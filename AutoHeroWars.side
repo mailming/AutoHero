@@ -32,6 +32,13 @@
       ],
       "value": ""
     }, {
+      "id": "d7ed4feb-be6d-426b-91a3-9014dcd88850",
+      "comment": "",
+      "command": "pause",
+      "target": "15000",
+      "targets": [],
+      "value": ""
+    }, {
       "id": "11cff2a2-7d50-41ee-b0ce-322094cdb355",
       "comment": "",
       "command": "click",
@@ -50,6 +57,20 @@
         ["css=.PopUp_buttons:nth-child(2) .PopUp_text", "css:finder"],
         ["xpath=//div[3]/div[2]/div/div", "xpath:position"]
       ],
+      "value": ""
+    }, {
+      "id": "c2735ff4-c493-425d-a02e-742d0c8c0623",
+      "comment": "",
+      "command": "pause",
+      "target": "12000000",
+      "targets": [],
+      "value": ""
+    }, {
+      "id": "0ba94ca7-8f69-4b3d-adec-2d0c98d59f7e",
+      "comment": "",
+      "command": "close",
+      "target": "",
+      "targets": [],
       "value": ""
     }]
   }, {
