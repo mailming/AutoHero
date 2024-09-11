@@ -1,0 +1,86 @@
+{
+  "id": "5ffa0bb1-6d70-4683-a69a-56e55c5544ed",
+  "version": "2.0",
+  "name": "minions",
+  "url": "https://www.hero-wars.com",
+  "tests": [{
+    "id": "abdc2af8-76c6-4a3d-9525-207312c54205",
+    "name": "Minions",
+    "commands": [{
+      "id": "58740a64-0af8-452f-9ef2-c245abf4be48",
+      "comment": "",
+      "command": "open",
+      "target": "/",
+      "targets": [],
+      "value": ""
+    }, {
+      "id": "95adb173-c55a-49c5-a714-a06fd854b873",
+      "comment": "",
+      "command": "setWindowSize",
+      "target": "2576x1408",
+      "targets": [],
+      "value": ""
+    }, {
+      "id": "646ee724-e6eb-49cd-93dc-3c2871f6f933",
+      "comment": "",
+      "command": "pause",
+      "target": "15000",
+      "targets": [],
+      "value": ""
+    }, {
+      "id": "5e7f42a6-1795-44cf-9fbb-ea72026815f3",
+      "comment": "",
+      "command": "click",
+      "target": "css=.scriptMenu_button:nth-child(7) > .scriptMenu_buttonText",
+      "targets": [
+        ["css=.scriptMenu_button:nth-child(7) > .scriptMenu_buttonText", "css:finder"],
+        ["xpath=//div[8]/div[2]/div[4]/div", "xpath:position"]
+      ],
+      "value": ""
+    }, {
+      "id": "36b6bbd9-b865-478b-bd6b-0b49df7f4cda",
+      "comment": "",
+      "command": "click",
+      "target": "css=.PopUp_buttons:nth-child(4) .PopUp_text",
+      "targets": [
+        ["css=.PopUp_buttons:nth-child(4) .PopUp_text", "css:finder"],
+        ["xpath=//div[3]/div[4]/div/div", "xpath:position"]
+      ],
+      "value": ""
+    }, {
+      "id": "de64422b-6b36-4582-9d0e-ef64b37332b1",
+      "comment": "",
+      "command": "click",
+      "target": "css=.PopUp_buttons:nth-child(1) .PopUp_text",
+      "targets": [
+        ["css=.PopUp_buttons:nth-child(1) .PopUp_text", "css:finder"],
+        ["xpath=//div[3]/div/div/div", "xpath:position"]
+      ],
+      "value": ""
+    }, {
+      "id": "401c24e2-3a7d-4885-8ad8-3e6d4ced3f33",
+      "comment": "",
+      "command": "pause",
+      "target": "120000",
+      "targets": [],
+      "value": ""
+    }, {
+      "id": "878647b7-8cc2-47af-a602-68792a2296bd",
+      "comment": "",
+      "command": "close",
+      "target": "",
+      "targets": [],
+      "value": ""
+    }]
+  }],
+  "suites": [{
+    "id": "54b721d1-a8ea-44e2-86e2-55d2313dbd97",
+    "name": "Default Suite",
+    "persistSession": false,
+    "parallel": false,
+    "timeout": 300,
+    "tests": ["abdc2af8-76c6-4a3d-9525-207312c54205"]
+  }],
+  "urls": ["https://www.hero-wars.com/"],
+  "plugins": []
+}
