@@ -78,7 +78,7 @@
     "name": "Default Suite",
     "persistSession": false,
     "parallel": false,
-    "timeout": 300,
+    "timeout": 150000,
     "tests": ["abdc2af8-76c6-4a3d-9525-207312c54205"]
   }],
   "urls": ["https://www.hero-wars.com/"],
