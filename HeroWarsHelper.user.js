@@ -853,6 +853,7 @@ const i18nLangData = {
 	},
 };
 
+
 function getLang() {
 	let lang = '';
 	if (typeof NXFlashVars !== 'undefined') {
