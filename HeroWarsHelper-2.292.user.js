@@ -3,7 +3,7 @@
 // @name:en			HeroWarsHelper
 // @name:ru			HeroWarsHelper
 // @namespace		HeroWarsHelper
-// @version			2.293
+// @version			2.292
 // @description		Automation of actions for the game Hero Wars
 // @description:en	Automation of actions for the game Hero Wars
 // @description:ru	Автоматизация действий для игры Хроники Хаоса
@@ -207,7 +207,6 @@ const i18nLangData = {
 		SYNC: 'Sync',
 		SYNC_TITLE: 'Partial synchronization of game data without reloading the page',
 		ARCHDEMON: 'Archdemon',
-		FURNACE_OF_SOULS: 'Furnace of souls',
 		ARCHDEMON_TITLE: 'Hitting kills and collecting rewards',
 		ESTER_EGGS: 'Easter eggs',
 		ESTER_EGGS_TITLE: 'Collect all Easter eggs or rewards',
@@ -565,7 +564,6 @@ const i18nLangData = {
 		SYNC: 'Синхронизация',
 		SYNC_TITLE: 'Частичная синхронизация данных игры без перезагрузки сатраницы',
 		ARCHDEMON: 'Архидемон',
-		FURNACE_OF_SOULS: 'Горнило душ',
 		ARCHDEMON_TITLE: 'Набивает килы и собирает награду',
 		ESTER_EGGS: 'Пасхалки',
 		ESTER_EGGS_TITLE: 'Собрать все пасхалки или награды',
@@ -1196,12 +1194,12 @@ const buttons = {
 				},
 				*/
 			];
-			popupButtons.push({ result: false, isClose: true });
+			popupButtons.push({ result: false, isClose: true })
 			const answer = await popup.confirm(`${I18N('CHOOSE_ACTION')}:`, popupButtons);
 			if (typeof answer === 'function') {
 				answer();
 			}
-		},
+		}
 	},
 	doOthers: {
 		name: I18N('OTHERS'),
@@ -1295,12 +1293,12 @@ const buttons = {
 					title: I18N('CHANGE_MAP_TITLE'),
 				},
 			];
-			popupButtons.push({ result: false, isClose: true });
+			popupButtons.push({ result: false, isClose: true })
 			const answer = await popup.confirm(`${I18N('CHOOSE_ACTION')}:`, popupButtons);
 			if (typeof answer === 'function') {
 				answer();
 			}
-		},
+		}
 	},
 	testTitanArena: {
 		name: I18N('TITAN_ARENA'),
@@ -1325,15 +1323,16 @@ const buttons = {
 		},
 		hide: true,
 	},
+	/*
 	// Горнило душ
 	bossRatingEvent: {
-		name: I18N('FURNACE_OF_SOULS'),
+		name: I18N('ARCHDEMON'),
 		title: I18N('ARCHDEMON_TITLE'),
 		func: function () {
-			confShow(`${I18N('RUN_SCRIPT')} ${I18N('FURNACE_OF_SOULS')}?`, bossRatingEventSouls);
+			confShow(`${I18N('RUN_SCRIPT')} ${I18N('ARCHDEMON')}?`, bossRatingEventSouls);
 		},
-		hide: false,
 	},
+	*/
 	rewardsAndMailFarm: {
 		name: I18N('REWARDS_AND_MAIL'),
 		title: I18N('REWARDS_AND_MAIL_TITLE'),
@@ -1362,10 +1361,7 @@ const buttons = {
 		name: I18N('DAILY_QUESTS'),
 		title: I18N('DAILY_QUESTS_TITLE'),
 		func: async function () {
-			const quests = new dailyQuests(
-				() => {},
-				() => {}
-			);
+			const quests = new dailyQuests(() => { }, () => { });
 			await quests.autoInit();
 			quests.start();
 		},
@@ -1377,7 +1373,7 @@ const buttons = {
 			confShow(`${I18N('RUN_SCRIPT')} ${I18N('SYNC')}?`, cheats.refreshGame);
 		},
 	},
-};
+}
 /**
  * Display buttons
  *
@@ -1723,7 +1719,6 @@ XMLHttpRequest.prototype.send = async function (sourceData) {
 
 			if (isChecked('sendExpedition')) {
 				checkExpedition();
-                testDoYourBest();
 			}
 
 			getAutoGifts();
@@ -10351,144 +10346,177 @@ function testDoYourBest() {
  *
  * Кнопка сделать все
  */
-class doYourBest { 
+class doYourBest {
 
-    funcList = [
-        {
-            name: 'getOutland',
-            label: I18N('ASSEMBLE_OUTLAND'),
-            checked: true
-        },
-        {
-            name: 'testTower',
-            label: I18N('PASS_THE_TOWER'),
-            checked: true
-        },
-        {
-            name: 'checkExpedition',
-            label: I18N('CHECK_EXPEDITIONS'),
-            checked: true
-        },
-        {
-            name: 'testTitanArena',
-            label: I18N('COMPLETE_TOE'),
-            checked: true
-        },
-        {
-            name: 'mailGetAll',
-            label: I18N('COLLECT_MAIL'),
-            checked: false
-        },
-        {
-            name: 'collectAllStuff',
-            label: I18N('COLLECT_MISC'),
-            title: I18N('COLLECT_MISC_TITLE'),
-            checked: true
-        },
-        {
-            name: 'getDailyBonus',
-            label: I18N('DAILY_BONUS'),
-            checked: true
-        },
-        {
-            name: 'dailyQuests',
-            label: I18N('DO_DAILY_QUESTS'),
-            checked: false
-        },
-        {
-            name: 'rollAscension',
-            label: I18N('SEER_TITLE'),
-            checked: true
-        },
-        {
-            name: 'questAllFarm',
-            label: I18N('COLLECT_QUEST_REWARDS'),
-            checked: false
-        },
-        {
-            name: 'testDungeon',
-            label: I18N('COMPLETE_DUNGEON'),
-            checked: true
-        },
-        {
-            name: 'synchronization',
-            label: I18N('MAKE_A_SYNC'),
-            checked: true
-        },
-        {
-            name: 'reloadGame',
-            label: I18N('RELOAD_GAME'),
-            checked: false
-        },
-    ];
+	funcList = [
+		{
+			name: 'getOutland',
+			label: I18N('ASSEMBLE_OUTLAND'),
+			checked: false
+		},
+		{
+			name: 'testTower',
+			label: I18N('PASS_THE_TOWER'),
+			checked: false
+		},
+		{
+			name: 'checkExpedition',
+			label: I18N('CHECK_EXPEDITIONS'),
+			checked: false
+		},
+		{
+			name: 'testTitanArena',
+			label: I18N('COMPLETE_TOE'),
+			checked: false
+		},
+		{
+			name: 'mailGetAll',
+			label: I18N('COLLECT_MAIL'),
+			checked: false
+		},
+		{
+			name: 'collectAllStuff',
+			label: I18N('COLLECT_MISC'),
+			title: I18N('COLLECT_MISC_TITLE'),
+			checked: false
+		},
+		{
+			name: 'getDailyBonus',
+			label: I18N('DAILY_BONUS'),
+			checked: false
+		},
+		{
+			name: 'dailyQuests',
+			label: I18N('DO_DAILY_QUESTS'),
+			checked: false
+		},
+		{
+			name: 'rollAscension',
+			label: I18N('SEER_TITLE'),
+			checked: false
+		},
+		{
+			name: 'questAllFarm',
+			label: I18N('COLLECT_QUEST_REWARDS'),
+			checked: false
+		},
+		{
+			name: 'testDungeon',
+			label: I18N('COMPLETE_DUNGEON'),
+			checked: false
+		},
+		{
+			name: 'synchronization',
+			label: I18N('MAKE_A_SYNC'),
+			checked: false
+		},
+		{
+			name: 'reloadGame',
+			label: I18N('RELOAD_GAME'),
+			checked: false
+		},
+	];
 
-    functions = {
-        getOutland,
-        testTower,
-        checkExpedition,
-        testTitanArena,
-        mailGetAll,
-        collectAllStuff: async () => {
-            await offerFarmAllReward();
-            await Send('{"calls":[{"name":"subscriptionFarm","args":{},"ident":"body"},{"name":"zeppelinGiftFarm","args":{},"ident":"zeppelinGiftFarm"},{"name":"grandFarmCoins","args":{},"ident":"grandFarmCoins"},{"name":"gacha_refill","args":{"ident":"heroGacha"},"ident":"gacha_refill"}]}');
-        },
-        dailyQuests: async function () {
-            const quests = new dailyQuests(() => { }, () => { });
-            await quests.autoInit(true);
-            await quests.start();
-        },
-        rollAscension,
-        getDailyBonus,
-        questAllFarm,
-        testDungeon,
-        synchronization: async () => {
-            cheats.refreshGame();
-        },
-        reloadGame: async () => {
-            location.reload();
-        },
-    }
+	functions = {
+		getOutland,
+		testTower,
+		checkExpedition,
+		testTitanArena,
+		mailGetAll,
+		collectAllStuff: async () => {
+			await offerFarmAllReward();
+			await Send('{"calls":[{"name":"subscriptionFarm","args":{},"ident":"body"},{"name":"zeppelinGiftFarm","args":{},"ident":"zeppelinGiftFarm"},{"name":"grandFarmCoins","args":{},"ident":"grandFarmCoins"},{"name":"gacha_refill","args":{"ident":"heroGacha"},"ident":"gacha_refill"}]}');
+		},
+		dailyQuests: async function () {
+			const quests = new dailyQuests(() => { }, () => { });
+			await quests.autoInit(true);
+			await quests.start();
+		},
+		rollAscension,
+		getDailyBonus,
+		questAllFarm,
+		testDungeon,
+		synchronization: async () => {
+			cheats.refreshGame();
+		},
+		reloadGame: async () => {
+			location.reload();
+		},
+	}
 
-    constructor(resolve, reject, questInfo) {
-        this.resolve = resolve;
-        this.reject = reject;
-        this.questInfo = questInfo
-    }
+	constructor(resolve, reject, questInfo) {
+		this.resolve = resolve;
+		this.reject = reject;
+		this.questInfo = questInfo
+	}
 
-    async start() {
-        for (const task of this.funcList) {
-            if (task.checked) {
-                try {
-                    setProgress(`${task.label} <br>${I18N('PERFORMED')}!`);
-                    await this.functions[task.name]();
-                    setProgress(`${task.label} <br>${I18N('DONE')}!`);
-                } catch (error) {
-                    this.errorHandling(error);
-                }
-            }
-        }
-        setTimeout((msg) => {
-            this.end(msg);
-        }, 2000, I18N('ALL_TASK_COMPLETED'));
-        return;
-    }
+	async start() {
+		const selectedDoIt = getSaveVal('selectedDoIt', {});
 
-    errorHandling(error) {
-        let errorInfo = error.toString() + '\n';
-        try {
-            const errorStack = error.stack.split('\n');
-            const endStack = errorStack.map(e => e.split('@')[0]).indexOf("testDoYourBest");
-            errorInfo += errorStack.slice(0, endStack).join('\n');
-        } catch (e) {
-            errorInfo += error.stack;
-        }
-        copyText(errorInfo);
-    }
+		this.funcList.forEach(task => {
+			if (!selectedDoIt[task.name]) {
+				selectedDoIt[task.name] = {
+					checked: task.checked
+				}
+			} else {
+				task.checked = selectedDoIt[task.name].checked
+			}
+		});
 
-    end(status) {
-        setProgress(status, true);
-        this.resolve();
-    }
+		const answer = await popup.confirm(I18N('RUN_FUNCTION'), [
+			{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
+			{ msg: I18N('BTN_GO'), result: true },
+		], this.funcList);
+
+		if (!answer) {
+			this.end('');
+			return;
+		}
+
+		const taskList = popup.getCheckBoxes();
+		taskList.forEach(task => {
+			selectedDoIt[task.name].checked = task.checked;
+		});
+		setSaveVal('selectedDoIt', selectedDoIt);
+		for (const task of popup.getCheckBoxes()) {
+			if (task.checked) {
+				try {
+					setProgress(`${task.label} <br>${I18N('PERFORMED')}!`);
+					await this.functions[task.name]();
+					setProgress(`${task.label} <br>${I18N('DONE')}!`);
+				} catch (error) {
+					if (await popup.confirm(`${I18N('ERRORS_OCCURRES')}:<br> ${task.label} <br>${I18N('COPY_ERROR')}?`, [
+						{ msg: I18N('BTN_NO'), result: false },
+						{ msg: I18N('BTN_YES'), result: true },
+					])) {
+						this.errorHandling(error);
+					}
+				}
+			}
+		}
+		setTimeout((msg) => {
+			this.end(msg);
+		}, 2000, I18N('ALL_TASK_COMPLETED'));
+		return;
+	}
+
+	errorHandling(error) {
+		//console.error(error);
+		let errorInfo = error.toString() + '\n';
+		try {
+			const errorStack = error.stack.split('\n');
+			const endStack = errorStack.map(e => e.split('@')[0]).indexOf("testDoYourBest");
+			errorInfo += errorStack.slice(0, endStack).join('\n');
+		} catch (e) {
+			errorInfo += error.stack;
+		}
+		copyText(errorInfo);
+	}
+
+	end(status) {
+		setProgress(status, true);
+		this.resolve();
+	}
 }
 
 /**
