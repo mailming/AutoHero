@@ -3,7 +3,7 @@
 // @name:en			HeroWarsHelper
 // @name:ru			HeroWarsHelper
 // @namespace		HeroWarsHelper
-// @version			2.293
+// @version			2.292
 // @description		Automation of actions for the game Hero Wars
 // @description:en	Automation of actions for the game Hero Wars
 // @description:ru	Автоматизация действий для игры Хроники Хаоса
@@ -207,7 +207,6 @@ const i18nLangData = {
 		SYNC: 'Sync',
 		SYNC_TITLE: 'Partial synchronization of game data without reloading the page',
 		ARCHDEMON: 'Archdemon',
-		FURNACE_OF_SOULS: 'Furnace of souls',
 		ARCHDEMON_TITLE: 'Hitting kills and collecting rewards',
 		ESTER_EGGS: 'Easter eggs',
 		ESTER_EGGS_TITLE: 'Collect all Easter eggs or rewards',
@@ -565,7 +564,6 @@ const i18nLangData = {
 		SYNC: 'Синхронизация',
 		SYNC_TITLE: 'Частичная синхронизация данных игры без перезагрузки сатраницы',
 		ARCHDEMON: 'Архидемон',
-		FURNACE_OF_SOULS: 'Горнило душ',
 		ARCHDEMON_TITLE: 'Набивает килы и собирает награду',
 		ESTER_EGGS: 'Пасхалки',
 		ESTER_EGGS_TITLE: 'Собрать все пасхалки или награды',
@@ -1196,12 +1194,12 @@ const buttons = {
 				},
 				*/
 			];
-			popupButtons.push({ result: false, isClose: true });
+			popupButtons.push({ result: false, isClose: true })
 			const answer = await popup.confirm(`${I18N('CHOOSE_ACTION')}:`, popupButtons);
 			if (typeof answer === 'function') {
 				answer();
 			}
-		},
+		}
 	},
 	doOthers: {
 		name: I18N('OTHERS'),
@@ -1295,12 +1293,12 @@ const buttons = {
 					title: I18N('CHANGE_MAP_TITLE'),
 				},
 			];
-			popupButtons.push({ result: false, isClose: true });
+			popupButtons.push({ result: false, isClose: true })
 			const answer = await popup.confirm(`${I18N('CHOOSE_ACTION')}:`, popupButtons);
 			if (typeof answer === 'function') {
 				answer();
 			}
-		},
+		}
 	},
 	testTitanArena: {
 		name: I18N('TITAN_ARENA'),
@@ -1325,15 +1323,16 @@ const buttons = {
 		},
 		hide: true,
 	},
+	/*
 	// Горнило душ
 	bossRatingEvent: {
-		name: I18N('FURNACE_OF_SOULS'),
+		name: I18N('ARCHDEMON'),
 		title: I18N('ARCHDEMON_TITLE'),
 		func: function () {
-			confShow(`${I18N('RUN_SCRIPT')} ${I18N('FURNACE_OF_SOULS')}?`, bossRatingEventSouls);
+			confShow(`${I18N('RUN_SCRIPT')} ${I18N('ARCHDEMON')}?`, bossRatingEventSouls);
 		},
-		hide: false,
 	},
+	*/
 	rewardsAndMailFarm: {
 		name: I18N('REWARDS_AND_MAIL'),
 		title: I18N('REWARDS_AND_MAIL_TITLE'),
@@ -1362,10 +1361,7 @@ const buttons = {
 		name: I18N('DAILY_QUESTS'),
 		title: I18N('DAILY_QUESTS_TITLE'),
 		func: async function () {
-			const quests = new dailyQuests(
-				() => {},
-				() => {}
-			);
+			const quests = new dailyQuests(() => { }, () => { });
 			await quests.autoInit();
 			quests.start();
 		},
@@ -1377,7 +1373,7 @@ const buttons = {
 			confShow(`${I18N('RUN_SCRIPT')} ${I18N('SYNC')}?`, cheats.refreshGame);
 		},
 	},
-};
+}
 /**
  * Display buttons
  *
