@@ -1144,7 +1144,7 @@ const buttons = {
 				{
 					msg: I18N('REWARDS'),
 					result: function () {
-						confShow(`${I18N('RUN_SCRIPT')} ${I18N('REWARDS')}?`, questAllFarm);
+						confShow(`${I18N('RUN_SCRIPT')} ${I18N('c')}?`, questAllFarm);
 					},
 					title: I18N('REWARDS_TITLE'),
 				},
@@ -9287,11 +9287,11 @@ class dailyQuests {
 		},
 		10007: {
 			description: 'Соверши 1 призыв в Атриуме Душ', // ++++++++++++++++
-		doItCall: () => [{ name: "gacha_open", args: { ident: "heroGacha", free: true, pack: false }, ident: "gacha_open" }],
-			isWeCanDo: () => {
-				const soulCrystal =  this.questInfo['inventoryGet'].coin[38];
-				return soulCrystal > 0;
-			},
+//		doItCall: () => [{ name: "gacha_open", args: { ident: "heroGacha", free: true, pack: false }, ident: "gacha_open" }],
+//			isWeCanDo: () => {
+//				const soulCrystal =  this.questInfo['inventoryGet'].coin[38];
+//				return soulCrystal > 0;
+//			},
 		},
 		10016: {
 			description: 'Отправь подарки согильдийцам', // ++++++++++++++++
@@ -9513,78 +9513,61 @@ class dailyQuests {
 	async start() {
 		const weCanDo = [];
 		const selectedActions = getSaveVal('selectedActions', {});
+	
+		// Automatically set to auto mode
+		this.isAuto = true;
+	
 		for (let quest of this.questInfo['questGetAll']) {
 			if (quest.id in this.dataQuests && quest.state == 1) {
-				if (!selectedActions[quest.id]) {
-					selectedActions[quest.id] = {
-						checked: false
-					}
-				}
-
+				// Automatically check and add available quests
 				const isWeCanDo = this.dataQuests[quest.id].isWeCanDo;
 				if (!isWeCanDo.call(this)) {
 					continue;
 				}
-
 				weCanDo.push({
 					name: quest.id,
 					label: I18N(`QUEST_${quest.id}`),
-					checked: selectedActions[quest.id].checked
+					checked: true // Automatically mark as checked
 				});
 			}
 		}
-
+	
 		if (!weCanDo.length) {
 			this.end(I18N('NOTHING_TO_DO'));
 			return;
 		}
-
+	
 		console.log(weCanDo);
-		let taskList = [];
-		if (this.isAuto) {
-			taskList = weCanDo;
-		} else {
-			const answer = await popup.confirm(`${I18N('YOU_CAN_COMPLETE') }:`, [
-				{ msg: I18N('BTN_DO_IT'), result: true },
-				{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
-			], weCanDo);
-			if (!answer) {
-				this.end('');
-				return;
-			}
-			taskList = popup.getCheckBoxes();
-			taskList.forEach(e => {
-				selectedActions[e.name].checked = e.checked;
-			});
-			setSaveVal('selectedActions', selectedActions);
-		}
-
+		let taskList = weCanDo;
+	
 		const calls = [];
 		let countChecked = 0;
 		for (const task of taskList) {
 			if (task.checked) {
 				countChecked++;
-				const quest = this.dataQuests[task.name]
+				const quest = this.dataQuests[task.name];
 				console.log(quest.description);
-
+	
 				if (quest.doItCall) {
 					const doItCall = quest.doItCall.call(this);
 					calls.push(...doItCall);
 				}
 			}
 		}
-
+	
 		if (!countChecked) {
 			this.end(I18N('NOT_QUEST_COMPLETED'));
 			return;
 		}
-
+	
+		// Send API calls for all tasks
 		const result = await Send(JSON.stringify({ calls }));
 		if (result.error) {
-			console.error(result.error, result.error.call)
+			console.error(result.error, result.error.call);
 		}
 		this.end(`${I18N('COMPLETED_QUESTS')}: ${countChecked}`);
 	}
+	
 
 	errorHandling(error) {
 		//console.error(error);
@@ -10018,7 +10001,7 @@ class doYourBest {
         {
             name: 'dailyQuests',
             label: I18N('DO_DAILY_QUESTS'),
-            checked: false
+            checked: true
         },
         {
             name: 'rollAscension',
@@ -10028,7 +10011,7 @@ class doYourBest {
         {
             name: 'questAllFarm',
             label: I18N('COLLECT_QUEST_REWARDS'),
-            checked: false
+            checked: true
         },
         {
             name: 'testDungeon',
