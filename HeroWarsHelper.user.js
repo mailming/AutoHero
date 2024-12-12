@@ -3,15 +3,15 @@
 // @name:en			HeroWarsHelper
 // @name:ru			HeroWarsHelper
 // @namespace		HeroWarsHelper
-// @version			2.293
+// @version			2.308
 // @description		Automation of actions for the game Hero Wars
 // @description:en	Automation of actions for the game Hero Wars
 // @description:ru	Автоматизация действий для игры Хроники Хаоса
 // @author			ZingerY
 // @license 		Copyright ZingerY
 // @homepage		https://zingery.ru/scripts/HeroWarsHelper.user.js
-// @icon			http://ilovemycomp.narod.ru/VaultBoyIco16.ico
-// @icon64			http://ilovemycomp.narod.ru/VaultBoyIco64.png
+// @icon			https://zingery.ru/scripts/VaultBoyIco16.ico
+// @icon64			https://zingery.ru/scripts/VaultBoyIco64.png
 // @match			https://www.hero-wars.com/*
 // @match			https://apps-1701433570146040.apps.fbsbx.com/*
 // @run-at			document-start
@@ -81,7 +81,49 @@ const original = {
 	send: XMLHttpRequest.prototype.send,
 	setRequestHeader: XMLHttpRequest.prototype.setRequestHeader,
 	SendWebSocket: WebSocket.prototype.send,
+	fetch: fetch,
 };
+
+// Sentry blocking
+// Блокировка наблюдателя
+this.fetch = function (url, options) {
+	/**
+	 * Checking URL for blocking
+	 * Проверяем URL на блокировку
+	 */
+	if (url.includes('sentry.io')) {
+		console.log('%cFetch blocked', 'color: red');
+		console.log(url, options);
+		const body = {
+			id: md5(Date.now()),
+		};
+		let info = {};
+		try {
+			info = JSON.parse(options.body);
+		} catch (e) {}
+		if (info.event_id) {
+			body.id = info.event_id;
+		}
+		/**
+		 * Mock response for blocked URL
+		 * 
+		 * Мокаем ответ для заблокированного URL
+		 */
+		const mockResponse = new Response('Custom blocked response', {
+			status: 200,
+			headers: { 'Content-Type': 'application/json' },
+			body,
+		});
+		return Promise.resolve(mockResponse);
+	} else {
+		/**
+		 * Call the original fetch function for all other URLs
+		 * Вызываем оригинальную функцию fetch для всех других URL
+		 */
+		return original.fetch.apply(this, arguments);
+	}
+};
+
 /**
  * Decoder for converting byte data to JSON string
  *
@@ -460,7 +502,7 @@ const i18nLangData = {
 		BOSS_VICTORY_IMPOSSIBLE:
 			'Based on the recalculation of {battles} battles, victory has not been achieved. Would you like to continue the search for a winning battle in real battles?',
 		BOSS_HAS_BEEN_DEF_TEXT:
-			'Boss {bossLvl} defeated in<br>{countBattle}/{countMaxBattle} attempts<br>(Please synchronize or restart the game to update the data)',
+			'Boss {bossLvl} defeated in<br>{countBattle}/{countMaxBattle} attempts{winTimer}<br>(Please synchronize or restart the game to update the data)',
 		MAP: 'Map: ',
 		PLAYER_POS: 'Player positions:',
 		NY_GIFTS: 'Gifts',
@@ -513,6 +555,7 @@ const i18nLangData = {
 		SELL_HERO_SOULS_TITLE: 'Exchanges all absolute star hero souls for gold',
 		GOLD_RECEIVED: 'Gold received: {gold}',
 		OPEN_ALL_EQUIP_BOXES: 'Open all Equipment Fragment Box?',
+		SERVER_NOT_ACCEPT: 'The server did not accept the result',
 	},
 	ru: {
 		/* Чекбоксы */
@@ -817,7 +860,7 @@ const i18nLangData = {
 		BOSS_VICTORY_IMPOSSIBLE:
 			'По результатам прерасчета {battles} боев победу получить не удалось. Вы хотите продолжить поиск победного боя на реальных боях?',
 		BOSS_HAS_BEEN_DEF_TEXT:
-			'Босс {bossLvl} побежден за<br>{countBattle}/{countMaxBattle} попыток<br>(Сделайте синхронизацию или перезагрузите игру для обновления данных)',
+			'Босс {bossLvl} побежден за<br>{countBattle}/{countMaxBattle} попыток{winTimer}<br>(Сделайте синхронизацию или перезагрузите игру для обновления данных)',
 		MAP: 'Карта: ',
 		PLAYER_POS: 'Позиции игроков:',
 		NY_GIFTS: 'Подарки',
@@ -870,6 +913,7 @@ const i18nLangData = {
 		SELL_HERO_SOULS_TITLE: 'Обменивает все души героев с абсолютной звездой на золото',
 		GOLD_RECEIVED: 'Получено золота: {gold}',
 		OPEN_ALL_EQUIP_BOXES: 'Открыть все ящики фрагментов экипировки?',
+		SERVER_NOT_ACCEPT: 'Сервер не принял результат',
 	},
 };
 
@@ -1009,7 +1053,7 @@ const checkboxes = {
 		default: false,
 		hide: true,
 	},
-	tryFixIt: {
+	tryFixIt_v2: {
 		label: I18N('BTN_TRY_FIX_IT'),
 		cbox: null,
 		title: I18N('BTN_TRY_FIX_IT_TITLE'),
@@ -1333,7 +1377,7 @@ const buttons = {
 		func: function () {
 			confShow(`${I18N('RUN_SCRIPT')} ${I18N('FURNACE_OF_SOULS')}?`, bossRatingEventSouls);
 		},
-		hide: false,
+		hide: true,
 	},
 	rewardsAndMailFarm: {
 		name: I18N('REWARDS_AND_MAIL'),
@@ -1717,7 +1761,11 @@ XMLHttpRequest.prototype.send = async function (sourceData) {
 		 */
 		if (headers["X-Request-Id"] > 2 && !isLoadGame) {
 			isLoadGame = true;
-			await lib.load();
+			if (cheats.libGame) {
+				lib.setData(cheats.libGame);
+			} else {
+				lib.setData(await cheats.LibLoad());
+			}
 			addControls();
 			addControlButtons();
 			addBottomUrls();
@@ -1884,21 +1932,67 @@ async function checkChangeSend(sourceData, tempData) {
 				call.name == 'brawl_endBattle' ||
 				call.name == 'towerEndBattle' ||
 				call.name == 'invasion_bossEnd' ||
+				call.name == 'titanArenaEndBattle' ||
 				call.name == 'bossEndBattle' ||
 				call.name == 'clanRaid_endNodeBattle') &&
 				isCancalBattle) {
 				nameFuncEndBattle = call.name;
+
+				if (isChecked('tryFixIt_v2') &&
+					!call.args.result.win &&
+					(call.name == 'brawl_endBattle' ||
+					//call.name == 'crossClanWar_endBattle' ||
+					call.name == 'epicBrawl_endBattle' ||
+					//call.name == 'clanWarEndBattle' ||
+					call.name == 'adventure_endBattle' ||
+					call.name == 'titanArenaEndBattle' ||
+					call.name == 'bossEndBattle' ||
+					call.name == 'adventureSolo_endBattle') &&
+					lastBattleInfo) {
+					const noFixWin = call.name == 'clanWarEndBattle' || call.name == 'crossClanWar_endBattle';
+					const cloneBattle = structuredClone(lastBattleInfo);
+					lastBattleInfo = null;
+					try {
+						const bFix = new BestOrWinFixBattle(cloneBattle);
+						bFix.setNoMakeWin(noFixWin);
+						let endTime = Date.now() + 3e4;
+						if (endTime < cloneBattle.endTime) {
+							endTime = cloneBattle.endTime;
+						}
+						const result = await bFix.start(cloneBattle.endTime, 150);
+
+						if (result.result.win) {
+							call.args.result = result.result;
+							call.args.progress = result.progress;
+							changeRequest = true;
+						} else if (result.value) {
+							if (
+								await popup.confirm('Поражение<br>Лучший результат: ' + result.value + '%', [
+									{ msg: 'Отмена', result: 0 },
+									{ msg: 'Принять', result: 1 },
+								])
+							) {
+								call.args.result = result.result;
+								call.args.progress = result.progress;
+								changeRequest = true;
+							}
+						}
+					} catch (error) {
+						console.error(error);
+					}
+				}
+
 				if (!call.args.result.win) {
 					let resultPopup = false;
 					if (call.name == 'adventure_endBattle' ||
-						call.name == 'invasion_bossEnd' ||
+						//call.name == 'invasion_bossEnd' ||
 						call.name == 'bossEndBattle' ||
 						call.name == 'adventureSolo_endBattle') {
 						resultPopup = await showMsgs(I18N('MSG_HAVE_BEEN_DEFEATED'), I18N('BTN_OK'), I18N('BTN_CANCEL'), I18N('BTN_AUTO'));
 					} else if (call.name == 'clanWarEndBattle' ||
 							call.name == 'crossClanWar_endBattle') {
 						resultPopup = await showMsg(I18N('MSG_HAVE_BEEN_DEFEATED'), I18N('BTN_OK'), I18N('BTN_AUTO_F5'));
-					} else {
+					} else if (call.name !== 'epicBrawl_endBattle' && call.name !== 'titanArenaEndBattle') {
 						resultPopup = await showMsg(I18N('MSG_HAVE_BEEN_DEFEATED'), I18N('BTN_OK'), I18N('BTN_CANCEL'));
 					}
 					if (resultPopup) {
@@ -1965,12 +2059,20 @@ async function checkChangeSend(sourceData, tempData) {
 				const bossDamage = call.args.progress[0].defenders.heroes[1].extra;
 				let maxDamage = bossDamage.damageTaken + bossDamage.damageTakenNextLevel;
 				const lastDamage = maxDamage;
+
+				const testFunc = [];
+
+				if (testFuntions.masterFix) {
+					testFunc.push({ msg: 'masterFix', isInput: true, default: 100 });
+				}
+
 				const resultPopup = await popup.confirm(
 					`${I18N('MSG_YOU_APPLIED')} ${lastDamage.toLocaleString()} ${I18N('MSG_DAMAGE')}.`,
 					[
 						{ msg: I18N('BTN_OK'), result: false },
 						{ msg: I18N('BTN_AUTO_F5'), result: 1 },
 						{ msg: I18N('BTN_TRY_FIX_IT'), result: 2 },
+						...testFunc,
 					],
 					[
 						{
@@ -1987,62 +2089,51 @@ async function checkChangeSend(sourceData, tempData) {
 						const cloneBattle = structuredClone(lastBossBattle);
 						const endTime = cloneBattle.endTime - 1e4;
 						console.log('fixBossBattleStart');
-						const COUNT = 300;
-						let maxCount = 0;
-						let duration = 0;
-						let avgTime = 0;
-						for (let count = 1; count <= COUNT; count++) {
-							maxCount = count;
-							const start = Date.now();
-							const timer = randf(1.3, 10.3);
-							if ((endTime + avgTime) < start) {
-								break;
-							}
-							await new Promise((e) =>
-								setTimeout(() => {
-									const maxDmg = maxDamage.toLocaleString();
-									const avg = avgTime.toFixed(2);
-									const msg = `${I18N('LETS_FIX')} ${maxCount}/${COUNT}<br/>${maxDmg}<br/>${avg}ms`;
-									setProgress(msg, false);
-									e();
-								}, 0)
-							);
-							try {
-								resultBattle = await Calc(cloneBattle);
-							} catch (e) {
-								continue;
-							}
-							
-							duration += Date.now() - start;
-							avgTime = duration / count; 
-							const extraDmg = resultBattle.progress[0].defenders.heroes[1].extra;
-							const bossDamage = extraDmg.damageTaken + extraDmg.damageTakenNextLevel;
-							console.log(count + '\t' + timer.toFixed(2) + '\t' + bossDamage.toLocaleString());
-							if (bossDamage > maxDamage) {
-								maxDamage = bossDamage;
-								call.args.result = resultBattle.result;
-								call.args.progress = resultBattle.progress;
-							}
-							cloneBattle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, timer] } }];
-						}
+
+						const bFix = new BossFixBattle(cloneBattle);
+						const result = await bFix.start(endTime, 300);
+						console.log(result);
+
 						let msgResult = I18N('DAMAGE_NO_FIXED', {
 							lastDamage: lastDamage.toLocaleString()
 						});
-						if (maxDamage > lastDamage) {
+						if (result.value > lastDamage) {
+							call.args.result = result.result;
+							call.args.progress = result.progress;
+							msgResult = I18N('DAMAGE_FIXED', {
+								lastDamage: lastDamage.toLocaleString(),
+								maxDamage: result.value.toLocaleString(),
+							});
+						}
+						console.log(lastDamage, '>', result.value);
+						setProgress(
+							msgResult +
+								'<br/>' +
+								I18N('COUNT_FIXED', {
+									count: result.maxCount,
+								}),
+							false,
+							hideProgress
+						);
+					} else if (resultPopup > 3) {
+						const cloneBattle = structuredClone(lastBossBattle);
+						const mFix = new masterFixBattle(cloneBattle);
+						const result = await mFix.start(cloneBattle.endTime, resultPopup);
+						console.log(result);
+						let msgResult = I18N('DAMAGE_NO_FIXED', {
+							lastDamage: lastDamage.toLocaleString(),
+						});
+						if (result.value > lastDamage) {
+							maxDamage = result.value;
+							call.args.result = result.result;
+							call.args.progress = result.progress;
 							msgResult = I18N('DAMAGE_FIXED', {
 								lastDamage: lastDamage.toLocaleString(),
 								maxDamage: maxDamage.toLocaleString(),
 							});
 						}
-						console.log(lastDamage, '>' ,maxDamage);
-						setProgress(
-							msgResult + '<br/>' +
-								I18N('COUNT_FIXED', {
-									count: maxCount,
-								}),
-							false,
-							hideProgress
-						);
+						console.log('Урон:', lastDamage, maxDamage);
+						setProgress(msgResult, false, hideProgress);
 					} else {
 						fixBattle(call.args.progress[0].attackers.heroes);
 						fixBattle(call.args.progress[0].defenders.heroes);
@@ -2065,12 +2156,15 @@ async function checkChangeSend(sourceData, tempData) {
 			 * Saving the request to start the last battle
 			 * Сохранение запроса начала последнего боя 
 			 */
-			if (call.name == 'clanWarAttack' ||
+			if (
+				call.name == 'clanWarAttack' ||
 				call.name == 'crossClanWar_startBattle' ||
 				call.name == 'adventure_turnStartBattle' ||
+				call.name == 'adventureSolo_turnStartBattle' ||
 				call.name == 'bossAttack' ||
 				call.name == 'invasion_bossStart' ||
-				call.name == 'towerStartBattle') {
+				call.name == 'towerStartBattle'
+			) {
 				nameFuncStartBattle = call.name;
 				lastBattleArg = call.args;
 
@@ -2228,9 +2322,8 @@ async function checkChangeSend(sourceData, tempData) {
 				call.name == 'titanUseSummonCircle') &&
 				call.args.amount > 1) {
 				const startAmount = call.args.amount;
-				call.args.amount = 1;
 				const result = await popup.confirm(I18N('MSG_SPECIFY_QUANT'), [
-					{ msg: I18N('BTN_OPEN'), isInput: true, default: call.args.amount},
+					{ msg: I18N('BTN_OPEN'), isInput: true, default: 1},
 					]);
 				if (result) {
 					const item = call.name == 'pet_chestOpen' ? { id: 90, type: 'consumable' } : { id: 13, type: 'coin' };
@@ -2256,7 +2349,7 @@ async function checkChangeSend(sourceData, tempData) {
 				artifactChestOpenCallName = call.name;
 				const startAmount = call.args.amount;
 				let result = await popup.confirm(I18N('MSG_SPECIFY_QUANT'), [
-					{ msg: I18N('BTN_OPEN'), isInput: true, default: call.args.amount },
+					{ msg: I18N('BTN_OPEN'), isInput: true, default: 1 },
 				]);
 				if (result) {
 					const openChests = result;
@@ -2362,8 +2455,10 @@ async function checkChangeResponse(response) {
 					description: respond.error.description,
 				}));
 			}
-			delete respond.error;
-			respond.results = [];
+			if (respond.error.name != 'AccountBan') {
+				delete respond.error;
+				respond.results = [];
+			}
 		}
 		let mainReward = null;
 		const allReward = {};
@@ -2398,7 +2493,7 @@ async function checkChangeResponse(response) {
 				const billings = call.result.response?.billings;
 				const bundle = call.result.response?.bundle;
 				if (billings && bundle) {
-					call.result.response.billings = [];
+					call.result.response.billings = call.result.response.billings.filter((e) => ['repeatableOffer'].includes(e.type));
 					call.result.response.bundle = [];
 					isChange = true;
 				}
@@ -2412,7 +2507,9 @@ async function checkChangeResponse(response) {
 					call.ident == callsIdent['specialOffer_getAll'])) {
 				let offers = call.result.response;
 				if (offers) {
-					call.result.response = offers.filter(e => !['addBilling', 'bundleCarousel'].includes(e.type) || ['idleResource'].includes(e.offerType));
+					call.result.response = offers.filter(
+						(e) => !['addBilling', 'bundleCarousel'].includes(e.type) || ['idleResource', 'stagesOffer'].includes(e.offerType)
+					);
 					isChange = true;
 				}
 			}
@@ -2502,6 +2599,7 @@ async function checkChangeResponse(response) {
 				call.ident == callsIdent['brawl_startBattle'] ||
 				call.ident == callsIdent['adventureSolo_turnStartBattle'] ||
 				call.ident == callsIdent['invasion_bossStart'] ||
+				call.ident == callsIdent['titanArenaStartBattle'] ||
 				call.ident == callsIdent['towerStartBattle'] ||
 				call.ident == callsIdent['adventure_turnStartBattle']) {
 				let battle = call.result.response.battle || call.result.response.replay;
@@ -2512,6 +2610,14 @@ async function checkChangeResponse(response) {
 					battle = call.result.response;
 				}
 				lastBattleInfo = battle;
+				if (call.ident == callsIdent['battleGetReplay'] && call.result.response.replay.type ===	"clan_raid") {
+					if (call?.result?.response?.replay?.result?.damage) {
+						const damages = Object.values(call.result.response.replay.result.damage);
+						const bossDamage = damages.reduce((a, v) => a + v, 0);
+						setProgress(I18N('BOSS_DAMAGE') + bossDamage.toLocaleString(), false, hideProgress);
+						continue;
+					}
+				}
 				if (!isChecked('preCalcBattle')) {
 					continue;
 				}
@@ -2531,9 +2637,12 @@ async function checkChangeResponse(response) {
 					});
 				}
 				let actions = [getBattleInfo(battle, false)]
-				const countTestBattle = getInput('countTestBattle');
+				let countTestBattle = getInput('countTestBattle');
+				if (call.ident == callsIdent['invasion_bossStart'] ) {
+					countTestBattle = 0;
+				}
 				if (call.ident == callsIdent['battleGetReplay']) {
-					battle.progress = [{ attackers: { input: ["auto", 0, 0, "auto", 0, 0] } }];
+					battle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
 				}
 				for (let i = 0; i < countTestBattle; i++) {
 					actions.push(getBattleInfo(battle, true));
@@ -2545,8 +2654,13 @@ async function checkChangeResponse(response) {
 						const timer = Math.floor(battleDuration - firstBattle.time);
 						const min = ('00' + Math.floor(timer / 60)).slice(-2);
 						const sec = ('00' + Math.floor(timer - min * 60)).slice(-2);
-						const countWin = e.reduce((w, s) => w + s.win, 0);
-						setProgress(`${I18N('THIS_TIME')} ${(firstBattle.win ? I18N('VICTORY') : I18N('DEFEAT'))} ${I18N('CHANCE_TO_WIN')}: ${Math.floor(countWin / e.length * 100)}% (${e.length}), ${min}:${sec}`, false, hideProgress)
+						let msg = `${I18N('THIS_TIME')} ${firstBattle.win ? I18N('VICTORY') : I18N('DEFEAT')}`;
+						if (e.length) {
+							const countWin = e.reduce((w, s) => w + s.win, 0);
+							msg += ` ${I18N('CHANCE_TO_WIN')}: ${Math.floor((countWin / e.length) * 100)}% (${e.length})`;
+						}
+						msg += `, ${min}:${sec}`
+						setProgress(msg, false, hideProgress)
 					});
 			}
 			/**
@@ -2662,12 +2776,12 @@ async function checkChangeResponse(response) {
 			 * АвтоПовтор открытия матрешек
 			 */
 			if (isChecked('countControl') && call.ident == callsIdent['consumableUseLootBox']) {
-				let lootBox = call.result.response;
+				let [countLootBox, lootBox] = Object.entries(call.result.response).pop();
+				countLootBox = +countLootBox;
 				let newCount = 0;
-				for (let n of lootBox) {
-					if (n?.consumable && n.consumable[lastRussianDollId]) {
-						newCount += n.consumable[lastRussianDollId]
-					}
+				if (lootBox?.consumable && lootBox.consumable[lastRussianDollId]) {
+					newCount += lootBox.consumable[lastRussianDollId];
+					delete lootBox.consumable[lastRussianDollId];
 				}
 				if (
 					newCount &&
@@ -2677,7 +2791,9 @@ async function checkChangeResponse(response) {
 					]))
 				) {
 					const recursionResult = await openRussianDolls(lastRussianDollId, newCount);
-					lootBox = [...lootBox, ...recursionResult];
+					countLootBox += +count;
+					mergeItemsObj(lootBox, recursionResult);
+					isChange = true;
 				}
 
 				if (this.massOpen) {
@@ -2702,8 +2818,16 @@ async function checkChangeResponse(response) {
 								deleteItems[libId] = -amount;
 							}
 						}
-						const result = await Send({ calls }).then((e) => e.results.map((r) => r.result.response).flat());
-						lootBox = [...lootBox, ...result];
+						const responses = await Send({ calls }).then((e) => e.results.map((r) => r.result.response).flat());
+
+						for (const loot of responses) {
+							const [count, result] = Object.entries(loot).pop();
+							countLootBox += +count;
+
+							mergeItemsObj(lootBox, result);
+						}
+						isChange = true;
+
 						this.onReadySuccess = () => {
 							cheats.updateInventory({ consumable: deleteItems });
 							cheats.refreshInventory();
@@ -2711,71 +2835,11 @@ async function checkChangeResponse(response) {
 					}
 				}
 
-				/** Объединение результата лутбоксов */
-				const allLootBox = {};
-				lootBox.forEach(e => {
-					for (let f in e) {
-						if (!allLootBox[f]) {
-							if (typeof e[f] == 'object') {
-								allLootBox[f] = {};
-							} else {
-								allLootBox[f] = 0;
-							}
-						}
-						if (typeof e[f] == 'object') {
-							for (let o in e[f]) {
-								if (newCount && o == lastRussianDollId) {
-									continue;
-								}
-								if (!allLootBox[f][o]) {
-									allLootBox[f][o] = e[f][o];
-								} else {
-									allLootBox[f][o] += e[f][o];
-								}
-							}
-						} else {
-							allLootBox[f] += e[f];
-						}
-					}
-				});
-				/** Разбитие результата */
-				const output = [];
-				const maxCount = 5;
-				let currentObj = {};
-				let count = 0;
-				for (let f in allLootBox) {
-					if (!currentObj[f]) {
-						if (typeof allLootBox[f] == 'object') {
-							for (let o in allLootBox[f]) {
-								currentObj[f] ||= {}
-								if (!currentObj[f][o]) {
-									currentObj[f][o] = allLootBox[f][o];
-									count++;
-									if (count === maxCount) {
-										output.push(currentObj);
-										currentObj = {};
-										count = 0;
-									}
-								}
-							}
-						} else {
-							currentObj[f] = allLootBox[f];
-							count++;
-							if (count === maxCount) {
-								output.push(currentObj);
-								currentObj = {};
-								count = 0;
-							}
-						}
-					}
+				if (isChange) {
+					call.result.response = {
+						[countLootBox]: lootBox,
+					};
 				}
-				if (count > 0) {
-					output.push(currentObj);
-				}
-
-				console.log(output);
-				call.result.response = output;
-				isChange = true;
 			}
 			/**
 			 * Dungeon recalculation (fix endless cards)
@@ -2918,6 +2982,14 @@ async function checkChangeResponse(response) {
 			if (call.ident == callsIdent['clanDomination_getInfo']) {
 				clanDominationGetInfo = call.result.response;
 			}
+			if (call.ident == callsIdent['clanRaid_endBossBattle']) {
+				console.log(call.result.response);
+				const damage = Object.values(call.result.response.damage).reduce((a, e) => a + e);
+				if (call.result.response.result.afterInvalid) {
+					addProgress('<br>' + I18N('SERVER_NOT_ACCEPT'));
+				}
+				addProgress('<br>Server > ' + I18N('BOSS_DAMAGE') + damage.toLocaleString());
+			}
 			/*
 			if (call.ident == callsIdent['chatGetAll'] && call.args.chatType == 'clanDomination' && !callsIdent['clanDomination_mapState']) {
 				this.onReadySuccess = async function () {
@@ -3049,8 +3121,8 @@ function getBattleType(strBattleType) {
 		case 'titan_tower':
 			return 'get_titan';
 		case 'tower':
-			return 'get_tower';
 		case 'clan_dungeon':
+			return 'get_tower';
 		case 'pve':
 		case 'mission':
 			return 'get_pve';
@@ -3305,6 +3377,15 @@ function setProgress(text, hide, onclick) {
 	}
 }
 
+/**
+ * Progress added
+ *
+ * Дополнение прогресса
+ */
+function addProgress(text) {
+	scriptMenu.addStatus(text);
+}
+
 /** 
  * Returns the timer value depending on the subscription
  * 
@@ -3317,6 +3398,19 @@ function getTimer(time, div) {
 	}
 	return Math.max(Math.ceil(time / speedDiv + 1.5), 4);
 }
+
+function startSlave() {
+	const sFix = new slaveFixBattle();
+	sFix.wsStart();
+}
+
+this.testFuntions = {
+	hideProgress,
+	setProgress,
+	addProgress,
+	masterFix: false,
+	startSlave,
+};
 
 /**
  * Calculates HASH MD5 from string
@@ -3340,17 +3434,22 @@ function getTimer(time, div) {
  */
 const popup = new (function () {
 	this.popUp,
-	this.downer,
-	this.middle,
-	this.msgText,
-	this.buttons = [];
+		this.downer,
+		this.middle,
+		this.msgText,
+		this.buttons = [];
 	this.checkboxes = [];
 	this.dialogPromice = null;
+	this.isInit = false;
 
 	this.init = function () {
+		if (this.isInit) {
+			return;
+		} 
 		addStyle();
 		addBlocks();
 		addEventListeners();
+		this.isInit = true;
 	}
 
 	const addEventListeners = () => {
@@ -3656,7 +3755,7 @@ const popup = new (function () {
 
 		const { button, contButton, inputField } = option.isClose ? this.addCloseButton() : this.addAnyButton(option);
 		if (option.isClose) {
-			this.dialogPromice = {func: buttonClick, result: option.result};
+			this.dialogPromice = { func: buttonClick, result: option.result };
 		}
 		button.addEventListener('click', () => {
 			let result = '';
@@ -3728,6 +3827,9 @@ const popup = new (function () {
 	}
 
 	this.confirm = async (msg, buttOpt, checkBoxes = []) => {
+		if (!this.isInit) {
+			this.init();
+		}
 		this.clearButtons();
 		this.clearCheckBox();
 		return new Promise((complete, failed) => {
@@ -3745,7 +3847,7 @@ const popup = new (function () {
 					popup.hide();
 				});
 				if (butt.isCancel) {
-					this.dialogPromice = {func: complete, result: butt.result};
+					this.dialogPromice = { func: complete, result: butt.result };
 				}
 			}
 			this.show();
@@ -4023,6 +4125,7 @@ const scriptMenu = new (function () {
 	this.setStatus = (text, onclick) => {
 		if (!text) {
 			this.status.classList.add('scriptMenu_statusHide');
+			this.status.innerHTML = '';
 		} else {
 			this.status.classList.remove('scriptMenu_statusHide');
 			this.status.innerHTML = text;
@@ -4033,6 +4136,13 @@ const scriptMenu = new (function () {
 				once: true
 			});
 		}
+	}
+
+	this.addStatus = (text) => {
+		if (!this.status.innerHTML) {
+			this.status.classList.remove('scriptMenu_statusHide');
+		}
+		this.status.innerHTML += text;
 	}
 
 	/**
@@ -4245,6 +4355,10 @@ class Library {
 
 	getData(id) {
 		return this.data[id];
+	}
+
+	setData(data) {
+		this.data = data;
 	}
 }
 
@@ -4705,6 +4819,9 @@ function executeDungeon(resolve, reject) {
 
 	titansStates = {};
 
+	let talentMsg = '';
+	let talentMsgReward = '';
+
 	callsExecuteDungeon = {
 		calls: [{
 			name: "dungeonGetInfo",
@@ -4824,8 +4941,9 @@ function executeDungeon(resolve, reject) {
 			saveProgress();
 			return;
 		}
+		checkTalent(dungeonInfo);
 		// console.log(dungeonInfo, dungeonActivity);
-		setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}`);
+		setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
 		if (dungeonActivity >= maxDungeonActivity) {
 			endDungeon('endDungeon', 'maxActive ' + dungeonActivity + '/' + maxDungeonActivity);
 			return;
@@ -4871,6 +4989,32 @@ function executeDungeon(resolve, reject) {
 			}
 			processingPromises(battleResults)
 		}
+	}
+
+	async function checkTalent(dungeonInfo) {
+		const talent = dungeonInfo.talent;
+		if (!talent) {
+			return;
+		}
+		const dungeonFloor = +dungeonInfo.floorNumber;
+		const talentFloor = +talent.floorRandValue;
+		let doorsAmount = 3 - talent.conditions.doorsAmount;
+
+		if (dungeonFloor === talentFloor && (!doorsAmount || !talent.conditions?.farmedDoors[dungeonFloor])) {
+			const reward = await Send({
+				calls: [
+					{ name: 'heroTalent_getReward', args: { talentType: 'tmntDungeonTalent', reroll: false }, ident: 'group_0_body' },
+					{ name: 'heroTalent_farmReward', args: { talentType: 'tmntDungeonTalent' }, ident: 'group_1_body' },
+				],
+			}).then((e) => e.results[0].result.response);
+			const type = Object.keys(reward).pop();
+			const itemId = Object.keys(reward[type]).pop();
+			const count = reward[type][itemId];
+			const itemName = cheats.translate(`LIB_${type.toUpperCase()}_NAME_${itemId}`);
+			talentMsgReward += `<br> ${count} ${itemName}`;
+			doorsAmount++;
+		}
+		talentMsg = `<br>TMNT Talent: ${doorsAmount}/3 ${talentMsgReward}<br>`;
 	}
 
 	function processingPromises(results) {
@@ -4965,7 +5109,7 @@ function executeDungeon(resolve, reject) {
 			} else {
 				const timer = getTimer(battleInfo.battleTime);
 				console.log(timer);
-				await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}`);
+				await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
 			}
 			const calls = [{
 				name: "dungeonEndBattle",
@@ -5233,6 +5377,10 @@ function executeTower(resolve, reject) {
 		 * Если сундук открыт и можно скипать этажи, то переходим дальше
 		 */
 		if (towerInfo.mayFullSkip && +towerInfo.teamLevel == 130) {
+			if (floorNumber == 1) {
+				fullSkipTower();
+				return;
+			}
 			if (isOpenChest) {
 				nextOpenChest(floorNumber);
 			} else {
@@ -5438,7 +5586,7 @@ function executeTower(resolve, reject) {
 			}]
 		}
 
-		if (scullCoin > 0 && reason == 'openChest 50 floor') {
+		if (scullCoin > 0) {
 			farmTowerRewardsCall.calls.push({
 				name: "tower_farmSkullReward",
 				args: {},
@@ -5483,12 +5631,29 @@ function executeTower(resolve, reject) {
 
 		let n = 0;
 		for (let i = 0; i < 15; i++) {
+			// 15 сундуков
 			fullSkipTowerCall.calls.push(nextChest(++n));
 			fullSkipTowerCall.calls.push(openChest(++n));
+			// +5 сундуков, 250 изюма // towerOpenChest
+			// if (i < 5) {
+			// 	fullSkipTowerCall.calls.push(openChest(++n, 2));
+			// }
 		}
 
+		fullSkipTowerCall.calls.push({
+			name: 'towerGetInfo',
+			args: {},
+			ident: 'group_' + ++n + '_body',
+		});
+
 		send(JSON.stringify(fullSkipTowerCall), data => {
-			data.results[0] = data.results[28];
+			for (const r of data.results) {
+				const towerInfo = r?.result?.response;
+				if (towerInfo && 'skullReward' in towerInfo) {
+					scullCoin += towerInfo.skullReward?.coin[7] ?? 0;
+				}
+			}
+			data.results[0] = data.results[data.results.length - 1];
 			checkDataFloor(data);
 		});
 	}
@@ -5510,10 +5675,6 @@ function executeTower(resolve, reject) {
 	function nextOpenChest(floorNumber) {
 		if (floorNumber > 49) {
 			endTower('openChest 50 floor', floorNumber);
-			return;
-		}
-		if (floorNumber == 1) {
-			fullSkipTower();
 			return;
 		}
 
@@ -5985,6 +6146,7 @@ function hackGame() {
 	selfGame = null;
 	bindId = 1e9;
 	this.libGame = null;
+	this.doneLibLoad = () => {}
 
 	/**
 	 * List of correspondence of used classes to their names
@@ -6734,6 +6896,7 @@ function hackGame() {
 		const originalStartFunc = Game.GameModel.prototype.start;
 		Game.GameModel.prototype.start = function (a, b, c) {
 			self.libGame = b.raw;
+			self.doneLibLoad(self.libGame);
 			try {
 				const levels = b.raw.seasonAdventure.level;
 				for (const id in levels) {
@@ -6747,6 +6910,12 @@ function hackGame() {
 			}
 			originalStartFunc.call(this, a, b, c);
 		}
+	}
+
+	this.LibLoad = function() {
+		return new Promise((e) => {
+			this.doneLibLoad = e;
+		});
 	}
 
 	/**
@@ -7225,29 +7394,53 @@ this.sendsMission = async function (param) {
  */
 async function openRussianDolls(libId, amount) {
 	let sum = 0;
-	let sumResult = [];
+	const sumResult = {};
+	let count = 0;
 
 	while (amount) {
 		sum += amount;
 		setProgress(`${I18N('TOTAL_OPEN')} ${sum}`);
-		const calls = [{
-			name: "consumableUseLootBox",
-			args: { libId, amount },
-			ident: "body"
-		}];
-		const result = await Send(JSON.stringify({ calls })).then(e => e.results[0].result.response);
+		const calls = [
+			{
+				name: 'consumableUseLootBox',
+				args: { libId, amount },
+				ident: 'body',
+			},
+		];
+		const response = await Send(JSON.stringify({ calls })).then((e) => e.results[0].result.response);
+		let [countLootBox, result] = Object.entries(response).pop();
+		count += +countLootBox;
 		let newCount = 0;
-		for (let n of result) {
-			if (n?.consumable && n.consumable[libId]) {
-				newCount += n.consumable[libId]
-			}
+
+		if (result?.consumable && result.consumable[libId]) {
+			newCount = result.consumable[libId];
+			delete result.consumable[libId];
 		}
-		sumResult = [...sumResult, ...result];
+
+		mergeItemsObj(sumResult, result);
 		amount = newCount;
 	}
 
 	setProgress(`${I18N('TOTAL_OPEN')} ${sum}`, 5000);
-	return sumResult;
+	return [count, sumResult];
+}
+
+function mergeItemsObj(obj1, obj2) {
+	for (const key in obj2) {
+		if (obj1[key]) {
+			if (typeof obj1[key] == 'object') {
+				for (const innerKey in obj2[key]) {
+					obj1[key][innerKey] = (obj1[key][innerKey] || 0) + obj2[key][innerKey];
+				}
+			} else {
+				obj1[key] += obj2[key] || 0;
+			}
+		} else {
+			obj1[key] = obj2[key];
+		}
+	}
+
+	return obj1;
 }
 
 /**
@@ -7289,8 +7482,8 @@ function lettersFilter(letters) {
 	const lettersIds = [];
 	for (let l in letters) {
 		letter = letters[l];
-		const reward = letter.reward;
-		if (!reward) {
+		const reward = letter?.reward;
+		if (!reward || !Object.keys(reward).length) {
 			continue;
 		}
 		/**
@@ -7485,8 +7678,10 @@ async function farmStamina(lootBoxId = 148) {
 
 	let collectEnergy = 0;
 	for (let count = lootBox; count > 0; count--) {
-		const result = await Send('{"calls":[{"name":"consumableUseLootBox","args":{"libId":148,"amount":1},"ident":"body"}]}')
-			.then(e => e.results[0].result.response[0]);
+		const response = await Send('{"calls":[{"name":"consumableUseLootBox","args":{"libId":148,"amount":1},"ident":"body"}]}').then(
+			(e) => e.results[0].result.response
+		);
+		const result = Object.values(response).pop();
 		if ('stamina' in result) {
 			setProgress(`${I18N('OPEN')}: ${lootBox - count}/${lootBox} ${I18N('STAMINA')} +${result.stamina}<br>${I18N('STAMINA')}: ${collectEnergy}`, false);
 			console.log(`${ I18N('STAMINA') } + ${ result.stamina }`);
@@ -8628,61 +8823,59 @@ function hintQuest(quest) {
 }
 
 async function farmBattlePass() {
-	const battlePasses = await Send({
+	const isFarmReward = (reward) => {
+		return !(reward?.buff || reward?.fragmentHero || reward?.bundleHeroReward);
+	};
+
+	const battlePassProcess = (pass) => {
+		if (!pass.id) {return []}
+		const levels = Object.values(lib.data.battlePass.level).filter(x => x.battlePass == pass.id)
+		const last_level = levels[levels.length - 1];
+		let actual = Math.max(...levels.filter(p => pass.exp >= p.experience).map(p => p.level))
+
+		if (pass.exp > last_level.experience) {
+			actual = last_level.level + (pass.exp - last_level.experience) / last_level.experienceByLevel;
+		}
+		const calls = [];
+		for(let i = 1; i <= actual; i++) {
+			const level = i >= last_level.level ? last_level : levels.find(l => l.level === i);
+			const reward = {free: level?.freeReward, paid:level?.paidReward};
+
+			if (!pass.rewards[i]?.free && isFarmReward(reward.free)) {
+				const args = {level: i, free:true};
+				if (!pass.gold) { args.id = pass.id }
+				calls.push({ name: 'battlePass_farmReward', args, ident: `${pass.gold ? 'body' : 'spesial'}_free_${args.id}_${i}` });
+			}
+			if (pass.ticket && !pass.rewards[i]?.paid && isFarmReward(reward.paid)) {
+				const args = {level: i, free:false};
+				if (!pass.gold) { args.id = pass.id}
+				calls.push({ name: 'battlePass_farmReward', args, ident: `${pass.gold ? 'body' : 'spesial'}_paid_${args.id}_${i}` });
+			}
+		}
+		return calls;
+	}
+
+	const passes = await Send({
 		calls: [
 			{ name: 'battlePass_getInfo', args: {}, ident: 'getInfo' },
 			{ name: 'battlePass_getSpecial', args: {}, ident: 'getSpecial' },
 		],
-	}).then((e) => [e.results[0].result.response.battlePass, ...Object.values(e.results[1].result.response)]);
+	}).then((e) => [{...e.results[0].result.response?.battlePass, gold: true}, ...Object.values(e.results[1].result.response)]);
 
-	const calls = [];
-	let first = true;
-	for (const battlePass of battlePasses) {
-		const id = battlePass.id;
-		const bPassExp = battlePass.exp;
-		const bPassRewardsLvls = Object.keys(battlePass.rewards);
-		const bPassLevels = Object.values(lib.data.battlePass.level).filter((e) => e.battlePass === id);
+	const calls = passes.map(p => battlePassProcess(p)).flat()
 
-		for (let lvl of bPassLevels) {
-			if (bPassExp < lvl.experience) {
-				continue;
-			}
-
-			if (bPassRewardsLvls.includes(lvl.level.toString())) {
-				continue;
-			}
-
-			const reward = lvl.freeReward;
-			/** Исключения на сбор наград */
-			const isFarmReward = !(
-				(
-					(reward?.buff ? true : false) || // ускорение набора энергии
-					(reward?.fragmentHero ? true : false) || // душы героев
-					(reward?.bundleHeroReward ? true : false) // герои
-				)
-			);
-
-			if (isFarmReward) {
-				const args = {
-					level: lvl.level,
-					free: true,
-				};
-
-				if (!first) {
-					args.id = id;
-				}
-				calls.push({
-					name: 'battlePass_farmReward',
-					args,
-					ident: 'battlePass_farmReward_' + lvl.level + '_' + id,
-				});
-			}
-		}
-		first = false;
+	if (!calls.length) {
+		setProgress(I18N('NOTHING_TO_COLLECT'));
+		return;
 	}
 
-	const results = await Send(JSON.stringify({ calls })).then((e) => e.results);
-	setProgress(I18N('SEASON_REWARD_COLLECTED', {count: results.length}), true);
+	let results = await Send({calls});
+	if (results.error) {
+		console.log(results.error);
+		setProgress(I18N('SOMETHING_WENT_WRONG'));
+	} else {
+		setProgress(I18N('SEASON_REWARD_COLLECTED', {count: results.results.length}), true);
+	}
 }
 
 async function sellHeroSoulsForGold() {
@@ -9064,6 +9257,516 @@ function executeBossBattle(resolve, reject) {
 	}
 }
 
+class FixBattle {
+	minTimer = 1.3;
+	maxTimer = 15.3;
+
+	constructor(battle, isTimeout = true) {
+		this.battle = structuredClone(battle);
+		this.isTimeout = isTimeout;
+	}
+
+	timeout(callback, timeout) {
+		if (this.isTimeout) {
+			this.worker.postMessage(timeout);
+			this.worker.onmessage = callback;
+		} else {
+			callback();
+		}
+	}
+
+	randTimer() {
+		return Math.random() * (this.maxTimer - this.minTimer + 1) + this.minTimer;
+	}
+
+	setAvgTime(startTime) {
+		this.fixTime += Date.now() - startTime;
+		this.avgTime = this.fixTime / this.count;
+	}
+
+	init() {
+		this.fixTime = 0;
+		this.lastTimer = 0;
+		this.index = 0;
+		this.lastBossDamage = 0;
+		this.bestResult = {
+			count: 0,
+			timer: 0,
+			value: 0,
+			result: null,
+			progress: null,
+		};
+		this.lastBattleResult = {
+			win: false,
+		};
+		this.worker = new Worker(
+			URL.createObjectURL(
+				new Blob([
+					`self.onmessage = function(e) {
+							const timeout = e.data;
+							setTimeout(() => {
+								self.postMessage(1);
+							}, timeout);
+						};`,
+				])
+			)
+		);
+	}
+
+	async start(endTime = Date.now() + 6e4, maxCount = 100) {
+		this.endTime = endTime;
+		this.maxCount = maxCount;
+		this.init();
+		return await new Promise((resolve) => {
+			this.resolve = resolve;
+			this.count = 0;
+			this.loop();
+		});
+	}
+
+	endFix() {
+		this.bestResult.maxCount = this.count;
+		this.worker.terminate();
+		this.resolve(this.bestResult);
+	}
+
+	async loop() {
+		const start = Date.now();
+		if (this.isEndLoop()) {
+			this.endFix();
+			return;
+		}
+		this.count++;
+		try {
+			this.lastResult = await Calc(this.battle);
+		} catch (e) {
+			this.updateProgressTimer(this.index++);
+			this.timeout(this.loop.bind(this), 0);
+			return;
+		}
+		const { progress, result } = this.lastResult;
+		this.lastBattleResult = result;
+		this.lastBattleProgress = progress;
+		this.setAvgTime(start);
+		this.checkResult();
+		this.showResult();
+		this.updateProgressTimer();
+		this.timeout(this.loop.bind(this), 0);
+	}
+
+	isEndLoop() {
+		return this.count >= this.maxCount || this.endTime < Date.now();
+	}
+
+	updateProgressTimer(index = 0) {
+		this.lastTimer = this.randTimer();
+		this.battle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', index, this.lastTimer] } }];
+	}
+
+	showResult() {
+		console.log(
+			this.count,
+			this.avgTime.toFixed(2),
+			(this.endTime - Date.now()) / 1000,
+			this.lastTimer.toFixed(2),
+			this.lastBossDamage.toLocaleString(),
+			this.bestResult.value.toLocaleString()
+		);
+	}
+
+	checkResult() {
+		const { damageTaken, damageTakenNextLevel } = this.lastBattleProgress[0].defenders.heroes[1].extra;
+		this.lastBossDamage = damageTaken + damageTakenNextLevel;
+		if (this.lastBossDamage > this.bestResult.value) {
+			this.bestResult = {
+				count: this.count,
+				timer: this.lastTimer,
+				value: this.lastBossDamage,
+				result: structuredClone(this.lastBattleResult),
+				progress: structuredClone(this.lastBattleProgress),
+			};
+		}
+	}
+
+	stopFix() {
+		this.endTime = 0;
+	}
+}
+
+class WinFixBattle extends FixBattle {
+	checkResult() {
+		if (this.lastBattleResult.win) {
+			this.bestResult = {
+				count: this.count,
+				timer: this.lastTimer,
+				value: this.lastBattleResult.stars,
+				result: structuredClone(this.lastBattleResult),
+				progress: structuredClone(this.lastBattleProgress),
+				battleTimer: this.lastResult.battleTimer,
+			};
+		}
+	}
+
+	setWinTimer(value) {
+		this.winTimer = value;
+	}
+
+	setMaxTimer(value) {
+		this.maxTimer = value;
+	}
+
+	randTimer() {
+		if (this.winTimer) {
+			return this.winTimer;
+		}
+		return super.randTimer();
+	}
+
+	isEndLoop() {
+		return super.isEndLoop() || this.bestResult.result?.win;
+	}
+
+	showResult() {
+		console.log(
+			this.count,
+			this.avgTime.toFixed(2),
+			(this.endTime - Date.now()) / 1000,
+			this.lastResult.battleTime,
+			this.lastTimer,
+			this.bestResult.value
+		);
+		const endTime = ((this.endTime - Date.now()) / 1000).toFixed(2);
+		const avgTime = this.avgTime.toFixed(2);
+		const msg = `${I18N('LETS_FIX')} ${this.count}/${this.maxCount}<br/>${endTime}s<br/>${avgTime}ms`;
+		setProgress(msg, false, this.stopFix.bind(this));
+	}
+}
+
+class BestOrWinFixBattle extends WinFixBattle {
+	isNoMakeWin = false;
+
+	getState(result) {
+		let beforeSumFactor = 0;
+		const beforeHeroes = result.battleData.defenders[0];
+		for (let heroId in beforeHeroes) {
+			const hero = beforeHeroes[heroId];
+			const state = hero.state;
+			let factor = 1;
+			if (state) {
+				const hp = state.hp / (hero?.hp || 1);
+				const energy = state.energy / 1e3;
+				factor = hp + energy / 20;
+			}
+			beforeSumFactor += factor;
+		}
+
+		let afterSumFactor = 0;
+		const afterHeroes = result.progress[0].defenders.heroes;
+		for (let heroId in afterHeroes) {
+			const hero = afterHeroes[heroId];
+			const hp = hero.hp / (beforeHeroes[heroId]?.hp || 1);
+			const energy = hero.energy / 1e3;
+			const factor = hp + energy / 20;
+			afterSumFactor += factor;
+		}
+		return 100 - Math.floor((afterSumFactor / beforeSumFactor) * 1e4) / 100;
+	}
+
+	setNoMakeWin(value) {
+		this.isNoMakeWin = value;
+	}
+
+	checkResult() {
+		const state = this.getState(this.lastResult);
+		console.log(state);
+
+		if (state > this.bestResult.value) {
+			if (!(this.isNoMakeWin && this.lastBattleResult.win)) {
+				this.bestResult = {
+					count: this.count,
+					timer: this.lastTimer,
+					value: state,
+					result: structuredClone(this.lastBattleResult),
+					progress: structuredClone(this.lastBattleProgress),
+					battleTimer: this.lastResult.battleTimer,
+				};
+			}
+		}
+	}
+}
+
+class BossFixBattle extends FixBattle {
+	showResult() {
+		super.showResult();
+		//setTimeout(() => {
+			const best = this.bestResult;
+			const maxDmg = best.value.toLocaleString();
+			const avgTime = this.avgTime.toLocaleString();
+			const msg = `${I18N('LETS_FIX')} ${this.count}/${this.maxCount}<br/>${maxDmg}<br/>${avgTime}ms`;
+			setProgress(msg, false, this.stopFix.bind(this));
+		//}, 0);
+	}
+}
+
+class DungeonFixBattle extends FixBattle {
+	init() {
+		super.init();
+		this.isTimeout = false;
+	}
+
+	setState() {
+		const result = this.lastResult;
+		let beforeSumFactor = 0;
+		const beforeHeroes = result.battleData.attackers;
+		for (let heroId in beforeHeroes) {
+			const hero = beforeHeroes[heroId];
+			const state = hero.state;
+			let factor = 1;
+			if (state) {
+				const hp = state.hp / (hero?.hp || 1);
+				const energy = state.energy / 1e3;
+				factor = hp + energy / 20;
+			}
+			beforeSumFactor += factor;
+		}
+
+		let afterSumFactor = 0;
+		const afterHeroes = result.progress[0].attackers.heroes;
+		for (let heroId in afterHeroes) {
+			const hero = afterHeroes[heroId];
+			const hp = hero.hp / (beforeHeroes[heroId]?.hp || 1);
+			const energy = hero.energy / 1e3;
+			const factor = hp + energy / 20;
+			afterSumFactor += factor;
+		}
+		this.lastState = Math.floor((afterSumFactor / beforeSumFactor) * 1e4) / 100;
+	}
+
+	checkResult() {
+		this.setState();
+		if (this.lastResult.result.win && this.lastState > this.bestResult.value) {
+			this.bestResult = {
+				count: this.count,
+				timer: this.lastTimer,
+				value: this.lastState,
+				result: this.lastResult.result,
+				progress: this.lastResult.progress,
+			};
+		}
+	}
+
+	showResult() {
+		console.log(
+			this.count,
+			this.avgTime.toFixed(2),
+			(this.endTime - Date.now()) / 1000,
+			this.lastTimer.toFixed(2),
+			this.lastState.toLocaleString(),
+			this.bestResult.value.toLocaleString()
+		);
+	}
+}
+
+const masterWsMixin = {
+	wsStart() {
+		const socket = new WebSocket(this.url);
+
+		socket.onopen = () => {
+			console.log('Connected to server');
+
+			// Пример создания новой задачи
+			const newTask = {
+				type: 'newTask',
+				battle: this.battle,
+				endTime: this.endTime - 1e4,
+				maxCount: this.maxCount,
+			};
+			socket.send(JSON.stringify(newTask));
+		};
+
+		socket.onmessage = this.onmessage.bind(this);
+
+		socket.onclose = () => {
+			console.log('Disconnected from server');
+		};
+
+		this.ws = socket;
+	},
+
+	onmessage(event) {
+		const data = JSON.parse(event.data);
+		switch (data.type) {
+			case 'newTask': {
+				console.log('newTask:', data);
+				this.id = data.id;
+				this.countExecutor = data.count;
+				break;
+			}
+			case 'getSolTask': {
+				console.log('getSolTask:', data);
+				this.endFix(data.solutions);
+				break;
+			}
+			case 'resolveTask': {
+				console.log('resolveTask:', data);
+				if (data.id === this.id && data.solutions.length === this.countExecutor) {
+					this.worker.terminate();
+					this.endFix(data.solutions);
+				}
+				break;
+			}
+			default:
+				console.log('Unknown message type:', data.type);
+		}
+	},
+
+	getTask() {
+		this.ws.send(
+			JSON.stringify({
+				type: 'getSolTask',
+				id: this.id,
+			})
+		);
+	},
+};
+
+/*
+mFix = new action.masterFixBattle(battle)
+await mFix.start(Date.now() + 6e4, 1);
+*/
+class masterFixBattle extends FixBattle {
+	constructor(battle, url = 'wss://localho.st:3000') {
+		super(battle, true);
+		this.url = url;
+	}
+
+	async start(endTime, maxCount) {
+		this.endTime = endTime;
+		this.maxCount = maxCount;
+		this.init();
+		this.wsStart();
+		return await new Promise((resolve) => {
+			this.resolve = resolve;
+			const timeout = this.endTime - Date.now();
+			this.timeout(this.getTask.bind(this), timeout);
+		});
+	}
+
+	async endFix(solutions) {
+		this.ws.close();
+		let maxCount = 0;
+		for (const solution of solutions) {
+			maxCount += solution.maxCount;
+			if (solution.value > this.bestResult.value) {
+				this.bestResult = solution;
+			}
+		}
+		this.count = maxCount;
+		super.endFix();
+	}
+}
+
+Object.assign(masterFixBattle.prototype, masterWsMixin);
+
+class masterWinFixBattle extends WinFixBattle {
+	constructor(battle, url = 'wss://localho.st:3000') {
+		super(battle, true);
+		this.url = url;
+	}
+
+	async start(endTime, maxCount) {
+		this.endTime = endTime;
+		this.maxCount = maxCount;
+		this.init();
+		this.wsStart();
+		return await new Promise((resolve) => {
+			this.resolve = resolve;
+			const timeout = this.endTime - Date.now();
+			this.timeout(this.getTask.bind(this), timeout);
+		});
+	}
+
+	async endFix(solutions) {
+		this.ws.close();
+		let maxCount = 0;
+		for (const solution of solutions) {
+			maxCount += solution.maxCount;
+			if (solution.value > this.bestResult.value) {
+				this.bestResult = solution;
+			}
+		}
+		this.count = maxCount;
+		super.endFix();
+	}
+}
+
+Object.assign(masterWinFixBattle.prototype, masterWsMixin);
+
+const slaveWsMixin = {
+	wsStop() {
+		this.ws.close();
+	},
+
+	wsStart() {
+		const socket = new WebSocket(this.url);
+
+		socket.onopen = () => {
+			console.log('Connected to server');
+		};
+		socket.onmessage = this.onmessage.bind(this);
+		socket.onclose = () => {
+			console.log('Disconnected from server');
+		};
+
+		this.ws = socket;
+	},
+
+	async onmessage(event) {
+		const data = JSON.parse(event.data);
+		switch (data.type) {
+			case 'newTask': {
+				console.log('newTask:', data.task);
+				const { battle, endTime, maxCount } = data.task;
+				this.battle = battle;
+				const id = data.task.id;
+				const solution = await this.start(endTime, maxCount);
+				this.ws.send(
+					JSON.stringify({
+						type: 'resolveTask',
+						id,
+						solution,
+					})
+				);
+				break;
+			}
+			default:
+				console.log('Unknown message type:', data.type);
+		}
+	},
+};
+/*
+sFix = new action.slaveFixBattle();
+sFix.wsStart()
+*/
+class slaveFixBattle extends FixBattle {
+	constructor(url = 'wss://localho.st:3000') {
+		super(null, false);
+		this.isTimeout = false;
+		this.url = url;
+	}
+}
+
+Object.assign(slaveFixBattle.prototype, slaveWsMixin);
+
+class slaveWinFixBattle extends WinFixBattle {
+	constructor(url = 'wss://localho.st:3000') {
+		super(null, false);
+		this.isTimeout = false;
+		this.url = url;
+	}
+}
+
+Object.assign(slaveWinFixBattle.prototype, slaveWsMixin);
 /**
  * Auto-repeat attack
  *
@@ -9088,12 +9791,18 @@ function executeAutoBattle(resolve, reject) {
 	let findCoeff = 0;
 	let dataNotEeceived = 0; 
 	let stopAutoBattle = false;
+
+	let isSetWinTimer = false;
 	const svgJustice = '<svg width="20" height="20" viewBox="0 0 124 125" xmlns="http://www.w3.org/2000/svg" style="fill: #fff;"><g><path d="m54 0h-1c-7.25 6.05-17.17 6.97-25.78 10.22-8.6 3.25-23.68 1.07-23.22 12.78s-0.47 24.08 1 35 2.36 18.36 7 28c4.43-8.31-3.26-18.88-3-30 0.26-11.11-2.26-25.29-1-37 11.88-4.16 26.27-0.42 36.77-9.23s20.53 6.05 29.23-0.77c-6.65-2.98-14.08-4.96-20-9z"/></g><g><path d="m108 5c-11.05 2.96-27.82 2.2-35.08 11.92s-14.91 14.71-22.67 23.33c-7.77 8.62-14.61 15.22-22.25 23.75 7.05 11.93 14.33 2.58 20.75-4.25 6.42-6.82 12.98-13.03 19.5-19.5s12.34-13.58 19.75-18.25c2.92 7.29-8.32 12.65-13.25 18.75-4.93 6.11-12.19 11.48-17.5 17.5s-12.31 11.38-17.25 17.75c10.34 14.49 17.06-3.04 26.77-10.23s15.98-16.89 26.48-24.52c10.5-7.64 12.09-24.46 14.75-36.25z"/></g><g><path d="m60 25c-11.52-6.74-24.53 8.28-38 6 0.84 9.61-1.96 20.2 2 29 5.53-4.04-4.15-23.2 4.33-26.67 8.48-3.48 18.14-1.1 24.67-8.33 2.73 0.3 4.81 2.98 7 0z"/></g><g><path d="m100 75c3.84-11.28 5.62-25.85 3-38-4.2 5.12-3.5 13.58-4 20s-3.52 13.18 1 18z"/></g><g><path d="m55 94c15.66-5.61 33.71-20.85 29-39-3.07 8.05-4.3 16.83-10.75 23.25s-14.76 8.35-18.25 15.75z"/></g><g><path d="m0 94v7c6.05 3.66 9.48 13.3 18 11-3.54-11.78 8.07-17.05 14-25 6.66 1.52 13.43 16.26 19 5-11.12-9.62-20.84-21.33-32-31-9.35 6.63 4.76 11.99 6 19-7.88 5.84-13.24 17.59-25 14z"/></g><g><path d="m82 125h26v-19h16v-1c-11.21-8.32-18.38-21.74-30-29-8.59 10.26-19.05 19.27-27 30h15v19z"/></g><g><path d="m68 110c-7.68-1.45-15.22 4.83-21.92-1.08s-11.94-5.72-18.08-11.92c-3.03 8.84 10.66 9.88 16.92 16.08s17.09 3.47 23.08-3.08z"/></g></svg>';
 	const svgBoss = '<svg width="20" height="20" viewBox="0 0 40 41" xmlns="http://www.w3.org/2000/svg" style="fill: #fff;"><g><path d="m21 12c-2.19-3.23 5.54-10.95-0.97-10.97-6.52-0.02 1.07 7.75-1.03 10.97-2.81 0.28-5.49-0.2-8-1-0.68 3.53 0.55 6.06 4 4 0.65 7.03 1.11 10.95 1.67 18.33 0.57 7.38 6.13 7.2 6.55-0.11 0.42-7.3 1.35-11.22 1.78-18.22 3.53 1.9 4.73-0.42 4-4-2.61 0.73-5.14 1.35-8 1m-1 17c-1.59-3.6-1.71-10.47 0-14 1.59 3.6 1.71 10.47 0 14z"/></g><g><path d="m6 19c-1.24-4.15 2.69-8.87 1-12-3.67 4.93-6.52 10.57-6 17 5.64-0.15 8.82 4.98 13 8 1.3-6.54-0.67-12.84-8-13z"/></g><g><path d="m33 7c0.38 5.57 2.86 14.79-7 15v10c4.13-2.88 7.55-7.97 13-8 0.48-6.46-2.29-12.06-6-17z"/></g></svg>';
 	const svgAttempt = '<svg width="20" height="20" viewBox="0 0 645 645" xmlns="http://www.w3.org/2000/svg" style="fill: #fff;"><g><path d="m442 26c-8.8 5.43-6.6 21.6-12.01 30.99-2.5 11.49-5.75 22.74-8.99 34.01-40.61-17.87-92.26-15.55-133.32-0.32-72.48 27.31-121.88 100.19-142.68 171.32 10.95-4.49 19.28-14.97 29.3-21.7 50.76-37.03 121.21-79.04 183.47-44.07 16.68 5.8 2.57 21.22-0.84 31.7-4.14 12.19-11.44 23.41-13.93 36.07 56.01-17.98 110.53-41.23 166-61-20.49-59.54-46.13-117.58-67-177z"/></g><g><path d="m563 547c23.89-16.34 36.1-45.65 47.68-71.32 23.57-62.18 7.55-133.48-28.38-186.98-15.1-22.67-31.75-47.63-54.3-63.7 1.15 14.03 6.71 26.8 8.22 40.78 12.08 61.99 15.82 148.76-48.15 183.29-10.46-0.54-15.99-16.1-24.32-22.82-8.2-7.58-14.24-19.47-23.75-24.25-4.88 59.04-11.18 117.71-15 177 62.9 5.42 126.11 9.6 189 15-4.84-9.83-17.31-15.4-24.77-24.23-9.02-7.06-17.8-15.13-26.23-22.77z"/></g><g><path d="m276 412c-10.69-15.84-30.13-25.9-43.77-40.23-15.39-12.46-30.17-25.94-45.48-38.52-15.82-11.86-29.44-28.88-46.75-37.25-19.07 24.63-39.96 48.68-60.25 72.75-18.71 24.89-42.41 47.33-58.75 73.25 22.4-2.87 44.99-13.6 66.67-13.67 0.06 22.8 10.69 42.82 20.41 62.59 49.09 93.66 166.6 114.55 261.92 96.08-6.07-9.2-22.11-9.75-31.92-16.08-59.45-26.79-138.88-75.54-127.08-151.92 21.66-2.39 43.42-4.37 65-7z"/></g></svg>';
 
 	this.start = function (battleArgs, battleInfo) {
 		battleArg = battleArgs;
+		if (nameFuncStartBattle == 'invasion_bossStart') {
+			startBattle();
+			return;
+		}
 		preCalcBattle(battleInfo);
 	}
 	/**
@@ -9297,11 +10006,28 @@ function executeAutoBattle(resolve, reject) {
 		if (isWin) {
 			endBattle(e, false);
 			return;
-		} else if (isChecked('tryFixIt')) {
+		} else if (isChecked('tryFixIt_v2')) {
 			const cloneBattle = structuredClone(e.battleData);
 			const bFix = new WinFixBattle(cloneBattle);
-			const endTime = Date.now() + 6e4;
-			const result = await bFix.start(endTime, Infinity);
+			let attempts = Infinity;
+			if (nameFuncStartBattle == 'invasion_bossStart' && !isSetWinTimer) {
+				let winTimer = await popup.confirm(`Secret number:`, [
+					{ result: false, isClose: true },
+					{ msg: 'Go', isInput: true, default: '0' },
+				]);
+				winTimer = Number.parseFloat(winTimer);
+				if (winTimer) {
+					attempts = 5;
+					bFix.setWinTimer(winTimer);
+				}
+				isSetWinTimer = true;
+			}
+			let endTime = Date.now() + 6e4;
+			if (nameFuncStartBattle == 'invasion_bossStart') {
+				endTime = Date.now() + 6e4 * 4;
+				bFix.setMaxTimer(120.3);
+			}
+			const result = await bFix.start(endTime, attempts);
 			console.log(result);
 			if (result.value) {
 				endBattle(result, false);
@@ -9319,7 +10045,7 @@ function executeAutoBattle(resolve, reject) {
 		} else {
 			if (nameFuncStartBattle == 'invasion_bossStart') {
 				const bossLvl = lastBattleInfo.typeId >= 130 ? lastBattleInfo.typeId : '';
-				const justice = lastBattleInfo?.effects?.attackers?.percentInOutDamageMod_any_99_100_300_99_1000 || 0;
+				const justice = lastBattleInfo?.effects?.attackers?.percentInOutDamageModAndEnergyIncrease_any_99_100_300_99_1000_300 || 0;
 				setProgress(`${svgBoss} ${bossLvl} ${svgJustice} ${justice} <br>${svgAttempt} ${countBattle}/${countMaxBattle}`, false, () => {
 					stopAutoBattle = true;
 				});
@@ -9387,12 +10113,17 @@ function executeAutoBattle(resolve, reject) {
 				nameFuncStartBattle == 'bossAttack') {
 				const countMaxBattle = getInput('countAutoBattle');
 				const bossLvl = lastBattleInfo.typeId >= 130 ? lastBattleInfo.typeId : '';
-				const justice = lastBattleInfo?.effects?.attackers?.percentInOutDamageMod_any_99_100_300_99_1000 || 0;
+				const justice = lastBattleInfo?.effects?.attackers?.percentInOutDamageModAndEnergyIncrease_any_99_100_300_99_1000_300 || 0;
+				let winTimer = '';
+				if (nameFuncStartBattle == 'invasion_bossStart') {
+					winTimer = '<br>Secret number: ' + battleResult.progress[0].attackers.input[5];
+				}
 				const result = await popup.confirm(
 					I18N('BOSS_HAS_BEEN_DEF_TEXT', {
 						bossLvl: `${svgBoss} ${bossLvl} ${svgJustice} ${justice}`,
 						countBattle: svgAttempt + ' ' + countBattle,
 						countMaxBattle,
+						winTimer,
 					}),
 					[
 						{ msg: I18N('BTN_OK'), result: 0 },
@@ -9425,168 +10156,6 @@ function executeAutoBattle(resolve, reject) {
 	}
 }
 
-class FixBattle {
-	constructor(battle, isTimeout = true) {
-		this.battle = structuredClone(battle);
-		this.isTimeout = isTimeout;
-	}
-
-	timeout(callback, timeout) {
-		if (this.isTimeout) {
-			this.worker.postMessage(timeout);
-			this.worker.onmessage = callback;
-		} else {
-			callback();
-		}
-	}
-
-	randTimer() {
-		const min = 1.3;
-		const max = 10.3;
-		return Math.random() * (max - min + 1) + min;
-	}
-
-	setAvgTime(startTime) {
-		this.fixTime += Date.now() - startTime;
-		this.avgTime = this.fixTime / this.count;
-	}
-
-	init() {
-		this.fixTime = 0;
-		this.lastTimer = 0;
-		this.index = 0;
-		this.lastBossDamage = 0;
-		this.bestResult = {
-			count: 0,
-			timer: 0,
-			value: 0,
-			result: null,
-			progress: null,
-		};
-		this.lastBattleResult = {
-			win: false,
-		};
-		this.worker = new Worker(
-			URL.createObjectURL(
-				new Blob([
-					`self.onmessage = function(e) {
-							const timeout = e.data;
-							setTimeout(() => {
-								self.postMessage(1);
-							}, timeout);
-						};`,
-				])
-			)
-		);
-	}
-
-	async start(endTime = Date.now() + 6e4, maxCount = 100) {
-		this.endTime = endTime;
-		this.maxCount = maxCount;
-		this.init();
-		return await new Promise((resolve) => {
-			this.resolve = resolve;
-			this.count = 0;
-			this.loop();
-		});
-	}
-
-	endFix() {
-		this.bestResult.maxCount = this.count;
-		this.worker.terminate();
-		this.resolve(this.bestResult);
-	}
-
-	async loop() {
-		const start = Date.now();
-		if (this.isEndLoop()) {
-			this.endFix();
-			return;
-		}
-		this.count++;
-		try {
-			this.lastResult = await Calc(this.battle);
-		} catch (e) {
-			this.updateProgressTimer(this.index++);
-			this.timeout(this.loop.bind(this), 0);
-			return;
-		}
-		const { progress, result } = this.lastResult;
-		this.lastBattleResult = result;
-		this.lastBattleProgress = progress;
-		this.setAvgTime(start);
-		this.checkResult();
-		this.showResult();
-		this.updateProgressTimer();
-		this.timeout(this.loop.bind(this), 0);
-	}
-
-	isEndLoop() {
-		return this.count >= this.maxCount || this.endTime < Date.now();
-	}
-
-	updateProgressTimer(index = 0) {
-		this.lastTimer = this.randTimer();
-		this.battle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', index, this.lastTimer] } }];
-	}
-
-	showResult() {
-		console.log(
-			this.count,
-			this.avgTime.toFixed(2),
-			(this.endTime - Date.now()) / 1000,
-			this.lastTimer.toFixed(2),
-			this.lastBossDamage.toLocaleString(),
-			this.bestResult.value.toLocaleString()
-		);
-	}
-
-	checkResult() {
-		const { damageTaken, damageTakenNextLevel } = this.lastBattleProgress[0].defenders.heroes[1].extra;
-		this.lastBossDamage = damageTaken + damageTakenNextLevel;
-		if (this.lastBossDamage > this.bestResult.value) {
-			this.bestResult = {
-				count: this.count,
-				timer: this.lastTimer,
-				value: this.lastBossDamage,
-				result: structuredClone(this.lastBattleResult),
-				progress: structuredClone(this.lastBattleProgress),
-			};
-		}
-	}
-}
-
-class WinFixBattle extends FixBattle {
-	checkResult() {
-		if (this.lastBattleResult.win) {
-			this.bestResult = {
-				count: this.count,
-				timer: this.lastTimer,
-				value: this.lastBattleResult.stars,
-				result: structuredClone(this.lastBattleResult),
-				progress: structuredClone(this.lastBattleProgress),
-				battleTimer: this.lastResult.battleTimer,
-			};
-		}
-	}
-
-	isEndLoop() {
-		return super.isEndLoop() || this.lastBattleResult.win;
-	}
-
-	showResult() {
-		console.log(this.count, this.avgTime.toFixed(2), (this.endTime - Date.now()) / 1000, this.lastResult.battleTime, this.lastTimer);
-		const endTime = ((this.endTime - Date.now()) / 1000).toFixed(2);
-		const avgTime = this.avgTime.toFixed(2);
-		const msg = `${this.count}/${this.maxCount}<br/>${endTime}s<br/>${avgTime}ms`;
-		setProgress(msg, false, this.stopFix.bind(this));
-	}
-
-	stopFix() {
-		this.endTime = 0;
-	}
-}
-
 function testDailyQuests() {
 	return new Promise((resolve, reject) => {
 		const quests = new dailyQuests(resolve, reject);
@@ -9609,21 +10178,18 @@ class dailyQuests {
 	 * Send(' {"calls":[{"name":"questGetAll","args":{},"ident":"body"}]}').then(e => console.log(e))
 	 * Send(' {"calls":[{"name":"bossGetAll","args":{},"ident":"body"}]}').then(e => console.log(e))
 	 */
-	callsList = [
-		"userGetInfo",
-		"heroGetAll",
-		"titanGetAll",
-		"inventoryGet",
-		"questGetAll",
-		"bossGetAll",
-	]
+	callsList = ['userGetInfo', 'heroGetAll', 'titanGetAll', 'inventoryGet', 'questGetAll', 'bossGetAll', 'missionGetAll'];
 
 	dataQuests = {
 		10001: {
 			description: 'Улучши умения героев 3 раза', // ++++++++++++++++
 			doItCall: () => {
 				const upgradeSkills = this.getUpgradeSkills();
-				return upgradeSkills.map(({ heroId, skill }, index) => ({ name: "heroUpgradeSkill", args: { heroId, skill }, "ident": `heroUpgradeSkill_${index}` }));
+				return upgradeSkills.map(({ heroId, skill }, index) => ({
+					name: 'heroUpgradeSkill',
+					args: { heroId, skill },
+					ident: `heroUpgradeSkill_${index}`,
+				}));
 			},
 			isWeCanDo: () => {
 				const upgradeSkills = this.getUpgradeSkills();
@@ -9642,8 +10208,27 @@ class dailyQuests {
 			isWeCanDo: () => false,
 		},
 		10003: {
-			description: 'Пройди 3 героические миссии', // --------------
-			isWeCanDo: () => false,
+			description: 'Пройди 3 героические миссии', // ++++++++++++++++
+			isWeCanDo: () => {
+				const vipPoints = +this.questInfo.userGetInfo.vipPoints;
+				const goldTicket = !!this.questInfo.inventoryGet.consumable[151];
+				return (vipPoints > 100 || goldTicket) && this.getHeroicMissionId();
+			},
+			doItCall: () => {
+				const selectedMissionId = this.getHeroicMissionId();
+				const goldTicket = !!this.questInfo.inventoryGet.consumable[151];
+				const vipLevel = Math.max(...lib.data.level.vip.filter(l => l.vipPoints <= +this.questInfo.userGetInfo.vipPoints).map(l => l.level));
+				// Возвращаем массив команд для рейда
+				if (vipLevel >= 5 || goldTicket) {
+					return [{ name: 'missionRaid', args: { id: selectedMissionId, times: 3 }, ident: 'missionRaid_1' }];
+				} else {
+					return [
+						{ name: 'missionRaid', args: { id: selectedMissionId, times: 1 }, ident: 'missionRaid_1' },
+						{ name: 'missionRaid', args: { id: selectedMissionId, times: 1 }, ident: 'missionRaid_2' },
+						{ name: 'missionRaid', args: { id: selectedMissionId, times: 1 }, ident: 'missionRaid_3' },
+					];
+				}
+			},
 		},
 		10004: {
 			description: 'Сразись 3 раза на Арене или Гранд Арене', // --------------
@@ -9651,11 +10236,13 @@ class dailyQuests {
 		},
 		10006: {
 			description: 'Используй обмен изумрудов 1 раз', // ++++++++++++++++
-			doItCall: () => [{
-				name: "refillableAlchemyUse",
-				args: { multi: false },
-				ident: "refillableAlchemyUse"
-			}],
+			doItCall: () => [
+				{
+					name: 'refillableAlchemyUse',
+					args: { multi: false },
+					ident: 'refillableAlchemyUse',
+				},
+			],
 			isWeCanDo: () => {
 				const starMoney = this.questInfo['userGetInfo'].starMoney;
 				return starMoney >= 20;
@@ -9663,30 +10250,33 @@ class dailyQuests {
 		},
 		10007: {
 			description: 'Соверши 1 призыв в Атриуме Душ', // ++++++++++++++++
-//		doItCall: () => [{ name: "gacha_open", args: { ident: "heroGacha", free: true, pack: false }, ident: "gacha_open" }],
-//			isWeCanDo: () => {
-//				const soulCrystal =  this.questInfo['inventoryGet'].coin[38];
-//				return soulCrystal > 0;
-//			},
+			doItCall: () => [{ name: 'gacha_open', args: { ident: 'heroGacha', free: true, pack: false }, ident: 'gacha_open' }],
+			isWeCanDo: () => {
+				const soulCrystal = this.questInfo['inventoryGet'].coin[38];
+				return soulCrystal > 0;
+			},
+
 		},
 		10016: {
 			description: 'Отправь подарки согильдийцам', // ++++++++++++++++
-			doItCall: () => [{ name: "clanSendDailyGifts", args: {}, ident: "clanSendDailyGifts" }],
+			doItCall: () => [{ name: 'clanSendDailyGifts', args: {}, ident: 'clanSendDailyGifts' }],
 			isWeCanDo: () => true,
 		},
 		10018: {
 			description: 'Используй зелье опыта', // ++++++++++++++++
 			doItCall: () => {
 				const expHero = this.getExpHero();
-				return [{
-					name: "consumableUseHeroXp",
-					args: {
-						heroId: expHero.heroId,
-						libId: expHero.libId,
-						amount: 1
+				return [
+					{
+						name: 'consumableUseHeroXp',
+						args: {
+							heroId: expHero.heroId,
+							libId: expHero.libId,
+							amount: 1,
+						},
+						ident: 'consumableUseHeroXp',
 					},
-					ident: "consumableUseHeroXp"
-				}];
+				];
 			},
 			isWeCanDo: () => {
 				const expHero = this.getExpHero();
@@ -9722,9 +10312,9 @@ class dailyQuests {
 			doItCall: () => {
 				const heroId = this.getHeroIdTitanGift();
 				return [
-					{ name: "heroTitanGiftLevelUp", args: { heroId }, ident: "heroTitanGiftLevelUp" },
-					{ name: "heroTitanGiftDrop", args: { heroId }, ident: "heroTitanGiftDrop" }
-				]
+					{ name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'heroTitanGiftLevelUp' },
+					{ name: 'heroTitanGiftDrop', args: { heroId }, ident: 'heroTitanGiftDrop' },
+				];
 			},
 			isWeCanDo: () => {
 				const heroId = this.getHeroIdTitanGift();
@@ -9732,18 +10322,18 @@ class dailyQuests {
 			},
 		},
 		10024: {
-			description: 'Повысь уровень любого артефакта один раз', // Готово 
+			description: 'Повысь уровень любого артефакта один раз', // Готово
 			doItCall: () => {
 				const upArtifact = this.getUpgradeArtifact();
 				return [
 					{
-						name: "heroArtifactLevelUp",
+						name: 'heroArtifactLevelUp',
 						args: {
 							heroId: upArtifact.heroId,
-							slotId: upArtifact.slotId
+							slotId: upArtifact.slotId,
 						},
-						ident: `heroArtifactLevelUp`
-					}
+						ident: `heroArtifactLevelUp`,
+					},
 				];
 			},
 			isWeCanDo: () => {
@@ -9772,13 +10362,13 @@ class dailyQuests {
 				const upTitanArtifact = this.getUpgradeTitanArtifact();
 				return [
 					{
-						name: "titanArtifactLevelUp",
+						name: 'titanArtifactLevelUp',
 						args: {
 							titanId: upTitanArtifact.titanId,
-							slotId: upTitanArtifact.slotId
+							slotId: upTitanArtifact.slotId,
 						},
-						ident: `titanArtifactLevelUp`
-					}
+						ident: `titanArtifactLevelUp`,
+					},
 				];
 			},
 			isWeCanDo: () => {
@@ -9788,9 +10378,9 @@ class dailyQuests {
 		},
 		10029: {
 			description: 'Открой сферу артефактов титанов', // ++++++++++++++++
-			doItCall: () => [{ name: "titanArtifactChestOpen", args: { amount: 1, free: true }, ident: "titanArtifactChestOpen" }],
+			doItCall: () => [{ name: 'titanArtifactChestOpen', args: { amount: 1, free: true }, ident: 'titanArtifactChestOpen' }],
 			isWeCanDo: () => {
-				return this.questInfo['inventoryGet']?.consumable[55] > 0
+				return this.questInfo['inventoryGet']?.consumable[55] > 0;
 			},
 		},
 		10030: {
@@ -9799,13 +10389,13 @@ class dailyQuests {
 				const upSkin = this.getUpgradeSkin();
 				return [
 					{
-						name: "heroSkinUpgrade",
+						name: 'heroSkinUpgrade',
 						args: {
 							heroId: upSkin.heroId,
-							skinId: upSkin.skinId
+							skinId: upSkin.skinId,
 						},
-						ident: `heroSkinUpgrade`
-					}
+						ident: `heroSkinUpgrade`,
+					},
 				];
 			},
 			isWeCanDo: () => {
@@ -9824,9 +10414,9 @@ class dailyQuests {
 		},
 		10044: {
 			description: 'Воспользуйся призывом питомцев 1 раз', // ++++++++++++++++
-			doItCall: () => [{ name: "pet_chestOpen", args: { amount: 1, paid: false }, ident: "pet_chestOpen" }],
+			doItCall: () => [{ name: 'pet_chestOpen', args: { amount: 1, paid: false }, ident: 'pet_chestOpen' }],
 			isWeCanDo: () => {
-				return this.questInfo['inventoryGet']?.consumable[90] > 0
+				return this.questInfo['inventoryGet']?.consumable[90] > 0;
 			},
 		},
 		10046: {
@@ -9843,16 +10433,16 @@ class dailyQuests {
 				const enchantRune = this.getEnchantRune();
 				return [
 					{
-						name: "heroEnchantRune",
+						name: 'heroEnchantRune',
 						args: {
 							heroId: enchantRune.heroId,
 							tier: enchantRune.tier,
 							items: {
-								consumable: { [enchantRune.itemId]: 1 }
-							}
+								consumable: { [enchantRune.itemId]: 1 },
+							},
 						},
-						ident: `heroEnchantRune`
-					}
+						ident: `heroEnchantRune`,
+					},
 				];
 			},
 			isWeCanDo: () => {
@@ -9876,10 +10466,12 @@ class dailyQuests {
 	async autoInit(isAuto) {
 		this.isAuto = isAuto || false;
 		const quests = {};
-		const calls = this.callsList.map(name => ({
-			name, args: {}, ident: name
-		}))
-		const result = await Send(JSON.stringify({ calls })).then(e => e.results);
+		const calls = this.callsList.map((name) => ({
+			name,
+			args: {},
+			ident: name,
+		}));
+		const result = await Send(JSON.stringify({ calls })).then((e) => e.results);
 		for (const call of result) {
 			quests[call.ident] = call.result.response;
 		}
@@ -9895,7 +10487,13 @@ class dailyQuests {
 	
 		for (let quest of this.questInfo['questGetAll']) {
 			if (quest.id in this.dataQuests && quest.state == 1) {
-				// Automatically check and add available quests
+				if (!selectedActions[quest.id]) {
+					selectedActions[quest.id] = {
+						checked: false,
+					};
+				}
+
+
 				const isWeCanDo = this.dataQuests[quest.id].isWeCanDo;
 				if (!isWeCanDo.call(this)) {
 					continue;
@@ -9903,7 +10501,8 @@ class dailyQuests {
 				weCanDo.push({
 					name: quest.id,
 					label: I18N(`QUEST_${quest.id}`),
-					checked: true // Automatically mark as checked
+					checked: selectedActions[quest.id].checked,
+
 				});
 			}
 		}
@@ -9914,8 +10513,29 @@ class dailyQuests {
 		}
 	
 		console.log(weCanDo);
-		let taskList = weCanDo;
-	
+		let taskList = [];
+		if (this.isAuto) {
+			taskList = weCanDo;
+		} else {
+			const answer = await popup.confirm(
+				`${I18N('YOU_CAN_COMPLETE')}:`,
+				[
+					{ msg: I18N('BTN_DO_IT'), result: true },
+					{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
+				],
+				weCanDo
+			);
+			if (!answer) {
+				this.end('');
+				return;
+			}
+			taskList = popup.getCheckBoxes();
+			taskList.forEach((e) => {
+				selectedActions[e.name].checked = e.checked;
+			});
+			setSaveVal('selectedActions', selectedActions);
+		}
+
 		const calls = [];
 		let countChecked = 0;
 		for (const task of taskList) {
@@ -9950,7 +10570,7 @@ class dailyQuests {
 		let errorInfo = error.toString() + '\n';
 		try {
 			const errorStack = error.stack.split('\n');
-			const endStack = errorStack.map(e => e.split('@')[0]).indexOf("testDoYourBest");
+			const endStack = errorStack.map((e) => e.split('@')[0]).indexOf('testDoYourBest');
 			errorInfo += errorStack.slice(0, endStack).join('\n');
 		} catch (e) {
 			errorInfo += error.stack;
@@ -10009,7 +10629,7 @@ class dailyQuests {
 
 		for (const hero of heroes) {
 			const heroInfo = heroLib[hero.id];
-			const level = hero.level
+			const level = hero.level;
 			if (level < 20) {
 				continue;
 			}
@@ -10058,7 +10678,7 @@ class dailyQuests {
 		const skinLib = lib.getData('skin');
 
 		for (const hero of heroes) {
-			const level = hero.level
+			const level = hero.level;
 			if (level < 20) {
 				continue;
 			}
@@ -10081,9 +10701,7 @@ class dailyQuests {
 				const costValue = +costNextLevel[costCurrency][costCurrencyId];
 
 				/** TODO: Возможно стоит искать самый высокий уровень который можно качнуть? */
-				if (level < upSkin.level &&
-					costValue < upSkin.cost &&
-					inventory[costCurrency][costCurrencyId] >= costValue) {
+				if (level < upSkin.level && costValue < upSkin.cost && inventory[costCurrency][costCurrencyId] >= costValue) {
 					upSkin.cost = costValue;
 					upSkin.level = level;
 					upSkin.heroId = hero.id;
@@ -10179,7 +10797,6 @@ class dailyQuests {
 		for (const hero of heroes) {
 			const color = hero.color;
 
-
 			for (let runeTier in hero.runes) {
 				/* Проверка на доступность руны */
 				if (color < colors[runeTier]) {
@@ -10227,30 +10844,30 @@ class dailyQuests {
 		for (let boss of bosses) {
 			if (boss.mayRaid) {
 				calls.push({
-					name: "bossRaid",
+					name: 'bossRaid',
 					args: {
-						bossId: boss.id
+						bossId: boss.id,
 					},
-					ident: "bossRaid_" + boss.id
+					ident: 'bossRaid_' + boss.id,
 				});
 				calls.push({
-					name: "bossOpenChest",
+					name: 'bossOpenChest',
 					args: {
 						bossId: boss.id,
 						amount: 1,
-						starmoney: 0
+						starmoney: 0,
 					},
-					ident: "bossOpenChest_" + boss.id
+					ident: 'bossOpenChest_' + boss.id,
 				});
 			} else if (boss.chestId == 1) {
 				calls.push({
-					name: "bossOpenChest",
+					name: 'bossOpenChest',
 					args: {
 						bossId: boss.id,
 						amount: 1,
-						starmoney: 0
+						starmoney: 0,
 					},
-					ident: "bossOpenChest_" + boss.id
+					ident: 'bossOpenChest_' + boss.id,
 				});
 			}
 		}
@@ -10303,16 +10920,54 @@ class dailyQuests {
 			}
 
 			const cost = titanGiftLib[hero.titanGiftLevel].cost;
-			if (minLevel > hero.titanGiftLevel &&
-				titanGift >= cost.consumable[24] &&
-				user.gold >= cost.gold
-			) {
+			if (minLevel > hero.titanGiftLevel && titanGift >= cost.consumable[24] && user.gold >= cost.gold) {
 				minLevel = hero.titanGiftLevel;
 				heroId = hero.id;
 			}
 		}
 
 		return heroId;
+	}
+
+	getHeroicMissionId() {
+		// Получаем доступные миссии с 3 звездами
+		const availableMissionsToRaid = Object.values(this.questInfo.missionGetAll)
+			.filter((mission) => mission.stars === 3)
+			.map((mission) => mission.id);
+
+		// Получаем героев для улучшения, у которых меньше 6 звезд
+		const heroesToUpgrade = Object.values(this.questInfo.heroGetAll)
+			.filter((hero) => hero.star < 6)
+			.sort((a, b) => b.power - a.power)
+			.map((hero) => hero.id);
+
+		// Получаем героические миссии, которые доступны для рейдов
+		const heroicMissions = Object.values(lib.data.mission).filter((mission) => mission.isHeroic && availableMissionsToRaid.includes(mission.id));
+
+		// Собираем дропы из героических миссий
+		const drops = heroicMissions.map((mission) => {
+			const lastWave = mission.normalMode.waves[mission.normalMode.waves.length - 1];
+			const allRewards = lastWave.enemies[lastWave.enemies.length - 1]
+				.drop.map((drop) => drop.reward);
+
+			const heroId = +Object.keys(allRewards.find((reward) => reward.fragmentHero).fragmentHero).pop();
+
+			return { id: mission.id, heroId };
+		});
+
+		// Определяем, какие дропы подходят для героев, которых нужно улучшить
+		const heroDrops = heroesToUpgrade.map((heroId) => drops.find((drop) => drop.heroId == heroId)).filter((drop) => drop);
+		const firstMission = heroDrops[0];
+		// Выбираем миссию для рейда
+		const selectedMissionId = firstMission ? firstMission.id : 1;
+
+		const stamina = this.questInfo.userGetInfo.refillable.find((x) => x.id == 1).amount;
+		const costMissions = 3 * lib.data.mission[selectedMissionId].normalMode.teamExp;
+		if (stamina < costMissions) {
+			console.log('Энергии не достаточно');
+			return 0;
+		}
+		return selectedMissionId;
 	}
 
 	end(status) {
@@ -11594,5 +12249,6 @@ class executeBrawls {
  * Закрытие окошек по Esc +-
  * Починить работу скрипта на уровне команды ниже 10 +-
  * Написать номальную синхронизацию
- * Добавить дополнительные настройки автопокупки в "Тайном богатстве"
+ * Запрет сбора квестов и отправки экспеиций в промежуток между локальным обновлением и глобальным обновлением дня
+ * Улучшение боев
  */
