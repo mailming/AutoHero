@@ -3,7 +3,7 @@
 // @name:en			HeroWarsHelper
 // @name:ru			HeroWarsHelper
 // @namespace		HeroWarsHelper
-// @version			2.312
+// @version			2.308
 // @description		Automation of actions for the game Hero Wars
 // @description:en	Automation of actions for the game Hero Wars
 // @description:ru	Автоматизация действий для игры Хроники Хаоса
@@ -71,21 +71,6 @@ let missionBattle = null;
  * Данные пользователя
  */
 let userInfo;
-this.isTimeBetweenNewDays = function () {
-	if (userInfo.timeZone <= 3) {
-		return false;
-	}
-	const nextDayTs = new Date(userInfo.nextDayTs * 1e3);
-	const nextServerDayTs = new Date(userInfo.nextServerDayTs * 1e3);
-	if (nextDayTs > nextServerDayTs) {
-		nextDayTs.setDate(nextDayTs.getDate() - 1);
-	}
-	const now = Date.now();
-	if (now > nextDayTs && now < nextServerDayTs) {
-		return true;
-	}
-	return false;
-};
 /**
  * Original methods for working with AJAX
  *
@@ -319,7 +304,6 @@ const i18nLangData = {
 		VALUES: 'Values',
 		EXPEDITIONS_SENT: 'Expeditions:<br>Collected: {countGet}<br>Sent: {countSend}',
 		EXPEDITIONS_NOTHING: 'Nothing to collect/send',
-		EXPEDITIONS_NOTTIME: 'It is not time for expeditions',
 		TITANIT: 'Titanit',
 		COMPLETED: 'completed',
 		FLOOR: 'Floor',
@@ -572,7 +556,6 @@ const i18nLangData = {
 		GOLD_RECEIVED: 'Gold received: {gold}',
 		OPEN_ALL_EQUIP_BOXES: 'Open all Equipment Fragment Box?',
 		SERVER_NOT_ACCEPT: 'The server did not accept the result',
-		INVASION_BOSS_BUFF: 'For {bossLvl} boss need buff {needBuff} you have {haveBuff}}',
 	},
 	ru: {
 		/* Чекбоксы */
@@ -680,7 +663,6 @@ const i18nLangData = {
 		VALUES: 'Значения',
 		EXPEDITIONS_SENT: 'Экспедиции:<br>Собрано: {countGet}<br>Отправлено: {countSend}',
 		EXPEDITIONS_NOTHING: 'Нечего собирать/отправлять',
-		EXPEDITIONS_NOTTIME: 'Не время для экспедиций',
 		TITANIT: 'Титанит',
 		COMPLETED: 'завершено',
 		FLOOR: 'Этаж',
@@ -932,9 +914,9 @@ const i18nLangData = {
 		GOLD_RECEIVED: 'Получено золота: {gold}',
 		OPEN_ALL_EQUIP_BOXES: 'Открыть все ящики фрагментов экипировки?',
 		SERVER_NOT_ACCEPT: 'Сервер не принял результат',
-		INVASION_BOSS_BUFF: 'Для {bossLvl} босса нужен баф {needBuff} у вас {haveBuff}',
 	},
 };
+
 
 function getLang() {
 	let lang = '';
@@ -1233,7 +1215,7 @@ const buttons = {
 				{
 					msg: I18N('REWARDS'),
 					result: function () {
-						confShow(`${I18N('RUN_SCRIPT')} ${I18N('REWARDS')}?`, questAllFarm);
+						confShow(`${I18N('RUN_SCRIPT')} ${I18N('c')}?`, questAllFarm);
 					},
 					title: I18N('REWARDS_TITLE'),
 				},
@@ -1502,40 +1484,6 @@ let lastBattleArg = {}
 let lastBossBattleStart = null;
 this.addBattleTimer = 4;
 this.invasionTimer = 2500;
-const invasionInfo = {
-	buff: 0,
-	bossLvl: 130,
-};
-const invasionDataPacks = {
-	130: { buff: 0, pet: 6004, heroes: [58, 48, 16, 65, 59], favor: { 16: 6004, 48: 6001, 58: 6002, 59: 6005, 65: 6000 } },
-	140: { buff: 0, pet: 6006, heroes: [1, 4, 13, 58, 65], favor: { 1: 6001, 4: 6006, 13: 6002, 58: 6005, 65: 6000 } },
-	150: { buff: 0, pet: 6006, heroes: [1, 12, 17, 21, 65], favor: { 1: 6001, 12: 6003, 17: 6006, 21: 6002, 65: 6000 } },
-	160: { buff: 0, pet: 6008, heroes: [12, 21, 34, 58, 65], favor: { 12: 6003, 21: 6006, 34: 6008, 58: 6002, 65: 6001 } },
-	170: { buff: 0, pet: 6005, heroes: [33, 12, 65, 21, 4], favor: { 4: 6001, 12: 6003, 21: 6006, 33: 6008, 65: 6000 } },
-	180: { buff: 20, pet: 6009, heroes: [58, 13, 5, 17, 65], favor: { 5: 6006, 13: 6003, 58: 6005 } },
-	190: { buff: 0, pet: 6006, heroes: [1, 12, 21, 36, 65], favor: { 1: 6004, 12: 6003, 21: 6006, 36: 6005, 65: 6000 } },
-	200: { buff: 0, pet: 6006, heroes: [12, 1, 13, 2, 65], favor: { 2: 6001, 12: 6003, 13: 6006, 65: 6000 } },
-	210: { buff: 15, pet: 6005, heroes: [12, 21, 33, 58, 65], favor: { 12: 6003, 21: 6006, 33: 6008, 58: 6005, 65: 6001 } },
-	220: { buff: 5, pet: 6006, heroes: [58, 13, 7, 34, 65], favor: { 7: 6002, 13: 6008, 34: 6006, 58: 6005, 65: 6001 } },
-	230: { buff: 35, pet: 6005, heroes: [5, 7, 13, 58, 65], favor: { 5: 6006, 7: 6003, 13: 6002, 58: 6005, 65: 6000 } },
-	240: { buff: 0, pet: 6005, heroes: [12, 58, 1, 36, 65], favor: { 1: 6006, 12: 6003, 36: 6005, 65: 6001 } },
-	250: { buff: 15, pet: 6005, heroes: [12, 36, 4, 16, 65], favor: { 12: 6003, 16: 6004, 36: 6005, 65: 6001 } },
-	260: { buff: 15, pet: 6005, heroes: [48, 12, 36, 65, 4], favor: { 4: 6006, 12: 6003, 36: 6005, 48: 6000, 65: 6007 } },
-	270: { buff: 35, pet: 6005, heroes: [12, 58, 36, 4, 65], favor: { 4: 6006, 12: 6003, 36: 6005 } },
-	280: { buff: 80, pet: 6005, heroes: [21, 36, 48, 7, 65], favor: { 7: 6003, 21: 6006, 36: 6005, 48: 6001, 65: 6000 } },
-	290: { buff: 95, pet: 6008, heroes: [12, 21, 36, 35, 65], favor: { 12: 6003, 21: 6006, 36: 6005, 65: 6007 } },
-	300: { buff: 25, pet: 6005, heroes: [12, 13, 4, 34, 65], favor: { 4: 6006, 12: 6003, 13: 6007, 34: 6002 } },
-	310: { buff: 45, pet: 6005, heroes: [12, 21, 58, 33, 65], favor: { 12: 6003, 21: 6006, 33: 6002, 58: 6005, 65: 6007 } },
-	320: { buff: 70, pet: 6005, heroes: [12, 48, 2, 6, 65], favor: { 6: 6005, 12: 6003 } },
-	330: { buff: 70, pet: 6005, heroes: [12, 21, 36, 5, 65], favor: { 5: 6002, 12: 6003, 21: 6006, 36: 6005, 65: 6000 } },
-	340: { buff: 55, pet: 6009, heroes: [12, 36, 13, 6, 65], favor: { 6: 6005, 12: 6003, 13: 6002, 36: 6006, 65: 6000 } },
-	350: { buff: 100, pet: 6005, heroes: [12, 21, 58, 34, 65], favor: { 12: 6003, 21: 6006, 58: 6005 } },
-	360: { buff: 85, pet: 6007, heroes: [12, 21, 36, 4, 65], favor: { 4: 6006, 12: 6003, 21: 6002, 36: 6005 } },
-	370: { buff: 90, pet: 6008, heroes: [12, 21, 36, 13, 65], favor: { 12: 6003, 13: 6007, 21: 6006, 36: 6005, 65: 6001 } },
-	380: { buff: 165, pet: 6005, heroes: [12, 33, 36, 4, 65], favor: { 4: 6001, 12: 6003, 33: 6006 } },
-	390: { buff: 235, pet: 6005, heroes: [21, 58, 48, 2, 65], favor: { 2: 6005, 21: 6002 } },
-	400: { buff: 125, pet: 6006, heroes: [12, 21, 36, 48, 65], favor: { 12: 6003, 21: 6006, 36: 6005, 48: 6001, 65: 6007 } },
-};
 /**
  * The name of the function of the beginning of the battle
  *
@@ -1823,12 +1771,8 @@ XMLHttpRequest.prototype.send = async function (sourceData) {
 			addBottomUrls();
 
 			if (isChecked('sendExpedition')) {
-				const isTimeBetweenDays = isTimeBetweenNewDays();
-				if (!isTimeBetweenDays) {
-					checkExpedition();
-				} else {
-					setProgress(I18N('EXPEDITIONS_NOTTIME'), true);
-				}
+				checkExpedition();
+                testDoYourBest();
 			}
 
 			getAutoGifts();
@@ -2457,24 +2401,6 @@ async function checkChangeSend(sourceData, tempData) {
 						this.massOpen = call.args.libId;
 				}
 			}
-			if (call.name == 'invasion_bossStart' && isChecked('tryFixIt_v2') && call.args.id == 217) {
-				const pack = invasionDataPacks[invasionInfo.bossLvl];
-				if (pack.buff != invasionInfo.buff) {
-					setProgress(
-						I18N('INVASION_BOSS_BUFF', {
-							bossLvl: invasionInfo.bossLvl,
-							needBuff: pack.buff,
-							haveBuff: invasionInfo.buff,
-						}),
-						false
-					);
-				} else {
-					call.args.pet = pack.pet;
-					call.args.heroes = pack.heroes;
-					call.args.favor = pack.favor;
-					changeRequest = true;
-				}
-			}
 			/**
 			 * Changing the maximum number of raids in the campaign
 			 * Изменение максимального количества рейдов в кампании
@@ -2593,17 +2519,6 @@ async function checkChangeResponse(response) {
 			 */
 			if (getSaveVal('noOfferDonat') && call.result?.bundleUpdate) {
 				delete call.result.bundleUpdate;
-				isChange = true;
-			}
-			/**
-			 * Hiding donation offers 4
-			 * Скрываем предложения доната 4 
-			 */
-			if (call.result?.specialOffers) {
-				const offers = call.result.specialOffers;
-				call.result.specialOffers = offers.filter(
-					(e) => !['addBilling', 'bundleCarousel'].includes(e.type) || ['idleResource', 'stagesOffer'].includes(e.offerType)
-				);
 				isChange = true;
 			}
 			/**
@@ -2875,7 +2790,7 @@ async function checkChangeResponse(response) {
 						{ msg: I18N('BTN_NO'), result: false, isClose: true },
 					]))
 				) {
-					const [count, recursionResult] = await openRussianDolls(lastRussianDollId, newCount);
+					const recursionResult = await openRussianDolls(lastRussianDollId, newCount);
 					countLootBox += +count;
 					mergeItemsObj(lootBox, recursionResult);
 					isChange = true;
@@ -3074,42 +2989,6 @@ async function checkChangeResponse(response) {
 					addProgress('<br>' + I18N('SERVER_NOT_ACCEPT'));
 				}
 				addProgress('<br>Server > ' + I18N('BOSS_DAMAGE') + damage.toLocaleString());
-			}
-			if (call.ident == callsIdent['invasion_getInfo']) {
-				const r = call.result.response;
-				if (r?.actions?.length) {
-					const boss = r.actions.find((e) => e.payload.id === 217);
-					invasionInfo.buff = r.buffAmount;
-					invasionInfo.bossLvl = boss.payload.level;
-					if (isChecked('tryFixIt_v2')) {
-						const pack = invasionDataPacks[invasionInfo.bossLvl];
-						setProgress(
-							I18N('INVASION_BOSS_BUFF', { 
-								bossLvl: invasionInfo.bossLvl, 
-								needBuff: pack.buff, 
-								haveBuff: invasionInfo.buff 
-							}),
-							false
-						);
-					}
-				}
-			}
-			if (call.ident == callsIdent['workshopBuff_create']) {
-				const r = call.result.response;
-				if (r.id == 1) {
-					invasionInfo.buff = r.amount;
-					if (isChecked('tryFixIt_v2')) {
-						const pack = invasionDataPacks[invasionInfo.bossLvl];
-						setProgress(
-							I18N('INVASION_BOSS_BUFF', {
-								bossLvl: invasionInfo.bossLvl,
-								needBuff: pack.buff,
-								haveBuff: invasionInfo.buff,
-							}),
-							false
-						);
-					}
-				}
 			}
 			/*
 			if (call.ident == callsIdent['chatGetAll'] && call.args.chatType == 'clanDomination' && !callsIdent['clanDomination_mapState']) {
@@ -10376,6 +10255,7 @@ class dailyQuests {
 				const soulCrystal = this.questInfo['inventoryGet'].coin[38];
 				return soulCrystal > 0;
 			},
+
 		},
 		10016: {
 			description: 'Отправь подарки согильдийцам', // ++++++++++++++++
@@ -10601,6 +10481,10 @@ class dailyQuests {
 	async start() {
 		const weCanDo = [];
 		const selectedActions = getSaveVal('selectedActions', {});
+	
+		// Automatically set to auto mode
+		this.isAuto = true;
+	
 		for (let quest of this.questInfo['questGetAll']) {
 			if (quest.id in this.dataQuests && quest.state == 1) {
 				if (!selectedActions[quest.id]) {
@@ -10609,24 +10493,25 @@ class dailyQuests {
 					};
 				}
 
+
 				const isWeCanDo = this.dataQuests[quest.id].isWeCanDo;
 				if (!isWeCanDo.call(this)) {
 					continue;
 				}
-
 				weCanDo.push({
 					name: quest.id,
 					label: I18N(`QUEST_${quest.id}`),
 					checked: selectedActions[quest.id].checked,
+
 				});
 			}
 		}
-
+	
 		if (!weCanDo.length) {
 			this.end(I18N('NOTHING_TO_DO'));
 			return;
 		}
-
+	
 		console.log(weCanDo);
 		let taskList = [];
 		if (this.isAuto) {
@@ -10658,25 +10543,27 @@ class dailyQuests {
 				countChecked++;
 				const quest = this.dataQuests[task.name];
 				console.log(quest.description);
-
+	
 				if (quest.doItCall) {
 					const doItCall = quest.doItCall.call(this);
 					calls.push(...doItCall);
 				}
 			}
 		}
-
+	
 		if (!countChecked) {
 			this.end(I18N('NOT_QUEST_COMPLETED'));
 			return;
 		}
-
+	
+		// Send API calls for all tasks
 		const result = await Send(JSON.stringify({ calls }));
 		if (result.error) {
 			console.error(result.error, result.error.call);
 		}
 		this.end(`${I18N('COMPLETED_QUESTS')}: ${countChecked}`);
 	}
+	
 
 	errorHandling(error) {
 		//console.error(error);
@@ -11103,177 +10990,144 @@ function testDoYourBest() {
  *
  * Кнопка сделать все
  */
-class doYourBest {
+class doYourBest { 
 
-	funcList = [
-		{
-			name: 'getOutland',
-			label: I18N('ASSEMBLE_OUTLAND'),
-			checked: false
-		},
-		{
-			name: 'testTower',
-			label: I18N('PASS_THE_TOWER'),
-			checked: false
-		},
-		{
-			name: 'checkExpedition',
-			label: I18N('CHECK_EXPEDITIONS'),
-			checked: false
-		},
-		{
-			name: 'testTitanArena',
-			label: I18N('COMPLETE_TOE'),
-			checked: false
-		},
-		{
-			name: 'mailGetAll',
-			label: I18N('COLLECT_MAIL'),
-			checked: false
-		},
-		{
-			name: 'collectAllStuff',
-			label: I18N('COLLECT_MISC'),
-			title: I18N('COLLECT_MISC_TITLE'),
-			checked: false
-		},
-		{
-			name: 'getDailyBonus',
-			label: I18N('DAILY_BONUS'),
-			checked: false
-		},
-		{
-			name: 'dailyQuests',
-			label: I18N('DO_DAILY_QUESTS'),
-			checked: false
-		},
-		{
-			name: 'rollAscension',
-			label: I18N('SEER_TITLE'),
-			checked: false
-		},
-		{
-			name: 'questAllFarm',
-			label: I18N('COLLECT_QUEST_REWARDS'),
-			checked: false
-		},
-		{
-			name: 'testDungeon',
-			label: I18N('COMPLETE_DUNGEON'),
-			checked: false
-		},
-		{
-			name: 'synchronization',
-			label: I18N('MAKE_A_SYNC'),
-			checked: false
-		},
-		{
-			name: 'reloadGame',
-			label: I18N('RELOAD_GAME'),
-			checked: false
-		},
-	];
+    funcList = [
+        {
+            name: 'getOutland',
+            label: I18N('ASSEMBLE_OUTLAND'),
+            checked: true
+        },
+        {
+            name: 'testTower',
+            label: I18N('PASS_THE_TOWER'),
+            checked: true
+        },
+        {
+            name: 'checkExpedition',
+            label: I18N('CHECK_EXPEDITIONS'),
+            checked: true
+        },
+        {
+            name: 'testTitanArena',
+            label: I18N('COMPLETE_TOE'),
+            checked: true
+        },
+        {
+            name: 'mailGetAll',
+            label: I18N('COLLECT_MAIL'),
+            checked: false
+        },
+        {
+            name: 'collectAllStuff',
+            label: I18N('COLLECT_MISC'),
+            title: I18N('COLLECT_MISC_TITLE'),
+            checked: true
+        },
+        {
+            name: 'getDailyBonus',
+            label: I18N('DAILY_BONUS'),
+            checked: true
+        },
+        {
+            name: 'dailyQuests',
+            label: I18N('DO_DAILY_QUESTS'),
+            checked: true
+        },
+        {
+            name: 'rollAscension',
+            label: I18N('SEER_TITLE'),
+            checked: true
+        },
+        {
+            name: 'questAllFarm',
+            label: I18N('COLLECT_QUEST_REWARDS'),
+            checked: true
+        },
+        {
+            name: 'testDungeon',
+            label: I18N('COMPLETE_DUNGEON'),
+            checked: true
+        },
+        {
+            name: 'synchronization',
+            label: I18N('MAKE_A_SYNC'),
+            checked: true
+        },
+        {
+            name: 'reloadGame',
+            label: I18N('RELOAD_GAME'),
+            checked: false
+        },
+    ];
 
-	functions = {
-		getOutland,
-		testTower,
-		checkExpedition,
-		testTitanArena,
-		mailGetAll,
-		collectAllStuff: async () => {
-			await offerFarmAllReward();
-			await Send('{"calls":[{"name":"subscriptionFarm","args":{},"ident":"body"},{"name":"zeppelinGiftFarm","args":{},"ident":"zeppelinGiftFarm"},{"name":"grandFarmCoins","args":{},"ident":"grandFarmCoins"},{"name":"gacha_refill","args":{"ident":"heroGacha"},"ident":"gacha_refill"}]}');
-		},
-		dailyQuests: async function () {
-			const quests = new dailyQuests(() => { }, () => { });
-			await quests.autoInit(true);
-			await quests.start();
-		},
-		rollAscension,
-		getDailyBonus,
-		questAllFarm,
-		testDungeon,
-		synchronization: async () => {
-			cheats.refreshGame();
-		},
-		reloadGame: async () => {
-			location.reload();
-		},
-	}
+    functions = {
+        getOutland,
+        testTower,
+        checkExpedition,
+        testTitanArena,
+        mailGetAll,
+        collectAllStuff: async () => {
+            await offerFarmAllReward();
+            await Send('{"calls":[{"name":"subscriptionFarm","args":{},"ident":"body"},{"name":"zeppelinGiftFarm","args":{},"ident":"zeppelinGiftFarm"},{"name":"grandFarmCoins","args":{},"ident":"grandFarmCoins"},{"name":"gacha_refill","args":{"ident":"heroGacha"},"ident":"gacha_refill"}]}');
+        },
+        dailyQuests: async function () {
+            const quests = new dailyQuests(() => { }, () => { });
+            await quests.autoInit(true);
+            await quests.start();
+        },
+        rollAscension,
+        getDailyBonus,
+        questAllFarm,
+        testDungeon,
+        synchronization: async () => {
+            cheats.refreshGame();
+        },
+        reloadGame: async () => {
+            location.reload();
+        },
+    }
 
-	constructor(resolve, reject, questInfo) {
-		this.resolve = resolve;
-		this.reject = reject;
-		this.questInfo = questInfo
-	}
+    constructor(resolve, reject, questInfo) {
+        this.resolve = resolve;
+        this.reject = reject;
+        this.questInfo = questInfo
+    }
 
-	async start() {
-		const selectedDoIt = getSaveVal('selectedDoIt', {});
+    async start() {
+        for (const task of this.funcList) {
+            if (task.checked) {
+                try {
+                    setProgress(`${task.label} <br>${I18N('PERFORMED')}!`);
+                    await this.functions[task.name]();
+                    setProgress(`${task.label} <br>${I18N('DONE')}!`);
+                } catch (error) {
+                    this.errorHandling(error);
+                }
+            }
+        }
+        setTimeout((msg) => {
+            this.end(msg);
+        }, 2000, I18N('ALL_TASK_COMPLETED'));
+        return;
+    }
 
-		this.funcList.forEach(task => {
-			if (!selectedDoIt[task.name]) {
-				selectedDoIt[task.name] = {
-					checked: task.checked
-				}
-			} else {
-				task.checked = selectedDoIt[task.name].checked
-			}
-		});
+    errorHandling(error) {
+        let errorInfo = error.toString() + '\n';
+        try {
+            const errorStack = error.stack.split('\n');
+            const endStack = errorStack.map(e => e.split('@')[0]).indexOf("testDoYourBest");
+            errorInfo += errorStack.slice(0, endStack).join('\n');
+        } catch (e) {
+            errorInfo += error.stack;
+        }
+        copyText(errorInfo);
+    }
 
-		const answer = await popup.confirm(I18N('RUN_FUNCTION'), [
-			{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
-			{ msg: I18N('BTN_GO'), result: true },
-		], this.funcList);
-
-		if (!answer) {
-			this.end('');
-			return;
-		}
-
-		const taskList = popup.getCheckBoxes();
-		taskList.forEach(task => {
-			selectedDoIt[task.name].checked = task.checked;
-		});
-		setSaveVal('selectedDoIt', selectedDoIt);
-		for (const task of popup.getCheckBoxes()) {
-			if (task.checked) {
-				try {
-					setProgress(`${task.label} <br>${I18N('PERFORMED')}!`);
-					await this.functions[task.name]();
-					setProgress(`${task.label} <br>${I18N('DONE')}!`);
-				} catch (error) {
-					if (await popup.confirm(`${I18N('ERRORS_OCCURRES')}:<br> ${task.label} <br>${I18N('COPY_ERROR')}?`, [
-						{ msg: I18N('BTN_NO'), result: false },
-						{ msg: I18N('BTN_YES'), result: true },
-					])) {
-						this.errorHandling(error);
-					}
-				}
-			}
-		}
-		setTimeout((msg) => {
-			this.end(msg);
-		}, 2000, I18N('ALL_TASK_COMPLETED'));
-		return;
-	}
-
-	errorHandling(error) {
-		//console.error(error);
-		let errorInfo = error.toString() + '\n';
-		try {
-			const errorStack = error.stack.split('\n');
-			const endStack = errorStack.map(e => e.split('@')[0]).indexOf("testDoYourBest");
-			errorInfo += errorStack.slice(0, endStack).join('\n');
-		} catch (e) {
-			errorInfo += error.stack;
-		}
-		copyText(errorInfo);
-	}
-
-	end(status) {
-		setProgress(status, true);
-		this.resolve();
-	}
+    end(status) {
+        setProgress(status, true);
+        this.resolve();
+    }
 }
 
 /**
