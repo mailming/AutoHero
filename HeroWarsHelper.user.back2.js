@@ -3,7 +3,7 @@
 // @name:en			HeroWarsHelper
 // @name:ru			HeroWarsHelper
 // @namespace		HeroWarsHelper
-// @version			2.315
+// @version			2.312
 // @description		Automation of actions for the game Hero Wars
 // @description:en	Automation of actions for the game Hero Wars
 // @description:ru	Автоматизация действий для игры Хроники Хаоса
@@ -86,10 +86,6 @@ this.isTimeBetweenNewDays = function () {
 	}
 	return false;
 };
-
-function getUserInfo() {
-	return userInfo;
-}
 /**
  * Original methods for working with AJAX
  *
@@ -1565,10 +1561,6 @@ let lastBattleInfo = null;
  */
 let isCancalBattle = true;
 
-function setIsCancalBattle(value) {
-	isCancalBattle = value;
-}
-
 /**
  * Certificator of the last open nesting doll
  *
@@ -2017,7 +2009,6 @@ async function checkChangeSend(sourceData, tempData) {
 					const cloneBattle = structuredClone(lastBattleInfo);
 					lastBattleInfo = null;
 					try {
-						const { BestOrWinFixBattle } = HWHClasses;
 						const bFix = new BestOrWinFixBattle(cloneBattle);
 						bFix.setNoMakeWin(noFixWin);
 						let endTime = Date.now() + 3e4;
@@ -2155,7 +2146,6 @@ async function checkChangeSend(sourceData, tempData) {
 						const endTime = cloneBattle.endTime - 1e4;
 						console.log('fixBossBattleStart');
 
-						const { BossFixBattle } = HWHClasses;
 						const bFix = new BossFixBattle(cloneBattle);
 						const result = await bFix.start(endTime, 300);
 						console.log(result);
@@ -2183,7 +2173,6 @@ async function checkChangeSend(sourceData, tempData) {
 						);
 					} else if (resultPopup > 3) {
 						const cloneBattle = structuredClone(lastBossBattle);
-						const { masterFixBattle } = HWHClasses;
 						const mFix = new masterFixBattle(cloneBattle);
 						const result = await mFix.start(cloneBattle.endTime, resultPopup);
 						console.log(result);
@@ -2697,7 +2686,6 @@ async function checkChangeResponse(response) {
 				call.ident == callsIdent['invasion_bossStart'] ||
 				call.ident == callsIdent['titanArenaStartBattle'] ||
 				call.ident == callsIdent['towerStartBattle'] ||
-				call.ident == callsIdent['epicBrawl_startBattle'] ||
 				call.ident == callsIdent['adventure_turnStartBattle']) {
 				let battle = call.result.response.battle || call.result.response.replay;
 				if (call.ident == callsIdent['brawl_startBattle'] ||
@@ -2718,11 +2706,10 @@ async function checkChangeResponse(response) {
 				if (!isChecked('preCalcBattle')) {
 					continue;
 				}
-				const preCalcBattle = structuredClone(battle);
 				setProgress(I18N('BEING_RECALC'));
 				let battleDuration = 120;
 				try {
-					const typeBattle = getBattleType(preCalcBattle.type);
+					const typeBattle = getBattleType(battle.type);
 					battleDuration = +lib.data.battleConfig[typeBattle.split('_')[1]].config.battleDuration;
 				} catch (e) { }
 				//console.log(battle.type);
@@ -2734,16 +2721,16 @@ async function checkChangeResponse(response) {
 						BattleCalc(battle, getBattleType(battle.type), e => resolve(e));
 					});
 				}
-				let actions = [getBattleInfo(preCalcBattle, false)];
+				let actions = [getBattleInfo(battle, false)]
 				let countTestBattle = getInput('countTestBattle');
 				if (call.ident == callsIdent['invasion_bossStart'] ) {
 					countTestBattle = 0;
 				}
 				if (call.ident == callsIdent['battleGetReplay']) {
-					preCalcBattle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
+					battle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
 				}
 				for (let i = 0; i < countTestBattle; i++) {
-					actions.push(getBattleInfo(preCalcBattle, true));
+					actions.push(getBattleInfo(battle, true));
 				}
 				Promise.all(actions)
 					.then(e => {
@@ -3323,8 +3310,6 @@ this.getSignature = function(headers, data) {
 
 	return md5(sign.signature);
 }
-
-let extintionsList = [];
 /**
  * Creates an interface
  *
@@ -3336,23 +3321,7 @@ function createInterface() {
 		showMenu: true
 	});
 	scriptMenu.addHeader(GM_info.script.name, justInfo);
-	const versionHeader = scriptMenu.addHeader('v' + GM_info.script.version);
-	if (extintionsList.length) {
-		versionHeader.title = '';
-		versionHeader.style.color = 'red';
-		for (const extintion of extintionsList) {
-			const { name, ver, author } = extintion;
-			versionHeader.title += name + ', v' + ver + ' by ' + author + '\n';
-		}
-	}
-}
-
-function addExtentionName(name, ver, author) {
-	extintionsList.push({
-		name,
-		ver,
-		author,
-	});
+	scriptMenu.addHeader('v' + GM_info.script.version);
 }
 
 function addControls() {
@@ -3552,7 +3521,6 @@ function getTimer(time, div) {
 }
 
 function startSlave() {
-	const { slaveFixBattle } = HWHClasses;
 	const sFix = new slaveFixBattle();
 	sFix.wsStart();
 }
@@ -3565,27 +3533,6 @@ this.testFuntions = {
 	startSlave,
 };
 
-this.HWHFuncs = {
-	send,
-	I18N,
-	isChecked,
-	getInput,
-	copyText,
-	confShow,
-	hideProgress,
-	setProgress,
-	addProgress,
-	getTimer,
-	addExtentionName,
-	getUserInfo,
-	setIsCancalBattle,
-	random,
-};
-
-this.HWHClasses = {
-	checkChangeSend,
-	checkChangeResponse,
-};
 /**
  * Calculates HASH MD5 from string
  *
@@ -4029,8 +3976,6 @@ const popup = new (function () {
 	}
 });
 
-this.HWHFuncs.popup = popup;
-
 /**
  * Script control panel
  *
@@ -4338,7 +4283,6 @@ const scriptMenu = new (function () {
 			header.addEventListener('click', func);
 		}
 		main.appendChild(header);
-		return header;
 	}
 
 	/**
@@ -4632,7 +4576,6 @@ function getSaveVal(saveName, def) {
 	const result = storage.get(saveName, def);
 	return result;
 }
-this.HWHFuncs.getSaveVal = getSaveVal;
 
 /**
  * Stores value
@@ -4642,7 +4585,6 @@ this.HWHFuncs.getSaveVal = getSaveVal;
 function setSaveVal(saveName, value) {
 	storage.set(saveName, value);
 }
-this.HWHFuncs.setSaveVal = setSaveVal;
 
 /**
  * Database initialization
@@ -4808,7 +4750,6 @@ class ZingerYWebsiteAPI {
  * Отправка экспедиций
  */
 function checkExpedition() {
-	const { Expedition } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const expedition = new Expedition(resolve, reject);
 		expedition.start();
@@ -4963,15 +4904,12 @@ class Expedition {
 	}
 }
 
-this.HWHClasses.Expedition = Expedition;
-
 /**
  * Walkthrough of the dungeon
  *
  * Прохождение подземелья
  */
 function testDungeon() {
-	const { executeDungeon } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const dung = new executeDungeon(resolve, reject);
 		const titanit = getInput('countTitanit');
@@ -5399,15 +5337,12 @@ function executeDungeon(resolve, reject) {
 	}
 }
 
-this.HWHClasses.executeDungeon = executeDungeon;
-
 /**
  * Passing the tower
  *
  * Прохождение башни
  */
 function testTower() {
-	const { executeTower } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		tower = new executeTower(resolve, reject);
 		tower.start();
@@ -5890,15 +5825,12 @@ function executeTower(resolve, reject) {
 	}
 }
 
-this.HWHClasses.executeTower = executeTower;
-
 /**
  * Passage of the arena of the titans
  *
  * Прохождение арены титанов
  */
 function testTitanArena() {
-	const { executeTitanArena } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		titAren = new executeTitanArena(resolve, reject);
 		titAren.start();
@@ -6329,8 +6261,6 @@ function executeTitanArena(resolve, reject) {
 		resolve();
 	}
 }
-
-this.HWHClasses.executeTitanArena = executeTitanArena;
 
 function hackGame() {
 	const self = this;
@@ -8636,8 +8566,6 @@ function countdownTimer(seconds, message) {
 	});
 }
 
-this.HWHFuncs.countdownTimer = countdownTimer;
-
 /** Набить килов в горниле душк */
 async function bossRatingEventSouls() {
 	const data = await Send({
@@ -9111,7 +9039,6 @@ async function sellHeroSoulsForGold() {
  * Атака прислужников Асгарда
  */
 function testRaidNodes() {
-	const { executeRaidNodes } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const tower = new executeRaidNodes(resolve, reject);
 		tower.start();
@@ -9186,7 +9113,7 @@ function executeRaidNodes(resolve, reject) {
 
 		raidData.nodes = clanRaidInfo.nodes;
 		raidData.attempts = clanRaidInfo.attempts;
-		setIsCancalBattle(false);
+		isCancalBattle = false;
 
 		checkNodes();
 	}
@@ -9362,7 +9289,7 @@ function executeRaidNodes(resolve, reject) {
 	 * Завершение задачи
 	 */
 	function endRaidNodes(reason, info) {
-		setIsCancalBattle(true);
+		isCancalBattle = true;
 		let textCancel = raidData.cancelBattle ? ` ${I18N('BATTLES_CANCELED')}: ${raidData.cancelBattle}` : '';
 		setProgress(`${I18N('MINION_RAID')} ${I18N('COMPLETED')}! ${textCancel}`, true);
 		console.log(reason, info);
@@ -9370,15 +9297,12 @@ function executeRaidNodes(resolve, reject) {
 	}
 }
 
-this.HWHClasses.executeRaidNodes = executeRaidNodes;
-
 /**
  * Asgard Boss Attack Replay
  *
  * Повтор атаки босса Асгарда
  */
 function testBossBattle() {
-	const { executeBossBattle } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const bossBattle = new executeBossBattle(resolve, reject);
 		bossBattle.start(lastBossBattle);
@@ -9453,8 +9377,6 @@ function executeBossBattle(resolve, reject) {
 		resolve();
 	}
 }
-
-this.HWHClasses.executeBossBattle = executeBossBattle;
 
 class FixBattle {
 	minTimer = 1.3;
@@ -9592,8 +9514,6 @@ class FixBattle {
 	}
 }
 
-this.HWHClasses.FixBattle = FixBattle;
-
 class WinFixBattle extends FixBattle {
 	checkResult() {
 		if (this.lastBattleResult.win) {
@@ -9642,8 +9562,6 @@ class WinFixBattle extends FixBattle {
 		setProgress(msg, false, this.stopFix.bind(this));
 	}
 }
-
-this.HWHClasses.WinFixBattle = WinFixBattle;
 
 class BestOrWinFixBattle extends WinFixBattle {
 	isNoMakeWin = false;
@@ -9698,8 +9616,6 @@ class BestOrWinFixBattle extends WinFixBattle {
 	}
 }
 
-this.HWHClasses.BestOrWinFixBattle = BestOrWinFixBattle;
-
 class BossFixBattle extends FixBattle {
 	showResult() {
 		super.showResult();
@@ -9712,8 +9628,6 @@ class BossFixBattle extends FixBattle {
 		//}, 0);
 	}
 }
-
-this.HWHClasses.BossFixBattle = BossFixBattle;
 
 class DungeonFixBattle extends FixBattle {
 	init() {
@@ -9773,8 +9687,6 @@ class DungeonFixBattle extends FixBattle {
 		);
 	}
 }
-
-this.HWHClasses.DungeonFixBattle = DungeonFixBattle;
 
 const masterWsMixin = {
 	wsStart() {
@@ -9877,8 +9789,6 @@ class masterFixBattle extends FixBattle {
 
 Object.assign(masterFixBattle.prototype, masterWsMixin);
 
-this.HWHClasses.masterFixBattle = masterFixBattle;
-
 class masterWinFixBattle extends WinFixBattle {
 	constructor(battle, url = 'wss://localho.st:3000') {
 		super(battle, true);
@@ -9912,8 +9822,6 @@ class masterWinFixBattle extends WinFixBattle {
 }
 
 Object.assign(masterWinFixBattle.prototype, masterWsMixin);
-
-this.HWHClasses.masterWinFixBattle = masterWinFixBattle;
 
 const slaveWsMixin = {
 	wsStop() {
@@ -9971,8 +9879,6 @@ class slaveFixBattle extends FixBattle {
 
 Object.assign(slaveFixBattle.prototype, slaveWsMixin);
 
-this.HWHClasses.slaveFixBattle = slaveFixBattle;
-
 class slaveWinFixBattle extends WinFixBattle {
 	constructor(url = 'wss://localho.st:3000') {
 		super(null, false);
@@ -9982,15 +9888,12 @@ class slaveWinFixBattle extends WinFixBattle {
 }
 
 Object.assign(slaveWinFixBattle.prototype, slaveWsMixin);
-
-this.HWHClasses.slaveWinFixBattle = slaveWinFixBattle;
 /**
  * Auto-repeat attack
  *
  * Автоповтор атаки
  */
 function testAutoBattle() {
-	const { executeAutoBattle } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const bossBattle = new executeAutoBattle(resolve, reject);
 		bossBattle.start(lastBattleArg, lastBattleInfo);
@@ -10060,7 +9963,7 @@ function executeAutoBattle(resolve, reject) {
 		let countWin = results.reduce((s, w) => w.result.win + s, 0);
 		setProgress(`${I18N('CHANCE_TO_WIN')} ${Math.floor(countWin / results.length * 100)}% (${results.length})`, false, hideProgress);
 		if (countWin > 0) {
-			setIsCancalBattle(false);
+			isCancalBattle = false;
 			startBattle();
 			return;
 		}
@@ -10083,7 +9986,7 @@ function executeAutoBattle(resolve, reject) {
 				{ msg: I18N('BTN_DO_IT'), result: true },
 			])
 			if (result) {
-				setIsCancalBattle(false);
+				isCancalBattle = false;
 				startBattle();
 				return;
 			}
@@ -10104,7 +10007,7 @@ function executeAutoBattle(resolve, reject) {
 		])
 		if (result) {
 			findCoeff = result;
-			setIsCancalBattle(false);
+			isCancalBattle = false;
 			startBattle();
 			return;
 		}
@@ -10225,7 +10128,6 @@ function executeAutoBattle(resolve, reject) {
 			endBattle(e, false);
 			return;
 		} else if (isChecked('tryFixIt_v2')) {
-			const { WinFixBattle } = HWHClasses;
 			const cloneBattle = structuredClone(e.battleData);
 			const bFix = new WinFixBattle(cloneBattle);
 			let attempts = Infinity;
@@ -10369,16 +10271,13 @@ function executeAutoBattle(resolve, reject) {
 	 * Завершение задачи
 	 */
 	function endAutoBattle(reason, info) {
-		setIsCancalBattle(true);
+		isCancalBattle = true;
 		console.log(reason, info);
 		resolve();
 	}
 }
 
-this.HWHClasses.executeAutoBattle = executeAutoBattle;
-
 function testDailyQuests() {
-	const { dailyQuests } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const quests = new dailyQuests(resolve, reject);
 		quests.init(questsInfo);
@@ -11191,10 +11090,8 @@ class dailyQuests {
 }
 
 this.questRun = dailyQuests;
-this.HWHClasses.dailyQuests = dailyQuests;
 
 function testDoYourBest() {
-	const { doYourBest } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const doIt = new doYourBest(resolve, reject);
 		doIt.start();
@@ -11379,15 +11276,12 @@ class doYourBest {
 	}
 }
 
-this.HWHClasses.doYourBest = doYourBest;
-
 /**
  * Passing the adventure along the specified route
  *
  * Прохождение приключения по указанному маршруту
  */
 function testAdventure(type) {
-	const { executeAdventure } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const bossBattle = new executeAdventure(resolve, reject);
 		bossBattle.start(type);
@@ -11616,15 +11510,15 @@ class executeAdventure {
 				 *
 				 * Отключаем штатную отменую боя
 				 */
-				setIsCancalBattle(false);
+				isCancalBattle = false;
 				if (await this.battle(toPath)) {
 					this.turnsLeft--;
 					toPath.splice(0, toPath.indexOf(nodeId));
 					nodeInfo.state = 'empty';
-					setIsCancalBattle(true);
+					isCancalBattle = true;
 					continue;
 				}
-				setIsCancalBattle(true);
+				isCancalBattle = true;
 				return this.end()
 			}
 
@@ -11807,14 +11701,12 @@ class executeAdventure {
 	}
 
 	end() {
-		setIsCancalBattle(true);
+		isCancalBattle = true;
 		setProgress(this.terminatеReason, true);
 		console.log(this.terminatеReason);
 		this.resolve();
 	}
 }
-
-this.HWHClasses.executeAdventure = executeAdventure;
 
 /**
  * Passage of brawls
@@ -11822,7 +11714,6 @@ this.HWHClasses.executeAdventure = executeAdventure;
  * Прохождение потасовок
  */
 function testBrawls(isAuto) {
-	const { executeBrawls } = HWHClasses;
 	return new Promise((resolve, reject) => {
 		const brawls = new executeBrawls(resolve, reject);
 		brawls.start(brawlsPack, isAuto);
@@ -11894,7 +11785,7 @@ class executeBrawls {
 	async start(args, isAuto) {
 		this.isAuto = isAuto;
 		this.args = args;
-		setIsCancalBattle(false);
+		isCancalBattle = false;
 		this.brawlInfo = await this.getBrawlInfo();
 		this.attempts = this.brawlInfo.attempts;
 
@@ -12487,15 +12378,13 @@ class executeBrawls {
 	}
 
 	end(endReason) {
-		setIsCancalBattle(true);
+		isCancalBattle = true;
 		isBrawlsAutoStart = false;
 		setProgress(endReason, true);
 		console.log(endReason);
 		this.resolve();
 	}
 }
-
-this.HWHClasses.executeBrawls = executeBrawls;
 
 })();
 
