@@ -11841,7 +11841,7 @@
 	
 		init(questInfo) {
 			this.questInfo = questInfo;
-			this.isAuto = false;
+			this.isAuto = true;
 		}
 	
 		async autoInit(isAuto) {
