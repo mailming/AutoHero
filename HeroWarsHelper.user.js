@@ -2026,7 +2026,10 @@
 				if (isChecked('dailyQuests')) {
 					testDailyQuests();
 				}
-	
+
+				// Auto run Do All function with all tasks checked
+				testDoYourBest();
+
 				if (isChecked('buyForGold')) {
 					buyInStoreForGold();
 				}
@@ -12362,6 +12365,7 @@
 		const { doYourBest } = HWHClasses;
 		return new Promise((resolve, reject) => {
 			const doIt = new doYourBest(resolve, reject);
+			doIt.isAuto = true;
 			doIt.start();
 		});
 	}
@@ -12372,6 +12376,7 @@
 	 * Кнопка сделать все
 	 */
 	class doYourBest {
+		isAuto = false;
 	
 		funcList = [
 			{
@@ -12477,33 +12482,45 @@
 	
 		async start() {
 			const selectedDoIt = getSaveVal('selectedDoIt', {});
-	
-			this.funcList.forEach(task => {
-				if (!selectedDoIt[task.name]) {
-					selectedDoIt[task.name] = {
-						checked: task.checked
+
+			if (this.isAuto) {
+				// Auto mode: check all functions and skip popup
+				this.funcList.forEach(task => {
+					task.checked = true;
+					selectedDoIt[task.name] = { checked: true };
+				});
+				setSaveVal('selectedDoIt', selectedDoIt);
+			} else {
+				// Manual mode: show popup
+				this.funcList.forEach(task => {
+					if (!selectedDoIt[task.name]) {
+						selectedDoIt[task.name] = {
+							checked: task.checked
+						}
+					} else {
+						task.checked = selectedDoIt[task.name].checked
 					}
-				} else {
-					task.checked = selectedDoIt[task.name].checked
+				});
+
+				const answer = await popup.confirm(I18N('RUN_FUNCTION'), [
+					{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
+					{ msg: I18N('BTN_GO'), result: true },
+				], this.funcList);
+
+				if (!answer) {
+					this.end('');
+					return;
 				}
-			});
-	
-			const answer = await popup.confirm(I18N('RUN_FUNCTION'), [
-				{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
-				{ msg: I18N('BTN_GO'), result: true },
-			], this.funcList);
-	
-			if (!answer) {
-				this.end('');
-				return;
+
+				const taskList = popup.getCheckBoxes();
+				taskList.forEach(task => {
+					selectedDoIt[task.name].checked = task.checked;
+				});
+				setSaveVal('selectedDoIt', selectedDoIt);
 			}
-	
-			const taskList = popup.getCheckBoxes();
-			taskList.forEach(task => {
-				selectedDoIt[task.name].checked = task.checked;
-			});
-			setSaveVal('selectedDoIt', selectedDoIt);
-			for (const task of popup.getCheckBoxes()) {
+
+			// Execute all checked functions
+			for (const task of this.funcList) {
 				if (task.checked) {
 					try {
 						setProgress(`${task.label} <br>${I18N('PERFORMED')}!`);
