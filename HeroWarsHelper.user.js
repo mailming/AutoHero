@@ -12484,10 +12484,15 @@
 			const selectedDoIt = getSaveVal('selectedDoIt', {});
 
 			if (this.isAuto) {
-				// Auto mode: check all functions and skip popup
+				// Auto mode: check all functions except reloadGame and skip popup
 				this.funcList.forEach(task => {
-					task.checked = true;
-					selectedDoIt[task.name] = { checked: true };
+					if (task.name !== 'reloadGame') {
+						task.checked = true;
+						selectedDoIt[task.name] = { checked: true };
+					} else {
+						task.checked = false;
+						selectedDoIt[task.name] = { checked: false };
+					}
 				});
 				setSaveVal('selectedDoIt', selectedDoIt);
 			} else {
