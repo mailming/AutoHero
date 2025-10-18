@@ -1321,7 +1321,7 @@
 					() => {},
 					() => {}
 				);
-				await quests.autoInit();
+				await quests.autoInit(true);
 				quests.start();
 			},
 		},
@@ -11892,6 +11892,11 @@
 			let taskList = [];
 			if (this.isAuto) {
 				taskList = weCanDo;
+				// Auto mode: check all tasks and update selectedActions
+				taskList.forEach((e) => {
+					selectedActions[e.name].checked = true;
+				});
+				setSaveVal('selectedActions', selectedActions);
 			} else {
 				const answer = await popup.confirm(
 					`${I18N('YOU_CAN_COMPLETE')}:`,
