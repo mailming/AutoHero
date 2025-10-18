@@ -11539,9 +11539,9 @@
 	
 	function testDailyQuests() {
 		const { dailyQuests } = HWHClasses;
-		return new Promise((resolve, reject) => {
+		return new Promise(async (resolve, reject) => {
 			const quests = new dailyQuests(resolve, reject);
-			quests.init(questsInfo);
+			await quests.autoInit(true);
 			quests.start();
 		});
 	}
