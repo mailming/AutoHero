@@ -7446,6 +7446,12 @@
 				
 				await this.getAvailableTeams();
 				
+				// Get detailed opponent information
+				const detailedOpponents = await this.getArenaOpponents();
+				if (detailedOpponents && detailedOpponents.length > 0) {
+					this.opponents = detailedOpponents;
+				}
+				
 				// Find and sort opponents by difficulty
 				this.findEasiestOpponents();
 				
@@ -7459,6 +7465,7 @@
 		}
 		
 		this.getArenaStatus = async function() {
+			// First, get arena info to get available opponents
 			const apiName = this.arenaType === 'grand' ? 'grandGetInfo' : 'arenaGetInfo';
 			const calls = [{
 				name: apiName,
@@ -7586,6 +7593,43 @@
 			};
 			
 			console.log('Team info:', this.teamInfo);
+		}
+		
+		this.getArenaOpponents = async function() {
+			// Get available opponents using arenaCheckTargetRange
+			// First we need to get the opponent IDs from the arena info
+			if (!this.arenaInfo || !this.arenaInfo.rivals || this.arenaInfo.rivals.length === 0) {
+				console.log('No opponents available in arena info');
+				return [];
+			}
+			
+			// Extract opponent IDs
+			const opponentIds = this.arenaInfo.rivals.map(rival => rival.id);
+			console.log('Opponent IDs:', opponentIds);
+			
+			// Use arenaCheckTargetRange to get detailed opponent info
+			const calls = [{
+				name: "arenaCheckTargetRange",
+				args: {
+					ids: opponentIds
+				},
+				context: {
+					actionTs: Date.now()
+				},
+				ident: "body"
+			}];
+			
+			const response = await Send(JSON.stringify({calls}));
+			console.log('Arena opponents API response:', response);
+			console.log('Arena opponents API response details:', JSON.stringify(response, null, 2));
+			
+			if (!response || !response.results || !response.results[0] || !response.results[0].result) {
+				throw new Error('Invalid API response structure for arenaCheckTargetRange');
+			}
+			
+			const opponents = response.results[0].result.response;
+			console.log('Detailed opponents info:', opponents);
+			return opponents;
 		}
 		
 		this.findEasiestOpponents = function() {
