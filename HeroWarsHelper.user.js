@@ -7435,7 +7435,9 @@
 					} else if (this.arenaInfo && this.arenaInfo.status === 'disabled') {
 						this.end('Arena is disabled - no battles available');
 					} else if (this.arenaInfo && this.arenaInfo.status === 'error') {
-						this.end('Arena API error - no battles available');
+						// Try to get more specific error information
+						const errorMsg = this.arenaInfo.errorMessage || 'Arena API error - no battles available';
+						this.end(errorMsg);
 					} else {
 						this.end('No attempts remaining');
 					}
@@ -7470,17 +7472,28 @@
 			// Check if response has an error
 			if (response && response.error) {
 				console.log('Arena API error:', response.error);
+				let errorMessage = response.error.message || response.error.code || 'Unknown error';
+				
+				// Provide more user-friendly error messages for common issues
+				if (errorMessage.includes('not available') || errorMessage.includes('locked')) {
+					errorMessage = 'Arena not yet unlocked - complete more campaign levels';
+				} else if (errorMessage.includes('maintenance') || errorMessage.includes('down')) {
+					errorMessage = 'Arena is under maintenance - try again later';
+				} else if (errorMessage.includes('level') || errorMessage.includes('requirement')) {
+					errorMessage = 'Arena level requirement not met';
+				}
 				this.arenaInfo = {
 					attempts: 0,
 					rank: 0,
 					status: 'error',
 					rivals: [],
 					canUpdateDefenders: false,
-					battleStartTs: 0
+					battleStartTs: 0,
+					errorMessage: errorMessage
 				};
 				this.attemptsRemaining = 0;
 				this.opponents = [];
-				setProgress(`${I18N('ARENA')}: Error - ${I18N('NO_BATTLES_AVAILABLE')}`);
+				setProgress(`${I18N('ARENA')}: API Error - ${errorMessage}`);
 				return;
 			}
 			
