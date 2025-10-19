@@ -7434,6 +7434,8 @@
 						this.end('Arena is in peace time - no battles available');
 					} else if (this.arenaInfo && this.arenaInfo.status === 'disabled') {
 						this.end('Arena is disabled - no battles available');
+					} else if (this.arenaInfo && this.arenaInfo.status === 'error') {
+						this.end('Arena API error - no battles available');
 					} else {
 						this.end('No attempts remaining');
 					}
@@ -7464,6 +7466,23 @@
 			
 			const response = await Send(JSON.stringify({calls}));
 			console.log('Arena API response:', response);
+			
+			// Check if response has an error
+			if (response && response.error) {
+				console.log('Arena API error:', response.error);
+				this.arenaInfo = {
+					attempts: 0,
+					rank: 0,
+					status: 'error',
+					rivals: [],
+					canUpdateDefenders: false,
+					battleStartTs: 0
+				};
+				this.attemptsRemaining = 0;
+				this.opponents = [];
+				setProgress(`${I18N('ARENA')}: Error - ${I18N('NO_BATTLES_AVAILABLE')}`);
+				return;
+			}
 			
 			// Check if response has the expected structure
 			if (!response || !response.results || !response.results[0] || !response.results[0].result) {
