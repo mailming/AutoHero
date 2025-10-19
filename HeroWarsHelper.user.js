@@ -103,6 +103,49 @@
 		fetch: fetch,
 	};
 	
+	// Enhanced API monitoring
+	function captureAllAPICalls() {
+		// Override console.log to capture API calls
+		const originalLog = console.log;
+		console.log = function(...args) {
+			if (args[0] && args[0].includes('API')) {
+				// Send to external monitoring system
+				window.postMessage({
+					type: 'API_CALL',
+					data: args
+				}, '*');
+			}
+			return originalLog.apply(console, args);
+		};
+		
+		// Also monitor the game's Send function specifically
+		if (window.Send) {
+			const originalSend = window.Send;
+			window.Send = function(data) {
+				// Log the API call
+				console.log('🚀 API REQUEST:', {
+					timestamp: new Date().toISOString(),
+					data: data,
+					stack: new Error().stack
+				});
+				
+				// Send to monitoring system
+				window.postMessage({
+					type: 'API_CALL',
+					data: data,
+					timestamp: Date.now()
+				}, '*');
+				
+				return originalSend.call(this, data);
+			};
+		}
+		
+		console.log('✅ API monitoring activated');
+	}
+	
+	// Activate API monitoring
+	captureAllAPICalls();
+	
 	// Sentry blocking
 	// Блокировка наблюдателя
 	this.fetch = function (url, options) {
