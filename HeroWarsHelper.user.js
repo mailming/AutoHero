@@ -7468,6 +7468,7 @@
 			
 			const response = await Send(JSON.stringify({calls}));
 			console.log('Arena API response:', response);
+			console.log('Arena API response details:', JSON.stringify(response, null, 2));
 			
 			// If Grand Arena API fails with "Undefined call", try regular Arena API as fallback
 			if (response && response.error && response.error.description && 
@@ -7482,6 +7483,7 @@
 			// Check if response has an error
 			if (response && response.error) {
 				console.log('Arena API error:', response.error);
+				console.log('Arena API error details:', JSON.stringify(response.error, null, 2));
 				let errorMessage = response.error.message || response.error.code || 'Unknown error';
 				
 				// Provide more user-friendly error messages for common issues
