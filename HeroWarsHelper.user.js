@@ -269,6 +269,13 @@
 			GRAND_ARENA_TITLE: 'Automatically battle in Grand Arena',
 			AUTO_ARENAS: 'Auto Arena & Grand Arena',
 			AUTO_ARENAS_TITLE: 'Automatically battle in both Arena and Grand Arena',
+			INITIALIZING: 'Initializing',
+			ATTEMPTS: 'Attempts',
+			BATTLE: 'Battle',
+			RANK: 'Rank',
+			PEACE_TIME: 'Peace Time',
+			DISABLED: 'Disabled',
+			NO_BATTLES_AVAILABLE: 'No battles available',
 			EXPEDITIONS: 'Expeditions',
 			EXPEDITIONS_TITLE: 'Sending and collecting expeditions',
 			SYNC: 'Sync',
@@ -645,6 +652,13 @@
 			GRAND_ARENA_TITLE: 'Автоматические бои в Великой Арене',
 			AUTO_ARENAS: 'Авто Арена и Великая Арена',
 			AUTO_ARENAS_TITLE: 'Автоматические бои в обеих аренах',
+			INITIALIZING: 'Инициализация',
+			ATTEMPTS: 'Попытки',
+			BATTLE: 'Бой',
+			RANK: 'Ранг',
+			PEACE_TIME: 'Время мира',
+			DISABLED: 'Отключено',
+			NO_BATTLES_AVAILABLE: 'Бои недоступны',
 			EXPEDITIONS: 'Экспедиции',
 			EXPEDITIONS_TITLE: 'Отправка и сбор экспедиций',
 			SYNC: 'Синхронизация',
@@ -7414,12 +7428,19 @@
 			try {
 				// Get arena status and team data
 				await this.getArenaStatus();
-				await this.getAvailableTeams();
 				
 				if (this.attemptsRemaining <= 0) {
-					this.end('No attempts remaining');
+					if (this.arenaInfo && this.arenaInfo.status === 'peace_time') {
+						this.end('Arena is in peace time - no battles available');
+					} else if (this.arenaInfo && this.arenaInfo.status === 'disabled') {
+						this.end('Arena is disabled - no battles available');
+					} else {
+						this.end('No attempts remaining');
+					}
 					return;
 				}
+				
+				await this.getAvailableTeams();
 				
 				// Find and sort opponents by difficulty
 				this.findEasiestOpponents();
@@ -7450,10 +7471,27 @@
 			}
 			
 			this.arenaInfo = response.results[0].result.response;
+			console.log('Arena info:', this.arenaInfo);
+			
+			// Check if arena is in peace time
+			if (this.arenaInfo.status === 'peace_time') {
+				this.attemptsRemaining = 0;
+				this.opponents = [];
+				setProgress(`${I18N('ARENA')}: ${I18N('PEACE_TIME')} - ${I18N('NO_BATTLES_AVAILABLE')}`);
+				return;
+			}
+			
+			// Check if arena is disabled
+			if (this.arenaInfo.status === 'disabled') {
+				this.attemptsRemaining = 0;
+				this.opponents = [];
+				setProgress(`${I18N('ARENA')}: ${I18N('DISABLED')} - ${I18N('NO_BATTLES_AVAILABLE')}`);
+				return;
+			}
+			
 			this.attemptsRemaining = this.arenaInfo.attempts || 0;
 			this.opponents = this.arenaInfo.rivals || [];
 			
-			console.log('Arena info:', this.arenaInfo);
 			setProgress(`${I18N('ARENA')}: ${I18N('ATTEMPTS')} ${this.attemptsRemaining}`);
 		}
 		
