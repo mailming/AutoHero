@@ -7469,6 +7469,16 @@
 			const response = await Send(JSON.stringify({calls}));
 			console.log('Arena API response:', response);
 			
+			// If Grand Arena API fails with "Undefined call", try regular Arena API as fallback
+			if (response && response.error && response.error.description && 
+				response.error.description.includes('Undefined call grandGetInfo') && 
+				this.arenaType === 'grand') {
+				console.log('Grand Arena API not available, trying regular Arena API as fallback');
+				this.arenaType = 'arena';
+				setProgress(`${I18N('ARENA')}: Grand Arena not available, trying regular Arena...`);
+				return this.getArenaStatus(); // Recursive call with arena type
+			}
+			
 			// Check if response has an error
 			if (response && response.error) {
 				console.log('Arena API error:', response.error);
@@ -7481,6 +7491,12 @@
 					errorMessage = 'Arena is under maintenance - try again later';
 				} else if (errorMessage.includes('level') || errorMessage.includes('requirement')) {
 					errorMessage = 'Arena level requirement not met';
+				} else if (errorMessage.includes('Undefined call') || errorMessage.includes('InvalidRequest')) {
+					if (this.arenaType === 'grand') {
+						errorMessage = 'Grand Arena not yet unlocked - complete more campaign levels';
+					} else {
+						errorMessage = 'Arena not yet unlocked - complete more campaign levels';
+					}
 				}
 				this.arenaInfo = {
 					attempts: 0,
