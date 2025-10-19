@@ -7596,7 +7596,7 @@
 		}
 		
 		this.getArenaOpponents = async function() {
-			// Get available opponents using arenaCheckTargetRange
+			// Get available opponents using arenaCheckTargetRange or grandCheckTargetRange
 			// First we need to get the opponent IDs from the arena info
 			if (!this.arenaInfo || !this.arenaInfo.rivals || this.arenaInfo.rivals.length === 0) {
 				console.log('No opponents available in arena info');
@@ -7607,9 +7607,10 @@
 			const opponentIds = this.arenaInfo.rivals.map(rival => rival.id);
 			console.log('Opponent IDs:', opponentIds);
 			
-			// Use arenaCheckTargetRange to get detailed opponent info
+			// Use the correct API call based on arena type
+			const apiName = this.arenaType === 'grand' ? 'grandCheckTargetRange' : 'arenaCheckTargetRange';
 			const calls = [{
-				name: "arenaCheckTargetRange",
+				name: apiName,
 				args: {
 					ids: opponentIds
 				},
@@ -7624,7 +7625,7 @@
 			console.log('Arena opponents API response details:', JSON.stringify(response, null, 2));
 			
 			if (!response || !response.results || !response.results[0] || !response.results[0].result) {
-				throw new Error('Invalid API response structure for arenaCheckTargetRange');
+				throw new Error(`Invalid API response structure for ${apiName}`);
 			}
 			
 			const opponents = response.results[0].result.response;
@@ -7745,7 +7746,10 @@
 					pet: team.pet,
 					favor: team.favor
 				},
-				ident: apiName
+				context: {
+					actionTs: Date.now()
+				},
+				ident: "body"
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
@@ -7790,7 +7794,10 @@
 					progress: battleResult.progress,
 					result: battleResult.result
 				},
-				ident: apiName
+				context: {
+					actionTs: Date.now()
+				},
+				ident: "body"
 			}];
 			
 			try {
