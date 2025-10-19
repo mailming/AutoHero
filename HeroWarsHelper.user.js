@@ -263,6 +263,12 @@
 			SEER_TITLE: 'Roll the Seer',
 			TOWER: 'Tower',
 			TOWER_TITLE: 'Pass the tower',
+			ARENA: 'Arena',
+			ARENA_TITLE: 'Automatically battle in Arena',
+			GRAND_ARENA: 'Grand Arena',
+			GRAND_ARENA_TITLE: 'Automatically battle in Grand Arena',
+			AUTO_ARENAS: 'Auto Arena & Grand Arena',
+			AUTO_ARENAS_TITLE: 'Automatically battle in both Arena and Grand Arena',
 			EXPEDITIONS: 'Expeditions',
 			EXPEDITIONS_TITLE: 'Sending and collecting expeditions',
 			SYNC: 'Sync',
@@ -633,6 +639,12 @@
 			SEER_TITLE: 'Покрутить Провидца',
 			TOWER: 'Башня',
 			TOWER_TITLE: 'Автопрохождение башни',
+			ARENA: 'Арена',
+			ARENA_TITLE: 'Автоматические бои в Арене',
+			GRAND_ARENA: 'Великая Арена',
+			GRAND_ARENA_TITLE: 'Автоматические бои в Великой Арене',
+			AUTO_ARENAS: 'Авто Арена и Великая Арена',
+			AUTO_ARENAS_TITLE: 'Автоматические бои в обеих аренах',
 			EXPEDITIONS: 'Экспедиции',
 			EXPEDITIONS_TITLE: 'Отправка и сбор экспедиций',
 			SYNC: 'Синхронизация',
@@ -1258,6 +1270,27 @@
 					color: 'green',
 				},
 			],
+		},
+		testArena: {
+			get name() { return I18N('ARENA'); },
+			get title() { return I18N('ARENA_TITLE'); },
+			onClick: function () {
+				confShow(`${I18N('RUN_SCRIPT')} ${I18N('ARENA')}?`, testArena);
+			},
+		},
+		testGrandArena: {
+			get name() { return I18N('GRAND_ARENA'); },
+			get title() { return I18N('GRAND_ARENA_TITLE'); },
+			onClick: function () {
+				confShow(`${I18N('RUN_SCRIPT')} ${I18N('GRAND_ARENA')}?`, testGrandArena);
+			},
+		},
+		testBothArenas: {
+			get name() { return I18N('AUTO_ARENAS'); },
+			get title() { return I18N('AUTO_ARENAS_TITLE'); },
+			onClick: function () {
+				confShow(`${I18N('RUN_SCRIPT')} ${I18N('AUTO_ARENAS')}?`, testBothArenas);
+			},
 		},
 		testDungeon: {
 			isCombine: true,
@@ -7276,7 +7309,340 @@
 		}
 	}
 	
+	/**
+	 * Arena battle calculator helper functions
+	 *
+	 * Вспомогательные функции для расчета битв арены
+	 */
+	
+	/**
+	 * Calculate win rate for arena battle
+	 *
+	 * Расчет вероятности победы в битве арены
+	 */
+	async function calcArenaBattleWinRate(attackers, defenders, battleType = 'arena') {
+		return new Promise((resolve, reject) => {
+			const battleData = {
+				attackers: attackers,
+				defenders: defenders,
+				seed: Math.random(),
+				typeId: battleType
+			};
+			
+			BattleCalc(battleData, getBattleType(battleType), (result) => {
+				if (result && result.result) {
+					resolve(result.result.win ? 1 : 0);
+				} else {
+					resolve(0);
+				}
+			});
+		});
+	}
+	
+	/**
+	 * Select best team for opponent
+	 *
+	 * Выбор лучшей команды против соперника
+	 */
+	async function selectBestTeamForOpponent(availableTeams, opponentTeam, battleType = 'arena') {
+		let bestTeam = null;
+		let bestWinRate = 0;
+		
+		// Try current team first
+		if (availableTeams.current) {
+			const winRate = await calcArenaBattleWinRate(availableTeams.current, opponentTeam, battleType);
+			if (winRate > bestWinRate) {
+				bestTeam = availableTeams.current;
+				bestWinRate = winRate;
+			}
+		}
+		
+		// Try alternative teams if current team has low win rate
+		if (bestWinRate < 0.5 && availableTeams.alternatives) {
+			for (const team of availableTeams.alternatives) {
+				const winRate = await calcArenaBattleWinRate(team, opponentTeam, battleType);
+				if (winRate > bestWinRate) {
+					bestTeam = team;
+					bestWinRate = winRate;
+				}
+			}
+		}
+		
+		return { team: bestTeam, winRate: bestWinRate };
+	}
+	
+	/**
+	 * Evaluate opponent difficulty
+	 *
+	 * Оценка сложности соперника
+	 */
+	function evaluateOpponentDifficulty(opponent) {
+		// Calculate power ratio (opponent power / your power)
+		const powerRatio = opponent.power / (userInfo.power || 1);
+		
+		// Lower rank = easier opponent
+		const rankDifficulty = opponent.rank || 999999;
+		
+		// Return difficulty score (lower = easier)
+		return {
+			opponent: opponent,
+			difficulty: powerRatio + (rankDifficulty / 1000000),
+			powerRatio: powerRatio,
+			rank: rankDifficulty
+		};
+	}
+	
+	/**
+	 * Arena auto-attack execution
+	 *
+	 * Автоматическое прохождение арены
+	 */
+	function executeArena(resolve, reject) {
+		this.resolve = resolve;
+		this.reject = reject;
+		this.arenaType = 'arena';
+		this.attemptsRemaining = 0;
+		this.victories = 0;
+		this.arenaInfo = null;
+		this.teamInfo = null;
+		this.opponents = [];
+		
+		this.start = async function(arenaType = 'arena') {
+			this.arenaType = arenaType;
+			setProgress(`${I18N('ARENA')}: ${I18N('INITIALIZING')}...`);
+			
+			try {
+				// Get arena status and team data
+				await this.getArenaStatus();
+				await this.getAvailableTeams();
+				
+				if (this.attemptsRemaining <= 0) {
+					this.end('No attempts remaining');
+					return;
+				}
+				
+				// Find and sort opponents by difficulty
+				this.findEasiestOpponents();
+				
+				// Execute battles
+				await this.executeBattles();
+				
+			} catch (error) {
+				console.error('Arena execution error:', error);
+				this.end('Error: ' + error.message);
+			}
+		}
+		
+		this.getArenaStatus = async function() {
+			const apiName = this.arenaType === 'grand' ? 'grandGetInfo' : 'arenaGetInfo';
+			const calls = [{
+				name: apiName,
+				args: {},
+				ident: apiName
+			}];
+			
+			const response = await Send(JSON.stringify({calls}));
+			this.arenaInfo = response.results[0].result.response;
+			this.attemptsRemaining = this.arenaInfo.attempts || 0;
+			this.opponents = this.arenaInfo.rivals || [];
+			
+			setProgress(`${I18N('ARENA')}: ${I18N('ATTEMPTS')} ${this.attemptsRemaining}`);
+		}
+		
+		this.getAvailableTeams = async function() {
+			const calls = [{
+				name: "teamGetAll",
+				args: {},
+				ident: "teamGetAll"
+			}, {
+				name: "teamGetFavor",
+				args: {},
+				ident: "teamGetFavor"
+			}, {
+				name: "heroGetAll",
+				args: {},
+				ident: "heroGetAll"
+			}];
+			
+			const response = await Send(JSON.stringify({calls}));
+			this.teamInfo = {
+				teams: response.results[0].result.response,
+				favor: response.results[1].result.response,
+				heroes: Object.values(response.results[2].result.response)
+			};
+		}
+		
+		this.findEasiestOpponents = function() {
+			// Sort opponents by difficulty (easiest first)
+			this.opponents = this.opponents
+				.map(opponent => evaluateOpponentDifficulty(opponent))
+				.sort((a, b) => a.difficulty - b.difficulty);
+			
+			console.log('Sorted opponents by difficulty:', this.opponents.map(o => ({
+				rank: o.rank,
+				power: o.opponent.power,
+				difficulty: o.difficulty
+			})));
+		}
+		
+		this.executeBattles = async function() {
+			for (let i = 0; i < this.attemptsRemaining && this.opponents.length > 0; i++) {
+				const opponent = this.opponents.shift();
+				setProgress(`${I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - ${I18N('RANK')} ${opponent.rank}`);
+				
+				try {
+					const result = await this.executeBattle(opponent);
+					if (result.win) {
+						this.victories++;
+					}
+				} catch (error) {
+					console.error('Battle error:', error);
+				}
+			}
+			
+			this.end(`Completed ${this.victories}/${this.attemptsRemaining} victories`);
+		}
+		
+		this.executeBattle = async function(opponent) {
+			// Get available teams
+			const availableTeams = this.getAvailableTeamsForBattle();
+			
+			// Select best team
+			const teamSelection = await selectBestTeamForOpponent(
+				availableTeams, 
+				opponent.opponent.team, 
+				this.arenaType
+			);
+			
+			if (!teamSelection.team || teamSelection.winRate < 0.3) {
+				console.log('Skipping opponent - no winning team found');
+				return { win: false };
+			}
+			
+			// Start battle
+			const battleResult = await this.startArenaBattle(opponent.opponent.id, teamSelection.team);
+			
+			// End battle
+			await this.endArenaBattle(battleResult);
+			
+			return battleResult;
+		}
+		
+		this.getAvailableTeamsForBattle = function() {
+			const arenaTeamKey = this.arenaType === 'grand' ? 'grand' : 'arena';
+			const currentTeam = this.teamInfo.teams[arenaTeamKey];
+			const favor = this.teamInfo.favor[arenaTeamKey] || {};
+			
+			// Create current team structure
+			const currentTeamData = {
+				heroes: currentTeam.filter(id => id < 6000),
+				pet: currentTeam.filter(id => id >= 6000).pop(),
+				favor: favor
+			};
+			
+			// Create alternative teams (top 5 heroes by power)
+			const topHeroes = this.teamInfo.heroes
+				.sort((a, b) => b.power - a.power)
+				.slice(0, 5)
+				.map(h => h.id);
+			
+			const alternativeTeam = {
+				heroes: topHeroes,
+				pet: currentTeamData.pet,
+				favor: favor
+			};
+			
+			return {
+				current: currentTeamData,
+				alternatives: [alternativeTeam]
+			};
+		}
+		
+		this.startArenaBattle = async function(rivalId, team) {
+			const apiName = this.arenaType === 'grand' ? 'grandStartBattle' : 'arenaStartBattle';
+			const calls = [{
+				name: apiName,
+				args: {
+					rivalId: rivalId,
+					heroes: team.heroes,
+					pet: team.pet,
+					favor: team.favor
+				},
+				ident: apiName
+			}];
+			
+			const response = await Send(JSON.stringify({calls}));
+			const battleData = response.results[0].result.response.battle;
+			
+			// Calculate battle result
+			return new Promise((resolve) => {
+				BattleCalc(battleData, getBattleType(this.arenaType), (result) => {
+					resolve({
+						win: result.result.win,
+						progress: result.progress,
+						result: result.result
+					});
+				});
+			});
+		}
+		
+		this.endArenaBattle = async function(battleResult) {
+			const apiName = this.arenaType === 'grand' ? 'grandEndBattle' : 'arenaEndBattle';
+			const calls = [{
+				name: apiName,
+				args: {
+					progress: battleResult.progress,
+					result: battleResult.result
+				},
+				ident: apiName
+			}];
+			
+			await Send(JSON.stringify({calls}));
+		}
+		
+		this.end = function(message) {
+			console.log('Arena execution ended:', message);
+			setProgress(`${I18N('ARENA')}: ${message}`, true);
+			this.resolve();
+		}
+	}
+	
+	/**
+	 * Wrapper functions for arena battles
+	 *
+	 * Функции-обертки для битв арены
+	 */
+	
+	function testArena() {
+		const { executeArena } = HWHClasses;
+		return new Promise((resolve, reject) => {
+			const arena = new executeArena(resolve, reject);
+			arena.start('arena');
+		});
+	}
+	
+	function testGrandArena() {
+		const { executeArena } = HWHClasses;
+		return new Promise((resolve, reject) => {
+			const arena = new executeArena(resolve, reject);
+			arena.start('grand');
+		});
+	}
+	
+	function testBothArenas() {
+		return new Promise(async (resolve, reject) => {
+			try {
+				await testArena();
+				await testGrandArena();
+				resolve();
+			} catch (error) {
+				reject(error);
+			}
+		});
+	}
+	
 	this.HWHClasses.executeTitanArena = executeTitanArena;
+	this.HWHClasses.executeArena = executeArena;
 	
 	function hackGame() {
 		const self = this;
@@ -12400,6 +12766,11 @@
 				checked: false
 			},
 			{
+				name: 'testBothArenas',
+				label: I18N('AUTO_ARENAS'),
+				checked: false
+			},
+			{
 				name: 'mailGetAll',
 				label: I18N('COLLECT_MAIL'),
 				checked: false
@@ -12452,6 +12823,7 @@
 			testTower,
 			checkExpedition,
 			testTitanArena,
+			testBothArenas,
 			mailGetAll,
 			collectAllStuff: async () => {
 				await offerFarmAllReward();
