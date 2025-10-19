@@ -7442,10 +7442,18 @@
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
+			console.log('Arena API response:', response);
+			
+			// Check if response has the expected structure
+			if (!response || !response.results || !response.results[0] || !response.results[0].result) {
+				throw new Error(`Invalid API response structure for ${apiName}`);
+			}
+			
 			this.arenaInfo = response.results[0].result.response;
 			this.attemptsRemaining = this.arenaInfo.attempts || 0;
 			this.opponents = this.arenaInfo.rivals || [];
 			
+			console.log('Arena info:', this.arenaInfo);
 			setProgress(`${I18N('ARENA')}: ${I18N('ATTEMPTS')} ${this.attemptsRemaining}`);
 		}
 		
@@ -7465,11 +7473,31 @@
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
+			console.log('Team API response:', response);
+			
+			// Check if response has the expected structure
+			if (!response || !response.results || response.results.length < 3) {
+				throw new Error('Invalid team API response structure');
+			}
+			
+			// Check each result individually
+			if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+				throw new Error('Invalid teamGetAll response');
+			}
+			if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
+				throw new Error('Invalid teamGetFavor response');
+			}
+			if (!response.results[2] || !response.results[2].result || !response.results[2].result.response) {
+				throw new Error('Invalid heroGetAll response');
+			}
+			
 			this.teamInfo = {
 				teams: response.results[0].result.response,
 				favor: response.results[1].result.response,
 				heroes: Object.values(response.results[2].result.response)
 			};
+			
+			console.log('Team info:', this.teamInfo);
 		}
 		
 		this.findEasiestOpponents = function() {
@@ -7504,28 +7532,45 @@
 		}
 		
 		this.executeBattle = async function(opponent) {
-			// Get available teams
-			const availableTeams = this.getAvailableTeamsForBattle();
-			
-			// Select best team
-			const teamSelection = await selectBestTeamForOpponent(
-				availableTeams, 
-				opponent.opponent.team, 
-				this.arenaType
-			);
-			
-			if (!teamSelection.team || teamSelection.winRate < 0.3) {
-				console.log('Skipping opponent - no winning team found');
+			try {
+				// Validate opponent data
+				if (!opponent || !opponent.opponent || !opponent.opponent.id) {
+					console.error('Invalid opponent data:', opponent);
+					return { win: false };
+				}
+				
+				// Get available teams
+				const availableTeams = this.getAvailableTeamsForBattle();
+				if (!availableTeams || !availableTeams.current) {
+					console.error('No available teams found');
+					return { win: false };
+				}
+				
+				// Select best team
+				const teamSelection = await selectBestTeamForOpponent(
+					availableTeams, 
+					opponent.opponent.team, 
+					this.arenaType
+				);
+				
+				if (!teamSelection.team || teamSelection.winRate < 0.3) {
+					console.log('Skipping opponent - no winning team found (win rate:', teamSelection.winRate, ')');
+					return { win: false };
+				}
+				
+				console.log('Selected team for battle:', teamSelection.team, 'Win rate:', teamSelection.winRate);
+				
+				// Start battle
+				const battleResult = await this.startArenaBattle(opponent.opponent.id, teamSelection.team);
+				
+				// End battle
+				await this.endArenaBattle(battleResult);
+				
+				return battleResult;
+			} catch (error) {
+				console.error('Error in executeBattle:', error);
 				return { win: false };
 			}
-			
-			// Start battle
-			const battleResult = await this.startArenaBattle(opponent.opponent.id, teamSelection.team);
-			
-			// End battle
-			await this.endArenaBattle(battleResult);
-			
-			return battleResult;
 		}
 		
 		this.getAvailableTeamsForBattle = function() {
@@ -7572,11 +7617,30 @@
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
+			console.log('Battle API response:', response);
+			
+			// Check if response has the expected structure
+			if (!response || !response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+				throw new Error(`Invalid battle API response structure for ${apiName}`);
+			}
+			
 			const battleData = response.results[0].result.response.battle;
+			if (!battleData) {
+				throw new Error('No battle data in response');
+			}
 			
 			// Calculate battle result
 			return new Promise((resolve) => {
 				BattleCalc(battleData, getBattleType(this.arenaType), (result) => {
+					if (!result || !result.result) {
+						console.error('BattleCalc returned invalid result:', result);
+						resolve({
+							win: false,
+							progress: [],
+							result: { win: false }
+						});
+						return;
+					}
 					resolve({
 						win: result.result.win,
 						progress: result.progress,
@@ -7597,7 +7661,13 @@
 				ident: apiName
 			}];
 			
-			await Send(JSON.stringify({calls}));
+			try {
+				const response = await Send(JSON.stringify({calls}));
+				console.log('End battle API response:', response);
+			} catch (error) {
+				console.error('Error ending battle:', error);
+				// Don't throw here, just log the error
+			}
 		}
 		
 		this.end = function(message) {
