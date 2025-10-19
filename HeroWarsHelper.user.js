@@ -7660,7 +7660,7 @@
 				context: {
 					actionTs: Date.now()
 				},
-				ident: "body"
+				ident: "group_1_body"  // Updated to match actual game API structure
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
@@ -7780,6 +7780,8 @@
 		}
 		
 		this.startArenaBattle = async function(rivalId, team) {
+			// Based on the API calls captured, we need to use stashClient for battle tracking
+			// The actual battle API might be different from what we initially thought
 			const apiName = this.arenaType === 'grand' ? 'grandStartBattle' : 'arenaStartBattle';
 			const calls = [{
 				name: apiName,
@@ -7792,7 +7794,7 @@
 				context: {
 					actionTs: Date.now()
 				},
-				ident: "body"
+				ident: "group_0_body"  // Updated to match actual game API structure
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
@@ -7830,6 +7832,8 @@
 		}
 		
 		this.endArenaBattle = async function(battleResult) {
+			// Based on the API calls captured, we need to use stashClient for battle tracking
+			// The actual battle API might be different from what we initially thought
 			const apiName = this.arenaType === 'grand' ? 'grandEndBattle' : 'arenaEndBattle';
 			const calls = [{
 				name: apiName,
@@ -7840,7 +7844,7 @@
 				context: {
 					actionTs: Date.now()
 				},
-				ident: "body"
+				ident: "group_0_body"  // Updated to match actual game API structure
 			}];
 			
 			try {
@@ -7849,6 +7853,40 @@
 			} catch (error) {
 				console.error('Error ending battle:', error);
 				// Don't throw here, just log the error
+			}
+		}
+		
+		// New method to handle stashClient API calls for battle tracking
+		this.trackBattleProgress = async function(battlePhase, windowName, sessionNumber, windowCounter) {
+			const calls = [{
+				name: "stashClient",
+				args: {
+					data: [{
+						type: `.client.window.${battlePhase}`,
+						params: {
+							actionTs: Date.now(),
+							windowName: windowName,
+							timestamp: Math.floor(Date.now() / 1000),
+							sessionNumber: sessionNumber,
+							windowCounter: windowCounter,
+							assetsReloadNum: 0,
+							assetsType: "web",
+							assetsLoadingPercent: 0,
+							assetsLoadingTime: 0
+						}
+					}]
+				},
+				context: { actionTs: Date.now() },
+				ident: "group_0_body"
+			}];
+			
+			try {
+				const response = await Send(JSON.stringify({calls}));
+				console.log('StashClient API response:', response);
+				return response;
+			} catch (error) {
+				console.error('Error tracking battle progress:', error);
+				return null;
 			}
 		}
 		
