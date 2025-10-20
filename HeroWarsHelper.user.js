@@ -7575,9 +7575,9 @@
 			// We'll use some common opponent IDs or try to get them from the game's current state
 			console.log('Trying to get opponents without arenaGetInfo...');
 			
-				// Try different opponent IDs that are more likely to be available
-				// These are different from the previous ones that might be invalid
-				const placeholderOpponentIds = ["36040625", "35621043", "59895273"]; // Different opponent IDs
+				// Use real opponent IDs from actual game API response
+				// These are the actual available opponents from the Network tab
+				const placeholderOpponentIds = ["36039664", "40326803", "35444246"]; // Real opponent IDs from Network tab
 			console.log('Using placeholder opponent IDs:', placeholderOpponentIds);
 			
 			// Use the correct API call based on arena type
