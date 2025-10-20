@@ -7728,29 +7728,26 @@
 					return { win: false };
 				}
 				
-				// Get available teams
-				const availableTeams = this.getAvailableTeamsForBattle();
-				if (!availableTeams || !availableTeams.current) {
-					console.error('No available teams found');
-					return { win: false };
-				}
+				console.log('Executing battle against opponent:', opponent.opponent.id);
 				
-				// Select best team
-				const teamSelection = await selectBestTeamForOpponent(
-					availableTeams, 
-					opponent.opponent.team, 
-					this.arenaType
-				);
+				// Skip complex battle calculation and use a simple team
+				// This avoids the "j5" property errors
+				const simpleTeam = {
+					heroes: [57, 31, 55, 40, 16], // Use the same team from your manual battle
+					pet: 6008,
+					favor: {
+						"16": 6004,
+						"31": 6006,
+						"55": 6001,
+						"57": 6003
+					},
+					banners: [6]
+				};
 				
-				if (!teamSelection.team || teamSelection.winRate < 0.3) {
-					console.log('Skipping opponent - no winning team found (win rate:', teamSelection.winRate, ')');
-					return { win: false };
-				}
-				
-				console.log('Selected team for battle:', teamSelection.team, 'Win rate:', teamSelection.winRate);
+				console.log('Using simple team for battle:', simpleTeam);
 				
 				// Start battle
-				const battleResult = await this.startArenaBattle(opponent.opponent.id, teamSelection.team);
+				const battleResult = await this.startArenaBattle(opponent.opponent.id, simpleTeam);
 				
 				// End battle
 				await this.endArenaBattle(battleResult);
