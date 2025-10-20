@@ -7491,7 +7491,7 @@
 				
 				// Get detailed opponent information
 				const detailedOpponents = await this.getArenaOpponents();
-				if (detailedOpponents && detailedOpponents.length > 0) {
+				if (detailedOpponents && Object.keys(detailedOpponents).length > 0) {
 					this.opponents = detailedOpponents;
 				}
 				
