@@ -7621,8 +7621,12 @@
 				for (const [opponentId, isAvailable] of Object.entries(this.opponents)) {
 					if (isAvailable) {
 						availableOpponents.push({
-							id: opponentId,
-							available: true,
+							opponent: {
+								id: opponentId,
+								power: Math.floor(Math.random() * 100000) + 50000, // Random power
+								team: [] // Empty team for now
+							},
+							rank: Math.floor(Math.random() * 1000) + 1, // Random rank
 							difficulty: Math.random() * 100 // Random difficulty for now
 						});
 					}
