@@ -7815,7 +7815,24 @@
 			
 			// Check for error in response
 			if (response.error) {
-				throw new Error(`API error: ${response.error.description || response.error.message || 'Unknown error'}`);
+				const errorName = response.error.name || 'Unknown';
+				const errorDesc = response.error.description || '';
+				
+				let errorMessage = `API error: ${errorName}`;
+				if (errorDesc) {
+					errorMessage += ` - ${errorDesc}`;
+				}
+				
+				// Provide specific messages for common errors
+				if (errorName === 'NotAvailable') {
+					errorMessage = 'Arena not available - may be in peace time, no attempts left, or arena locked';
+				} else if (errorName === 'InvalidRequest') {
+					errorMessage = 'Invalid request - check opponent IDs and team configuration';
+				} else if (errorName === 'ArgumentError') {
+					errorMessage = 'Missing required arguments - check team data';
+				}
+				
+				throw new Error(errorMessage);
 			}
 			
 			// If we have results, try to extract battle data
