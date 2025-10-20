@@ -7508,12 +7508,13 @@
 		}
 		
 		this.getArenaStatus = async function() {
-			// First, get arena info to get available opponents
-			const apiName = this.arenaType === 'grand' ? 'grandGetInfo' : 'arenaGetInfo';
+			// Use the correct API call for Arena - arenaAttack instead of arenaGetInfo
+			const apiName = this.arenaType === 'grand' ? 'grandAttack' : 'arenaAttack';
 			const calls = [{
 				name: apiName,
 				args: {},
-				ident: apiName
+				context: { actionTs: Date.now() },
+				ident: "body"
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
@@ -7780,21 +7781,21 @@
 		}
 		
 		this.startArenaBattle = async function(rivalId, team) {
-			// Based on the API calls captured, we need to use stashClient for battle tracking
-			// The actual battle API might be different from what we initially thought
-			const apiName = this.arenaType === 'grand' ? 'grandStartBattle' : 'arenaStartBattle';
+			// Use the correct API call - arenaAttack instead of arenaStartBattle
+			const apiName = this.arenaType === 'grand' ? 'grandAttack' : 'arenaAttack';
 			const calls = [{
 				name: apiName,
 				args: {
-					rivalId: rivalId,
+					userId: rivalId,  // Use userId instead of rivalId
 					heroes: team.heroes,
 					pet: team.pet,
-					favor: team.favor
+					favor: team.favor,
+					banners: team.banners || []
 				},
 				context: {
 					actionTs: Date.now()
 				},
-				ident: "group_0_body"  // Updated to match actual game API structure
+				ident: "body"  // Updated to match actual game API structure
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
@@ -7832,19 +7833,27 @@
 		}
 		
 		this.endArenaBattle = async function(battleResult) {
-			// Based on the API calls captured, we need to use stashClient for battle tracking
-			// The actual battle API might be different from what we initially thought
-			const apiName = this.arenaType === 'grand' ? 'grandEndBattle' : 'arenaEndBattle';
+			// Use stashClient for battle tracking as observed in the actual game
 			const calls = [{
-				name: apiName,
+				name: "stashClient",
 				args: {
-					progress: battleResult.progress,
-					result: battleResult.result
+					data: [{
+						type: ".client.window.close",
+						params: {
+							actionTs: Date.now(),
+							windowName: "game.view.popup.battle.BattlePausePopup",
+							timestamp: Math.floor(Date.now() / 1000),
+							sessionNumber: 83,
+							windowCounter: 21,
+							assetsReloadNum: 0,
+							assetsType: "web",
+							assetsLoadingPercent: 0,
+							assetsLoadingTime: 0
+						}
+					}]
 				},
-				context: {
-					actionTs: Date.now()
-				},
-				ident: "group_0_body"  // Updated to match actual game API structure
+				context: { actionTs: Date.now() },
+				ident: "group_1_body"
 			}];
 			
 			try {
