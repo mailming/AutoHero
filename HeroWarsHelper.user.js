@@ -108,7 +108,7 @@
 		// Override console.log to capture API calls
 		const originalLog = console.log;
 		console.log = function(...args) {
-			if (args[0] && args[0].includes('API')) {
+			if (args[0] && typeof args[0] === 'string' && args[0].includes('API')) {
 				// Send to external monitoring system
 				window.postMessage({
 					type: 'API_CALL',
@@ -7922,8 +7922,22 @@
 	function testBothArenas() {
 		return new Promise(async (resolve, reject) => {
 			try {
-				await testArena();
-				await testGrandArena();
+				// Try Arena first
+				try {
+					await testArena();
+				} catch (error) {
+					console.log('Arena not available:', error.message);
+					// Continue to Grand Arena even if regular Arena fails
+				}
+				
+				// Try Grand Arena
+				try {
+					await testGrandArena();
+				} catch (error) {
+					console.log('Grand Arena not available:', error.message);
+					// Continue even if Grand Arena fails
+				}
+				
 				resolve();
 			} catch (error) {
 				reject(error);
