@@ -7625,11 +7625,66 @@
 								id: opponentId,
 								power: Math.floor(Math.random() * 100000) + 50000, // Random power
 								team: [
-									{ id: 1, level: 80, stars: 5, power: 15000 },
-									{ id: 2, level: 80, stars: 5, power: 15000 },
-									{ id: 3, level: 80, stars: 5, power: 15000 },
-									{ id: 4, level: 80, stars: 5, power: 15000 },
-									{ id: 5, level: 80, stars: 5, power: 15000 }
+									{ 
+										id: 1, level: 80, stars: 5, power: 15000,
+										skills: { 1: 80 }, skins: {}, currentSkin: 0,
+										artifacts: [{ level: 80, star: 5 }],
+										scale: 1.0, type: "hero", perks: [],
+										anticrit: 0, antidodge: 0, hp: 100000,
+										physicalAttack: 10000, elementArmor: 5000,
+										elementAttack: 5000, elementSpiritPower: 10000,
+										element: "light", elementSpiritLevel: 80,
+										elementSpiritStar: 5, elementSpiritSkills: [],
+										elementAffinityPower: 100, skin: 0
+									},
+									{ 
+										id: 2, level: 80, stars: 5, power: 15000,
+										skills: { 2: 80 }, skins: {}, currentSkin: 0,
+										artifacts: [{ level: 80, star: 5 }],
+										scale: 1.0, type: "hero", perks: [],
+										anticrit: 0, antidodge: 0, hp: 100000,
+										physicalAttack: 10000, elementArmor: 5000,
+										elementAttack: 5000, elementSpiritPower: 10000,
+										element: "dark", elementSpiritLevel: 80,
+										elementSpiritStar: 5, elementSpiritSkills: [],
+										elementAffinityPower: 100, skin: 0
+									},
+									{ 
+										id: 3, level: 80, stars: 5, power: 15000,
+										skills: { 3: 80 }, skins: {}, currentSkin: 0,
+										artifacts: [{ level: 80, star: 5 }],
+										scale: 1.0, type: "hero", perks: [],
+										anticrit: 0, antidodge: 0, hp: 100000,
+										physicalAttack: 10000, elementArmor: 5000,
+										elementAttack: 5000, elementSpiritPower: 10000,
+										element: "nature", elementSpiritLevel: 80,
+										elementSpiritStar: 5, elementSpiritSkills: [],
+										elementAffinityPower: 100, skin: 0
+									},
+									{ 
+										id: 4, level: 80, stars: 5, power: 15000,
+										skills: { 4: 80 }, skins: {}, currentSkin: 0,
+										artifacts: [{ level: 80, star: 5 }],
+										scale: 1.0, type: "hero", perks: [],
+										anticrit: 0, antidodge: 0, hp: 100000,
+										physicalAttack: 10000, elementArmor: 5000,
+										elementAttack: 5000, elementSpiritPower: 10000,
+										element: "fire", elementSpiritLevel: 80,
+										elementSpiritStar: 5, elementSpiritSkills: [],
+										elementAffinityPower: 100, skin: 0
+									},
+									{ 
+										id: 5, level: 80, stars: 5, power: 15000,
+										skills: { 5: 80 }, skins: {}, currentSkin: 0,
+										artifacts: [{ level: 80, star: 5 }],
+										scale: 1.0, type: "hero", perks: [],
+										anticrit: 0, antidodge: 0, hp: 100000,
+										physicalAttack: 10000, elementArmor: 5000,
+										elementAttack: 5000, elementSpiritPower: 10000,
+										element: "water", elementSpiritLevel: 80,
+										elementSpiritStar: 5, elementSpiritSkills: [],
+										elementAffinityPower: 100, skin: 0
+									}
 								]
 							},
 							rank: Math.floor(Math.random() * 1000) + 1, // Random rank
