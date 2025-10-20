@@ -7624,7 +7624,13 @@
 							opponent: {
 								id: opponentId,
 								power: Math.floor(Math.random() * 100000) + 50000, // Random power
-								team: [] // Empty team for now
+								team: [
+									{ id: 1, level: 80, stars: 5, power: 15000 },
+									{ id: 2, level: 80, stars: 5, power: 15000 },
+									{ id: 3, level: 80, stars: 5, power: 15000 },
+									{ id: 4, level: 80, stars: 5, power: 15000 },
+									{ id: 5, level: 80, stars: 5, power: 15000 }
+								]
 							},
 							rank: Math.floor(Math.random() * 1000) + 1, // Random rank
 							difficulty: Math.random() * 100 // Random difficulty for now
