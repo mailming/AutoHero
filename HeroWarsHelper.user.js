@@ -7613,22 +7613,34 @@
 		}
 		
 		this.findEasiestOpponents = function() {
-			// Sort opponents by difficulty (easiest first)
-			this.opponents = this.opponents
-				.map(opponent => evaluateOpponentDifficulty(opponent))
-				.sort((a, b) => a.difficulty - b.difficulty);
-			
-			console.log('Sorted opponents by difficulty:', this.opponents.map(o => ({
-				rank: o.rank,
-				power: o.opponent.power,
-				difficulty: o.difficulty
-			})));
+			// Process the opponent availability data from arenaCheckTargetRange
+			if (this.opponents && typeof this.opponents === 'object') {
+				const availableOpponents = [];
+				
+				// Convert the boolean response to opponent objects
+				for (const [opponentId, isAvailable] of Object.entries(this.opponents)) {
+					if (isAvailable) {
+						availableOpponents.push({
+							id: opponentId,
+							available: true,
+							difficulty: Math.random() * 100 // Random difficulty for now
+						});
+					}
+				}
+				
+				// Sort by difficulty (easiest first)
+				this.opponents = availableOpponents.sort((a, b) => a.difficulty - b.difficulty);
+				console.log('Available opponents:', this.opponents);
+			} else {
+				console.log('No opponents data to process');
+				this.opponents = [];
+			}
 		}
 		
 		this.executeBattles = async function() {
 			for (let i = 0; i < this.attemptsRemaining && this.opponents.length > 0; i++) {
 				const opponent = this.opponents.shift();
-				setProgress(`${I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - ${I18N('RANK')} ${opponent.rank}`);
+				setProgress(`${I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - Opponent ${opponent.id}`);
 				
 				try {
 					const result = await this.executeBattle(opponent);
