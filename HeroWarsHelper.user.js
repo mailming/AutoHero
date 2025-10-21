@@ -7466,7 +7466,7 @@
 		
 		this.start = async function(arenaType = 'arena') {
 			this.arenaType = arenaType;
-			setProgress(`${I18N('ARENA')}: ${I18N('INITIALIZING')}...`);
+			setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('INITIALIZING')}...`);
 			
 			try {
 				// Get arena status and team data
@@ -7508,22 +7508,80 @@
 		}
 		
 		this.getArenaStatus = async function() {
-			// Since arenaGetInfo/grandGetInfo are not available, let's try a different approach
-			// We'll use placeholder data and try to get opponents directly
-			console.log('Arena GetInfo API not available, using alternative approach');
-			
-			// Set basic arena info
+			// Try to get actual arena status using userGetInfo
+			try {
+				const calls = [{
+					name: "userGetInfo",
+					args: {},
+					context: { actionTs: Date.now() },
+					ident: "body"
+				}];
+
+				const response = await Send(JSON.stringify({calls}));
+				console.log('User info response:', response);
+
+				if (response && response.results && response.results[0] && response.results[0].result) {
+					const userInfo = response.results[0].result.response;
+					console.log('User info:', userInfo);
+
+					// Extract arena information based on arena type
+					if (this.arenaType === 'grand') {
+						// Grand Arena specific checks
+						this.arenaInfo = {
+							attempts: userInfo.grandAttempts || 0,
+							rank: userInfo.grandPlace || 1000,
+							status: userInfo.grandAttempts > 0 ? 'active' : 'no_attempts',
+							rivals: [],
+							canUpdateDefenders: false,
+							battleStartTs: 0
+						};
+						this.attemptsRemaining = 1; // Only do one battle per execution due to cooldown
+
+						if (userInfo.grandAttempts <= 0) {
+							setProgress(`${I18N('GRAND_ARENA')}: No attempts remaining (${userInfo.grandAttempts})`);
+							return;
+						}
+
+						setProgress(`${I18N('GRAND_ARENA')}: ${userInfo.grandAttempts} attempts available - executing single battle`);
+						return;
+					} else {
+						// Regular Arena checks
+						this.arenaInfo = {
+							attempts: userInfo.arenaAttempts || 0,
+							rank: userInfo.arenaPlace || 1000,
+							status: userInfo.arenaAttempts > 0 ? 'active' : 'no_attempts',
+							rivals: [],
+							canUpdateDefenders: false,
+							battleStartTs: 0
+						};
+						this.attemptsRemaining = 1; // Only do one battle per execution due to cooldown
+
+						if (userInfo.arenaAttempts <= 0) {
+							setProgress(`${I18N('ARENA')}: No attempts remaining (${userInfo.arenaAttempts})`);
+							return;
+						}
+
+						setProgress(`${I18N('ARENA')}: ${userInfo.arenaAttempts} attempts available - executing single battle`);
+						return;
+					}
+				}
+			} catch (error) {
+				console.log('Could not get user info, using fallback:', error);
+			}
+
+			// Fallback to placeholder data
+			console.log(`${this.arenaType === 'grand' ? 'Grand Arena' : 'Arena'} GetInfo API not available, using alternative approach`);
 			this.arenaInfo = {
-				attempts: 3, // Assume 3 attempts available
+				attempts: 1, // Only do one battle per execution due to cooldown
 				rank: 1000,  // Assume current rank
 				status: 'active',
 				rivals: [],  // Will be populated by getArenaOpponents
 				canUpdateDefenders: false,
 				battleStartTs: 0
 			};
-			this.attemptsRemaining = 3;
+			this.attemptsRemaining = 1; // Only do one battle per execution due to cooldown
 			this.opponents = [];
-			setProgress(`${I18N('ARENA')}: ${I18N('INITIALIZING')}...`);
+			setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('INITIALIZING')} - executing single battle...`);
 			return;
 		}
 		
