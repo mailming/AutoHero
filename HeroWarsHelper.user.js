@@ -2117,7 +2117,7 @@
 					testDailyQuests();
 				}
 
-				// Auto run Do All function with all tasks checked
+				// Auto run Do All function with all tasks checked 
 				testDoYourBest();
 
 				if (isChecked('buyForGold')) {
@@ -7629,26 +7629,17 @@
 		}
 		
 		this.getArenaOpponents = async function() {
-			// Since we can't get opponent IDs from arenaGetInfo, let's try a different approach
-			// We'll use some common opponent IDs or try to get them from the game's current state
-			console.log('Trying to get opponents without arenaGetInfo...');
-			
-				// Use real opponent IDs from actual game API response
-				// These are the actual available opponents from the Network tab
-				const placeholderOpponentIds = ["36039664", "40326803", "35444246"]; // Real opponent IDs from Network tab
-			console.log('Using placeholder opponent IDs:', placeholderOpponentIds);
+			console.log('Getting arena opponents...');
 			
 			// Use the correct API call based on arena type
-			const apiName = this.arenaType === 'grand' ? 'grandCheckTargetRange' : 'arenaCheckTargetRange';
+			const apiName = this.arenaType === 'grand' ? 'grandFindEnemies' : 'arenaFindEnemies';
 			const calls = [{
 				name: apiName,
-				args: {
-					ids: placeholderOpponentIds
-				},
+				args: {},
 				context: {
 					actionTs: Date.now()
 				},
-				ident: "group_1_body"  // Updated to match actual game API structure
+				ident: "body"
 			}];
 			
 			try {
@@ -7662,96 +7653,45 @@
 				
 				const opponents = response.results[0].result.response;
 				console.log('Detailed opponents info:', opponents);
-				return opponents;
+				
+				// Convert array of opponents to object format for easier processing
+				const opponentsMap = {};
+				if (Array.isArray(opponents)) {
+					opponents.forEach(opponent => {
+						opponentsMap[opponent.userId] = opponent;
+					});
+				}
+				
+				return opponentsMap;
 			} catch (error) {
 				console.error('Error getting arena opponents:', error);
-				// Return empty array if we can't get opponents
-				return [];
+				// Return empty object if we can't get opponents
+				return {};
 			}
 		}
 		
 		this.findEasiestOpponents = function() {
-			// Process the opponent availability data from arenaCheckTargetRange
+			// Process the opponent data from arenaFindEnemies
 			if (this.opponents && typeof this.opponents === 'object') {
 				const availableOpponents = [];
 				
-				// Convert the boolean response to opponent objects
-				for (const [opponentId, isAvailable] of Object.entries(this.opponents)) {
-					if (isAvailable) {
-						availableOpponents.push({
-							opponent: {
-								id: opponentId,
-								power: Math.floor(Math.random() * 100000) + 50000, // Random power
-								team: [
-									{ 
-										id: 1, level: 80, stars: 5, power: 15000,
-										skills: { 1: 80 }, skins: {}, currentSkin: 0,
-										artifacts: [{ level: 80, star: 5 }],
-										scale: 1.0, type: "hero", perks: [],
-										anticrit: 0, antidodge: 0, hp: 100000,
-										physicalAttack: 10000, elementArmor: 5000,
-										elementAttack: 5000, elementSpiritPower: 10000,
-										element: "light", elementSpiritLevel: 80,
-										elementSpiritStar: 5, elementSpiritSkills: [],
-										elementAffinityPower: 100, skin: 0
-									},
-									{ 
-										id: 2, level: 80, stars: 5, power: 15000,
-										skills: { 2: 80 }, skins: {}, currentSkin: 0,
-										artifacts: [{ level: 80, star: 5 }],
-										scale: 1.0, type: "hero", perks: [],
-										anticrit: 0, antidodge: 0, hp: 100000,
-										physicalAttack: 10000, elementArmor: 5000,
-										elementAttack: 5000, elementSpiritPower: 10000,
-										element: "dark", elementSpiritLevel: 80,
-										elementSpiritStar: 5, elementSpiritSkills: [],
-										elementAffinityPower: 100, skin: 0
-									},
-									{ 
-										id: 3, level: 80, stars: 5, power: 15000,
-										skills: { 3: 80 }, skins: {}, currentSkin: 0,
-										artifacts: [{ level: 80, star: 5 }],
-										scale: 1.0, type: "hero", perks: [],
-										anticrit: 0, antidodge: 0, hp: 100000,
-										physicalAttack: 10000, elementArmor: 5000,
-										elementAttack: 5000, elementSpiritPower: 10000,
-										element: "nature", elementSpiritLevel: 80,
-										elementSpiritStar: 5, elementSpiritSkills: [],
-										elementAffinityPower: 100, skin: 0
-									},
-									{ 
-										id: 4, level: 80, stars: 5, power: 15000,
-										skills: { 4: 80 }, skins: {}, currentSkin: 0,
-										artifacts: [{ level: 80, star: 5 }],
-										scale: 1.0, type: "hero", perks: [],
-										anticrit: 0, antidodge: 0, hp: 100000,
-										physicalAttack: 10000, elementArmor: 5000,
-										elementAttack: 5000, elementSpiritPower: 10000,
-										element: "fire", elementSpiritLevel: 80,
-										elementSpiritStar: 5, elementSpiritSkills: [],
-										elementAffinityPower: 100, skin: 0
-									},
-									{ 
-										id: 5, level: 80, stars: 5, power: 15000,
-										skills: { 5: 80 }, skins: {}, currentSkin: 0,
-										artifacts: [{ level: 80, star: 5 }],
-										scale: 1.0, type: "hero", perks: [],
-										anticrit: 0, antidodge: 0, hp: 100000,
-										physicalAttack: 10000, elementArmor: 5000,
-										elementAttack: 5000, elementSpiritPower: 10000,
-										element: "water", elementSpiritLevel: 80,
-										elementSpiritStar: 5, elementSpiritSkills: [],
-										elementAffinityPower: 100, skin: 0
-									}
-								]
-							},
-							rank: Math.floor(Math.random() * 1000) + 1, // Random rank
-							difficulty: Math.random() * 100 // Random difficulty for now
-						});
-					}
+				// Convert the opponent data to our internal format
+				for (const [opponentId, opponentData] of Object.entries(this.opponents)) {
+					availableOpponents.push({
+						opponent: {
+							id: opponentId,
+							power: parseInt(opponentData.power) || 0,
+							place: parseInt(opponentData.place) || 1000,
+							heroes: opponentData.heroes || [],
+							banners: opponentData.banners || [],
+							user: opponentData.user || {}
+						},
+						rank: parseInt(opponentData.place) || 1000,
+						difficulty: parseInt(opponentData.power) || 0 // Use power as difficulty indicator
+					});
 				}
 				
-				// Sort by difficulty (easiest first)
+				// Sort by difficulty (easiest first - lowest power)
 				this.opponents = availableOpponents.sort((a, b) => a.difficulty - b.difficulty);
 				console.log('Available opponents:', this.opponents);
 			} else {
@@ -7763,9 +7703,18 @@
 		this.executeBattles = async function() {
 			for (let i = 0; i < this.attemptsRemaining && this.opponents.length > 0; i++) {
 				const opponent = this.opponents.shift();
-				setProgress(`${I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - Opponent ${opponent.id}`);
+				setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - Opponent ${opponent.id}`);
 				
 				try {
+					// For Grand Arena, check target range first
+					if (this.arenaType === 'grand') {
+						const canAttack = await this.checkTargetRange(opponent.opponent.id);
+						if (!canAttack) {
+							console.log(`Target ${opponent.opponent.id} is not in range, skipping`);
+							continue;
+						}
+					}
+					
 					const result = await this.executeBattle(opponent);
 					if (result.win) {
 						this.victories++;
@@ -7788,10 +7737,82 @@
 				
 				console.log('Executing battle against opponent:', opponent.opponent.id);
 				
-				// Skip complex battle calculation and use a simple team
-				// This avoids the "j5" property errors
-				const simpleTeam = {
-					heroes: [57, 31, 55, 40, 16], // Use the same team from your manual battle
+				// Get team configuration based on arena type
+				const teamConfig = this.getTeamConfiguration();
+				console.log('Using team configuration for battle:', teamConfig);
+				
+				// Start battle - use the opponent ID as userId
+				const battleResult = await this.startArenaBattle(opponent.opponent.id, teamConfig);
+				
+				// End battle
+				await this.endArenaBattle(battleResult);
+				
+				return battleResult;
+			} catch (error) {
+				console.error('Error in executeBattle:', error);
+				return { win: false };
+			}
+		}
+		
+		this.checkTargetRange = async function(targetId) {
+			if (this.arenaType !== 'grand') {
+				return true; // Regular Arena doesn't need range check
+			}
+			
+			try {
+				const calls = [{
+					name: "grandCheckTargetRange",
+					args: {
+						ids: [targetId]
+					},
+					context: {
+						actionTs: Date.now()
+					},
+					ident: "body"
+				}];
+				
+				const response = await Send(JSON.stringify({calls}));
+				console.log('Target range check response:', response);
+				
+				if (response && response.results && response.results[0] && response.results[0].result) {
+					const result = response.results[0].result.response;
+					return result[targetId] === true;
+				}
+				
+				return false;
+			} catch (error) {
+				console.error('Error checking target range:', error);
+				return false;
+			}
+		}
+		
+		this.getTeamConfiguration = function() {
+			if (this.arenaType === 'grand') {
+				// Grand Arena uses 3 teams with different structure
+				return {
+					heroes: [
+						[58, 1, 64, 13, 55],  // Team 1
+						[42, 56, 9, 62, 43],  // Team 2
+						[16, 31, 57, 40, 48]  // Team 3
+					],
+					pets: [6006, 6005, 6004],  // One pet per team
+					favor: {
+						"1": 6002,
+						"9": 6005,
+						"16": 6004,
+						"42": 6007,
+						"48": 6000,
+						"55": 6001,
+						"56": 6006,
+						"62": 6003,
+						"64": 6008
+					},
+					banners: [1, 6, 2]  // One banner per team
+				};
+			} else {
+				// Regular Arena uses single team
+				return {
+					heroes: [57, 31, 55, 40, 16],
 					pet: 6008,
 					favor: {
 						"16": 6004,
@@ -7801,19 +7822,6 @@
 					},
 					banners: [6]
 				};
-				
-				console.log('Using simple team for battle:', simpleTeam);
-				
-				// Start battle
-				const battleResult = await this.startArenaBattle(opponent.opponent.id, simpleTeam);
-				
-				// End battle
-				await this.endArenaBattle(battleResult);
-				
-				return battleResult;
-			} catch (error) {
-				console.error('Error in executeBattle:', error);
-				return { win: false };
 			}
 		}
 		
@@ -7848,27 +7856,42 @@
 		}
 		
 		this.startArenaBattle = async function(rivalId, team) {
-			// Use the correct API call - arenaAttack instead of arenaStartBattle
+			// Use the correct API call based on arena type
 			const apiName = this.arenaType === 'grand' ? 'grandAttack' : 'arenaAttack';
+			
+			// Prepare arguments based on arena type
+			let args;
+			if (this.arenaType === 'grand') {
+				// Grand Arena uses different parameter structure
+				args = {
+					userId: rivalId,
+					heroes: team.heroes,  // Array of 3 teams
+					pets: team.pets,      // Array of 3 pets
+					favor: team.favor,
+					banners: team.banners  // Array of 3 banners
+				};
+			} else {
+				// Regular Arena uses single team structure
+				args = {
+					userId: rivalId,
+					heroes: team.heroes,  // Single array of 5 heroes
+					pet: team.pet,        // Single pet
+					favor: team.favor,
+					banners: team.banners  // Single banner
+				};
+			}
+			
 			const calls = [{
 				name: apiName,
-				args: {
-					userId: rivalId,  // Use userId instead of rivalId
-					heroes: team.heroes,
-					pet: team.pet,
-					favor: team.favor,
-					banners: team.banners || []
-				},
+				args: args,
 				context: {
 					actionTs: Date.now()
 				},
-				ident: "body"  // Updated to match actual game API structure
+				ident: "body"
 			}];
 			
 			const response = await Send(JSON.stringify({calls}));
 			console.log('Battle API response:', response);
-			
-			// More flexible response validation
 			console.log('Battle API response details:', JSON.stringify(response, null, 2));
 			
 			// Check for error in response
@@ -7893,48 +7916,77 @@
 				throw new Error(errorMessage);
 			}
 			
-			// If we have results, try to extract battle data
-			let battleData = null;
-			if (response.results && response.results[0]) {
-				const result = response.results[0].result || response.results[0];
-				if (result.response && result.response.battle) {
-					battleData = result.response.battle;
-				} else if (result.battle) {
-					battleData = result.battle;
-				} else if (result.response) {
-					battleData = result.response;
+			// Handle Grand Arena response structure
+			if (this.arenaType === 'grand') {
+				// Grand Arena returns battles array and overall result
+				if (response.results && response.results[0] && response.results[0].result) {
+					const result = response.results[0].result.response;
+					if (result.battles && result.battles.length > 0) {
+						// Use the first battle for calculation
+						const battleData = result.battles[0];
+						return new Promise((resolve) => {
+							BattleCalc(battleData, getBattleType(this.arenaType), (calcResult) => {
+								if (!calcResult || !calcResult.result) {
+									console.error('BattleCalc returned invalid result:', calcResult);
+									resolve({
+										win: false,
+										progress: [],
+										result: { win: false }
+									});
+									return;
+								}
+								resolve({
+									win: calcResult.result.win,
+									progress: calcResult.progress,
+									result: calcResult.result
+								});
+							});
+						});
+					}
+				}
+			} else {
+				// Regular Arena response handling
+				let battleData = null;
+				if (response.results && response.results[0]) {
+					const result = response.results[0].result || response.results[0];
+					if (result.response && result.response.battle) {
+						battleData = result.response.battle;
+					} else if (result.battle) {
+						battleData = result.battle;
+					} else if (result.response) {
+						battleData = result.response;
+					}
+				}
+				
+				if (battleData) {
+					return new Promise((resolve) => {
+						BattleCalc(battleData, getBattleType(this.arenaType), (result) => {
+							if (!result || !result.result) {
+								console.error('BattleCalc returned invalid result:', result);
+								resolve({
+									win: false,
+									progress: [],
+									result: { win: false }
+								});
+								return;
+							}
+							resolve({
+								win: result.result.win,
+								progress: result.progress,
+								result: result.result
+							});
+						});
+					});
 				}
 			}
 			
 			// If no battle data found, assume success and return a simple result
-			if (!battleData) {
-				console.log('No battle data found, assuming success');
-				return {
-					win: true,
-					progress: [],
-					result: { win: true }
-				};
-			}
-			
-			// Calculate battle result
-			return new Promise((resolve) => {
-				BattleCalc(battleData, getBattleType(this.arenaType), (result) => {
-					if (!result || !result.result) {
-						console.error('BattleCalc returned invalid result:', result);
-						resolve({
-							win: false,
-							progress: [],
-							result: { win: false }
-						});
-						return;
-					}
-					resolve({
-						win: result.result.win,
-						progress: result.progress,
-						result: result.result
-					});
-				});
-			});
+			console.log('No battle data found, assuming success');
+			return {
+				win: true,
+				progress: [],
+				result: { win: true }
+			};
 		}
 		
 		this.endArenaBattle = async function(battleResult) {
