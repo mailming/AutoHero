@@ -1,14 +1,11 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
 // @match        *://www.hero-wars.com/*
-// @match        *://heroes-wb.nextersglobal.com/*
-// @match        *://*.nextersglobal.com/*
-// @match        *://*/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -109,6 +106,7 @@
                     data: resp,
                     timestamp: new Date().toISOString()
                 });
+                console.log('🔍 DEBUG: Added response to pendingLogs, count =', apiMonitor.pendingLogs.length);
             }
             
             apiMonitor.updateUI();
@@ -1057,7 +1055,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.4 loaded! (with lib.data monitoring)');
+    console.log('🚀 API Monitor v3.5 loaded! (with lib.data monitoring)');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('🔍 DEBUG: CONFIG.enableFileLogging =', CONFIG.enableFileLogging);
     console.log('🔍 DEBUG: CONFIG.logToFileInterval =', CONFIG.logToFileInterval);
@@ -1093,8 +1091,12 @@
     // Auto-write logs to file periodically
     if (CONFIG.enableFileLogging) {
         setInterval(() => {
+            console.log('🔍 DEBUG: Auto-logging check - pendingLogs.length =', apiMonitor.pendingLogs.length);
             if (apiMonitor.pendingLogs.length > 0) {
+                console.log('🔍 DEBUG: Auto-logging triggered - calling writeLogsToFile');
                 apiMonitor.writeLogsToFile();
+            } else {
+                console.log('🔍 DEBUG: Auto-logging skipped - no pending logs');
             }
         }, CONFIG.logToFileInterval);
         
