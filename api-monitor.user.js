@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
@@ -30,7 +30,7 @@
         maxLogFileSize: 10 * 1024 * 1024, // 10MB max log file size
         logFormat: 'json', // 'json', 'text', 'csv'
         // Lib.data monitoring configuration
-        enableLibDataMonitoring: true, // Enable lib.data monitoring
+        enableLibDataMonitoring: false, // Enable lib.data monitoring
         libDataCheckInterval: 3000, // Check lib.data every 3 seconds
         libDataLogChanges: true, // Log lib.data changes to console
         libDataSaveChanges: true // Save lib.data changes to files
@@ -1052,7 +1052,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.1 loaded! (with lib.data monitoring)');
+    console.log('🚀 API Monitor v3.2 loaded! (with lib.data monitoring)');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
