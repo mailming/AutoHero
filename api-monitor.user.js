@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  Comprehensive API monitoring for web applications with file logging
 // @author       AutoHero Project
 // @match        *://heroes-wb.nextersglobal.com/*
@@ -357,7 +357,7 @@
                     version: "1.2",
                     creator: {
                         name: "API Monitor",
-                        version: "2.6"
+                        version: "2.7"
                     },
                     entries: []
                 }
@@ -841,7 +841,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v2.6 loaded!');
+    console.log('🚀 API Monitor v2.7 loaded!');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
@@ -891,24 +891,24 @@
         }
     }, 2000);
     
-    // Test API interception with some sample requests
-    setTimeout(() => {
-        console.log('🔍 DEBUG: Testing API interception...');
-        
-        // Test fetch request
-        fetch('https://httpbin.org/get?test=api-monitor')
-            .then(response => response.json())
-            .then(data => console.log('🔍 DEBUG: Fetch test completed:', data))
-            .catch(error => console.error('🔍 DEBUG: Fetch test failed:', error));
-            
-        // Test XHR request
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', 'https://httpbin.org/get?test=xhr-monitor');
-        xhr.onload = () => console.log('🔍 DEBUG: XHR test completed:', xhr.responseText);
-        xhr.onerror = () => console.error('🔍 DEBUG: XHR test failed');
-        xhr.send();
-        
-    }, 3000);
+    // Test API interception with some sample requests (DISABLED)
+    // setTimeout(() => {
+    //     console.log('🔍 DEBUG: Testing API interception...');
+    //     
+    //     // Test fetch request
+    //     fetch('https://httpbin.org/get?test=api-monitor')
+    //         .then(response => response.json())
+    //         .then(data => console.log('🔍 DEBUG: Fetch test completed:', data))
+    //         .catch(error => console.error('🔍 DEBUG: Fetch test failed:', error));
+    //         
+    //     // Test XHR request
+    //     const xhr = new XMLHttpRequest();
+    //     xhr.open('GET', 'https://httpbin.org/get?test=xhr-monitor');
+    //     xhr.onload = () => console.log('🔍 DEBUG: XHR test completed:', xhr.responseText);
+    //     xhr.onerror = () => console.error('🔍 DEBUG: XHR test failed');
+    //     xhr.send();
+    //     
+    // }, 3000);
     }
     
     // Load saved data on startup
