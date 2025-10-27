@@ -1,0 +1,587 @@
+// ==UserScript==
+// @name         Hero Wars API Monitor
+// @namespace    http://tampermonkey.net/
+// @version      2.0
+// @description  Comprehensive API monitoring for Hero Wars and other web applications
+// @author       AutoHero Project
+// @match        *://heroes-wb.nextersglobal.com/*
+// @match        *://*.nextersglobal.com/*
+// @match        *://*/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// @grant        unsafeWindow
+// @run-at       document-start
+// ==/UserScript==
+
+(function() {
+    'use strict';
+    
+    // Configuration
+    const CONFIG = {
+        maxRequests: 1000,
+        maxResponseSize: 1024 * 1024, // 1MB
+        enableUI: true,
+        enableExport: true,
+        enableFiltering: true,
+        logLevel: 'all' // 'all', 'errors', 'requests', 'responses'
+    };
+    
+    // Initialize API Monitor
+    window.apiMonitor = {
+        requests: [],
+        responses: [],
+        errors: [],
+        stats: {
+            totalRequests: 0,
+            totalResponses: 0,
+            totalErrors: 0,
+            startTime: Date.now()
+        },
+        
+        // Add request to monitor
+        addRequest: function(req) {
+            if (this.requests.length >= CONFIG.maxRequests) {
+                this.requests.shift(); // Remove oldest
+            }
+            
+            this.requests.push(req);
+            this.stats.totalRequests++;
+            
+            if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'requests') {
+                console.log('🔵 API_REQUEST:', JSON.stringify(req, null, 2));
+            }
+            
+            this.updateUI();
+        },
+        
+        // Add response to monitor
+        addResponse: function(resp) {
+            if (this.responses.length >= CONFIG.maxRequests) {
+                this.responses.shift(); // Remove oldest
+            }
+            
+            this.responses.push(resp);
+            this.stats.totalResponses++;
+            
+            if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'responses') {
+                console.log('🟢 API_RESPONSE:', JSON.stringify(resp, null, 2));
+            }
+            
+            this.updateUI();
+        },
+        
+        // Add error to monitor
+        addError: function(err) {
+            if (this.errors.length >= CONFIG.maxRequests) {
+                this.errors.shift(); // Remove oldest
+            }
+            
+            this.errors.push(err);
+            this.stats.totalErrors++;
+            
+            if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'errors') {
+                console.log('🔴 API_ERROR:', JSON.stringify(err, null, 2));
+            }
+            
+            this.updateUI();
+        },
+        
+        // Get all data
+        getAllData: function() {
+            return {
+                requests: this.requests,
+                responses: this.responses,
+                errors: this.errors,
+                stats: this.stats,
+                timestamp: new Date().toISOString(),
+                url: window.location.href
+            };
+        },
+        
+        // Clear all data
+        clearData: function() {
+            this.requests = [];
+            this.responses = [];
+            this.errors = [];
+            this.stats = {
+                totalRequests: 0,
+                totalResponses: 0,
+                totalErrors: 0,
+                startTime: Date.now()
+            };
+            this.updateUI();
+            console.log('🧹 API Monitor data cleared');
+        },
+        
+        // Export data
+        exportData: function(format = 'json') {
+            const data = this.getAllData();
+            
+            if (format === 'json') {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `api-monitor-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } else if (format === 'har') {
+                // Convert to HAR format
+                const har = this.convertToHAR(data);
+                const blob = new Blob([JSON.stringify(har, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `api-monitor-${Date.now()}.har`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        },
+        
+        // Convert to HAR format
+        convertToHAR: function(data) {
+            const har = {
+                log: {
+                    version: "1.2",
+                    creator: {
+                        name: "Hero Wars API Monitor",
+                        version: "2.0"
+                    },
+                    entries: []
+                }
+            };
+            
+            data.requests.forEach((req, index) => {
+                const response = data.responses.find(r => r.requestId === req.id);
+                const error = data.errors.find(e => e.requestId === req.id);
+                
+                const entry = {
+                    startedDateTime: req.timestamp,
+                    time: response ? new Date(response.timestamp) - new Date(req.timestamp) : 0,
+                    request: {
+                        method: req.method,
+                        url: req.url,
+                        httpVersion: "HTTP/1.1",
+                        headers: Object.entries(req.headers).map(([name, value]) => ({ name, value })),
+                        queryString: [],
+                        cookies: [],
+                        headersSize: JSON.stringify(req.headers).length,
+                        bodySize: req.body ? JSON.stringify(req.body).length : 0,
+                        postData: req.body ? {
+                            mimeType: "application/json",
+                            text: JSON.stringify(req.body)
+                        } : undefined
+                    },
+                    response: response ? {
+                        status: response.status,
+                        statusText: response.statusText,
+                        httpVersion: "HTTP/1.1",
+                        headers: Object.entries(response.headers).map(([name, value]) => ({ name, value })),
+                        cookies: [],
+                        content: {
+                            size: JSON.stringify(response.body).length,
+                            mimeType: response.headers['content-type'] || 'application/json',
+                            text: typeof response.body === 'string' ? response.body : JSON.stringify(response.body)
+                        },
+                        redirectURL: "",
+                        headersSize: JSON.stringify(response.headers).length,
+                        bodySize: JSON.stringify(response.body).length
+                    } : undefined,
+                    cache: {},
+                    timings: {
+                        blocked: 0,
+                        dns: 0,
+                        connect: 0,
+                        send: 0,
+                        wait: 0,
+                        receive: 0
+                    }
+                };
+                
+                if (error) {
+                    entry.response = {
+                        status: 0,
+                        statusText: "Error",
+                        httpVersion: "HTTP/1.1",
+                        headers: [],
+                        cookies: [],
+                        content: {
+                            size: error.error.length,
+                            mimeType: "text/plain",
+                            text: error.error
+                        },
+                        redirectURL: "",
+                        headersSize: 0,
+                        bodySize: error.error.length
+                    };
+                }
+                
+                har.log.entries.push(entry);
+            });
+            
+            return har;
+        },
+        
+        // Update UI
+        updateUI: function() {
+            if (!CONFIG.enableUI) return;
+            
+            const statsElement = document.getElementById('api-monitor-stats');
+            if (statsElement) {
+                statsElement.innerHTML = `
+                    <div style="background: #f0f0f0; padding: 10px; border-radius: 5px; margin: 10px 0; font-family: monospace;">
+                        <strong>API Monitor Stats:</strong><br>
+                        Requests: ${this.stats.totalRequests} | 
+                        Responses: ${this.stats.totalResponses} | 
+                        Errors: ${this.stats.totalErrors} | 
+                        Runtime: ${Math.round((Date.now() - this.stats.startTime) / 1000)}s
+                    </div>
+                `;
+            }
+        },
+        
+        // Show data in popup
+        showData: function() {
+            const data = this.getAllData();
+            const popup = window.open('', 'API Monitor Data', 'width=1200,height=800,scrollbars=yes');
+            
+            popup.document.write(`
+                <html>
+                <head>
+                    <title>API Monitor Results</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 20px; }
+                        .section { margin: 20px 0; }
+                        .request, .response, .error { 
+                            border: 1px solid #ddd; 
+                            margin: 10px 0; 
+                            padding: 10px; 
+                            border-radius: 5px; 
+                        }
+                        .request { background: #e3f2fd; }
+                        .response { background: #e8f5e8; }
+                        .error { background: #ffebee; }
+                        pre { white-space: pre-wrap; word-wrap: break-word; }
+                        .stats { background: #f5f5f5; padding: 15px; border-radius: 5px; }
+                        button { margin: 5px; padding: 10px; cursor: pointer; }
+                    </style>
+                </head>
+                <body>
+                    <h1>API Monitor Results</h1>
+                    
+                    <div class="stats">
+                        <h3>Statistics</h3>
+                        <p><strong>URL:</strong> ${data.url}</p>
+                        <p><strong>Timestamp:</strong> ${data.timestamp}</p>
+                        <p><strong>Total Requests:</strong> ${data.stats.totalRequests}</p>
+                        <p><strong>Total Responses:</strong> ${data.stats.totalResponses}</p>
+                        <p><strong>Total Errors:</strong> ${data.stats.totalErrors}</p>
+                        <p><strong>Runtime:</strong> ${Math.round((Date.now() - data.stats.startTime) / 1000)} seconds</p>
+                    </div>
+                    
+                    <div class="section">
+                        <h3>Requests (${data.requests.length})</h3>
+                        ${data.requests.map(req => `
+                            <div class="request">
+                                <strong>${req.method} ${req.url}</strong><br>
+                                <small>Time: ${req.timestamp}</small><br>
+                                <pre>${JSON.stringify(req, null, 2)}</pre>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div class="section">
+                        <h3>Responses (${data.responses.length})</h3>
+                        ${data.responses.map(resp => `
+                            <div class="response">
+                                <strong>${resp.status} ${resp.statusText}</strong><br>
+                                <small>Time: ${resp.timestamp}</small><br>
+                                <pre>${JSON.stringify(resp, null, 2)}</pre>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div class="section">
+                        <h3>Errors (${data.errors.length})</h3>
+                        ${data.errors.map(err => `
+                            <div class="error">
+                                <strong>Error</strong><br>
+                                <small>Time: ${err.timestamp}</small><br>
+                                <pre>${JSON.stringify(err, null, 2)}</pre>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <button onclick="window.close()">Close</button>
+                        <button onclick="exportData('json')">Export JSON</button>
+                        <button onclick="exportData('har')">Export HAR</button>
+                    </div>
+                    
+                    <script>
+                        function exportData(format) {
+                            const data = ${JSON.stringify(data)};
+                            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = 'api-monitor-' + Date.now() + '.' + format;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                        }
+                    </script>
+                </body>
+                </html>
+            `);
+        }
+    };
+    
+    // Intercept fetch requests
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+        const requestId = Date.now() + Math.random();
+        const request = {
+            id: requestId,
+            type: 'fetch',
+            url: args[0],
+            method: args[1]?.method || 'GET',
+            headers: args[1]?.headers || {},
+            body: args[1]?.body,
+            timestamp: new Date().toISOString()
+        };
+        
+        window.apiMonitor.addRequest(request);
+        
+        try {
+            const response = await originalFetch.apply(this, args);
+            
+            // Clone response to read body without consuming it
+            const responseClone = response.clone();
+            let responseBody;
+            
+            try {
+                const contentType = response.headers.get('content-type') || '';
+                
+                if (contentType.includes('application/json')) {
+                    responseBody = await responseClone.json();
+                } else if (contentType.includes('text/')) {
+                    responseBody = await responseClone.text();
+                } else if (contentType.includes('image/')) {
+                    responseBody = '[Binary Image Data]';
+                } else if (contentType.includes('video/')) {
+                    responseBody = '[Binary Video Data]';
+                } else if (contentType.includes('audio/')) {
+                    responseBody = '[Binary Audio Data]';
+                } else {
+                    // Try to read as text, fallback to array buffer info
+                    try {
+                        responseBody = await responseClone.text();
+                    } catch (e) {
+                        const arrayBuffer = await responseClone.arrayBuffer();
+                        responseBody = `[Binary Data: ${arrayBuffer.byteLength} bytes]`;
+                    }
+                }
+                
+                // Limit response size
+                if (typeof responseBody === 'string' && responseBody.length > CONFIG.maxResponseSize) {
+                    responseBody = responseBody.substring(0, CONFIG.maxResponseSize) + '...[truncated]';
+                }
+                
+            } catch (e) {
+                responseBody = `Unable to read response body: ${e.message}`;
+            }
+            
+            const responseData = {
+                requestId: requestId,
+                status: response.status,
+                statusText: response.statusText,
+                headers: Object.fromEntries(response.headers),
+                body: responseBody,
+                timestamp: new Date().toISOString()
+            };
+            
+            window.apiMonitor.addResponse(responseData);
+            return response;
+            
+        } catch (error) {
+            const errorData = {
+                requestId: requestId,
+                error: error.message,
+                stack: error.stack,
+                timestamp: new Date().toISOString()
+            };
+            
+            window.apiMonitor.addError(errorData);
+            throw error;
+        }
+    };
+    
+    // Intercept XMLHttpRequest
+    const originalXHR = window.XMLHttpRequest;
+    window.XMLHttpRequest = function() {
+        const xhr = new originalXHR();
+        const originalOpen = xhr.open;
+        const originalSend = xhr.send;
+        
+        xhr.open = function(method, url, ...args) {
+            const requestId = Date.now() + Math.random();
+            const request = {
+                id: requestId,
+                type: 'xhr',
+                method: method,
+                url: url,
+                timestamp: new Date().toISOString()
+            };
+            
+            window.apiMonitor.addRequest(request);
+            xhr._requestId = requestId;
+            
+            return originalOpen.apply(this, [method, url, ...args]);
+        };
+        
+        xhr.send = function(data) {
+            if (data) {
+                console.log('XHR_DATA:', data);
+            }
+            
+            xhr.addEventListener('load', function() {
+                const responseData = {
+                    requestId: xhr._requestId,
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                    response: xhr.responseText,
+                    headers: {},
+                    timestamp: new Date().toISOString()
+                };
+                
+                // Try to parse response headers
+                try {
+                    const responseHeaders = xhr.getAllResponseHeaders();
+                    if (responseHeaders) {
+                        responseHeaders.split('\r\n').forEach(line => {
+                            const parts = line.split(': ');
+                            if (parts.length === 2) {
+                                responseData.headers[parts[0]] = parts[1];
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.log('Could not parse XHR headers:', e);
+                }
+                
+                window.apiMonitor.addResponse(responseData);
+            });
+            
+            xhr.addEventListener('error', function() {
+                const errorData = {
+                    requestId: xhr._requestId,
+                    error: 'XHR Error',
+                    timestamp: new Date().toISOString()
+                };
+                
+                window.apiMonitor.addError(errorData);
+            });
+            
+            xhr.addEventListener('timeout', function() {
+                const errorData = {
+                    requestId: xhr._requestId,
+                    error: 'XHR Timeout',
+                    timestamp: new Date().toISOString()
+                };
+                
+                window.apiMonitor.addError(errorData);
+            });
+            
+            return originalSend.apply(this, [data]);
+        };
+        
+        return xhr;
+    };
+    
+    // Add UI elements when page loads
+    function addUI() {
+        if (!CONFIG.enableUI) return;
+        
+        // Add stats display
+        const statsDiv = document.createElement('div');
+        statsDiv.id = 'api-monitor-stats';
+        statsDiv.style.cssText = `
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 10000;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-width: 300px;
+        `;
+        
+        document.body.appendChild(statsDiv);
+        
+        // Add control buttons
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.cssText = `
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 10000;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        `;
+        
+        controlsDiv.innerHTML = `
+            <div style="margin-bottom: 10px;">
+                <button onclick="window.apiMonitor.showData()" style="margin: 2px; padding: 5px;">View Data</button>
+                <button onclick="window.apiMonitor.clearData()" style="margin: 2px; padding: 5px;">Clear</button>
+                <button onclick="window.apiMonitor.exportData('json')" style="margin: 2px; padding: 5px;">Export JSON</button>
+                <button onclick="window.apiMonitor.exportData('har')" style="margin: 2px; padding: 5px;">Export HAR</button>
+            </div>
+        `;
+        
+        document.body.appendChild(controlsDiv);
+        
+        // Update stats
+        window.apiMonitor.updateUI();
+    }
+    
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', addUI);
+    } else {
+        addUI();
+    }
+    
+    // Console commands
+    console.log('🚀 Hero Wars API Monitor v2.0 loaded!');
+    console.log('📊 Available commands:');
+    console.log('  - window.apiMonitor.showData() - View all captured data');
+    console.log('  - window.apiMonitor.clearData() - Clear all data');
+    console.log('  - window.apiMonitor.exportData("json") - Export as JSON');
+    console.log('  - window.apiMonitor.exportData("har") - Export as HAR');
+    console.log('  - window.apiMonitor.getAllData() - Get raw data');
+    
+    // Auto-save data periodically
+    setInterval(() => {
+        const data = window.apiMonitor.getAllData();
+        if (data.requests.length > 0 || data.responses.length > 0) {
+            GM_setValue('apiMonitorData', data);
+        }
+    }, 30000); // Save every 30 seconds
+    
+    // Load saved data on startup
+    const savedData = GM_getValue('apiMonitorData', null);
+    if (savedData && savedData.requests) {
+        window.apiMonitor.requests = savedData.requests || [];
+        window.apiMonitor.responses = savedData.responses || [];
+        window.apiMonitor.errors = savedData.errors || [];
+        console.log('📁 Loaded saved API monitor data');
+    }
+    
+})();
