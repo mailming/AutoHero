@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hero Wars API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  Comprehensive API monitoring for Hero Wars and other web applications with file logging
 // @author       AutoHero Project
 // @match        *://heroes-wb.nextersglobal.com/*
@@ -22,18 +22,18 @@
     const CONFIG = {
         maxRequests: 1000,
         maxResponseSize: 1024 * 1024, // 1MB
-        enableUI: true,
+        enableUI: false, // Disable UI by default for cleaner experience
         enableExport: true,
         enableFiltering: true,
         logLevel: 'all', // 'all', 'errors', 'requests', 'responses'
-        enableFileLogging: true,
-        logToFileInterval: 5000, // Log to file every 5 seconds
+        enableFileLogging: true, // Enable file logging by default
+        logToFileInterval: 3000, // Log to file every 3 seconds (more frequent)
         maxLogFileSize: 10 * 1024 * 1024, // 10MB max log file size
         logFormat: 'json' // 'json', 'text', 'csv'
     };
     
-    // Initialize API Monitor
-    window.apiMonitor = {
+    // Initialize API Monitor - Make it globally accessible
+    const apiMonitor = {
         requests: [],
         responses: [],
         errors: [],
@@ -49,12 +49,12 @@
         
         // Add request to monitor
         addRequest: function(req) {
-            if (this.requests.length >= CONFIG.maxRequests) {
-                this.requests.shift(); // Remove oldest
+            if (apiMonitor.requests.length >= CONFIG.maxRequests) {
+                apiMonitor.requests.shift(); // Remove oldest
             }
             
-            this.requests.push(req);
-            this.stats.totalRequests++;
+            apiMonitor.requests.push(req);
+            apiMonitor.stats.totalRequests++;
             
             if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'requests') {
                 console.log('🔵 API_REQUEST:', JSON.stringify(req, null, 2));
@@ -62,24 +62,24 @@
             
             // Add to pending logs for file writing
             if (CONFIG.enableFileLogging) {
-                this.pendingLogs.push({
+                apiMonitor.pendingLogs.push({
                     type: 'request',
                     data: req,
                     timestamp: new Date().toISOString()
                 });
             }
             
-            this.updateUI();
+            apiMonitor.updateUI();
         },
         
         // Add response to monitor
         addResponse: function(resp) {
-            if (this.responses.length >= CONFIG.maxRequests) {
-                this.responses.shift(); // Remove oldest
+            if (apiMonitor.responses.length >= CONFIG.maxRequests) {
+                apiMonitor.responses.shift(); // Remove oldest
             }
             
-            this.responses.push(resp);
-            this.stats.totalResponses++;
+            apiMonitor.responses.push(resp);
+            apiMonitor.stats.totalResponses++;
             
             if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'responses') {
                 console.log('🟢 API_RESPONSE:', JSON.stringify(resp, null, 2));
@@ -87,24 +87,24 @@
             
             // Add to pending logs for file writing
             if (CONFIG.enableFileLogging) {
-                this.pendingLogs.push({
+                apiMonitor.pendingLogs.push({
                     type: 'response',
                     data: resp,
                     timestamp: new Date().toISOString()
                 });
             }
             
-            this.updateUI();
+            apiMonitor.updateUI();
         },
         
         // Add error to monitor
         addError: function(err) {
-            if (this.errors.length >= CONFIG.maxRequests) {
-                this.errors.shift(); // Remove oldest
+            if (apiMonitor.errors.length >= CONFIG.maxRequests) {
+                apiMonitor.errors.shift(); // Remove oldest
             }
             
-            this.errors.push(err);
-            this.stats.totalErrors++;
+            apiMonitor.errors.push(err);
+            apiMonitor.stats.totalErrors++;
             
             if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'errors') {
                 console.log('🔴 API_ERROR:', JSON.stringify(err, null, 2));
@@ -112,23 +112,23 @@
             
             // Add to pending logs for file writing
             if (CONFIG.enableFileLogging) {
-                this.pendingLogs.push({
+                apiMonitor.pendingLogs.push({
                     type: 'error',
                     data: err,
                     timestamp: new Date().toISOString()
                 });
             }
             
-            this.updateUI();
+            apiMonitor.updateUI();
         },
         
         // Get all data
         getAllData: function() {
             return {
-                requests: this.requests,
-                responses: this.responses,
-                errors: this.errors,
-                stats: this.stats,
+                requests: apiMonitor.requests,
+                responses: apiMonitor.responses,
+                errors: apiMonitor.errors,
+                stats: apiMonitor.stats,
                 timestamp: new Date().toISOString(),
                 url: window.location.href
             };
@@ -136,11 +136,11 @@
         
         // Clear all data
         clearData: function() {
-            this.requests = [];
-            this.responses = [];
-            this.errors = [];
-            this.pendingLogs = [];
-            this.stats = {
+            apiMonitor.requests = [];
+            apiMonitor.responses = [];
+            apiMonitor.errors = [];
+            apiMonitor.pendingLogs = [];
+            apiMonitor.stats = {
                 totalRequests: 0,
                 totalResponses: 0,
                 totalErrors: 0,
@@ -148,13 +148,13 @@
                 logsWritten: 0,
                 lastLogTime: Date.now()
             };
-            this.updateUI();
+            apiMonitor.updateUI();
             console.log('🧹 API Monitor data cleared');
         },
         
         // Write logs to file
         writeLogsToFile: function() {
-            if (!CONFIG.enableFileLogging || this.pendingLogs.length === 0) {
+            if (!CONFIG.enableFileLogging || apiMonitor.pendingLogs.length === 0) {
                 return;
             }
             
@@ -167,17 +167,17 @@
                         session: {
                             url: window.location.href,
                             timestamp: new Date().toISOString(),
-                            logsCount: this.pendingLogs.length
+                            logsCount: apiMonitor.pendingLogs.length
                         },
-                        logs: this.pendingLogs
+                        logs: apiMonitor.pendingLogs
                     }, null, 2);
                 } else if (CONFIG.logFormat === 'text') {
-                    logContent = this.pendingLogs.map(log => {
+                    logContent = apiMonitor.pendingLogs.map(log => {
                         return `[${log.timestamp}] ${log.type.toUpperCase()}: ${JSON.stringify(log.data, null, 2)}`;
                     }).join('\n\n');
                 } else if (CONFIG.logFormat === 'csv') {
                     const headers = 'timestamp,type,url,method,status,error\n';
-                    const rows = this.pendingLogs.map(log => {
+                    const rows = apiMonitor.pendingLogs.map(log => {
                         const data = log.data;
                         const url = data.url || '';
                         const method = data.method || '';
@@ -195,13 +195,13 @@
                 GM_download(logContent, filename, 'text/plain');
                 
                 // Update stats
-                this.stats.logsWritten += this.pendingLogs.length;
-                this.stats.lastLogTime = Date.now();
+                apiMonitor.stats.logsWritten += apiMonitor.pendingLogs.length;
+                apiMonitor.stats.lastLogTime = Date.now();
                 
-                console.log(`📁 Logged ${this.pendingLogs.length} entries to file: ${filename}`);
+                console.log(`📁 Logged ${apiMonitor.pendingLogs.length} entries to file: ${filename}`);
                 
                 // Clear pending logs
-                this.pendingLogs = [];
+                apiMonitor.pendingLogs = [];
                 
             } catch (error) {
                 console.error('❌ Error writing logs to file:', error);
@@ -210,15 +210,15 @@
         
         // Force write logs to file immediately
         forceWriteLogs: function() {
-            this.writeLogsToFile();
+            apiMonitor.writeLogsToFile();
         },
         
         // Get log statistics
         getLogStats: function() {
             return {
-                totalLogsWritten: this.stats.logsWritten,
-                pendingLogs: this.pendingLogs.length,
-                lastLogTime: this.stats.lastLogTime,
+                totalLogsWritten: apiMonitor.stats.logsWritten,
+                pendingLogs: apiMonitor.pendingLogs.length,
+                lastLogTime: apiMonitor.stats.lastLogTime,
                 logFormat: CONFIG.logFormat,
                 fileLoggingEnabled: CONFIG.enableFileLogging
             };
@@ -226,7 +226,7 @@
         
         // Export data
         exportData: function(format = 'json') {
-            const data = this.getAllData();
+            const data = apiMonitor.getAllData();
             
             if (format === 'json') {
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -339,16 +339,16 @@
             
             const statsElement = document.getElementById('api-monitor-stats');
             if (statsElement) {
-                const runtime = Math.round((Date.now() - this.stats.startTime) / 1000);
-                const logsWritten = this.stats.logsWritten;
-                const pendingLogs = this.pendingLogs.length;
+                const runtime = Math.round((Date.now() - apiMonitor.stats.startTime) / 1000);
+                const logsWritten = apiMonitor.stats.logsWritten;
+                const pendingLogs = apiMonitor.pendingLogs.length;
                 
                 statsElement.innerHTML = `
                     <div style="background: #f0f0f0; padding: 10px; border-radius: 5px; margin: 10px 0; font-family: monospace;">
                         <strong>API Monitor Stats:</strong><br>
-                        Requests: ${this.stats.totalRequests} | 
-                        Responses: ${this.stats.totalResponses} | 
-                        Errors: ${this.stats.totalErrors} | 
+                        Requests: ${apiMonitor.stats.totalRequests} | 
+                        Responses: ${apiMonitor.stats.totalResponses} | 
+                        Errors: ${apiMonitor.stats.totalErrors} | 
                         Runtime: ${runtime}s<br>
                         <span style="color: ${CONFIG.enableFileLogging ? 'green' : 'red'}">
                             📁 File Logging: ${CONFIG.enableFileLogging ? 'ON' : 'OFF'} | 
@@ -362,7 +362,7 @@
         
         // Show data in popup
         showData: function() {
-            const data = this.getAllData();
+            const data = apiMonitor.getAllData();
             const popup = window.open('', 'API Monitor Data', 'width=1200,height=800,scrollbars=yes');
             
             popup.document.write(`
@@ -456,6 +456,9 @@
         }
     };
     
+    // Make apiMonitor globally accessible
+    window.apiMonitor = apiMonitor;
+    
     // Intercept fetch requests
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
@@ -470,7 +473,7 @@
             timestamp: new Date().toISOString()
         };
         
-        window.apiMonitor.addRequest(request);
+        apiMonitor.addRequest(request);
         
         try {
             const response = await originalFetch.apply(this, args);
@@ -520,7 +523,7 @@
                 timestamp: new Date().toISOString()
             };
             
-            window.apiMonitor.addResponse(responseData);
+            apiMonitor.addResponse(responseData);
             return response;
             
         } catch (error) {
@@ -531,7 +534,7 @@
                 timestamp: new Date().toISOString()
             };
             
-            window.apiMonitor.addError(errorData);
+            apiMonitor.addError(errorData);
             throw error;
         }
     };
@@ -553,7 +556,7 @@
                 timestamp: new Date().toISOString()
             };
             
-            window.apiMonitor.addRequest(request);
+            apiMonitor.addRequest(request);
             xhr._requestId = requestId;
             
             return originalOpen.apply(this, [method, url, ...args]);
@@ -589,7 +592,7 @@
                     console.log('Could not parse XHR headers:', e);
                 }
                 
-                window.apiMonitor.addResponse(responseData);
+                apiMonitor.addResponse(responseData);
             });
             
             xhr.addEventListener('error', function() {
@@ -599,7 +602,7 @@
                     timestamp: new Date().toISOString()
                 };
                 
-                window.apiMonitor.addError(errorData);
+                apiMonitor.addError(errorData);
             });
             
             xhr.addEventListener('timeout', function() {
@@ -609,7 +612,7 @@
                     timestamp: new Date().toISOString()
                 };
                 
-                window.apiMonitor.addError(errorData);
+                apiMonitor.addError(errorData);
             });
             
             return originalSend.apply(this, [data]);
@@ -671,7 +674,7 @@
         document.body.appendChild(controlsDiv);
         
         // Update stats
-        window.apiMonitor.updateUI();
+        apiMonitor.updateUI();
     }
     
     // Initialize when DOM is ready
@@ -682,7 +685,7 @@
     }
     
     // Console commands
-    console.log('🚀 Hero Wars API Monitor v2.1 loaded!');
+    console.log('🚀 Hero Wars API Monitor v2.2 loaded!');
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
     console.log('  - window.apiMonitor.clearData() - Clear all data');
@@ -698,7 +701,7 @@
     
     // Auto-save data periodically
     setInterval(() => {
-        const data = window.apiMonitor.getAllData();
+        const data = apiMonitor.getAllData();
         if (data.requests.length > 0 || data.responses.length > 0) {
             GM_setValue('apiMonitorData', data);
         }
@@ -707,8 +710,8 @@
     // Auto-write logs to file periodically
     if (CONFIG.enableFileLogging) {
         setInterval(() => {
-            if (window.apiMonitor.pendingLogs.length > 0) {
-                window.apiMonitor.writeLogsToFile();
+            if (apiMonitor.pendingLogs.length > 0) {
+                apiMonitor.writeLogsToFile();
             }
         }, CONFIG.logToFileInterval);
         
@@ -718,9 +721,9 @@
     // Load saved data on startup
     const savedData = GM_getValue('apiMonitorData', null);
     if (savedData && savedData.requests) {
-        window.apiMonitor.requests = savedData.requests || [];
-        window.apiMonitor.responses = savedData.responses || [];
-        window.apiMonitor.errors = savedData.errors || [];
+        apiMonitor.requests = savedData.requests || [];
+        apiMonitor.responses = savedData.responses || [];
+        apiMonitor.errors = savedData.errors || [];
         console.log('📁 Loaded saved API monitor data');
     }
     
