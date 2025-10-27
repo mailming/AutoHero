@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hero Wars API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  Comprehensive API monitoring for Hero Wars and other web applications with file logging
 // @author       AutoHero Project
 // @match        *://heroes-wb.nextersglobal.com/*
@@ -286,10 +286,10 @@
                         method: req.method,
                         url: req.url,
                         httpVersion: "HTTP/1.1",
-                        headers: Object.entries(req.headers).map(([name, value]) => ({ name, value })),
+                        headers: req.headers ? Object.entries(req.headers).map(([name, value]) => ({ name, value })) : [],
                         queryString: [],
                         cookies: [],
-                        headersSize: JSON.stringify(req.headers).length,
+                        headersSize: req.headers ? JSON.stringify(req.headers).length : 0,
                         bodySize: req.body ? JSON.stringify(req.body).length : 0,
                         postData: req.body ? {
                             mimeType: "application/json",
@@ -300,16 +300,16 @@
                         status: response.status,
                         statusText: response.statusText,
                         httpVersion: "HTTP/1.1",
-                        headers: Object.entries(response.headers).map(([name, value]) => ({ name, value })),
+                        headers: response.headers ? Object.entries(response.headers).map(([name, value]) => ({ name, value })) : [],
                         cookies: [],
                         content: {
-                            size: JSON.stringify(response.body).length,
-                            mimeType: response.headers['content-type'] || 'application/json',
-                            text: typeof response.body === 'string' ? response.body : JSON.stringify(response.body)
+                            size: response.body ? JSON.stringify(response.body).length : 0,
+                            mimeType: response.headers && response.headers['content-type'] ? response.headers['content-type'] : 'application/json',
+                            text: response.body ? (typeof response.body === 'string' ? response.body : JSON.stringify(response.body)) : ''
                         },
                         redirectURL: "",
-                        headersSize: JSON.stringify(response.headers).length,
-                        bodySize: JSON.stringify(response.body).length
+                        headersSize: response.headers ? JSON.stringify(response.headers).length : 0,
+                        bodySize: response.body ? JSON.stringify(response.body).length : 0
                     } : undefined,
                     cache: {},
                     timings: {
@@ -753,7 +753,7 @@
     }
     
     // Console commands
-    console.log('🚀 Hero Wars API Monitor v2.3 loaded!');
+    console.log('🚀 Hero Wars API Monitor v2.4 loaded!');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
