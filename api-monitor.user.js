@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.8
+// @version      2.9
 // @description  Comprehensive API monitoring for web applications with file logging
 // @author       AutoHero Project
 // @match        *://heroes-wb.nextersglobal.com/*
@@ -356,7 +356,7 @@
                     version: "1.2",
                     creator: {
                         name: "API Monitor",
-                        version: "2.8"
+                        version: "2.9"
                     },
                     entries: []
                 }
@@ -840,7 +840,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v2.8 loaded!');
+    console.log('🚀 API Monitor v2.9 loaded!');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
@@ -908,7 +908,6 @@
     //     xhr.send();
     //     
     // }, 3000);
-    }
     
     // Load saved data on startup
     const savedData = GM_getValue('apiMonitorData', null);
