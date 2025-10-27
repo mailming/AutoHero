@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
@@ -214,10 +214,19 @@
                 console.log('🔍 DEBUG: Generated filename =', filename);
                 console.log('🔍 DEBUG: Log content length =', logContent.length);
                 
-                // Use GM_download to save file
-                console.log('🔍 DEBUG: Calling GM_download...');
-                GM_download(logContent, filename, 'text/plain');
-                console.log('🔍 DEBUG: GM_download called successfully');
+                // Use proper download method
+                console.log('🔍 DEBUG: Creating download...');
+                const blob = new Blob([logContent], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                console.log('🔍 DEBUG: Download created successfully');
                 
                 // Update stats
                 apiMonitor.stats.logsWritten += apiMonitor.pendingLogs.length;
@@ -309,10 +318,19 @@
                 console.log('🔍 DEBUG: Generated filename =', filename);
                 console.log('🔍 DEBUG: Log content length =', logContent.length);
                 
-                // Use GM_download to save file
-                console.log('🔍 DEBUG: Calling GM_download...');
-                GM_download(logContent, filename, 'text/plain');
-                console.log('🔍 DEBUG: GM_download called successfully');
+                // Use proper download method
+                console.log('🔍 DEBUG: Creating download...');
+                const blob = new Blob([logContent], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                console.log('🔍 DEBUG: Download created successfully');
                 
                 // Update stats
                 apiMonitor.stats.logsWritten += 1; // Count as one manual write
@@ -692,7 +710,16 @@
                 };
                 
                 const filename = `lib-data-api-monitor-${Date.now()}.json`;
-                GM_download(JSON.stringify(data, null, 2), filename, 'text/plain');
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
                 
                 console.log(`📁 Saved lib.data change to: ${filename}`);
                 
@@ -1025,7 +1052,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.0 loaded! (with lib.data monitoring)');
+    console.log('🚀 API Monitor v3.1 loaded! (with lib.data monitoring)');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
@@ -1089,20 +1116,33 @@
         console.log(`🎮 Auto lib.data monitoring enabled - will start when lib.data is available`);
     }
     
-    // Test GM_download function immediately
+    // Test download function immediately
     setTimeout(() => {
-        console.log('🔍 DEBUG: Testing GM_download function...');
+        console.log('🔍 DEBUG: Testing download function...');
         try {
             const testContent = JSON.stringify({
                 test: true,
                 timestamp: new Date().toISOString(),
-                message: 'API Monitor Test File'
+                message: 'API Monitor Test File',
+                version: '3.0',
+                features: ['API monitoring', 'lib.data monitoring', 'file logging']
             }, null, 2);
             const testFilename = `AutoHero-Test-${Date.now()}.json`;
-            GM_download(testContent, testFilename, 'text/plain');
-            console.log('🔍 DEBUG: GM_download test completed - check Downloads folder for:', testFilename);
+            
+            const blob = new Blob([testContent], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = testFilename;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            console.log('🔍 DEBUG: Download test completed - check Downloads folder for:', testFilename);
         } catch (error) {
-            console.error('🔍 DEBUG: GM_download test failed:', error);
+            console.error('🔍 DEBUG: Download test failed:', error);
         }
     }, 2000);
     
