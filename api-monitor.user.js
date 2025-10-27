@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Hero Wars API Monitor
+// @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.4
-// @description  Comprehensive API monitoring for Hero Wars and other web applications with file logging
+// @version      2.5
+// @description  Comprehensive API monitoring for web applications with file logging
 // @author       AutoHero Project
 // @match        *://heroes-wb.nextersglobal.com/*
 // @match        *://*.nextersglobal.com/*
@@ -268,8 +268,8 @@
                 log: {
                     version: "1.2",
                     creator: {
-                        name: "Hero Wars API Monitor",
-                        version: "2.0"
+                        name: "API Monitor",
+                        version: "2.5"
                     },
                     entries: []
                 }
@@ -753,7 +753,7 @@
     }
     
     // Console commands
-    console.log('🚀 Hero Wars API Monitor v2.4 loaded!');
+    console.log('🚀 API Monitor v2.5 loaded!');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
