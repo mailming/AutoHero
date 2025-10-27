@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
 // @match        *://www.hero-wars.com/*
+// @match        *://heroes-wb.nextersglobal.com/*
+// @match        *://*.nextersglobal.com/*
+// @match        *://*/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -751,6 +754,7 @@
     // Intercept fetch requests
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
+        console.log('🔍 DEBUG: Fetch intercepted:', args[0]);
         const requestId = Date.now() + Math.random();
         const request = {
             id: requestId,
@@ -836,6 +840,7 @@
         const originalSend = xhr.send;
         
         xhr.open = function(method, url, ...args) {
+            console.log('🔍 DEBUG: XHR intercepted:', method, url);
             const requestId = Date.now() + Math.random();
             const request = {
                 id: requestId,
@@ -1052,8 +1057,11 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.3 loaded! (with lib.data monitoring)');
+    console.log('🚀 API Monitor v3.4 loaded! (with lib.data monitoring)');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
+    console.log('🔍 DEBUG: CONFIG.enableFileLogging =', CONFIG.enableFileLogging);
+    console.log('🔍 DEBUG: CONFIG.logToFileInterval =', CONFIG.logToFileInterval);
+    console.log('🔍 DEBUG: Auto-logging will start when API requests are detected');
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
     console.log('  - window.apiMonitor.clearData() - Clear all data');
