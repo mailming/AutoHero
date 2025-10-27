@@ -699,6 +699,7 @@
     
     // Console commands
     console.log('🚀 Hero Wars API Monitor v2.2 loaded!');
+    console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
     console.log('  - window.apiMonitor.clearData() - Clear all data');
@@ -729,6 +730,23 @@
         }, CONFIG.logToFileInterval);
         
         console.log(`📁 Auto file logging enabled - writing every ${CONFIG.logToFileInterval}ms`);
+    
+    // Test GM_download function immediately
+    setTimeout(() => {
+        console.log('🔍 DEBUG: Testing GM_download function...');
+        try {
+            const testContent = JSON.stringify({
+                test: true,
+                timestamp: new Date().toISOString(),
+                message: 'API Monitor Test File'
+            }, null, 2);
+            const testFilename = `api-monitor-test-${Date.now()}.json`;
+            GM_download(testContent, testFilename, 'text/plain');
+            console.log('🔍 DEBUG: GM_download test completed - check Downloads folder for:', testFilename);
+        } catch (error) {
+            console.error('🔍 DEBUG: GM_download test failed:', error);
+        }
+    }, 2000);
     }
     
     // Load saved data on startup
