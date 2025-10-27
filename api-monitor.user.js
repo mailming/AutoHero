@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
@@ -1052,7 +1052,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.2 loaded! (with lib.data monitoring)');
+    console.log('🚀 API Monitor v3.3 loaded! (with lib.data monitoring)');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
@@ -1116,35 +1116,6 @@
         console.log(`🎮 Auto lib.data monitoring enabled - will start when lib.data is available`);
     }
     
-    // Test download function immediately
-    setTimeout(() => {
-        console.log('🔍 DEBUG: Testing download function...');
-        try {
-            const testContent = JSON.stringify({
-                test: true,
-                timestamp: new Date().toISOString(),
-                message: 'API Monitor Test File',
-                version: '3.0',
-                features: ['API monitoring', 'lib.data monitoring', 'file logging']
-            }, null, 2);
-            const testFilename = `AutoHero-Test-${Date.now()}.json`;
-            
-            const blob = new Blob([testContent], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = testFilename;
-            a.style.display = 'none';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            console.log('🔍 DEBUG: Download test completed - check Downloads folder for:', testFilename);
-        } catch (error) {
-            console.error('🔍 DEBUG: Download test failed:', error);
-        }
-    }, 2000);
     
     // Test API interception with some sample requests (DISABLED)
     // setTimeout(() => {
