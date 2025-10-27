@@ -67,6 +67,7 @@
                     data: req,
                     timestamp: new Date().toISOString()
                 });
+                console.log('🔍 DEBUG: Added request to pendingLogs, count =', apiMonitor.pendingLogs.length);
             }
             
             apiMonitor.updateUI();
@@ -154,13 +155,20 @@
         
         // Write logs to file
         writeLogsToFile: function() {
+            console.log('🔍 DEBUG: writeLogsToFile called');
+            console.log('🔍 DEBUG: enableFileLogging =', CONFIG.enableFileLogging);
+            console.log('🔍 DEBUG: pendingLogs.length =', apiMonitor.pendingLogs.length);
+            
             if (!CONFIG.enableFileLogging || apiMonitor.pendingLogs.length === 0) {
+                console.log('🔍 DEBUG: Skipping file write - logging disabled or no pending logs');
                 return;
             }
             
             try {
+                console.log('🔍 DEBUG: Starting file write process');
                 let logContent = '';
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                console.log('🔍 DEBUG: Generated timestamp =', timestamp);
                 
                 if (CONFIG.logFormat === 'json') {
                     logContent = JSON.stringify({
@@ -190,9 +198,13 @@
                 
                 // Create filename with timestamp
                 const filename = `api-logs-${timestamp}.${CONFIG.logFormat === 'json' ? 'json' : CONFIG.logFormat === 'csv' ? 'csv' : 'txt'}`;
+                console.log('🔍 DEBUG: Generated filename =', filename);
+                console.log('🔍 DEBUG: Log content length =', logContent.length);
                 
                 // Use GM_download to save file
+                console.log('🔍 DEBUG: Calling GM_download...');
                 GM_download(logContent, filename, 'text/plain');
+                console.log('🔍 DEBUG: GM_download called successfully');
                 
                 // Update stats
                 apiMonitor.stats.logsWritten += apiMonitor.pendingLogs.length;
@@ -205,6 +217,7 @@
                 
             } catch (error) {
                 console.error('❌ Error writing logs to file:', error);
+                console.error('🔍 DEBUG: Error details:', error.message, error.stack);
             }
         },
         
