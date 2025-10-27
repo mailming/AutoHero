@@ -22,7 +22,7 @@
     const CONFIG = {
         maxRequests: 1000,
         maxResponseSize: 1024 * 1024, // 1MB
-        enableUI: false, // Disable UI by default for cleaner experience
+        enableUI: true, // Enable UI for testing and debugging
         enableExport: true,
         enableFiltering: true,
         logLevel: 'all', // 'all', 'errors', 'requests', 'responses'
