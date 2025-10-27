@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.5
+// @version      2.6
 // @description  Comprehensive API monitoring for web applications with file logging
 // @author       AutoHero Project
 // @match        *://heroes-wb.nextersglobal.com/*
@@ -223,7 +223,95 @@
         
         // Force write logs to file immediately
         forceWriteLogs: function() {
-            apiMonitor.writeLogsToFile();
+            console.log('🔍 DEBUG: forceWriteLogs called');
+            
+            // Get all current data instead of just pending logs
+            const allData = apiMonitor.getAllData();
+            
+            if (allData.requests.length === 0 && allData.responses.length === 0 && allData.errors.length === 0) {
+                console.log('🔍 DEBUG: No data to write - no requests, responses, or errors captured');
+                return;
+            }
+            
+            try {
+                console.log('🔍 DEBUG: Writing all current data to file');
+                let logContent = '';
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                
+                if (CONFIG.logFormat === 'json') {
+                    logContent = JSON.stringify(allData, null, 2);
+                } else if (CONFIG.logFormat === 'text') {
+                    logContent = `=== API MONITOR LOGS ===\n`;
+                    logContent += `Timestamp: ${allData.timestamp}\n`;
+                    logContent += `URL: ${allData.url}\n`;
+                    logContent += `Total Requests: ${allData.stats.totalRequests}\n`;
+                    logContent += `Total Responses: ${allData.stats.totalResponses}\n`;
+                    logContent += `Total Errors: ${allData.stats.totalErrors}\n\n`;
+                    
+                    logContent += `--- REQUESTS ---\n`;
+                    allData.requests.forEach((req, i) => {
+                        logContent += `${i + 1}. ${req.method} ${req.url}\n`;
+                        logContent += `   Timestamp: ${req.timestamp}\n`;
+                        if (req.headers && Object.keys(req.headers).length > 0) {
+                            logContent += `   Headers: ${JSON.stringify(req.headers)}\n`;
+                        }
+                        logContent += `\n`;
+                    });
+                    
+                    logContent += `--- RESPONSES ---\n`;
+                    allData.responses.forEach((resp, i) => {
+                        logContent += `${i + 1}. ${resp.status} ${resp.statusText}\n`;
+                        logContent += `   Request ID: ${resp.requestId}\n`;
+                        logContent += `   Timestamp: ${resp.timestamp}\n`;
+                        logContent += `\n`;
+                    });
+                    
+                    logContent += `--- ERRORS ---\n`;
+                    allData.errors.forEach((err, i) => {
+                        logContent += `${i + 1}. ${err.error}\n`;
+                        logContent += `   Request ID: ${err.requestId}\n`;
+                        logContent += `   Timestamp: ${err.timestamp}\n`;
+                        logContent += `\n`;
+                    });
+                } else if (CONFIG.logFormat === 'csv') {
+                    const headers = ['Type', 'Timestamp', 'Method', 'URL', 'Status', 'Size'];
+                    const rows = [];
+                    
+                    allData.requests.forEach(req => {
+                        rows.push(['request', req.timestamp, req.method, req.url, '', '']);
+                    });
+                    
+                    allData.responses.forEach(resp => {
+                        rows.push(['response', resp.timestamp, '', '', resp.status, JSON.stringify(resp.body).length]);
+                    });
+                    
+                    allData.errors.forEach(err => {
+                        rows.push(['error', err.timestamp, '', '', 'ERROR', err.error.length]);
+                    });
+                    
+                    logContent = headers.join(',') + '\n' + rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+                }
+                
+                const filename = `AutoHero-API-Logs-${timestamp}.${CONFIG.logFormat === 'json' ? 'json' : CONFIG.logFormat === 'csv' ? 'csv' : 'txt'}`;
+                console.log('🔍 DEBUG: Generated filename =', filename);
+                console.log('🔍 DEBUG: Log content length =', logContent.length);
+                
+                // Use GM_download to save file
+                console.log('🔍 DEBUG: Calling GM_download...');
+                GM_download(logContent, filename, 'text/plain');
+                console.log('🔍 DEBUG: GM_download called successfully');
+                
+                // Update stats
+                apiMonitor.stats.logsWritten += 1; // Count as one manual write
+                apiMonitor.stats.lastLogTime = Date.now();
+                
+                console.log(`📁 Manually logged all data to file: ${filename}`);
+                console.log(`📊 Logged ${allData.requests.length} requests, ${allData.responses.length} responses, ${allData.errors.length} errors`);
+                
+            } catch (error) {
+                console.error('❌ Error writing logs to file:', error);
+                console.error('🔍 DEBUG: Error details:', error.message, error.stack);
+            }
         },
         
         // Get log statistics
@@ -269,7 +357,7 @@
                     version: "1.2",
                     creator: {
                         name: "API Monitor",
-                        version: "2.5"
+                        version: "2.6"
                     },
                     entries: []
                 }
@@ -753,7 +841,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v2.5 loaded!');
+    console.log('🚀 API Monitor v2.6 loaded!');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
