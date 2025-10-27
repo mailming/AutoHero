@@ -1,12 +1,11 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.9
-// @description  Comprehensive API monitoring for web applications with file logging
+// @version      3.0
+// @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
-// @match        *://heroes-wb.nextersglobal.com/*
-// @match        *://*.nextersglobal.com/*
-// @match        *://*/*
+// @match        *://hero-wars.com/*
+// @match        *://www.hero-wars.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -29,7 +28,12 @@
         enableFileLogging: true, // Enable file logging by default
         logToFileInterval: 3000, // Log to file every 3 seconds (more frequent)
         maxLogFileSize: 10 * 1024 * 1024, // 10MB max log file size
-        logFormat: 'json' // 'json', 'text', 'csv'
+        logFormat: 'json', // 'json', 'text', 'csv'
+        // Lib.data monitoring configuration
+        enableLibDataMonitoring: true, // Enable lib.data monitoring
+        libDataCheckInterval: 3000, // Check lib.data every 3 seconds
+        libDataLogChanges: true, // Log lib.data changes to console
+        libDataSaveChanges: true // Save lib.data changes to files
     };
     
     // Initialize API Monitor - Make it globally accessible
@@ -38,13 +42,22 @@
         responses: [],
         errors: [],
         pendingLogs: [], // New logs waiting to be written to file
+        // Lib.data monitoring
+        libDataMonitor: {
+            isMonitoring: false,
+            lastDataHash: null,
+            changeCount: 0,
+            intervalId: null,
+            lastLibData: null
+        },
         stats: {
             totalRequests: 0,
             totalResponses: 0,
             totalErrors: 0,
             startTime: Date.now(),
             logsWritten: 0,
-            lastLogTime: Date.now()
+            lastLogTime: Date.now(),
+            libDataChanges: 0
         },
         
         // Add request to monitor
@@ -468,6 +481,14 @@
                 logStatus.textContent = `📁 File Logging: ${CONFIG.enableFileLogging ? 'ON' : 'OFF'} | Written: ${logsWritten} | Pending: ${pendingLogs}`;
                 statsDiv.appendChild(logStatus);
                 
+                const br3 = document.createElement('br');
+                statsDiv.appendChild(br3);
+                
+                const libDataStatus = document.createElement('span');
+                libDataStatus.style.color = apiMonitor.libDataMonitor.isMonitoring ? 'green' : 'red';
+                libDataStatus.textContent = `🎮 Lib.data: ${apiMonitor.libDataMonitor.isMonitoring ? 'ON' : 'OFF'} | Changes: ${apiMonitor.stats.libDataChanges}`;
+                statsDiv.appendChild(libDataStatus);
+                
                 statsElement.appendChild(statsDiv);
             }
         },
@@ -565,6 +586,135 @@
                 </body>
                 </html>
             `);
+        },
+        
+        // Lib.data monitoring methods
+        startLibDataMonitoring: function() {
+            if (!CONFIG.enableLibDataMonitoring) {
+                console.log('⚠️ Lib.data monitoring is disabled in CONFIG');
+                return;
+            }
+            
+            if (apiMonitor.libDataMonitor.isMonitoring) {
+                console.log('⚠️ Lib.data monitoring already running');
+                return;
+            }
+            
+            console.log('🎮 Starting lib.data monitoring...');
+            apiMonitor.libDataMonitor.isMonitoring = true;
+            
+            // Initial check
+            apiMonitor.checkLibData();
+            
+            // Set up interval
+            apiMonitor.libDataMonitor.intervalId = setInterval(() => {
+                apiMonitor.checkLibData();
+            }, CONFIG.libDataCheckInterval);
+            
+            console.log(`✅ Lib.data monitoring started (checking every ${CONFIG.libDataCheckInterval}ms)`);
+        },
+        
+        stopLibDataMonitoring: function() {
+            if (!apiMonitor.libDataMonitor.isMonitoring) {
+                console.log('⚠️ Lib.data monitoring not running');
+                return;
+            }
+            
+            if (apiMonitor.libDataMonitor.intervalId) {
+                clearInterval(apiMonitor.libDataMonitor.intervalId);
+                apiMonitor.libDataMonitor.intervalId = null;
+            }
+            
+            apiMonitor.libDataMonitor.isMonitoring = false;
+            console.log('⏹️ Lib.data monitoring stopped');
+        },
+        
+        checkLibData: function() {
+            if (typeof lib === 'undefined' || !lib.data) {
+                return; // lib.data not available yet
+            }
+            
+            const currentData = lib.data;
+            const currentHash = apiMonitor.getDataHash(currentData);
+            
+            if (currentHash !== apiMonitor.libDataMonitor.lastDataHash) {
+                apiMonitor.libDataMonitor.changeCount++;
+                apiMonitor.libDataMonitor.lastDataHash = currentHash;
+                apiMonitor.libDataMonitor.lastLibData = JSON.parse(JSON.stringify(currentData));
+                apiMonitor.stats.libDataChanges++;
+                
+                if (CONFIG.libDataLogChanges) {
+                    console.log(`🔄 lib.data changed! (Change #${apiMonitor.libDataMonitor.changeCount})`);
+                    console.log(`📊 Data keys: ${Object.keys(currentData).length} properties`);
+                    console.log(`🔑 Main keys: ${Object.keys(currentData).slice(0, 10).join(', ')}`);
+                }
+                
+                if (CONFIG.libDataSaveChanges) {
+                    apiMonitor.saveLibDataToFile(currentData);
+                }
+                
+                // Add to pending logs for API monitor
+                if (CONFIG.enableFileLogging) {
+                    apiMonitor.pendingLogs.push({
+                        type: 'lib_data_change',
+                        data: {
+                            changeNumber: apiMonitor.libDataMonitor.changeCount,
+                            keys: Object.keys(currentData),
+                            keyCount: Object.keys(currentData).length,
+                            timestamp: new Date().toISOString()
+                        },
+                        timestamp: new Date().toISOString()
+                    });
+                }
+                
+                apiMonitor.updateUI();
+            }
+        },
+        
+        getDataHash: function(data) {
+            try {
+                return btoa(JSON.stringify(data)).slice(0, 20);
+            } catch (e) {
+                return 'error_' + Date.now();
+            }
+        },
+        
+        saveLibDataToFile: function(libData) {
+            try {
+                const timestamp = new Date().toISOString();
+                const data = {
+                    timestamp: timestamp,
+                    url: window.location.href,
+                    libData: libData,
+                    changeNumber: apiMonitor.libDataMonitor.changeCount,
+                    totalChanges: apiMonitor.stats.libDataChanges,
+                    source: 'api-monitor-integrated'
+                };
+                
+                const filename = `lib-data-api-monitor-${Date.now()}.json`;
+                GM_download(JSON.stringify(data, null, 2), filename, 'text/plain');
+                
+                console.log(`📁 Saved lib.data change to: ${filename}`);
+                
+            } catch (error) {
+                console.error('❌ Error saving lib.data to file:', error);
+            }
+        },
+        
+        getLibDataStats: function() {
+            return {
+                isMonitoring: apiMonitor.libDataMonitor.isMonitoring,
+                changeCount: apiMonitor.libDataMonitor.changeCount,
+                totalChanges: apiMonitor.stats.libDataChanges,
+                lastDataHash: apiMonitor.libDataMonitor.lastDataHash,
+                checkInterval: CONFIG.libDataCheckInterval,
+                libDataAvailable: typeof lib !== 'undefined' && !!lib.data
+            };
+        },
+        
+        forceLibDataCheck: function() {
+            console.log('🔍 Force checking lib.data...');
+            apiMonitor.checkLibData();
         }
     };
     
@@ -827,6 +977,40 @@
         
         controlsDiv.appendChild(buttonContainer2);
         
+        // Create third button container for lib.data controls
+        const buttonContainer3 = document.createElement('div');
+        buttonContainer3.style.marginBottom = '10px';
+        
+        // Start Lib.data Monitoring button
+        const startLibDataBtn = document.createElement('button');
+        startLibDataBtn.textContent = '🎮 Start Lib.data';
+        startLibDataBtn.style.cssText = 'margin: 2px; padding: 5px; background: #2196F3; color: white;';
+        startLibDataBtn.addEventListener('click', () => apiMonitor.startLibDataMonitoring());
+        buttonContainer3.appendChild(startLibDataBtn);
+        
+        // Stop Lib.data Monitoring button
+        const stopLibDataBtn = document.createElement('button');
+        stopLibDataBtn.textContent = '⏹️ Stop Lib.data';
+        stopLibDataBtn.style.cssText = 'margin: 2px; padding: 5px; background: #f44336; color: white;';
+        stopLibDataBtn.addEventListener('click', () => apiMonitor.stopLibDataMonitoring());
+        buttonContainer3.appendChild(stopLibDataBtn);
+        
+        // Lib.data Stats button
+        const libDataStatsBtn = document.createElement('button');
+        libDataStatsBtn.textContent = 'Lib.data Stats';
+        libDataStatsBtn.style.cssText = 'margin: 2px; padding: 5px;';
+        libDataStatsBtn.addEventListener('click', () => console.log(apiMonitor.getLibDataStats()));
+        buttonContainer3.appendChild(libDataStatsBtn);
+        
+        // Force Lib.data Check button
+        const forceLibDataBtn = document.createElement('button');
+        forceLibDataBtn.textContent = '🔍 Check Now';
+        forceLibDataBtn.style.cssText = 'margin: 2px; padding: 5px;';
+        forceLibDataBtn.addEventListener('click', () => apiMonitor.forceLibDataCheck());
+        buttonContainer3.appendChild(forceLibDataBtn);
+        
+        controlsDiv.appendChild(buttonContainer3);
+        
         document.body.appendChild(controlsDiv);
         
         // Update stats
@@ -841,7 +1025,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v2.9 loaded!');
+    console.log('🚀 API Monitor v3.0 loaded! (with lib.data monitoring)');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
@@ -855,6 +1039,13 @@
     console.log(`  - File logging: ${CONFIG.enableFileLogging ? 'ENABLED' : 'DISABLED'}`);
     console.log(`  - Log format: ${CONFIG.logFormat}`);
     console.log(`  - Auto-save interval: ${CONFIG.logToFileInterval}ms`);
+    console.log('🎮 Lib.data monitoring commands:');
+    console.log('  - window.apiMonitor.startLibDataMonitoring() - Start lib.data monitoring');
+    console.log('  - window.apiMonitor.stopLibDataMonitoring() - Stop lib.data monitoring');
+    console.log('  - window.apiMonitor.getLibDataStats() - Get lib.data statistics');
+    console.log('  - window.apiMonitor.forceLibDataCheck() - Force check lib.data now');
+    console.log(`  - Lib.data monitoring: ${CONFIG.enableLibDataMonitoring ? 'ENABLED' : 'DISABLED'}`);
+    console.log(`  - Check interval: ${CONFIG.libDataCheckInterval}ms`);
     
     // Auto-save data periodically
     setInterval(() => {
@@ -873,6 +1064,29 @@
         }, CONFIG.logToFileInterval);
         
         console.log(`📁 Auto file logging enabled - writing every ${CONFIG.logToFileInterval}ms`);
+    }
+    
+    // Auto-start lib.data monitoring
+    if (CONFIG.enableLibDataMonitoring) {
+        // Wait a bit for the page to load, then start monitoring
+        setTimeout(() => {
+            if (typeof lib !== 'undefined' && lib.data) {
+                console.log('🎯 lib.data detected, auto-starting monitoring...');
+                apiMonitor.startLibDataMonitoring();
+            } else {
+                console.log('⏳ Waiting for lib.data to become available...');
+                // Check every second for lib.data
+                const checkInterval = setInterval(() => {
+                    if (typeof lib !== 'undefined' && lib.data) {
+                        clearInterval(checkInterval);
+                        console.log('🎯 lib.data detected, auto-starting monitoring...');
+                        apiMonitor.startLibDataMonitoring();
+                    }
+                }, 1000);
+            }
+        }, 2000); // Wait 2 seconds after page load
+        
+        console.log(`🎮 Auto lib.data monitoring enabled - will start when lib.data is available`);
     }
     
     // Test GM_download function immediately
