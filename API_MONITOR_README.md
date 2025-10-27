@@ -12,6 +12,9 @@ A comprehensive Tampermonkey script for monitoring API calls, responses, and err
 - **Auto-save**: Automatically saves data every 30 seconds
 - **Response Body Capture**: Captures response bodies with smart content type handling
 - **Memory Management**: Limits stored data to prevent memory issues
+- **🆕 File Logging**: Automatically logs all API calls and responses to files
+- **🆕 Multiple Log Formats**: Support for JSON, text, and CSV log formats
+- **🆕 Automatic File Downloads**: Logs are automatically downloaded as files
 
 ## Installation
 
@@ -48,6 +51,13 @@ window.apiMonitor.exportData('har')
 
 // Get raw data object
 window.apiMonitor.getAllData()
+
+// 🆕 File Logging Commands
+// Force write logs to file immediately
+window.apiMonitor.forceWriteLogs()
+
+// Get logging statistics
+window.apiMonitor.getLogStats()
 ```
 
 ### Configuration
@@ -60,7 +70,11 @@ const CONFIG = {
     enableUI: true,           // Show UI controls
     enableExport: true,       // Enable export functionality
     enableFiltering: true,    // Enable request filtering
-    logLevel: 'all'           // 'all', 'errors', 'requests', 'responses'
+    logLevel: 'all',          // 'all', 'errors', 'requests', 'responses'
+    enableFileLogging: true,  // Enable automatic file logging
+    logToFileInterval: 5000,  // Log to file every 5 seconds
+    maxLogFileSize: 10 * 1024 * 1024, // 10MB max log file size
+    logFormat: 'json'         // 'json', 'text', 'csv'
 };
 ```
 
@@ -108,6 +122,71 @@ The script is optimized for Hero Wars API monitoring with:
 - Authentication header tracking
 - Session management monitoring
 - Battle API call tracking
+
+## File Logging
+
+### Automatic File Logging
+The script automatically logs all API calls and responses to files:
+
+- **Automatic Downloads**: Files are automatically downloaded to your default download folder
+- **Multiple Formats**: Support for JSON, text, and CSV formats
+- **Configurable Interval**: Set how often logs are written (default: every 5 seconds)
+- **File Naming**: Files are named with timestamps (e.g., `api-logs-2024-01-01T12-00-00-000Z.json`)
+
+### Log Formats
+
+#### JSON Format (Default)
+```json
+{
+  "session": {
+    "url": "https://heroes-wb.nextersglobal.com/",
+    "timestamp": "2024-01-01T12:00:00.000Z",
+    "logsCount": 5
+  },
+  "logs": [
+    {
+      "type": "request",
+      "data": { /* request data */ },
+      "timestamp": "2024-01-01T12:00:00.000Z"
+    },
+    {
+      "type": "response", 
+      "data": { /* response data */ },
+      "timestamp": "2024-01-01T12:00:01.000Z"
+    }
+  ]
+}
+```
+
+#### Text Format
+```
+[2024-01-01T12:00:00.000Z] REQUEST: {
+  "id": "1234567890",
+  "type": "fetch",
+  "url": "https://api.example.com/endpoint",
+  "method": "POST",
+  "headers": { "Content-Type": "application/json" },
+  "body": { "key": "value" },
+  "timestamp": "2024-01-01T12:00:00.000Z"
+}
+
+[2024-01-01T12:00:01.000Z] RESPONSE: {
+  "requestId": "1234567890",
+  "status": 200,
+  "statusText": "OK",
+  "headers": { "Content-Type": "application/json" },
+  "body": { "success": true },
+  "timestamp": "2024-01-01T12:00:01.000Z"
+}
+```
+
+#### CSV Format
+```csv
+timestamp,type,url,method,status,error
+2024-01-01T12:00:00.000Z,request,https://api.example.com/endpoint,POST,,
+2024-01-01T12:00:01.000Z,response,https://api.example.com/endpoint,,200,
+2024-01-01T12:00:02.000Z,error,https://api.example.com/endpoint,,,Network Error
+```
 
 ## Export Formats
 
@@ -167,6 +246,15 @@ To contribute to this script:
 5. Submit a pull request
 
 ## Changelog
+
+### Version 2.1
+- **🆕 File Logging**: Added automatic file logging functionality
+- **🆕 Multiple Log Formats**: Support for JSON, text, and CSV formats
+- **🆕 Automatic Downloads**: Logs are automatically downloaded as files
+- **🆕 Configurable Logging**: Customizable logging intervals and formats
+- **🆕 Log Statistics**: Track logging performance and statistics
+- **🆕 Enhanced UI**: Added file logging controls and status display
+- **🆕 Force Logging**: Manual trigger for immediate log file creation
 
 ### Version 2.0
 - Complete rewrite with enhanced features
