@@ -13,6 +13,7 @@
 // @grant        GM_download
 // @updateURL   https://github.com/mailming/AutoHero/raw/develop/api-monitor.user.js
 // @downloadURL https://github.com/mailming/AutoHero/raw/develop/api-monitor.user.js
+// ==/UserScript==
 
 (function() {
     'use strict';
@@ -872,6 +873,7 @@
         }, CONFIG.logToFileInterval);
         
         console.log(`📁 Auto file logging enabled - writing every ${CONFIG.logToFileInterval}ms`);
+    }
     
     // Test GM_download function immediately
     setTimeout(() => {
@@ -908,14 +910,5 @@
     //     xhr.send();
     //     
     // }, 3000);
-    
-    // Load saved data on startup
-    const savedData = GM_getValue('apiMonitorData', null);
-    if (savedData && savedData.requests) {
-        apiMonitor.requests = savedData.requests || [];
-        apiMonitor.responses = savedData.responses || [];
-        apiMonitor.errors = savedData.errors || [];
-        console.log('📁 Loaded saved API monitor data');
-    }
     
 })();
