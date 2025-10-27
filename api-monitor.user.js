@@ -197,7 +197,7 @@
                 }
                 
                 // Create filename with timestamp
-                const filename = `api-logs-${timestamp}.${CONFIG.logFormat === 'json' ? 'json' : CONFIG.logFormat === 'csv' ? 'csv' : 'txt'}`;
+                const filename = `AutoHero-API-Logs-${timestamp}.${CONFIG.logFormat === 'json' ? 'json' : CONFIG.logFormat === 'csv' ? 'csv' : 'txt'}`;
                 console.log('🔍 DEBUG: Generated filename =', filename);
                 console.log('🔍 DEBUG: Log content length =', logContent.length);
                 
@@ -795,7 +795,7 @@
                 timestamp: new Date().toISOString(),
                 message: 'API Monitor Test File'
             }, null, 2);
-            const testFilename = `api-monitor-test-${Date.now()}.json`;
+            const testFilename = `AutoHero-Test-${Date.now()}.json`;
             GM_download(testContent, testFilename, 'text/plain');
             console.log('🔍 DEBUG: GM_download test completed - check Downloads folder for:', testFilename);
         } catch (error) {
