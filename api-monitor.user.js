@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hero Wars API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  Comprehensive API monitoring for Hero Wars and other web applications with file logging
 // @author       AutoHero Project
 // @match        *://heroes-wb.nextersglobal.com/*
@@ -356,20 +356,31 @@
                 const logsWritten = apiMonitor.stats.logsWritten;
                 const pendingLogs = apiMonitor.pendingLogs.length;
                 
-                statsElement.innerHTML = `
-                    <div style="background: #f0f0f0; padding: 10px; border-radius: 5px; margin: 10px 0; font-family: monospace;">
-                        <strong>API Monitor Stats:</strong><br>
-                        Requests: ${apiMonitor.stats.totalRequests} | 
-                        Responses: ${apiMonitor.stats.totalResponses} | 
-                        Errors: ${apiMonitor.stats.totalErrors} | 
-                        Runtime: ${runtime}s<br>
-                        <span style="color: ${CONFIG.enableFileLogging ? 'green' : 'red'}">
-                            📁 File Logging: ${CONFIG.enableFileLogging ? 'ON' : 'OFF'} | 
-                            Written: ${logsWritten} | 
-                            Pending: ${pendingLogs}
-                        </span>
-                    </div>
-                `;
+                // Clear and rebuild stats element safely
+                statsElement.textContent = '';
+                const statsDiv = document.createElement('div');
+                statsDiv.style.cssText = 'background: #f0f0f0; padding: 10px; border-radius: 5px; margin: 10px 0; font-family: monospace;';
+                
+                const title = document.createElement('strong');
+                title.textContent = 'API Monitor Stats:';
+                statsDiv.appendChild(title);
+                
+                const br1 = document.createElement('br');
+                statsDiv.appendChild(br1);
+                
+                const statsText = document.createElement('span');
+                statsText.textContent = `Requests: ${apiMonitor.stats.totalRequests} | Responses: ${apiMonitor.stats.totalResponses} | Errors: ${apiMonitor.stats.totalErrors} | Runtime: ${runtime}s`;
+                statsDiv.appendChild(statsText);
+                
+                const br2 = document.createElement('br');
+                statsDiv.appendChild(br2);
+                
+                const logStatus = document.createElement('span');
+                logStatus.style.color = CONFIG.enableFileLogging ? 'green' : 'red';
+                logStatus.textContent = `📁 File Logging: ${CONFIG.enableFileLogging ? 'ON' : 'OFF'} | Written: ${logsWritten} | Pending: ${pendingLogs}`;
+                statsDiv.appendChild(logStatus);
+                
+                statsElement.appendChild(statsDiv);
             }
         },
         
@@ -671,18 +682,62 @@
             font-family: Arial, sans-serif;
         `;
         
-        controlsDiv.innerHTML = `
-            <div style="margin-bottom: 10px;">
-                <button onclick="window.apiMonitor.showData()" style="margin: 2px; padding: 5px;">View Data</button>
-                <button onclick="window.apiMonitor.clearData()" style="margin: 2px; padding: 5px;">Clear</button>
-                <button onclick="window.apiMonitor.exportData('json')" style="margin: 2px; padding: 5px;">Export JSON</button>
-                <button onclick="window.apiMonitor.exportData('har')" style="margin: 2px; padding: 5px;">Export HAR</button>
-            </div>
-            <div style="margin-bottom: 10px;">
-                <button onclick="window.apiMonitor.forceWriteLogs()" style="margin: 2px; padding: 5px; background: #4CAF50; color: white;">📁 Write Logs</button>
-                <button onclick="console.log(window.apiMonitor.getLogStats())" style="margin: 2px; padding: 5px;">Log Stats</button>
-            </div>
-        `;
+        // Create controls safely without innerHTML
+        controlsDiv.textContent = '';
+        
+        // Create button container
+        const buttonContainer1 = document.createElement('div');
+        buttonContainer1.style.marginBottom = '10px';
+        
+        // View Data button
+        const viewDataBtn = document.createElement('button');
+        viewDataBtn.textContent = 'View Data';
+        viewDataBtn.style.cssText = 'margin: 2px; padding: 5px;';
+        viewDataBtn.addEventListener('click', () => apiMonitor.showData());
+        buttonContainer1.appendChild(viewDataBtn);
+        
+        // Clear button
+        const clearBtn = document.createElement('button');
+        clearBtn.textContent = 'Clear';
+        clearBtn.style.cssText = 'margin: 2px; padding: 5px;';
+        clearBtn.addEventListener('click', () => apiMonitor.clearData());
+        buttonContainer1.appendChild(clearBtn);
+        
+        // Export JSON button
+        const exportJsonBtn = document.createElement('button');
+        exportJsonBtn.textContent = 'Export JSON';
+        exportJsonBtn.style.cssText = 'margin: 2px; padding: 5px;';
+        exportJsonBtn.addEventListener('click', () => apiMonitor.exportData('json'));
+        buttonContainer1.appendChild(exportJsonBtn);
+        
+        // Export HAR button
+        const exportHarBtn = document.createElement('button');
+        exportHarBtn.textContent = 'Export HAR';
+        exportHarBtn.style.cssText = 'margin: 2px; padding: 5px;';
+        exportHarBtn.addEventListener('click', () => apiMonitor.exportData('har'));
+        buttonContainer1.appendChild(exportHarBtn);
+        
+        controlsDiv.appendChild(buttonContainer1);
+        
+        // Create second button container
+        const buttonContainer2 = document.createElement('div');
+        buttonContainer2.style.marginBottom = '10px';
+        
+        // Write Logs button
+        const writeLogsBtn = document.createElement('button');
+        writeLogsBtn.textContent = '📁 Write Logs';
+        writeLogsBtn.style.cssText = 'margin: 2px; padding: 5px; background: #4CAF50; color: white;';
+        writeLogsBtn.addEventListener('click', () => apiMonitor.forceWriteLogs());
+        buttonContainer2.appendChild(writeLogsBtn);
+        
+        // Log Stats button
+        const logStatsBtn = document.createElement('button');
+        logStatsBtn.textContent = 'Log Stats';
+        logStatsBtn.style.cssText = 'margin: 2px; padding: 5px;';
+        logStatsBtn.addEventListener('click', () => console.log(apiMonitor.getLogStats()));
+        buttonContainer2.appendChild(logStatsBtn);
+        
+        controlsDiv.appendChild(buttonContainer2);
         
         document.body.appendChild(controlsDiv);
         
@@ -698,7 +753,7 @@
     }
     
     // Console commands
-    console.log('🚀 Hero Wars API Monitor v2.2 loaded!');
+    console.log('🚀 Hero Wars API Monitor v2.3 loaded!');
     console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
     console.log('📊 Available commands:');
     console.log('  - window.apiMonitor.showData() - View all captured data');
@@ -747,6 +802,25 @@
             console.error('🔍 DEBUG: GM_download test failed:', error);
         }
     }, 2000);
+    
+    // Test API interception with some sample requests
+    setTimeout(() => {
+        console.log('🔍 DEBUG: Testing API interception...');
+        
+        // Test fetch request
+        fetch('https://httpbin.org/get?test=api-monitor')
+            .then(response => response.json())
+            .then(data => console.log('🔍 DEBUG: Fetch test completed:', data))
+            .catch(error => console.error('🔍 DEBUG: Fetch test failed:', error));
+            
+        // Test XHR request
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'https://httpbin.org/get?test=xhr-monitor');
+        xhr.onload = () => console.log('🔍 DEBUG: XHR test completed:', xhr.responseText);
+        xhr.onerror = () => console.error('🔍 DEBUG: XHR test failed');
+        xhr.send();
+        
+    }, 3000);
     }
     
     // Load saved data on startup
