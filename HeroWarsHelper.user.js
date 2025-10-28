@@ -7402,30 +7402,16 @@
 	 * Выбор лучшей команды против соперника
 	 */
 	async function selectBestTeamForOpponent(availableTeams, opponentTeam, battleType = 'arena') {
-		let bestTeam = null;
-		let bestWinRate = 0;
-		
-		// Try current team first
+		// Follow adventure pattern: Use system's pre-configured team only
+		// No dynamic team selection - use what the system provides
 		if (availableTeams.current) {
 			const winRate = await calcArenaBattleWinRate(availableTeams.current, opponentTeam, battleType);
-			if (winRate > bestWinRate) {
-				bestTeam = availableTeams.current;
-				bestWinRate = winRate;
-			}
+			return { team: availableTeams.current, winRate: winRate };
 		}
 		
-		// Try alternative teams if current team has low win rate
-		if (bestWinRate < 0.5 && availableTeams.alternatives) {
-			for (const team of availableTeams.alternatives) {
-				const winRate = await calcArenaBattleWinRate(team, opponentTeam, battleType);
-				if (winRate > bestWinRate) {
-					bestTeam = team;
-					bestWinRate = winRate;
-				}
-			}
-		}
-		
-		return { team: bestTeam, winRate: bestWinRate };
+		// Fallback if no current team available
+		console.warn('No current team available from system');
+		return { team: null, winRate: 0 };
 	}
 	
 	/**
@@ -7787,71 +7773,98 @@
 		}
 		
 		this.getTeamConfiguration = function() {
+			// Use system's pre-configured teams from teamGetAll (like adventure system)
+			if (!this.teamInfo || !this.teamInfo.teams) {
+				console.error('Team info not available, using fallback configuration');
+				return this.getFallbackTeamConfiguration();
+			}
+			
+			const teamData = this.teamInfo.teams;
+			const favorData = this.teamInfo.favor;
+			
 			if (this.arenaType === 'grand') {
-				// Grand Arena uses 3 teams with different structure
+				// Grand Arena: Use system's pre-configured grand arena teams
+				const grandTeams = teamData.grand || [];
+				const grandFavor = favorData.grand || {};
+				
+				console.log('Grand Arena teams from system:', grandTeams);
+				console.log('Grand Arena favor from system:', grandFavor);
+				
+				// Process grand arena teams (3 teams of 6 elements each: 5 heroes + 1 pet)
+				const heroes = [];
+				const pets = [];
+				
+				for (let i = 0; i < grandTeams.length; i++) {
+					const team = grandTeams[i];
+					if (team && team.length >= 6) {
+						heroes.push(team.slice(0, 5)); // First 5 are heroes
+						pets.push(team[5]); // 6th element is pet
+					}
+				}
+				
+				return {
+					heroes: heroes,
+					pets: pets,
+					favor: grandFavor,
+					banners: [] // Will be handled by system
+				};
+			} else {
+				// Regular Arena: Use system's pre-configured arena team
+				const arenaTeam = teamData.arena || [];
+				const arenaFavor = favorData.arena || {};
+				
+				console.log('Regular Arena team from system:', arenaTeam);
+				console.log('Regular Arena favor from system:', arenaFavor);
+				
+				// Process arena team (6 elements: 5 heroes + 1 pet)
+				let heroes = [];
+				let pet = null;
+				
+				if (arenaTeam && arenaTeam.length >= 6) {
+					heroes = arenaTeam.slice(0, 5); // First 5 are heroes
+					pet = arenaTeam[5]; // 6th element is pet
+				}
+				
+				return {
+					heroes: heroes,
+					pet: pet,
+					favor: arenaFavor,
+					banners: [] // Will be handled by system
+				};
+			}
+		}
+		
+		this.getFallbackTeamConfiguration = function() {
+			// Fallback configuration if system teams are not available
+			if (this.arenaType === 'grand') {
 				return {
 					heroes: [
 						[58, 1, 64, 13, 55],  // Team 1
 						[42, 56, 9, 62, 43],  // Team 2
 						[16, 31, 57, 40, 48]  // Team 3
 					],
-					pets: [6006, 6005, 6004],  // One pet per team
-					favor: {
-						"1": 6002,
-						"9": 6005,
-						"16": 6004,
-						"42": 6007,
-						"48": 6000,
-						"55": 6001,
-						"56": 6006,
-						"62": 6003,
-						"64": 6008
-					},
-					banners: [1, 6, 2]  // One banner per team
+					pets: [6006, 6005, 6004],
+					favor: {},
+					banners: [1, 6, 2]
 				};
 			} else {
-				// Regular Arena uses single team
 				return {
 					heroes: [57, 31, 55, 40, 16],
 					pet: 6008,
-					favor: {
-						"16": 6004,
-						"31": 6006,
-						"55": 6001,
-						"57": 6003
-					},
+					favor: {},
 					banners: [6]
 				};
 			}
 		}
 		
 		this.getAvailableTeamsForBattle = function() {
-			const arenaTeamKey = this.arenaType === 'grand' ? 'grand' : 'arena';
-			const currentTeam = this.teamInfo.teams[arenaTeamKey];
-			const favor = this.teamInfo.favor[arenaTeamKey] || {};
-			
-			// Create current team structure
-			const currentTeamData = {
-				heroes: currentTeam.filter(id => id < 6000),
-				pet: currentTeam.filter(id => id >= 6000).pop(),
-				favor: favor
-			};
-			
-			// Create alternative teams (top 5 heroes by power)
-			const topHeroes = this.teamInfo.heroes
-				.sort((a, b) => b.power - a.power)
-				.slice(0, 5)
-				.map(h => h.id);
-			
-			const alternativeTeam = {
-				heroes: topHeroes,
-				pet: currentTeamData.pet,
-				favor: favor
-			};
+			// Use system's pre-configured teams only (like adventure system)
+			// No dynamic team selection - use what the system provides
+			const teamConfig = this.getTeamConfiguration();
 			
 			return {
-				current: currentTeamData,
-				alternatives: [alternativeTeam]
+				current: teamConfig,
+				alternatives: [] // No alternatives - use system's team only
 			};
 		}
 		
