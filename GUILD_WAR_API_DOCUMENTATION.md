@@ -16,6 +16,8 @@ https://api.hero-wars.com/
 
 ## API Calls
 
+
+
 ### 1. clanWarGetInfo
 
 **Description:** Retrieves current Guild War information including available slots and team data.
@@ -25,10 +27,18 @@ https://api.hero-wars.com/
 {
   "calls": [
     {
+      "name": "clanWarGetDefence",
+      "args": {},
+      "context": {
+        "actionTs": 678264
+      },
+      "ident": "body"
+    },
+    {
       "name": "clanWarGetInfo",
       "args": {},
       "context": {
-        "actionTs": 122604
+        "actionTs": 678264
       },
       "ident": "clanWarGetInfo"
     }
@@ -39,68 +49,90 @@ https://api.hero-wars.com/
 **Response:**
 ```json
 {
-  "date": 1761659616.247844,
+  "date": 1761669992.7946301,
   "results": [
     {
-      "ident": "clanWarGetInfo",
+      "ident": "body",
       "result": {
         "response": {
           "slots": {
-            "1": 54814373,
-            "2": 57654342,
-            "3": 54949643,
-            "4": 55215540,
-            "5": 54772226,
-            "6": 57470962,
-            "7": 57354546,
-            "8": 54814373,
-            "9": 57470962,
-            "10": 54772226,
-            "11": 57654342,
-            "12": 54971604,
-            "13": 54793169,
-            "14": 55098660,
-            "15": 57373161,
-            "16": 54793169,
-            "17": 55278076,
-            "18": 55195158,
-            "19": 54866493,
-            "20": 55188328,
-            "21": 55491979,
-            "22": 55293294,
-            "23": 54917238,
-            "24": 55215540,
-            "25": 57354546,
-            "26": 54971604,
-            "27": 55188328,
-            "28": 55006538,
-            "29": 55293294,
-            "30": 55167289,
-            "31": 55195158,
-            "32": 55278076,
-            "33": 54917238,
-            "34": 54949643,
-            "35": 55098660,
-            "36": 54866493,
-            "37": 55006538,
-            "38": 57373161,
-            "39": 55167289,
-            "40": 55491979
+            "1": 35449277,
+            "2": 35581685,
+            "3": 35538758,
+            "4": 35911013,
+            "5": 35776732,
+            "6": 35538770,
+            "7": 35891708,
+            "8": 35538758,
+            "9": 35695193,
+            "10": 36040671,
+            "11": 35538770,
+            "12": 35911013,
+            "13": 35621043,
+            "14": 35961156,
+            "15": 36039664,
+            "16": 35461323,
+            "17": 59895273,
+            "18": 35449277,
+            "19": 59873495,
+            "20": 35986432,
+            "21": 35961156,
+            "22": 35902122,
+            "23": 35621043,
+            "24": 48705148,
+            "25": 59895273,
+            "26": 48705148,
+            "27": 59873495,
+            "28": 35902122,
+            "29": 36040671,
+            "30": 35986432,
+            "31": 35718205,
+            "32": 59891179,
+            "33": 35461323,
+            "34": 35581685,
+            "35": 36039664,
+            "36": 35695193,
+            "37": 59891179,
+            "38": 35718205,
+            "39": 35776732,
+            "40": 35891708
           },
           "teams": {
-            "54749260": {
+            "35448204": {
               "clanDefence_titans": {
                 "units": {
-                  "4001": {
-                    "id": 4001,
-                    "level": 53,
-                    "star": 4,
-                    "element": "water",
-                    "elementSpiritLevel": 1,
-                    "elementSpiritStar": 0,
+                  "4033": {
+                    "id": 4033,
+                    "level": 130,
+                    "star": 6,
+                    "element": "dark",
+                    "elementSpiritLevel": 93,
+                    "elementSpiritStar": 2,
                     "elementSpiritSkills": [],
-                    "elementAffinityPower": 0,
-                    "power": 17160
+                    "elementAffinityPower": 116.25,
+                    "power": 266190
+                  },
+                  "4043": {
+                    "id": 4043,
+                    "level": 130,
+                    "star": 6,
+                    "element": "light",
+                    "elementSpiritLevel": 129,
+                    "elementSpiritStar": 6,
+                    "elementSpiritSkills": [
+                      {
+                        "skillId": 4511,
+                        "level": 1,
+                        "tierScale": 0.25
+                      },
+                      {
+                        "skillId": 4515,
+                        "level": 1,
+                        "tierScale": 0.25
+                      }
+                    ],
+                    "elementAffinityPower": 161.25,
+                    "power": 266190
                   }
                 }
               }
@@ -118,35 +150,23 @@ https://api.hero-wars.com/
 | Field | Type | Description |
 |-------|------|-------------|
 | `slots` | Object | Map of slot IDs to defending player IDs |
-| `slots[slotId]` | Number | Player ID defending this slot |
+| `slots[slotId]` | Number | Player ID defending this slot (1-40) |
 | `teams` | Object | Team configurations for different players |
 | `teams[playerId]` | Object | Player's team data |
 | `teams[playerId].clanDefence_titans` | Object | Titan defense team |
 | `teams[playerId].clanDefence_titans.units` | Object | Titan units in defense |
 
+**Note:** The actual API call combines both `clanWarGetDefence` and `clanWarGetInfo` in a single request, with the response containing both defense data and general war information. The `ident` field uses "body" for the defense data and "clanWarGetInfo" for the general information.
+
 ---
 
 ### 2. clanWarGetDefence
 
-**Description:** Retrieves defense information for Guild War slots.
+**Description:** Retrieves defense information for Guild War slots. In practice, this is combined with `clanWarGetInfo` in a single API call.
 
-**Request:**
-```json
-{
-  "calls": [
-    {
-      "name": "clanWarGetDefence",
-      "args": {},
-      "context": {
-        "actionTs": 122604
-      },
-      "ident": "body"
-    }
-  ]
-}
-```
+**Request:** See `clanWarGetInfo` section above - both calls are made together.
 
-**Response:** Similar structure to `clanWarGetInfo` but focused on defense data.
+**Response:** The defense data is returned as part of the combined response under the "body" identifier, containing the same structure as `clanWarGetInfo` but focused on defense team configurations.
 
 ---
 
@@ -440,15 +460,25 @@ Common error responses:
 
 ## Implementation Notes
 
+### API Call Pattern
+- The actual implementation combines `clanWarGetDefence` and `clanWarGetInfo` in a single request
+- Both calls use the same `actionTs` timestamp
+- The response contains both defense data (under "body" ident) and general war info (under "clanWarGetInfo" ident)
+
 ### Team Selection
 - Use `teamGetAll.clanDefence_heroes` for hero teams
 - Use `teamGetAll.clanDefence_titans` for titan teams
 - Use `teamGetFavor.clanDefence_heroes` for favor assignments
 
+### Slot Availability
+- When no slots are available, the `slots` object will be empty or contain fewer than 40 entries
+- The number of available slots directly corresponds to the number of attack attempts
+- Slots 1-20 are typically hero battles, slots 21-40 are typically titan battles
+
 ### Attack Strategy
-1. Get available slots with `clanWarGetInfo`
-2. Analyze defending teams
-3. Select appropriate attack team
+1. Get available slots and defense data with combined `clanWarGetDefence` and `clanWarGetInfo` call
+2. Analyze defending teams from the response
+3. Select appropriate attack team based on slot type (hero/titan)
 4. Execute attack with `clanWarAttack`
 5. Process battle results
 
@@ -471,6 +501,8 @@ Common error responses:
 - **v2.0**: Added banner system
 - **v3.0**: Enhanced battle effects
 - **v4.0**: Improved team data structure
+- **v5.0**: Updated with real API data from network traffic analysis
+- **v5.1**: Corrected API call patterns and response structure based on actual HAR file data
 
 ---
 

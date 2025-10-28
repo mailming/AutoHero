@@ -8169,73 +8169,17 @@
 			setProgress(`${I18N('GUILD_WAR')}: ${I18N('INITIALIZING')}...`);
 
 			try {
-				// Get Guild War status and team data
-				await this.getGuildWarStatus();
+				// Get team data for attacks
 				await this.getTeamData();
 
-				// Check if Guild War is available and we have attempts
-				if (!this.guildWarInfo || this.attemptsRemaining <= 0) {
-					this.end('No Guild War attempts available');
-					return;
-				}
-
-				// Start attacking from slot 1
-				await this.attackSlots();
+				// Directly attack slots 1 and 2
+				await this.attackDirectSlots();
 			} catch (error) {
 				console.error('Guild War error:', error);
 				this.end(`Error: ${error.message}`);
 			}
 		}
 
-		this.getGuildWarStatus = async function() {
-			console.log('Getting Guild War status...');
-			
-			const calls = [
-				{
-					name: "clanWarGetInfo",
-					args: {},
-					context: { actionTs: Date.now() },
-					ident: "clanWarGetInfo"
-				},
-				{
-					name: "clanWarGetDefence",
-					args: {},
-					context: { actionTs: Date.now() },
-					ident: "clanWarGetDefence"
-				}
-			];
-
-			const response = await Send(JSON.stringify({calls}));
-			
-			if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
-				throw new Error('Invalid clanWarGetInfo response');
-			}
-			if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
-				throw new Error('Invalid clanWarGetDefence response');
-			}
-
-			this.guildWarInfo = response.results[0].result.response;
-			this.defenceInfo = response.results[1].result.response;
-			
-			// Extract slots data (1-40)
-			this.slots = [];
-			for (let i = 1; i <= 40; i++) {
-				const slotId = i.toString();
-				if (this.guildWarInfo.slots && this.guildWarInfo.slots[slotId]) {
-					this.slots.push({
-						id: i,
-						playerId: this.guildWarInfo.slots[slotId],
-						attacked: false
-					});
-				}
-			}
-
-			// Get attempts from user info (assuming it's available)
-			this.attemptsRemaining = 3; // Default attempts, should be fetched from user info
-			
-			console.log('Guild War slots:', this.slots);
-			console.log('Available attempts:', this.attemptsRemaining);
-		}
 
 		this.getTeamData = async function() {
 			console.log('Getting team data...');
@@ -8263,14 +8207,19 @@
 
 			const response = await Send(JSON.stringify({calls}));
 			
+			// Check for API errors
+			if (response.error) {
+				throw new Error(`Team data API error: ${response.error.name} - ${response.error.description}`);
+			}
+			
 			if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
-				throw new Error('Invalid teamGetAll response');
+				throw new Error('Invalid teamGetAll response - team data not available');
 			}
 			if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
-				throw new Error('Invalid teamGetFavor response');
+				throw new Error('Invalid teamGetFavor response - favor data not available');
 			}
 			if (!response.results[2] || !response.results[2].result || !response.results[2].result.response) {
-				throw new Error('Invalid heroGetAll response');
+				throw new Error('Invalid heroGetAll response - hero data not available');
 			}
 
 			this.teamInfo = {
@@ -8282,115 +8231,146 @@
 			console.log('Team data loaded');
 		}
 
-		this.attackSlots = async function() {
-			console.log('Starting Guild War attacks...');
+		this.attackDirectSlots = async function() {
+			console.log('Starting direct Guild War attacks on slots 1 and 2...');
 			
-			for (let slot of this.slots) {
-				if (this.attemptsRemaining <= 0) {
-					console.log('No more attempts remaining');
-					break;
-				}
+			// Attack slot 1
+			try {
+				console.log('Attacking slot 1...');
+				setProgress(`${I18N('GUILD_WAR')}: Attacking slot 1`);
+				await this.attackSlot(1);
+				this.victories++;
+				console.log('Slot 1 attack completed successfully');
+			} catch (error) {
+				console.error('Error attacking slot 1:', error);
+				this.end(`Slot 1 attack failed: ${error.message}`);
+				return;
+			}
 
-				if (slot.attacked) {
-					console.log(`Slot ${slot.id} already attacked, skipping`);
-					continue;
-				}
+			// Small delay between attacks
+			await new Promise(resolve => setTimeout(resolve, 1000));
 
-				console.log(`Attacking slot ${slot.id} (Player: ${slot.playerId})`);
-				setProgress(`${I18N('GUILD_WAR')}: Attacking slot ${slot.id}/${this.slots.length}`);
-
-				try {
-					// Determine if this is a hero or titan battle
-					const battleType = this.determineBattleType(slot);
-					
-					if (battleType === 'hero') {
-						await this.attackHeroSlot(slot);
-					} else if (battleType === 'titan') {
-						await this.attackTitanSlot(slot);
-					} else {
-						console.log(`Unknown battle type for slot ${slot.id}, skipping`);
-						continue;
-					}
-
-					slot.attacked = true;
-					this.attemptsRemaining--;
-					this.victories++;
-
-					// Small delay between attacks
-					await new Promise(resolve => setTimeout(resolve, 1000));
-
-				} catch (error) {
-					console.error(`Error attacking slot ${slot.id}:`, error);
-					// Continue with next slot on error
-				}
+			// Attack slot 2
+			try {
+				console.log('Attacking slot 2...');
+				setProgress(`${I18N('GUILD_WAR')}: Attacking slot 2`);
+				await this.attackSlot(2);
+				this.victories++;
+				console.log('Slot 2 attack completed successfully');
+			} catch (error) {
+				console.error('Error attacking slot 2:', error);
+				this.end(`Slot 2 attack failed: ${error.message}`);
+				return;
 			}
 
 			this.end(`Completed ${this.victories} Guild War attacks`);
 		}
 
-		this.determineBattleType = function(slot) {
-			// Check if the defending team has titans or heroes
-			// This is a simplified check - in reality, you'd need to analyze the team composition
-			// For now, we'll assume slots 1-20 are hero battles and 21-40 are titan battles
-			return slot.id <= 20 ? 'hero' : 'titan';
-		}
-
-		this.attackHeroSlot = async function(slot) {
-			console.log(`Attacking hero slot ${slot.id}`);
+		this.attackSlot = async function(slotId) {
+			console.log(`Attacking slot ${slotId}...`);
 			
-			// Get arena team configuration
-			const arenaTeam = this.teamInfo.teams.arena || [];
-			const arenaFavor = this.teamInfo.favor.arena || {};
-
-			if (arenaTeam.length < 6) {
-				throw new Error('Arena team not properly configured');
+			// Get arena team configuration (same as arena attack)
+			const teamConfig = this.getArenaTeamConfiguration();
+			
+			if (!teamConfig.heroes || teamConfig.heroes.length < 5) {
+				throw new Error('Arena team not properly configured - need at least 5 heroes');
 			}
 
-			const heroes = arenaTeam.slice(0, 5);
-			const pet = arenaTeam[5];
-
-			const attackArgs = {
-				slotId: slot.id,
-				heroes: heroes,
-				pet: pet,
-				favor: arenaFavor,
-				banner: 1
-			};
-
-			const calls = [{
-				name: "clanWarAttack",
-				args: attackArgs,
-				context: { actionTs: Date.now() },
-				ident: "body"
-			}];
+			// Prepare attack request using arena team structure
+			const calls = [
+				{
+					name: "clanWarAttack",
+					args: {
+						slotId: slotId,
+						heroes: teamConfig.heroes.slice(0, 5), // Take first 5 heroes
+						pet: teamConfig.pet,
+						favor: teamConfig.favor,
+						banner: teamConfig.banners && teamConfig.banners.length > 0 ? teamConfig.banners[0] : 1
+					},
+					context: {
+						actionTs: Date.now()
+					},
+					ident: "body"
+				}
+			];
 
 			const response = await Send(JSON.stringify({calls}));
 			
+			// Check for API errors
 			if (response.error) {
-				throw new Error(`Attack failed: ${response.error.name} - ${response.error.description}`);
+				// Handle specific Guild War errors
+				if (response.error.name === 'NotAvailable') {
+					throw new Error('Guild War is not currently available');
+				} else if (response.error.name === 'InvalidRequest') {
+					throw new Error('Invalid attack request - check team configuration');
+				} else if (response.error.name === 'ArgumentError') {
+					throw new Error('Missing required attack arguments');
+				} else if (response.error.name === 'NotFound') {
+					throw new Error(`Target slot ${slotId} not found`);
+				} else {
+					throw new Error(`Attack failed: ${response.error.name} - ${response.error.description}`);
+				}
 			}
 
-			console.log(`Hero attack on slot ${slot.id} completed`);
-		}
-
-		this.attackTitanSlot = async function(slot) {
-			console.log(`Attacking titan slot ${slot.id}`);
-			
-			// Get titan arena team configuration
-			const titanTeam = this.teamInfo.teams.titan_arena || [];
-
-			if (titanTeam.length < 5) {
-				throw new Error('Titan arena team not properly configured');
+			// Check if the response contains results
+			if (!response.results || !response.results[0]) {
+				throw new Error('Invalid attack response - no results received');
 			}
 
-			// For titan battles, we need to use a different approach
-			// Since clanWarAttack is for hero battles, we might need a different API
-			// For now, we'll skip titan battles or use a placeholder
-			console.log(`Titan attack on slot ${slot.id} - using hero team as fallback`);
-			
-			// Use hero team as fallback for titan battles
-			await this.attackHeroSlot(slot);
+			const result = response.results[0].result;
+			if (!result) {
+				throw new Error('Invalid attack response - no result data');
+			}
+
+			console.log(`Slot ${slotId} attack completed successfully`);
+			return result;
 		}
+
+		this.getArenaTeamConfiguration = function() {
+			// Use the same team configuration logic as arena attack
+			if (!this.teamInfo || !this.teamInfo.teams) {
+				console.error('Team info not available, using fallback configuration');
+				return this.getFallbackTeamConfiguration();
+			}
+
+			const teamData = this.teamInfo.teams;
+			const favorData = this.teamInfo.favor;
+
+			// Use arena team configuration (same as regular arena)
+			const arenaTeam = teamData.arena || [];
+			const arenaFavor = favorData.arena || {};
+
+			console.log('Arena team from system:', arenaTeam);
+			console.log('Arena favor from system:', arenaFavor);
+
+			// Process arena team (6 elements: 5 heroes + 1 pet)
+			let heroes = [];
+			let pet = null;
+
+			if (arenaTeam && arenaTeam.length >= 6) {
+				heroes = arenaTeam.slice(0, 5); // First 5 are heroes
+				pet = arenaTeam[5]; // 6th element is pet
+			}
+
+			return {
+				heroes: heroes,
+				pet: pet,
+				favor: arenaFavor,
+				banners: [] // Will be handled by system
+			};
+		}
+
+		this.getFallbackTeamConfiguration = function() {
+			// Fallback configuration if team data is not available
+			console.log('Using fallback team configuration');
+			return {
+				heroes: [46, 57, 40, 16, 65], // Default hero team
+				pet: 6004, // Default pet
+				favor: {}, // No favor assignments
+				banners: []
+			};
+		}
+
 
 		this.end = function(reason) {
 			setProgress(`${I18N('GUILD_WAR')}: ${reason}`, true);
@@ -15036,3 +15016,4 @@
 	 * Починить работу скрипта на уровне команды ниже 10 +-
 	 * Написать номальную синхронизацию
 	 */
+

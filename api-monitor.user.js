@@ -753,6 +753,8 @@
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
         console.log('🔍 DEBUG: Fetch intercepted:', args[0]);
+        console.log('🔍 DEBUG: apiMonitor exists:', typeof window.apiMonitor !== 'undefined');
+        console.log('🔍 DEBUG: CONFIG.logLevel:', CONFIG.logLevel);
         const requestId = Date.now() + Math.random();
         const request = {
             id: requestId,
@@ -764,7 +766,9 @@
             timestamp: new Date().toISOString()
         };
         
-        apiMonitor.addRequest(request);
+        console.log('🔍 DEBUG: About to call addRequest with:', request);
+        window.apiMonitor.addRequest(request);
+        console.log('🔍 DEBUG: addRequest completed, total requests:', window.apiMonitor.stats.totalRequests);
         
         try {
             const response = await originalFetch.apply(this, args);
@@ -814,7 +818,7 @@
                 timestamp: new Date().toISOString()
             };
             
-            apiMonitor.addResponse(responseData);
+            window.apiMonitor.addResponse(responseData);
             return response;
             
         } catch (error) {
@@ -825,7 +829,7 @@
                 timestamp: new Date().toISOString()
             };
             
-            apiMonitor.addError(errorData);
+            window.apiMonitor.addError(errorData);
             throw error;
         }
     };
@@ -848,7 +852,7 @@
                 timestamp: new Date().toISOString()
             };
             
-            apiMonitor.addRequest(request);
+            window.apiMonitor.addRequest(request);
             xhr._requestId = requestId;
             
             return originalOpen.apply(this, [method, url, ...args]);
@@ -884,7 +888,7 @@
                     console.log('Could not parse XHR headers:', e);
                 }
                 
-                apiMonitor.addResponse(responseData);
+                window.apiMonitor.addResponse(responseData);
             });
             
             xhr.addEventListener('error', function() {
@@ -894,7 +898,7 @@
                     timestamp: new Date().toISOString()
                 };
                 
-                apiMonitor.addError(errorData);
+                window.apiMonitor.addError(errorData);
             });
             
             xhr.addEventListener('timeout', function() {
@@ -904,7 +908,7 @@
                     timestamp: new Date().toISOString()
                 };
                 
-                apiMonitor.addError(errorData);
+                window.apiMonitor.addError(errorData);
             });
             
             return originalSend.apply(this, [data]);
@@ -1082,7 +1086,7 @@
     
     // Auto-save data periodically
     setInterval(() => {
-        const data = apiMonitor.getAllData();
+        const data = window.apiMonitor.getAllData();
         if (data.requests.length > 0 || data.responses.length > 0) {
             GM_setValue('apiMonitorData', data);
         }
@@ -1091,10 +1095,10 @@
     // Auto-write logs to file periodically
     if (CONFIG.enableFileLogging) {
         setInterval(() => {
-            console.log('🔍 DEBUG: Auto-logging check - pendingLogs.length =', apiMonitor.pendingLogs.length);
-            if (apiMonitor.pendingLogs.length > 0) {
+            console.log('🔍 DEBUG: Auto-logging check - pendingLogs.length =', window.apiMonitor.pendingLogs.length);
+            if (window.apiMonitor.pendingLogs.length > 0) {
                 console.log('🔍 DEBUG: Auto-logging triggered - calling writeLogsToFile');
-                apiMonitor.writeLogsToFile();
+                window.apiMonitor.writeLogsToFile();
             } else {
                 console.log('🔍 DEBUG: Auto-logging skipped - no pending logs');
             }
@@ -1127,23 +1131,23 @@
     }
     
     
-    // Test API interception with some sample requests (DISABLED)
-    // setTimeout(() => {
-    //     console.log('🔍 DEBUG: Testing API interception...');
-    //     
-    //     // Test fetch request
-    //     fetch('https://httpbin.org/get?test=api-monitor')
-    //         .then(response => response.json())
-    //         .then(data => console.log('🔍 DEBUG: Fetch test completed:', data))
-    //         .catch(error => console.error('🔍 DEBUG: Fetch test failed:', error));
-    //         
-    //     // Test XHR request
-    //     const xhr = new XMLHttpRequest();
-    //     xhr.open('GET', 'https://httpbin.org/get?test=xhr-monitor');
-    //     xhr.onload = () => console.log('🔍 DEBUG: XHR test completed:', xhr.responseText);
-    //     xhr.onerror = () => console.error('🔍 DEBUG: XHR test failed');
-    //     xhr.send();
-    //     
-    // }, 3000);
+    // Test API interception with some sample requests (ENABLED FOR DEBUGGING)
+    setTimeout(() => {
+        console.log('🔍 DEBUG: Testing API interception...');
+        
+        // Test fetch request
+        fetch('https://httpbin.org/get?test=api-monitor')
+            .then(response => response.json())
+            .then(data => console.log('🔍 DEBUG: Fetch test completed:', data))
+            .catch(error => console.error('🔍 DEBUG: Fetch test failed:', error));
+            
+        // Test XHR request
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'https://httpbin.org/get?test=xhr-monitor');
+        xhr.onload = () => console.log('🔍 DEBUG: XHR test completed:', xhr.responseText);
+        xhr.onerror = () => console.error('🔍 DEBUG: XHR test failed');
+        xhr.send();
+        
+    }, 3000);
     
 })();
