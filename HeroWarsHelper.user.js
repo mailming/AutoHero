@@ -7797,9 +7797,6 @@
 			const teamData = this.teamInfo.teams;
 			const favorData = this.teamInfo.favor;
 
-			console.log('Full teamData structure:', teamData);
-			console.log('Full favorData structure:', favorData);
-
 			if (this.arenaType === 'grand') {
 				// Grand Arena: Use system's pre-configured grand arena teams
 				const grandTeams = teamData.grand || [];
@@ -7807,12 +7804,6 @@
 
 				console.log('Grand Arena teams from system:', grandTeams);
 				console.log('Grand Arena favor from system:', grandFavor);
-
-				// Check if grand teams are empty, use fallback
-				if (grandTeams.length === 0) {
-					console.warn('Grand Arena teams are empty, using fallback');
-					return this.getFallbackTeamConfiguration();
-				}
 
 				// Process grand arena teams (3 teams of 6 elements each: 5 heroes + 1 pet)
 				const heroes = [];
@@ -7840,12 +7831,6 @@
 				console.log('Regular Arena team from system:', arenaTeam);
 				console.log('Regular Arena favor from system:', arenaFavor);
 
-				// Check if arena team is empty, use fallback
-				if (arenaTeam.length === 0) {
-					console.warn('Regular Arena team is empty, using fallback');
-					return this.getFallbackTeamConfiguration();
-				}
-
 				// Process arena team (6 elements: 5 heroes + 1 pet)
 				let heroes = [];
 				let pet = null;
@@ -7866,10 +7851,8 @@
 
 		this.getFallbackTeamConfiguration = function() {
 			// Fallback configuration if system teams are not available
-			console.log('Using fallback team configuration for', this.arenaType);
-			
 			if (this.arenaType === 'grand') {
-				const fallbackConfig = {
+				return {
 					heroes: [
 						[58, 1, 64, 13, 55],  // Team 1
 						[42, 56, 9, 62, 43],  // Team 2
@@ -7879,17 +7862,13 @@
 					favor: {},
 					banners: [1, 6, 2]
 				};
-				console.log('Grand Arena fallback config:', fallbackConfig);
-				return fallbackConfig;
 			} else {
-				const fallbackConfig = {
+				return {
 					heroes: [57, 31, 55, 40, 16],
 					pet: 6008,
 					favor: {},
 					banners: [6]
 				};
-				console.log('Regular Arena fallback config:', fallbackConfig);
-				return fallbackConfig;
 			}
 		}
 
@@ -11120,7 +11099,7 @@
 			console.log('🎯 Monday detected - Auto-running minions attack...');
 			setProgress(I18N('MONDAY_DETECTED'), false);
 			
-			// Run minions attack automatically (non-blocking)
+			// Run minions attack automatically
 			testRaidNodes().then(() => {
 				console.log('✅ Minions attack completed successfully');
 				setProgress(I18N('MONDAY_COMPLETED'), true);
@@ -11131,7 +11110,7 @@
 		} else {
 			const dayName = getDayName(dayOfWeek);
 			console.log(`📅 Today is ${dayName} - Minions auto-run only on Mondays`);
-			// Don't show progress message for non-Monday days to avoid spam
+			setProgress(I18N('MONDAY_NOT_TODAY', { day: dayName }), false);
 		}
 	}
 
