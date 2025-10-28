@@ -599,6 +599,12 @@
 			SHOPS_WARNING:
 				'Stores<br><span style="color:red">If you buy brawl store coins for emeralds, you must use them immediately, otherwise they will disappear after restarting the game!</span>',
 			MINIONS_WARNING: 'The hero packs for attacking minions are incomplete, should I continue?',
+			TUESDAY_AUTO_RUN: 'Tuesday auto-run',
+			TUESDAY_AUTO_RUN_TITLE: 'Automatically run minions attack every Tuesday',
+			TUESDAY_DETECTED: 'Tuesday detected - Auto-running minions attack...',
+			TUESDAY_NOT_TODAY: 'Today is {day} - Minions auto-run only on Tuesdays',
+			TUESDAY_COMPLETED: 'Minions attack completed (Tuesday auto-run)',
+			TUESDAY_FAILED: 'Minions attack failed (Tuesday auto-run)',
 			FAST_SEASON: 'Fast season',
 			FAST_SEASON_TITLE: 'Skip the map selection screen in a season',
 			SET_NUMBER_LEVELS: 'Specify the number of levels:',
@@ -981,6 +987,12 @@
 			SHOPS_WARNING:
 				'Магазины<br><span style="color:red">Если Вы купите монеты магазинов потасовок за изумруды, то их надо использовать сразу, иначе после перезагрузки игры они пропадут!</span>',
 			MINIONS_WARNING: 'Пачки героев для атаки приспешников неполные, продолжить?',
+			TUESDAY_AUTO_RUN: 'Автозапуск по вторникам',
+			TUESDAY_AUTO_RUN_TITLE: 'Автоматически запускать атаку прислужников каждый вторник',
+			TUESDAY_DETECTED: 'Обнаружен вторник - Автозапуск атаки прислужников...',
+			TUESDAY_NOT_TODAY: 'Сегодня {day} - Автозапуск прислужников только по вторникам',
+			TUESDAY_COMPLETED: 'Атака прислужников завершена (автозапуск вторника)',
+			TUESDAY_FAILED: 'Атака прислужников не удалась (автозапуск вторника)',
 			FAST_SEASON: 'Быстрый сезон',
 			FAST_SEASON_TITLE: 'Пропуск экрана с выбором карты в сезоне',
 			SET_NUMBER_LEVELS: 'Указать колличество уровней:',
@@ -2098,6 +2110,9 @@
 				addControls();
 				addControlButtons();
 				addBottomUrls();
+
+				// Auto-run minions attack on Tuesdays
+				autoRunMinionsOnTuesday();
 
 				if (isChecked('sendExpedition')) {
 					const isTimeBetweenDays = isTimeBetweenNewDays();
@@ -11069,6 +11084,43 @@
 			const tower = new executeRaidNodes(resolve, reject);
 			tower.start();
 		});
+	}
+
+	/**
+	 * Auto-run minions attack on Tuesdays
+	 * Автоматический запуск атаки прислужников по вторникам
+	 */
+	function autoRunMinionsOnTuesday() {
+		const today = new Date();
+		const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, 2 = Tuesday, etc.
+		
+		// Check if today is Tuesday (day 2)
+		if (dayOfWeek === 2) {
+			console.log('🎯 Tuesday detected - Auto-running minions attack...');
+			setProgress(I18N('TUESDAY_DETECTED'), false);
+			
+			// Run minions attack automatically
+			testRaidNodes().then(() => {
+				console.log('✅ Minions attack completed successfully');
+				setProgress(I18N('TUESDAY_COMPLETED'), true);
+			}).catch((error) => {
+				console.error('❌ Minions attack failed:', error);
+				setProgress(I18N('TUESDAY_FAILED'), true);
+			});
+		} else {
+			const dayName = getDayName(dayOfWeek);
+			console.log(`📅 Today is ${dayName} - Minions auto-run only on Tuesdays`);
+			setProgress(I18N('TUESDAY_NOT_TODAY', { day: dayName }), false);
+		}
+	}
+
+	/**
+	 * Get day name for logging
+	 * Получить название дня для логирования
+	 */
+	function getDayName(dayOfWeek) {
+		const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+		return days[dayOfWeek];
 	}
 
 	/**
