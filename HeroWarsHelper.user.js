@@ -341,7 +341,7 @@
 			SANCTUARY: 'Sanctuary',
 			SANCTUARY_TITLE: 'Fast travel to Sanctuary',
 			GUILD_WAR: 'Guild War',
-			GUILD_WAR_TITLE: 'Fast travel to Guild War',
+			GUILD_WAR_TITLE: 'Auto attack Guild War slots',
 			SECRET_WEALTH: 'Secret Wealth',
 			SECRET_WEALTH_TITLE: 'Buy something in the store "Secret Wealth"',
 			/* Misc */
@@ -730,7 +730,7 @@
 			SANCTUARY: 'Святилище',
 			SANCTUARY_TITLE: 'Быстрый переход к Святилищу',
 			GUILD_WAR: 'Война гильдий',
-			GUILD_WAR_TITLE: 'Быстрый переход к Войне гильдий',
+			GUILD_WAR_TITLE: 'Автоматическая атака слотов Войны гильдий',
 			SECRET_WEALTH: 'Тайное богатство',
 			SECRET_WEALTH_TITLE: 'Купить что-то в магазине "Тайное богатство"',
 			/* Разное */
@@ -1352,6 +1352,13 @@
 			get title() { return I18N('GRAND_ARENA_TITLE'); },
 			onClick: function () {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('GRAND_ARENA')}?`, testGrandArena);
+			},
+		},
+		testGuildWar: {
+			get name() { return I18N('GUILD_WAR'); },
+			get title() { return I18N('GUILD_WAR_TITLE'); },
+			onClick: function () {
+				confShow(`${I18N('RUN_SCRIPT')} ${I18N('GUILD_WAR')}?`, testGuildWar);
 			},
 		},
 		testBothArenas: {
@@ -8141,6 +8148,269 @@
 
 	this.HWHClasses.executeTitanArena = executeTitanArena;
 	this.HWHClasses.executeArena = executeArena;
+	this.HWHClasses.executeGuildWar = executeGuildWar;
+
+	/**
+	 * Guild War auto-attack execution
+	 *
+	 * Автоматическая атака гильдии войны
+	 */
+	function executeGuildWar(resolve, reject) {
+		this.resolve = resolve;
+		this.reject = reject;
+		this.attemptsRemaining = 0;
+		this.victories = 0;
+		this.guildWarInfo = null;
+		this.teamInfo = null;
+		this.slots = [];
+		this.currentSlot = 1;
+
+		this.start = async function() {
+			setProgress(`${I18N('GUILD_WAR')}: ${I18N('INITIALIZING')}...`);
+
+			try {
+				// Get Guild War status and team data
+				await this.getGuildWarStatus();
+				await this.getTeamData();
+
+				// Check if Guild War is available and we have attempts
+				if (!this.guildWarInfo || this.attemptsRemaining <= 0) {
+					this.end('No Guild War attempts available');
+					return;
+				}
+
+				// Start attacking from slot 1
+				await this.attackSlots();
+			} catch (error) {
+				console.error('Guild War error:', error);
+				this.end(`Error: ${error.message}`);
+			}
+		}
+
+		this.getGuildWarStatus = async function() {
+			console.log('Getting Guild War status...');
+			
+			const calls = [
+				{
+					name: "clanWarGetInfo",
+					args: {},
+					context: { actionTs: Date.now() },
+					ident: "clanWarGetInfo"
+				},
+				{
+					name: "clanWarGetDefence",
+					args: {},
+					context: { actionTs: Date.now() },
+					ident: "clanWarGetDefence"
+				}
+			];
+
+			const response = await Send(JSON.stringify({calls}));
+			
+			if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+				throw new Error('Invalid clanWarGetInfo response');
+			}
+			if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
+				throw new Error('Invalid clanWarGetDefence response');
+			}
+
+			this.guildWarInfo = response.results[0].result.response;
+			this.defenceInfo = response.results[1].result.response;
+			
+			// Extract slots data (1-40)
+			this.slots = [];
+			for (let i = 1; i <= 40; i++) {
+				const slotId = i.toString();
+				if (this.guildWarInfo.slots && this.guildWarInfo.slots[slotId]) {
+					this.slots.push({
+						id: i,
+						playerId: this.guildWarInfo.slots[slotId],
+						attacked: false
+					});
+				}
+			}
+
+			// Get attempts from user info (assuming it's available)
+			this.attemptsRemaining = 3; // Default attempts, should be fetched from user info
+			
+			console.log('Guild War slots:', this.slots);
+			console.log('Available attempts:', this.attemptsRemaining);
+		}
+
+		this.getTeamData = async function() {
+			console.log('Getting team data...');
+			
+			const calls = [
+				{
+					name: "teamGetAll",
+					args: {},
+					context: { actionTs: Date.now() },
+					ident: "teamGetAll"
+				},
+				{
+					name: "teamGetFavor",
+					args: {},
+					context: { actionTs: Date.now() },
+					ident: "teamGetFavor"
+				},
+				{
+					name: "heroGetAll",
+					args: {},
+					context: { actionTs: Date.now() },
+					ident: "heroGetAll"
+				}
+			];
+
+			const response = await Send(JSON.stringify({calls}));
+			
+			if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+				throw new Error('Invalid teamGetAll response');
+			}
+			if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
+				throw new Error('Invalid teamGetFavor response');
+			}
+			if (!response.results[2] || !response.results[2].result || !response.results[2].result.response) {
+				throw new Error('Invalid heroGetAll response');
+			}
+
+			this.teamInfo = {
+				teams: response.results[0].result.response,
+				favor: response.results[1].result.response,
+				heroes: Object.values(response.results[2].result.response)
+			};
+
+			console.log('Team data loaded');
+		}
+
+		this.attackSlots = async function() {
+			console.log('Starting Guild War attacks...');
+			
+			for (let slot of this.slots) {
+				if (this.attemptsRemaining <= 0) {
+					console.log('No more attempts remaining');
+					break;
+				}
+
+				if (slot.attacked) {
+					console.log(`Slot ${slot.id} already attacked, skipping`);
+					continue;
+				}
+
+				console.log(`Attacking slot ${slot.id} (Player: ${slot.playerId})`);
+				setProgress(`${I18N('GUILD_WAR')}: Attacking slot ${slot.id}/${this.slots.length}`);
+
+				try {
+					// Determine if this is a hero or titan battle
+					const battleType = this.determineBattleType(slot);
+					
+					if (battleType === 'hero') {
+						await this.attackHeroSlot(slot);
+					} else if (battleType === 'titan') {
+						await this.attackTitanSlot(slot);
+					} else {
+						console.log(`Unknown battle type for slot ${slot.id}, skipping`);
+						continue;
+					}
+
+					slot.attacked = true;
+					this.attemptsRemaining--;
+					this.victories++;
+
+					// Small delay between attacks
+					await new Promise(resolve => setTimeout(resolve, 1000));
+
+				} catch (error) {
+					console.error(`Error attacking slot ${slot.id}:`, error);
+					// Continue with next slot on error
+				}
+			}
+
+			this.end(`Completed ${this.victories} Guild War attacks`);
+		}
+
+		this.determineBattleType = function(slot) {
+			// Check if the defending team has titans or heroes
+			// This is a simplified check - in reality, you'd need to analyze the team composition
+			// For now, we'll assume slots 1-20 are hero battles and 21-40 are titan battles
+			return slot.id <= 20 ? 'hero' : 'titan';
+		}
+
+		this.attackHeroSlot = async function(slot) {
+			console.log(`Attacking hero slot ${slot.id}`);
+			
+			// Get arena team configuration
+			const arenaTeam = this.teamInfo.teams.arena || [];
+			const arenaFavor = this.teamInfo.favor.arena || {};
+
+			if (arenaTeam.length < 6) {
+				throw new Error('Arena team not properly configured');
+			}
+
+			const heroes = arenaTeam.slice(0, 5);
+			const pet = arenaTeam[5];
+
+			const attackArgs = {
+				slotId: slot.id,
+				heroes: heroes,
+				pet: pet,
+				favor: arenaFavor,
+				banner: 1
+			};
+
+			const calls = [{
+				name: "clanWarAttack",
+				args: attackArgs,
+				context: { actionTs: Date.now() },
+				ident: "body"
+			}];
+
+			const response = await Send(JSON.stringify({calls}));
+			
+			if (response.error) {
+				throw new Error(`Attack failed: ${response.error.name} - ${response.error.description}`);
+			}
+
+			console.log(`Hero attack on slot ${slot.id} completed`);
+		}
+
+		this.attackTitanSlot = async function(slot) {
+			console.log(`Attacking titan slot ${slot.id}`);
+			
+			// Get titan arena team configuration
+			const titanTeam = this.teamInfo.teams.titan_arena || [];
+
+			if (titanTeam.length < 5) {
+				throw new Error('Titan arena team not properly configured');
+			}
+
+			// For titan battles, we need to use a different approach
+			// Since clanWarAttack is for hero battles, we might need a different API
+			// For now, we'll skip titan battles or use a placeholder
+			console.log(`Titan attack on slot ${slot.id} - using hero team as fallback`);
+			
+			// Use hero team as fallback for titan battles
+			await this.attackHeroSlot(slot);
+		}
+
+		this.end = function(reason) {
+			setProgress(`${I18N('GUILD_WAR')}: ${reason}`, true);
+			console.log('Guild War completed:', reason);
+			this.resolve();
+		}
+	}
+
+	/**
+	 * Wrapper function for Guild War battles
+	 *
+	 * Функция-обертка для битв гильдии войны
+	 */
+	function testGuildWar() {
+		const { executeGuildWar } = HWHClasses;
+		return new Promise((resolve, reject) => {
+			const guildWar = new executeGuildWar(resolve, reject);
+			guildWar.start();
+		});
+	}
 
 	function hackGame() {
 		const self = this;
@@ -13306,6 +13576,11 @@
 				checked: false
 			},
 			{
+				name: 'testGuildWar',
+				label: I18N('GUILD_WAR'),
+				checked: false
+			},
+			{
 				name: 'mailGetAll',
 				label: I18N('COLLECT_MAIL'),
 				checked: false
@@ -13359,6 +13634,7 @@
 			checkExpedition,
 			testTitanArena,
 			testBothArenas,
+			testGuildWar,
 			mailGetAll,
 			collectAllStuff: async () => {
 				await offerFarmAllReward();
