@@ -16,7 +16,7 @@
 // @match			https://apps-1701433570146040.apps.fbsbx.com/*
 // @run-at			document-start
 // @downloadURL https://update.greasyfork.org/scripts/450693/HeroWarsHelper.user.js
-// @updateURL https://update.greasyfork.org/scripts/450693/HeroWarsHelper.meta.js
+// @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/HeroWarsHelper.user.js
 // ==/UserScript==
 
 (function() {
