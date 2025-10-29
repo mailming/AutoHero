@@ -1246,9 +1246,12 @@
 	function isChecked(checkBox) {
 		const { checkboxes } = HWHData;
 		if (!(checkBox in checkboxes)) {
+			console.log('%cDebug isChecked: Checkbox not found:', 'color: red;', checkBox);
 			return false;
 		}
-		return checkboxes[checkBox].cbox?.checked;
+		const result = checkboxes[checkBox].cbox?.checked;
+		console.log('%cDebug isChecked:', 'color: purple;', checkBox, '=', result, 'cbox exists:', !!checkboxes[checkBox].cbox);
+		return result;
 	}
 	/**
 	 * Input fields
@@ -2164,16 +2167,24 @@
 				// Auto run Do All function with all tasks checked
 				testDoYourBest().then(() => {
 					// Auto raid missions - run after arena attacks complete
+					console.log('%cAuto Raid Mission: Checking if enabled...', 'color: blue; font-weight: bold;');
+					console.log('%cAuto Raid Mission: isChecked result:', 'color: blue;', isChecked('autoRaidMission'));
 					if (isChecked('autoRaidMission')) {
 						console.log('%cAuto Raid Mission: Starting after arena attacks...', 'color: orange; font-weight: bold;');
 						autoRaidMission();
+					} else {
+						console.log('%cAuto Raid Mission: Disabled - checkbox not checked', 'color: red; font-weight: bold;');
 					}
 				}).catch(error => {
 					console.error('Do Your Best function error:', error);
 					// Still try to run auto raid mission even if Do Your Best fails
+					console.log('%cAuto Raid Mission: Checking if enabled (error case)...', 'color: blue; font-weight: bold;');
+					console.log('%cAuto Raid Mission: isChecked result (error case):', 'color: blue;', isChecked('autoRaidMission'));
 					if (isChecked('autoRaidMission')) {
 						console.log('%cAuto Raid Mission: Starting after arena attacks (with error)...', 'color: orange; font-weight: bold;');
 						autoRaidMission();
+					} else {
+						console.log('%cAuto Raid Mission: Disabled - checkbox not checked (error case)', 'color: red; font-weight: bold;');
 					}
 				});
 
