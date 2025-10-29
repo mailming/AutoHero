@@ -10454,10 +10454,14 @@
 			console.log('%cAuto Raid Mission: API response received:', 'color: blue;', result);
 
 			const userInfo = result[0];
-			const missions = result[1];
+			const missionsData = result[1];
+			
+			// Convert missions object to array (missions are stored as object, not array)
+			const missions = Object.values(missionsData);
 			
 			console.log('%cAuto Raid Mission: User info:', 'color: blue;', userInfo);
-			console.log('%cAuto Raid Mission: Missions data:', 'color: blue;', missions);
+			console.log('%cAuto Raid Mission: Missions data (raw):', 'color: blue;', missionsData);
+			console.log('%cAuto Raid Mission: Missions array:', 'color: blue;', missions);
 
 			// Check if user has energy for raids
 			const energy = userInfo.refillable.find(n => n.id == 1);
@@ -10467,28 +10471,29 @@
 				return;
 			}
 
-			// Find available missions for raiding (typically campaign missions)
+			// Find available missions for raiding (campaign missions with 3 stars)
 			console.log('%cAuto Raid Mission: Total missions received:', 'color: blue;', missions.length);
 			console.log('%cAuto Raid Mission: Energy available:', 'color: blue;', energy.amount);
-			
-			const availableMissions = missions.filter(mission => 
-				mission.isOpen && 
-				mission.canRaid && 
-				mission.energy <= energy.amount
-			);
-
-			console.log('%cAuto Raid Mission: Available missions after filtering:', 'color: blue;', availableMissions.length);
 			
 			// Debug: Show first few missions to understand the structure
 			if (missions.length > 0) {
 				console.log('%cAuto Raid Mission: Sample mission data:', 'color: blue;', missions.slice(0, 3).map(m => ({
 					id: m.id,
+					stars: m.stars,
 					isOpen: m.isOpen,
 					canRaid: m.canRaid,
 					energy: m.energy,
 					name: m.name || 'Unknown'
 				})));
 			}
+			
+			// Filter missions that can be raided (3 stars and available)
+			const availableMissions = missions.filter(mission => 
+				mission.stars === 3 && 
+				mission.isOpen
+			);
+
+			console.log('%cAuto Raid Mission: Available missions after filtering:', 'color: blue;', availableMissions.length);
 
 			if (availableMissions.length === 0) {
 				console.log('%cAuto Raid Mission: No missions qualify for raiding', 'color: red;');
@@ -10496,18 +10501,11 @@
 				return;
 			}
 
-			// Select the highest energy mission that can be raided
-			const selectedMission = availableMissions
-				.sort((a, b) => b.energy - a.energy)[0];
-
-			// Calculate how many raids we can do
-			const maxRaids = Math.floor(energy.amount / selectedMission.energy);
-			const raidCount = Math.min(maxRaids, 10); // Limit to 10 raids max
-
-			if (raidCount === 0) {
-				setProgress(I18N('NOT_ENOUGH_ENERGY'), true);
-				return;
-			}
+			// Select the first available mission (simplified approach)
+			const selectedMission = availableMissions[0];
+			
+			// For now, just do 3 raids (same as existing quest system)
+			const raidCount = 3;
 
 			setProgress(I18N('STARTING_RAID_MISSIONS', { 
 				missionId: selectedMission.id, 
