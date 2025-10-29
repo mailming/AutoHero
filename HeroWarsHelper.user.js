@@ -1235,7 +1235,7 @@
 			get label() { return I18N('AUTO_RAID_MISSION'); },
 			cbox: null,
 			get title() { return I18N('AUTO_RAID_MISSION_TITLE'); },
-			default: false,
+			default: true,
 		},
 	};
 	/**
@@ -1246,12 +1246,9 @@
 	function isChecked(checkBox) {
 		const { checkboxes } = HWHData;
 		if (!(checkBox in checkboxes)) {
-			console.log('%cDebug isChecked: Checkbox not found:', 'color: red;', checkBox);
 			return false;
 		}
-		const result = checkboxes[checkBox].cbox?.checked;
-		console.log('%cDebug isChecked:', 'color: purple;', checkBox, '=', result, 'cbox exists:', !!checkboxes[checkBox].cbox);
-		return result;
+		return checkboxes[checkBox].cbox?.checked;
 	}
 	/**
 	 * Input fields
@@ -2167,24 +2164,16 @@
 				// Auto run Do All function with all tasks checked
 				testDoYourBest().then(() => {
 					// Auto raid missions - run after arena attacks complete
-					console.log('%cAuto Raid Mission: Checking if enabled...', 'color: blue; font-weight: bold;');
-					console.log('%cAuto Raid Mission: isChecked result:', 'color: blue;', isChecked('autoRaidMission'));
 					if (isChecked('autoRaidMission')) {
 						console.log('%cAuto Raid Mission: Starting after arena attacks...', 'color: orange; font-weight: bold;');
 						autoRaidMission();
-					} else {
-						console.log('%cAuto Raid Mission: Disabled - checkbox not checked', 'color: red; font-weight: bold;');
 					}
 				}).catch(error => {
 					console.error('Do Your Best function error:', error);
 					// Still try to run auto raid mission even if Do Your Best fails
-					console.log('%cAuto Raid Mission: Checking if enabled (error case)...', 'color: blue; font-weight: bold;');
-					console.log('%cAuto Raid Mission: isChecked result (error case):', 'color: blue;', isChecked('autoRaidMission'));
 					if (isChecked('autoRaidMission')) {
 						console.log('%cAuto Raid Mission: Starting after arena attacks (with error)...', 'color: orange; font-weight: bold;');
 						autoRaidMission();
-					} else {
-						console.log('%cAuto Raid Mission: Disabled - checkbox not checked (error case)', 'color: red; font-weight: bold;');
 					}
 				});
 
@@ -10459,34 +10448,50 @@
 				}
 			];
 
-			console.log('%cAuto Raid Mission: Fetching user info and missions...', 'color: blue;');
 			const result = await Send(JSON.stringify({ calls }))
 				.then(e => e.results.map(n => n.result.response));
 
+			console.log('%cAuto Raid Mission: API response received:', 'color: blue;', result);
+
 			const userInfo = result[0];
 			const missions = result[1];
+			
+			console.log('%cAuto Raid Mission: User info:', 'color: blue;', userInfo);
+			console.log('%cAuto Raid Mission: Missions data:', 'color: blue;', missions);
 
 			// Check if user has energy for raids
 			const energy = userInfo.refillable.find(n => n.id == 1);
-			console.log('%cAuto Raid Mission: Energy available:', 'color: blue;', energy ? energy.amount : 'Not found');
 			
 			if (!energy || energy.amount < 10) {
-				console.log('%cAuto Raid Mission: Not enough energy, aborting', 'color: red;');
 				setProgress(I18N('NOT_ENOUGH_ENERGY'), true);
 				return;
 			}
 
 			// Find available missions for raiding (typically campaign missions)
+			console.log('%cAuto Raid Mission: Total missions received:', 'color: blue;', missions.length);
+			console.log('%cAuto Raid Mission: Energy available:', 'color: blue;', energy.amount);
+			
 			const availableMissions = missions.filter(mission => 
 				mission.isOpen && 
 				mission.canRaid && 
 				mission.energy <= energy.amount
 			);
 
-			console.log('%cAuto Raid Mission: Available missions:', 'color: blue;', availableMissions.length);
+			console.log('%cAuto Raid Mission: Available missions after filtering:', 'color: blue;', availableMissions.length);
+			
+			// Debug: Show first few missions to understand the structure
+			if (missions.length > 0) {
+				console.log('%cAuto Raid Mission: Sample mission data:', 'color: blue;', missions.slice(0, 3).map(m => ({
+					id: m.id,
+					isOpen: m.isOpen,
+					canRaid: m.canRaid,
+					energy: m.energy,
+					name: m.name || 'Unknown'
+				})));
+			}
 
 			if (availableMissions.length === 0) {
-				console.log('%cAuto Raid Mission: No raid missions available, aborting', 'color: red;');
+				console.log('%cAuto Raid Mission: No missions qualify for raiding', 'color: red;');
 				setProgress(I18N('NO_RAID_MISSIONS_AVAILABLE'), true);
 				return;
 			}
@@ -10495,16 +10500,11 @@
 			const selectedMission = availableMissions
 				.sort((a, b) => b.energy - a.energy)[0];
 
-			console.log('%cAuto Raid Mission: Selected mission:', 'color: blue;', selectedMission.id, 'Energy cost:', selectedMission.energy);
-
 			// Calculate how many raids we can do
 			const maxRaids = Math.floor(energy.amount / selectedMission.energy);
 			const raidCount = Math.min(maxRaids, 10); // Limit to 10 raids max
 
-			console.log('%cAuto Raid Mission: Calculated raids:', 'color: blue;', 'Max possible:', maxRaids, 'Will execute:', raidCount);
-
 			if (raidCount === 0) {
-				console.log('%cAuto Raid Mission: Cannot perform any raids, aborting', 'color: red;');
 				setProgress(I18N('NOT_ENOUGH_ENERGY'), true);
 				return;
 			}
@@ -10513,8 +10513,6 @@
 				missionId: selectedMission.id, 
 				count: raidCount 
 			}), false);
-
-			console.log('%cAuto Raid Mission: Executing raids...', 'color: green; font-weight: bold;');
 
 			// Execute raid missions
 			const raidCalls = [{
@@ -10529,19 +10527,14 @@
 				ident: "body"
 			}];
 
-			console.log('%cAuto Raid Mission: Sending raid request...', 'color: blue;', raidCalls);
 			const raidResult = await Send(JSON.stringify({
 				calls: raidCalls
 			}));
-
-			console.log('%cAuto Raid Mission: Raid result received:', 'color: blue;', raidResult);
 
 			if (raidResult && raidResult.results && raidResult.results[0]) {
 				const raidData = raidResult.results[0].result.response;
 				let totalGold = 0;
 				let totalFragments = 0;
-
-				console.log('%cAuto Raid Mission: Processing raid data...', 'color: blue;', raidData);
 
 				// Calculate total rewards
 				for (let i = 0; i < raidCount; i++) {
@@ -10556,7 +10549,7 @@
 					}
 				}
 
-				console.log('%cAuto Raid Mission: Completed successfully!', 'color: green; font-weight: bold;', 'Gold:', totalGold, 'Fragments:', totalFragments);
+				console.log('%cAuto Raid Mission: Completed!', 'color: green; font-weight: bold;', `Gold: ${totalGold}, Fragments: ${totalFragments}`);
 				setProgress(I18N('RAID_MISSIONS_COMPLETED', { 
 					missionId: selectedMission.id,
 					count: raidCount,
@@ -10564,12 +10557,11 @@
 					fragments: totalFragments
 				}), true);
 			} else {
-				console.log('%cAuto Raid Mission: Failed - no results', 'color: red;');
 				setProgress(I18N('RAID_MISSIONS_FAILED'), true);
 			}
 
 		} catch (error) {
-			console.error('%cAuto Raid Mission: Error occurred:', 'color: red; font-weight: bold;', error);
+			console.error('%cAuto Raid Mission: Error:', 'color: red; font-weight: bold;', error);
 			setProgress(I18N('RAID_MISSIONS_ERROR'), true);
 		}
 	}
