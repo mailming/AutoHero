@@ -607,6 +607,14 @@
 			MONDAY_FAILED: 'Minions attack failed (Monday auto-run)',
 			FAST_SEASON: 'Fast season',
 			FAST_SEASON_TITLE: 'Skip the map selection screen in a season',
+			AUTO_RAID_MISSION: 'Auto Raid Mission',
+			AUTO_RAID_MISSION_TITLE: 'Automatically execute raid missions on script load',
+			NOT_ENOUGH_ENERGY: 'Not enough energy for raid missions',
+			NO_RAID_MISSIONS_AVAILABLE: 'No raid missions available',
+			STARTING_RAID_MISSIONS: 'Starting raid missions: Mission {missionId} x{count}',
+			RAID_MISSIONS_COMPLETED: 'Raid missions completed: Mission {missionId} x{count} - Gold: {gold}, Fragments: {fragments}',
+			RAID_MISSIONS_FAILED: 'Raid missions failed',
+			RAID_MISSIONS_ERROR: 'Error during raid missions',
 			SET_NUMBER_LEVELS: 'Specify the number of levels:',
 			POSSIBLE_IMPROVE_LEVELS: 'It is possible to improve only {count} levels.<br>Improving?',
 			NOT_ENOUGH_RESOURECES: 'Not enough resources',
@@ -995,6 +1003,14 @@
 			MONDAY_FAILED: 'Атака прислужников не удалась (автозапуск понедельника)',
 			FAST_SEASON: 'Быстрый сезон',
 			FAST_SEASON_TITLE: 'Пропуск экрана с выбором карты в сезоне',
+			AUTO_RAID_MISSION: 'Авто Рейд Миссии',
+			AUTO_RAID_MISSION_TITLE: 'Автоматически выполнять рейд миссии при загрузке скрипта',
+			NOT_ENOUGH_ENERGY: 'Недостаточно энергии для рейд миссий',
+			NO_RAID_MISSIONS_AVAILABLE: 'Нет доступных рейд миссий',
+			STARTING_RAID_MISSIONS: 'Запуск рейд миссий: Миссия {missionId} x{count}',
+			RAID_MISSIONS_COMPLETED: 'Рейд миссии завершены: Миссия {missionId} x{count} - Золото: {gold}, Фрагменты: {fragments}',
+			RAID_MISSIONS_FAILED: 'Рейд миссии не удались',
+			RAID_MISSIONS_ERROR: 'Ошибка при выполнении рейд миссий',
 			SET_NUMBER_LEVELS: 'Указать колличество уровней:',
 			POSSIBLE_IMPROVE_LEVELS: 'Возможно улучшить только {count} уровней.<br>Улучшаем?',
 			NOT_ENOUGH_RESOURECES: 'Не хватает ресурсов',
@@ -1213,6 +1229,12 @@
 			get label() { return I18N('FAST_SEASON'); },
 			cbox: null,
 			get title() { return I18N('FAST_SEASON_TITLE'); },
+			default: false,
+		},
+		autoRaidMission: {
+			get label() { return I18N('AUTO_RAID_MISSION'); },
+			cbox: null,
+			get title() { return I18N('AUTO_RAID_MISSION_TITLE'); },
 			default: false,
 		},
 	};
@@ -2140,7 +2162,20 @@
 				}
 
 				// Auto run Do All function with all tasks checked
-				testDoYourBest();
+				testDoYourBest().then(() => {
+					// Auto raid missions - run after arena attacks complete
+					if (isChecked('autoRaidMission')) {
+						console.log('%cAuto Raid Mission: Starting after arena attacks...', 'color: orange; font-weight: bold;');
+						autoRaidMission();
+					}
+				}).catch(error => {
+					console.error('Do Your Best function error:', error);
+					// Still try to run auto raid mission even if Do Your Best fails
+					if (isChecked('autoRaidMission')) {
+						console.log('%cAuto Raid Mission: Starting after arena attacks (with error)...', 'color: orange; font-weight: bold;');
+						autoRaidMission();
+					}
+				});
 
 				if (isChecked('buyForGold')) {
 					buyInStoreForGold();
@@ -10389,6 +10424,143 @@
 
 		console.log(resultRaid, adventureId, portalSphere.amount);
 		setProgress(I18N('ADVENTURE_COMPLETED', { adventureId, times: resultRaid.length }), true);
+	}
+
+	/**
+	 * Auto raid mission function
+	 * Автоматическое выполнение рейд миссий
+	 */
+	async function autoRaidMission() {
+		try {
+			console.log('%cAuto Raid Mission: Function started', 'color: green; font-weight: bold;');
+			
+			// Get user info and mission data
+			const calls = [
+				{
+					name: "userGetInfo",
+					args: {},
+					ident: "userGetInfo"
+				},
+				{
+					name: "missionGetAll",
+					args: {},
+					ident: "missionGetAll"
+				}
+			];
+
+			console.log('%cAuto Raid Mission: Fetching user info and missions...', 'color: blue;');
+			const result = await Send(JSON.stringify({ calls }))
+				.then(e => e.results.map(n => n.result.response));
+
+			const userInfo = result[0];
+			const missions = result[1];
+
+			// Check if user has energy for raids
+			const energy = userInfo.refillable.find(n => n.id == 1);
+			console.log('%cAuto Raid Mission: Energy available:', 'color: blue;', energy ? energy.amount : 'Not found');
+			
+			if (!energy || energy.amount < 10) {
+				console.log('%cAuto Raid Mission: Not enough energy, aborting', 'color: red;');
+				setProgress(I18N('NOT_ENOUGH_ENERGY'), true);
+				return;
+			}
+
+			// Find available missions for raiding (typically campaign missions)
+			const availableMissions = missions.filter(mission => 
+				mission.isOpen && 
+				mission.canRaid && 
+				mission.energy <= energy.amount
+			);
+
+			console.log('%cAuto Raid Mission: Available missions:', 'color: blue;', availableMissions.length);
+
+			if (availableMissions.length === 0) {
+				console.log('%cAuto Raid Mission: No raid missions available, aborting', 'color: red;');
+				setProgress(I18N('NO_RAID_MISSIONS_AVAILABLE'), true);
+				return;
+			}
+
+			// Select the highest energy mission that can be raided
+			const selectedMission = availableMissions
+				.sort((a, b) => b.energy - a.energy)[0];
+
+			console.log('%cAuto Raid Mission: Selected mission:', 'color: blue;', selectedMission.id, 'Energy cost:', selectedMission.energy);
+
+			// Calculate how many raids we can do
+			const maxRaids = Math.floor(energy.amount / selectedMission.energy);
+			const raidCount = Math.min(maxRaids, 10); // Limit to 10 raids max
+
+			console.log('%cAuto Raid Mission: Calculated raids:', 'color: blue;', 'Max possible:', maxRaids, 'Will execute:', raidCount);
+
+			if (raidCount === 0) {
+				console.log('%cAuto Raid Mission: Cannot perform any raids, aborting', 'color: red;');
+				setProgress(I18N('NOT_ENOUGH_ENERGY'), true);
+				return;
+			}
+
+			setProgress(I18N('STARTING_RAID_MISSIONS', { 
+				missionId: selectedMission.id, 
+				count: raidCount 
+			}), false);
+
+			console.log('%cAuto Raid Mission: Executing raids...', 'color: green; font-weight: bold;');
+
+			// Execute raid missions
+			const raidCalls = [{
+				name: "missionRaid",
+				args: {
+					id: selectedMission.id,
+					times: raidCount
+				},
+				context: {
+					actionTs: Date.now()
+				},
+				ident: "body"
+			}];
+
+			console.log('%cAuto Raid Mission: Sending raid request...', 'color: blue;', raidCalls);
+			const raidResult = await Send(JSON.stringify({
+				calls: raidCalls
+			}));
+
+			console.log('%cAuto Raid Mission: Raid result received:', 'color: blue;', raidResult);
+
+			if (raidResult && raidResult.results && raidResult.results[0]) {
+				const raidData = raidResult.results[0].result.response;
+				let totalGold = 0;
+				let totalFragments = 0;
+
+				console.log('%cAuto Raid Mission: Processing raid data...', 'color: blue;', raidData);
+
+				// Calculate total rewards
+				for (let i = 0; i < raidCount; i++) {
+					if (raidData[i]) {
+						if (raidData[i].gold) totalGold += raidData[i].gold;
+						if (raidData[i].fragmentScroll) {
+							totalFragments += Object.values(raidData[i].fragmentScroll).reduce((a, b) => a + b, 0);
+						}
+						if (raidData[i].fragmentGear) {
+							totalFragments += Object.values(raidData[i].fragmentGear).reduce((a, b) => a + b, 0);
+						}
+					}
+				}
+
+				console.log('%cAuto Raid Mission: Completed successfully!', 'color: green; font-weight: bold;', 'Gold:', totalGold, 'Fragments:', totalFragments);
+				setProgress(I18N('RAID_MISSIONS_COMPLETED', { 
+					missionId: selectedMission.id,
+					count: raidCount,
+					gold: totalGold,
+					fragments: totalFragments
+				}), true);
+			} else {
+				console.log('%cAuto Raid Mission: Failed - no results', 'color: red;');
+				setProgress(I18N('RAID_MISSIONS_FAILED'), true);
+			}
+
+		} catch (error) {
+			console.error('%cAuto Raid Mission: Error occurred:', 'color: red; font-weight: bold;', error);
+			setProgress(I18N('RAID_MISSIONS_ERROR'), true);
+		}
 	}
 
 	/** Вывести всю клановую статистику в консоль браузера */
