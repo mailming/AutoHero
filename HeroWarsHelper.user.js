@@ -10434,89 +10434,20 @@
 		try {
 			console.log('%cAuto Raid Mission: Function started', 'color: green; font-weight: bold;');
 			
-			// Get user info and mission data
-			const calls = [
-				{
-					name: "userGetInfo",
-					args: {},
-					ident: "userGetInfo"
-				},
-				{
-					name: "missionGetAll",
-					args: {},
-					ident: "missionGetAll"
-				}
-			];
-
-			const result = await Send(JSON.stringify({ calls }))
-				.then(e => e.results.map(n => n.result.response));
-
-			console.log('%cAuto Raid Mission: API response received:', 'color: blue;', result);
-
-			const userInfo = result[0];
-			const missionsData = result[1];
-			
-			// Convert missions object to array (missions are stored as object, not array)
-			const missions = Object.values(missionsData);
-			
-			console.log('%cAuto Raid Mission: User info:', 'color: blue;', userInfo);
-			console.log('%cAuto Raid Mission: Missions data (raw):', 'color: blue;', missionsData);
-			console.log('%cAuto Raid Mission: Missions array:', 'color: blue;', missions);
-
-			// Check if user has energy for raids
-			const energy = userInfo.refillable.find(n => n.id == 1);
-			
-			if (!energy || energy.amount < 10) {
-				setProgress(I18N('NOT_ENOUGH_ENERGY'), true);
-				return;
-			}
-
-			// Find available missions for raiding (campaign missions with 3 stars)
-			console.log('%cAuto Raid Mission: Total missions received:', 'color: blue;', missions.length);
-			console.log('%cAuto Raid Mission: Energy available:', 'color: blue;', energy.amount);
-			
-			// Debug: Show first few missions to understand the structure
-			if (missions.length > 0) {
-				console.log('%cAuto Raid Mission: Sample mission data:', 'color: blue;', missions.slice(0, 3).map(m => ({
-					id: m.id,
-					stars: m.stars,
-					isOpen: m.isOpen,
-					canRaid: m.canRaid,
-					energy: m.energy,
-					name: m.name || 'Unknown'
-				})));
-			}
-			
-			// Filter missions that can be raided (3 stars and available)
-			const availableMissions = missions.filter(mission => 
-				mission.stars === 3 && 
-				mission.isOpen
-			);
-
-			console.log('%cAuto Raid Mission: Available missions after filtering:', 'color: blue;', availableMissions.length);
-
-			if (availableMissions.length === 0) {
-				console.log('%cAuto Raid Mission: No missions qualify for raiding', 'color: red;');
-				setProgress(I18N('NO_RAID_MISSIONS_AVAILABLE'), true);
-				return;
-			}
-
-			// Select the first available mission (simplified approach)
-			const selectedMission = availableMissions[0];
-			
-			// For now, just do 3 raids (same as existing quest system)
+			// Simple approach: Use mission ID 158 (from HAR file) and do 3 raids
+			const missionId = 158;
 			const raidCount = 3;
 
 			setProgress(I18N('STARTING_RAID_MISSIONS', { 
-				missionId: selectedMission.id, 
+				missionId: missionId, 
 				count: raidCount 
 			}), false);
 
-			// Execute raid missions
+			// Execute raid missions using exact API call from HAR file
 			const raidCalls = [{
 				name: "missionRaid",
 				args: {
-					id: selectedMission.id,
+					id: missionId,
 					times: raidCount
 				},
 				context: {
@@ -10525,9 +10456,13 @@
 				ident: "body"
 			}];
 
+			console.log('%cAuto Raid Mission: Sending raid request...', 'color: blue;', raidCalls);
+
 			const raidResult = await Send(JSON.stringify({
 				calls: raidCalls
 			}));
+
+			console.log('%cAuto Raid Mission: Raid result:', 'color: blue;', raidResult);
 
 			if (raidResult && raidResult.results && raidResult.results[0]) {
 				const raidData = raidResult.results[0].result.response;
@@ -10549,12 +10484,13 @@
 
 				console.log('%cAuto Raid Mission: Completed!', 'color: green; font-weight: bold;', `Gold: ${totalGold}, Fragments: ${totalFragments}`);
 				setProgress(I18N('RAID_MISSIONS_COMPLETED', { 
-					missionId: selectedMission.id,
+					missionId: missionId,
 					count: raidCount,
 					gold: totalGold,
 					fragments: totalFragments
 				}), true);
 			} else {
+				console.log('%cAuto Raid Mission: Failed - no results', 'color: red;');
 				setProgress(I18N('RAID_MISSIONS_FAILED'), true);
 			}
 
