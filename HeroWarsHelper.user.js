@@ -16,7 +16,7 @@
 // @match			https://apps-1701433570146040.apps.fbsbx.com/*
 // @run-at			document-start
 // @downloadURL https://update.greasyfork.org/scripts/450693/HeroWarsHelper.user.js
-// @updateURL https://update.greasyfork.org/scripts/450693/HeroWarsHelper.meta.js
+// @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/HeroWarsHelper.user.js
 // ==/UserScript==
 
 (function() {
@@ -607,6 +607,14 @@
 			MONDAY_FAILED: 'Minions attack failed (Monday auto-run)',
 			FAST_SEASON: 'Fast season',
 			FAST_SEASON_TITLE: 'Skip the map selection screen in a season',
+			AUTO_RAID_MISSION: 'Auto Raid Mission',
+			AUTO_RAID_MISSION_TITLE: 'Automatically execute raid missions on script load',
+			NOT_ENOUGH_ENERGY: 'Not enough energy for raid missions',
+			NO_RAID_MISSIONS_AVAILABLE: 'No raid missions available',
+			STARTING_RAID_MISSIONS: 'Starting raid missions: Mission {missionId} x{count}',
+			RAID_MISSIONS_COMPLETED: 'Raid missions completed: Mission {missionId} x{count} - Gold: {gold}, Fragments: {fragments}',
+			RAID_MISSIONS_FAILED: 'Raid missions failed',
+			RAID_MISSIONS_ERROR: 'Error during raid missions',
 			SET_NUMBER_LEVELS: 'Specify the number of levels:',
 			POSSIBLE_IMPROVE_LEVELS: 'It is possible to improve only {count} levels.<br>Improving?',
 			NOT_ENOUGH_RESOURECES: 'Not enough resources',
@@ -995,6 +1003,14 @@
 			MONDAY_FAILED: 'Атака прислужников не удалась (автозапуск понедельника)',
 			FAST_SEASON: 'Быстрый сезон',
 			FAST_SEASON_TITLE: 'Пропуск экрана с выбором карты в сезоне',
+			AUTO_RAID_MISSION: 'Авто Рейд Миссии',
+			AUTO_RAID_MISSION_TITLE: 'Автоматически выполнять рейд миссии при загрузке скрипта',
+			NOT_ENOUGH_ENERGY: 'Недостаточно энергии для рейд миссий',
+			NO_RAID_MISSIONS_AVAILABLE: 'Нет доступных рейд миссий',
+			STARTING_RAID_MISSIONS: 'Запуск рейд миссий: Миссия {missionId} x{count}',
+			RAID_MISSIONS_COMPLETED: 'Рейд миссии завершены: Миссия {missionId} x{count} - Золото: {gold}, Фрагменты: {fragments}',
+			RAID_MISSIONS_FAILED: 'Рейд миссии не удались',
+			RAID_MISSIONS_ERROR: 'Ошибка при выполнении рейд миссий',
 			SET_NUMBER_LEVELS: 'Указать колличество уровней:',
 			POSSIBLE_IMPROVE_LEVELS: 'Возможно улучшить только {count} уровней.<br>Улучшаем?',
 			NOT_ENOUGH_RESOURECES: 'Не хватает ресурсов',
@@ -1214,6 +1230,12 @@
 			cbox: null,
 			get title() { return I18N('FAST_SEASON_TITLE'); },
 			default: false,
+		},
+		autoRaidMission: {
+			get label() { return I18N('AUTO_RAID_MISSION'); },
+			cbox: null,
+			get title() { return I18N('AUTO_RAID_MISSION_TITLE'); },
+			default: true,
 		},
 	};
 	/**
@@ -2140,7 +2162,20 @@
 				}
 
 				// Auto run Do All function with all tasks checked
-				testDoYourBest();
+				testDoYourBest().then(() => {
+					// Auto raid missions - run after arena attacks complete
+					if (isChecked('autoRaidMission')) {
+						console.log('%cAuto Raid Mission: Starting after arena attacks...', 'color: orange; font-weight: bold;');
+						autoRaidMission();
+					}
+				}).catch(error => {
+					console.error('Do Your Best function error:', error);
+					// Still try to run auto raid mission even if Do Your Best fails
+					if (isChecked('autoRaidMission')) {
+						console.log('%cAuto Raid Mission: Starting after arena attacks (with error)...', 'color: orange; font-weight: bold;');
+						autoRaidMission();
+					}
+				});
 
 				if (isChecked('buyForGold')) {
 					buyInStoreForGold();
@@ -10518,6 +10553,80 @@
 
 		console.log(resultRaid, adventureId, portalSphere.amount);
 		setProgress(I18N('ADVENTURE_COMPLETED', { adventureId, times: resultRaid.length }), true);
+	}
+
+	/**
+	 * Auto raid mission function
+	 * Автоматическое выполнение рейд миссий
+	 */
+	async function autoRaidMission() {
+		try {
+			console.log('%cAuto Raid Mission: Function started', 'color: green; font-weight: bold;');
+			
+			// Simple approach: Use mission ID 158 (from HAR file) and do 3 raids
+			const missionId = 158;
+			const raidCount = 3;
+
+			setProgress(I18N('STARTING_RAID_MISSIONS', { 
+				missionId: missionId, 
+				count: raidCount 
+			}), false);
+
+			// Execute raid missions using exact API call from HAR file
+			const raidCalls = [{
+				name: "missionRaid",
+				args: {
+					id: missionId,
+					times: raidCount
+				},
+				context: {
+					actionTs: Date.now()
+				},
+				ident: "body"
+			}];
+
+			console.log('%cAuto Raid Mission: Sending raid request...', 'color: blue;', raidCalls);
+
+			const raidResult = await Send(JSON.stringify({
+				calls: raidCalls
+			}));
+
+			console.log('%cAuto Raid Mission: Raid result:', 'color: blue;', raidResult);
+
+			if (raidResult && raidResult.results && raidResult.results[0]) {
+				const raidData = raidResult.results[0].result.response;
+				let totalGold = 0;
+				let totalFragments = 0;
+
+				// Calculate total rewards
+				for (let i = 0; i < raidCount; i++) {
+					if (raidData[i]) {
+						if (raidData[i].gold) totalGold += raidData[i].gold;
+						if (raidData[i].fragmentScroll) {
+							totalFragments += Object.values(raidData[i].fragmentScroll).reduce((a, b) => a + b, 0);
+						}
+						if (raidData[i].fragmentGear) {
+							totalFragments += Object.values(raidData[i].fragmentGear).reduce((a, b) => a + b, 0);
+						}
+					}
+				}
+
+				console.log('%cAuto Raid Mission: Completed!', 'color: green; font-weight: bold;', `Gold: ${totalGold}, Fragments: ${totalFragments}`);
+				setProgress(I18N('RAID_MISSIONS_COMPLETED', { 
+					missionId: missionId,
+					count: raidCount,
+					gold: totalGold,
+					fragments: totalFragments
+				}), true);
+			} else {
+				console.log('%cAuto Raid Mission: Failed - no results', 'color: red;');
+				setProgress(I18N('RAID_MISSIONS_FAILED'), true);
+			}
+
+		} catch (error) {
+			console.error('%cAuto Raid Mission: Error:', 'color: red; font-weight: bold;', error);
+			setProgress(I18N('RAID_MISSIONS_ERROR'), true);
+		}
 	}
 
 	/** Вывести всю клановую статистику в консоль браузера */
