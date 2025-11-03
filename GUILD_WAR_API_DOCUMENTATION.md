@@ -11,7 +11,7 @@ Guild War is a clan-based PvP system where clans compete against each other by a
 ### Base URL
 All Guild War APIs use the standard Hero Wars API endpoint:
 ```
-https://api.hero-wars.com/
+https://heroes-wb.nextersglobal.com/api/
 ```
 
 ## API Calls
@@ -30,7 +30,7 @@ https://api.hero-wars.com/
       "name": "clanWarGetDefence",
       "args": {},
       "context": {
-        "actionTs": 678264
+        "actionTs": 63665
       },
       "ident": "body"
     },
@@ -38,7 +38,7 @@ https://api.hero-wars.com/
       "name": "clanWarGetInfo",
       "args": {},
       "context": {
-        "actionTs": 678264
+        "actionTs": 63665
       },
       "ident": "clanWarGetInfo"
     }
@@ -49,93 +49,123 @@ https://api.hero-wars.com/
 **Response:**
 ```json
 {
-  "date": 1761669992.7946301,
+  "date": 1762191003.695759,
   "results": [
     {
       "ident": "body",
       "result": {
         "response": {
           "slots": {
-            "1": 35449277,
-            "2": 35581685,
-            "3": 35538758,
-            "4": 35911013,
-            "5": 35776732,
-            "6": 35538770,
-            "7": 35891708,
-            "8": 35538758,
-            "9": 35695193,
-            "10": 36040671,
-            "11": 35538770,
-            "12": 35911013,
-            "13": 35621043,
-            "14": 35961156,
-            "15": 36039664,
-            "16": 35461323,
-            "17": 59895273,
-            "18": 35449277,
-            "19": 59873495,
-            "20": 35986432,
-            "21": 35961156,
-            "22": 35902122,
-            "23": 35621043,
-            "24": 48705148,
-            "25": 59895273,
-            "26": 48705148,
-            "27": 59873495,
-            "28": 35902122,
-            "29": 36040671,
-            "30": 35986432,
-            "31": 35718205,
-            "32": 59891179,
-            "33": 35461323,
-            "34": 35581685,
-            "35": 36039664,
-            "36": 35695193,
-            "37": 59891179,
-            "38": 35718205,
-            "39": 35776732,
-            "40": 35891708
+            "1": 54814373,
+            "2": 57654342,
+            "3": 54949643,
+            "4": 55215540,
+            "5": 54772226,
+            "6": 57470962,
+            "7": 57354546,
+            "8": 54814373,
+            "9": 57470962,
+            "10": 54772226,
+            "11": 57654342,
+            "12": 54971604,
+            "13": 54793169,
+            "14": 55098660,
+            "15": 57373161,
+            "16": 54793169,
+            "17": 55278076,
+            "18": 55195158,
+            "19": 54866493,
+            "20": 55188328,
+            "21": 55491979,
+            "22": 55293294,
+            "23": 54917238,
+            "24": 55215540,
+            "25": 57354546,
+            "26": 54971604,
+            "27": 55188328,
+            "28": 55006538,
+            "29": 55293294,
+            "30": 55167289,
+            "31": 55195158,
+            "32": 55278076,
+            "33": 54917238,
+            "34": 54949643,
+            "35": 55098660,
+            "36": 54866493,
+            "37": 55006538,
+            "38": 57373161,
+            "39": 55167289,
+            "40": 55491979
           },
           "teams": {
-            "35448204": {
+            "54749260": {
               "clanDefence_titans": {
                 "units": {
-                  "4033": {
-                    "id": 4033,
-                    "level": 130,
-                    "star": 6,
-                    "element": "dark",
-                    "elementSpiritLevel": 93,
-                    "elementSpiritStar": 2,
+                  "4001": {
+                    "id": 4001,
+                    "level": 53,
+                    "star": 4,
+                    "element": "water",
+                    "elementSpiritLevel": 1,
+                    "elementSpiritStar": 0,
                     "elementSpiritSkills": [],
-                    "elementAffinityPower": 116.25,
-                    "power": 266190
+                    "elementAffinityPower": 0,
+                    "power": 17160
                   },
-                  "4043": {
-                    "id": 4043,
-                    "level": 130,
+                  "4010": {
+                    "id": 4010,
+                    "level": 62,
                     "star": 6,
-                    "element": "light",
-                    "elementSpiritLevel": 129,
-                    "elementSpiritStar": 6,
-                    "elementSpiritSkills": [
-                      {
-                        "skillId": 4511,
-                        "level": 1,
-                        "tierScale": 0.25
-                      },
-                      {
-                        "skillId": 4515,
-                        "level": 1,
-                        "tierScale": 0.25
-                      }
-                    ],
-                    "elementAffinityPower": 161.25,
-                    "power": 266190
+                    "element": "fire",
+                    "elementSpiritLevel": 1,
+                    "elementSpiritStar": 0,
+                    "elementSpiritSkills": [],
+                    "elementAffinityPower": 0,
+                    "power": 41637
                   }
                 }
-              }
+              },
+              "clanDefence_heroes": {
+                "units": {
+                  "7": {
+                    "id": 7,
+                    "level": 119,
+                    "color": 11,
+                    "star": 4,
+                    "power": 43469
+                  },
+                  "20": {
+                    "id": 20,
+                    "level": 118,
+                    "color": 8,
+                    "star": 4,
+                    "power": 29554
+                  },
+                  "2": {
+                    "id": 2,
+                    "level": 119,
+                    "color": 12,
+                    "star": 5,
+                    "power": 55080
+                  },
+                  "4": {
+                    "id": 4,
+                    "level": 118,
+                    "color": 7,
+                    "star": 4,
+                    "power": 27676
+                  },
+                  "61": {
+                    "id": 61,
+                    "level": 119,
+                    "color": 10,
+                    "star": 5,
+                    "power": 46858
+                  }
+                },
+                "banner": null
+              },
+              "userId": 54749260
             }
           }
         }
@@ -149,14 +179,196 @@ https://api.hero-wars.com/
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `slots` | Object | Map of slot IDs to defending player IDs |
-| `slots[slotId]` | Number | Player ID defending this slot (1-40) |
+| `slots` | Object | Map of slot IDs (1-40) to defending player IDs |
+| `slots[slotId]` | Number | Player ID defending this slot |
 | `teams` | Object | Team configurations for different players |
 | `teams[playerId]` | Object | Player's team data |
-| `teams[playerId].clanDefence_titans` | Object | Titan defense team |
-| `teams[playerId].clanDefence_titans.units` | Object | Titan units in defense |
+| `teams[playerId].userId` | Number | Player ID |
+| `teams[playerId].clanDefence_titans` | Object | Titan defense team (for slots 21-40) |
+| `teams[playerId].clanDefence_titans.units` | Object | Titan units in defense (titan ID → titan data) |
+| `teams[playerId].clanDefence_heroes` | Object | Hero defense team (for slots 1-20) |
+| `teams[playerId].clanDefence_heroes.units` | Object | Hero units in defense (hero ID → hero data) |
+| `teams[playerId].clanDefence_heroes.banner` | Number\|Null | Banner ID or null |
 
-**Note:** The actual API call combines both `clanWarGetDefence` and `clanWarGetInfo` in a single request, with the response containing both defense data and general war information. The `ident` field uses "body" for the defense data and "clanWarGetInfo" for the general information.
+**Note:** The actual API call combines both `clanWarGetDefence` and `clanWarGetInfo` in a single request. The response contains defense data and general war information under the "body" identifier. Both calls return the same data structure (slots and teams).
+
+---
+
+### 4. clanWarEndBattle
+
+**Description:** Submits the battle result after completing a Guild War battle. This must be called after the battle is completed to finalize the results and update war points.
+
+**Request:**
+```json
+{
+  "calls": [
+    {
+      "name": "clanWarEndBattle",
+      "args": {
+        "result": {
+          "win": false,
+          "stars": 0
+        },
+        "progress": [
+          {
+            "v": 272,
+            "b": 0,
+            "seed": 1906504079,
+            "attackers": {
+              "input": ["auto", 0, 0, "auto", 0, 0],
+              "heroes": {}
+            },
+            "defenders": {
+              "input": [],
+              "heroes": {
+                "1": {
+                  "hp": 5782520,
+                  "energy": 800,
+                  "isDead": false
+                },
+                "2": {
+                  "hp": 2929050,
+                  "energy": 908,
+                  "isDead": false
+                },
+                "3": {
+                  "hp": 4572236,
+                  "energy": 1000,
+                  "isDead": false
+                }
+              }
+            }
+          }
+        ]
+      },
+      "context": {
+        "actionTs": 97529
+      },
+      "ident": "body"
+    }
+  ]
+}
+```
+
+**Request Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `result.win` | Boolean | Whether the battle was won |
+| `result.stars` | Number | Stars earned (0-3) |
+| `progress` | Array | Array of battle progress snapshots |
+| `progress[].v` | Number | Server version |
+| `progress[].b` | Number | Battle index |
+| `progress[].seed` | Number | Battle seed (must match `clanWarAttack` response seed) |
+| `progress[].attackers.input` | Array | Player input actions during battle |
+| `progress[].attackers.heroes` | Object | Final state of attacker units (HP, energy, alive) |
+| `progress[].defenders.input` | Array | Defender input actions (usually empty) |
+| `progress[].defenders.heroes` | Object | Final state of defender units (position → state) |
+
+**Response:**
+```json
+{
+  "date": 1762191037.153217,
+  "results": [
+    {
+      "ident": "body",
+      "result": {
+        "response": {
+          "slotVictoryPoints": 0,
+          "fortificationVictoryPoints": 0,
+          "ourClanPoints": 74,
+          "slot": {
+            "team": [
+              {
+                "1": {
+                  "state": {
+                    "hp": 5782520,
+                    "energy": 800,
+                    "isDead": false,
+                    "maxHp": 7271482
+                  },
+                  "id": 4033,
+                  "star": 6,
+                  "level": 130,
+                  "power": 187026,
+                  "type": "titan",
+                  "element": "dark",
+                  "elementSpiritStar": 3,
+                  "elementSpiritLevel": 75,
+                  "elementSpiritSkills": [
+                    {
+                      "skillId": 4500,
+                      "level": 1,
+                      "tierScale": 5
+                    },
+                    {
+                      "skillId": 4507,
+                      "level": 1,
+                      "tierScale": 20
+                    }
+                  ]
+                }
+              }
+            ],
+            "attackerId": 0,
+            "status": "ready",
+            "user": {
+              "id": "55206291",
+              "name": "Gambi",
+              "lastLoginTime": "1762151481",
+              "serverId": "377",
+              "level": "130",
+              "clanId": "323222",
+              "clanRole": "2",
+              "commander": false,
+              "avatarId": "1169",
+              "isChatModerator": false,
+              "frameId": 206,
+              "leagueId": 3,
+              "allowPm": "all",
+              "clanTitle": "Chevaliers",
+              "clanIcon": {
+                "flagColor1": 8,
+                "flagColor2": 10,
+                "flagShape": 0,
+                "iconColor": 1,
+                "iconShape": 1
+              }
+            },
+            "banner": null,
+            "pointsFarmed": 13,
+            "slotId": "8",
+            "totalPoints": 20
+          },
+          "enemyClanPoints": 440
+        }
+      }
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slotVictoryPoints` | Number | Victory points earned for this slot (if won) |
+| `fortificationVictoryPoints` | Number | Fortification victory points earned |
+| `ourClanPoints` | Number | Total points for your clan |
+| `enemyClanPoints` | Number | Total points for enemy clan |
+| `slot` | Object | Updated slot information |
+| `slot.team` | Array | Defending team array (position → unit data) |
+| `slot.attackerId` | Number | ID of last attacker (0 if slot is ready) |
+| `slot.status` | String | Slot status ("ready" if available for attack) |
+| `slot.user` | Object | Defender player information |
+| `slot.user.id` | String | Player ID |
+| `slot.user.name` | String | Player name |
+| `slot.user.clanId` | String | Clan ID |
+| `slot.user.clanTitle` | String | Clan name |
+| `slot.banner` | Number\|Null | Banner ID or null |
+| `slot.pointsFarmed` | Number | Points farmed from this slot |
+| `slot.slotId` | String | Slot ID |
+| `slot.totalPoints` | Number | Total points available from this slot |
 
 ---
 
@@ -172,9 +384,9 @@ https://api.hero-wars.com/
 
 ### 3. clanWarAttack
 
-**Description:** Executes an attack against a specific Guild War slot.
+**Description:** Executes an attack against a specific Guild War slot. Can be used for both hero battles (slots 1-20) and titan battles (slots 21-40).
 
-**Request:**
+**Request (Hero Battle):**
 ```json
 {
   "calls": [
@@ -199,20 +411,40 @@ https://api.hero-wars.com/
 }
 ```
 
+**Request (Titan Battle):**
+```json
+{
+  "calls": [
+    {
+      "name": "clanWarAttack",
+      "args": {
+        "slotId": 8,
+        "heroes": [4033, 4003, 4001, 4032, 4000],
+        "favor": {}
+      },
+      "context": {
+        "actionTs": 89933
+      },
+      "ident": "body"
+    }
+  ]
+}
+```
+
 **Request Parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `slotId` | Number | Target slot ID to attack (1-40) |
-| `heroes` | Array[Number] | Array of 5 hero IDs for the attack team |
-| `pet` | Number | Pet ID to use in battle |
-| `favor` | Object | Favor pet assignments (hero ID → pet ID mapping) |
-| `banner` | Number | Banner ID to use in battle |
+| `slotId` | Number | Target slot ID to attack (1-40, 1-20 for heroes, 21-40 for titans) |
+| `heroes` | Array[Number] | Array of 5 unit IDs (hero IDs for slots 1-20, titan IDs for slots 21-40) |
+| `pet` | Number | (Optional) Pet ID to use in battle (hero battles only) |
+| `favor` | Object | (Optional) Favor pet assignments (hero ID → pet ID mapping, empty for titan battles) |
+| `banner` | Number | (Optional) Banner ID to use in battle (hero battles only) |
 
-**Response:**
+**Response (Titan Battle Example):**
 ```json
 {
-  "date": 1761659647.0272999,
+  "date": 1762191029.429076,
   "results": [
     {
       "ident": "body",
@@ -220,118 +452,103 @@ https://api.hero-wars.com/
         "response": {
           "battle": {
             "userId": "57373161",
-            "typeId": "54999117",
+            "typeId": "55206291",
             "attackers": {
-              "46": {
-                "id": 46,
-                "xp": 3625195,
-                "level": 130,
-                "color": 11,
-                "slots": {"2": 0, "0": 0, "3": 0},
-                "skills": {"230": 130, "231": 130, "232": 130, "233": 130},
-                "power": 33806,
+              "4033": {
+                "id": 4033,
+                "xp": 223220,
+                "level": 94,
                 "star": 5,
-                "runes": [1620, 1650, 0, 0, 0],
-                "skins": {"101": 30, "159": 20},
-                "currentSkin": 159,
-                "titanGiftLevel": 0,
-                "titanCoinsSpent": null,
+                "skills": {
+                  "4034": 94,
+                  "4035": 94
+                },
+                "power": 94013,
+                "skins": {
+                  "10019": 50,
+                  "10038": 45
+                },
+                "currentSkin": 10038,
                 "artifacts": [
-                  {"level": 26, "star": 4},
-                  {"level": 6, "star": 1},
-                  {"level": 6, "star": 1}
+                  {"level": 50, "star": 2},
+                  {"level": 96, "star": 3},
+                  {"level": 50, "star": 2}
                 ],
-                "scale": 1,
-                "petId": 0,
-                "type": "hero",
-                "perks": [9, 5, 1, 22],
-                "ascensions": {"1": [0, 1, 4, 2, 3]},
-                "agility": 918,
-                "hp": 42483,
-                "intelligence": 2959,
-                "physicalAttack": 50,
-                "strength": 2442,
-                "armor": 1702,
-                "magicPower": 4154,
-                "magicResist": 1025,
-                "skin": 159,
-                "favorPetId": 0,
-                "favorPower": 0
+                "scale": 0.8,
+                "type": "titan",
+                "perks": [6, 5],
+                "anticrit": 1,
+                "antidodge": 1,
+                "hp": 3357674.56,
+                "physicalAttack": 346735.78,
+                "elementArmor": 157984.5,
+                "elementAttack": 42856.8,
+                "elementSpiritPower": 279758,
+                "element": "dark",
+                "elementSpiritLevel": 72,
+                "elementSpiritStar": 1,
+                "elementSpiritSkills": [],
+                "elementAffinityPower": 72,
+                "skin": 10038
               }
             },
             "defenders": [
               {
                 "1": {
-                  "id": 46,
-                  "xp": 3625195,
+                  "id": 4033,
+                  "xp": 1009660,
                   "level": 130,
-                  "color": 11,
-                  "slots": {"4": 0, "0": 0, "1": 0, "2": 0},
-                  "skills": {"230": 130, "231": 130, "232": 130, "233": 130, "6032": 70},
-                  "power": 51349,
-                  "star": 5,
-                  "runes": [1410, 6360, 400, 600, 1800],
-                  "skins": {"101": 45, "178": 29, "315": 24, "262": 22},
-                  "currentSkin": 101,
-                  "titanGiftLevel": 30,
-                  "titanCoinsSpent": {"consumable": {"24": 65150}},
+                  "star": 6,
+                  "skills": {
+                    "4034": 130,
+                    "4035": 130
+                  },
+                  "power": 187026,
+                  "skins": {
+                    "10019": 50,
+                    "10038": 50
+                  },
+                  "currentSkin": 10038,
                   "artifacts": [
-                    {"level": 61, "star": 4},
-                    {"level": 74, "star": 3},
-                    {"level": 74, "star": 3}
+                    {"level": 102, "star": 4},
+                    {"level": 102, "star": 5},
+                    {"level": 110, "star": 5}
                   ],
-                  "scale": 1,
-                  "petId": 6006,
-                  "type": "hero",
-                  "perks": [9, 5, 1, 22],
-                  "ascensions": {"1": [0, 1]},
-                  "agility": 1278,
-                  "hp": 117008.2,
-                  "intelligence": 5059.6,
-                  "physicalAttack": 50,
-                  "strength": 2832,
-                  "armor": 2723.3,
-                  "magicPower": 9950.5,
-                  "magicResist": 695,
-                  "skin": 101,
-                  "favorPetId": 6006,
-                  "favorPower": 2407,
+                  "scale": 0.8,
+                  "type": "titan",
+                  "perks": [6, 5],
+                  "anticrit": 1,
+                  "antidodge": 1,
+                  "hp": 7271482.18,
+                  "physicalAttack": 790077.87,
+                  "elementArmor": 238032.5,
+                  "elementAttack": 218184,
+                  "elementSpiritPower": 447369,
+                  "element": "dark",
+                  "elementSpiritLevel": 75,
+                  "elementSpiritStar": 3,
+                  "elementSpiritSkills": [
+                    {"skillId": 4500, "level": 1, "tierScale": 5},
+                    {"skillId": 4507, "level": 1, "tierScale": 20}
+                  ],
+                  "elementAffinityPower": 112.5,
+                  "skin": 10038,
                   "state": {
-                    "hp": 230288,
-                    "energy": 0,
+                    "hp": 4865074,
+                    "energy": 562,
                     "isDead": false,
-                    "maxHp": 230288
+                    "maxHp": 7271482
                   }
                 }
               }
             ],
-            "effects": {
-              "defenders": {
-                "percentBuffAll_healing": 10,
-                "percentBuffAll_magicPower": 2.5,
-                "percentBuffAll_magicResist": 4,
-                "percentBuffAll_physicalAttack": 5
-              },
-              "defendersBanner": {
-                "id": 4,
-                "slots": [5, 16, 29]
-              },
-              "attackers": {
-                "percentBuffByPerk_energyIncrease_4": 10,
-                "percentBuffAll_magicPower": 2.5,
-                "percentBuffAll_armor": 3
-              },
-              "attackersBanner": {
-                "id": 1,
-                "slots": [5, 38]
-              }
-            },
+            "effects": [],
             "reward": [],
-            "startTime": 1761659646,
-            "seed": 2889773322,
-            "type": "clan_pvp"
+            "startTime": 1762191029,
+            "seed": 1906504079,
+            "type": "clan_pvp_titan"
           },
-          "endTime": 1761659826
+          "endTime": 1762191209
         }
       }
     }
@@ -345,14 +562,14 @@ https://api.hero-wars.com/
 |-------|------|-------------|
 | `battle` | Object | Complete battle data |
 | `battle.userId` | String | Attacking player ID |
-| `battle.typeId` | String | Battle type identifier |
-| `battle.attackers` | Object | Attacking team data |
-| `battle.defenders` | Array | Defending team data |
-| `battle.effects` | Object | Battle effects and buffs |
+| `battle.typeId` | String | Defending player ID (as string) |
+| `battle.attackers` | Object | Attacking team data (unit ID → unit data) |
+| `battle.defenders` | Array | Defending team data (array of objects with position → unit data) |
+| `battle.effects` | Object\|Array | Battle effects and buffs (empty array for titan battles, object for hero battles) |
 | `battle.reward` | Array | Battle rewards |
 | `battle.startTime` | Number | Battle start timestamp |
-| `battle.seed` | Number | Random seed for battle |
-| `battle.type` | String | Battle type ("clan_pvp") |
+| `battle.seed` | Number | Random seed for battle replay |
+| `battle.type` | String | Battle type ("clan_pvp" for heroes, "clan_pvp_titan" for titans) |
 | `endTime` | Number | Battle end timestamp |
 
 ## Hero Data Structure
@@ -391,6 +608,39 @@ Each hero in the battle data contains:
 | `skin` | Number | Current skin ID |
 | `favorPetId` | Number | Favor pet ID |
 | `favorPower` | Number | Favor power |
+
+## Titan Data Structure
+
+Titans in battle data contain:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | Number | Titan ID (4000+ range) |
+| `xp` | Number | Experience points |
+| `level` | Number | Titan level |
+| `star` | Number | Star rating |
+| `skills` | Object | Skill levels (skill ID → level) |
+| `power` | Number | Total power |
+| `skins` | Object | Available skins (skin ID → level) |
+| `currentSkin` | Number | Currently equipped skin ID |
+| `artifacts` | Array | Artifact data (level, star) |
+| `scale` | Number | Scale factor (typically 0.8) |
+| `type` | String | Entity type ("titan") |
+| `perks` | Array | Perk IDs |
+| `anticrit` | Number | Anti-crit stat |
+| `antidodge` | Number | Anti-dodge stat |
+| `hp` | Number | Health points |
+| `physicalAttack` | Number | Physical attack |
+| `elementArmor` | Number | Element armor |
+| `elementAttack` | Number | Element attack |
+| `elementSpiritPower` | Number | Element spirit power |
+| `element` | String | Element type ("dark", "light", "fire", "water", "earth") |
+| `elementSpiritLevel` | Number | Element spirit level |
+| `elementSpiritStar` | Number | Element spirit star |
+| `elementSpiritSkills` | Array | Element spirit skills (skillId, level, tierScale) |
+| `elementAffinityPower` | Number | Element affinity power |
+| `skin` | Number | Current skin ID |
+| `state` | Object | Current battle state (hp, energy, isDead, maxHp) |
 
 ## Pet Data Structure
 
@@ -503,6 +753,13 @@ Common error responses:
 - **v4.0**: Improved team data structure
 - **v5.0**: Updated with real API data from network traffic analysis
 - **v5.1**: Corrected API call patterns and response structure based on actual HAR file data
+- **v6.0**: Complete rewrite with actual API data from GW.har:
+  - Updated base URL to `heroes-wb.nextersglobal.com/api/`
+  - Added complete `clanWarEndBattle` API documentation
+  - Updated `clanWarAttack` to show both hero and titan battle examples
+  - Added titan data structure documentation
+  - Updated all request/response examples with actual data from HAR file
+  - Clarified differences between hero battles (slots 1-20) and titan battles (slots 21-40)
 
 ---
 

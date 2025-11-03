@@ -7824,11 +7824,28 @@
 					}
 				}
 
+				// Get banners from userInfo if available, otherwise use defaults (one per team)
+				let banners = [1, 2, 3]; // Default banner IDs for 3 teams
+				try {
+					const userInfo = getUserInfo();
+					if (userInfo && userInfo.banners) {
+						// If banners is an array, use it (should be 3 banners for grand arena)
+						if (Array.isArray(userInfo.banners)) {
+							banners = userInfo.banners.length >= 3 ? userInfo.banners.slice(0, 3) : 
+							         userInfo.banners.length === 1 ? [userInfo.banners[0], userInfo.banners[0], userInfo.banners[0]] : [1, 1, 1];
+						} else if (typeof userInfo.banners === 'number') {
+							banners = [userInfo.banners, userInfo.banners, userInfo.banners];
+						}
+					}
+				} catch (e) {
+					console.log('Could not get banners from userInfo, using defaults');
+				}
+
 				return {
 					heroes: heroes,
 					pets: pets,
 					favor: grandFavor,
-					banners: [] // Will be handled by system
+					banners: banners
 				};
 			} else {
 				// Regular Arena: Use system's pre-configured arena team
@@ -7847,11 +7864,24 @@
 					pet = arenaTeam[5]; // 6th element is pet
 				}
 
+				// Get banner from userInfo if available, otherwise use default
+				let banners = [1]; // Default banner ID
+				try {
+					const userInfo = getUserInfo();
+					if (userInfo && userInfo.banner) {
+						// If banner is a number, wrap it in array
+						banners = typeof userInfo.banner === 'number' ? [userInfo.banner] : 
+						         Array.isArray(userInfo.banner) ? userInfo.banner : [1];
+					}
+				} catch (e) {
+					console.log('Could not get banner from userInfo, using default');
+				}
+
 				return {
 					heroes: heroes,
 					pet: pet,
 					favor: arenaFavor,
-					banners: [] // Will be handled by system
+					banners: banners
 				};
 			}
 		}
@@ -7867,14 +7897,14 @@
 					],
 					pets: [6006, 6005, 6004],
 					favor: {},
-					banners: [1, 6, 2]
+					banners: [1, 2, 3] // Default banners for 3 teams
 				};
 			} else {
 				return {
 					heroes: [57, 31, 55, 40, 16],
 					pet: 6008,
 					favor: {},
-					banners: [6]
+					banners: [1] // Default banner
 				};
 			}
 		}
@@ -8232,9 +8262,41 @@
 		}
 
 		this.attackDirectSlots = async function() {
-			console.log('Starting direct Guild War attacks on slots 1 and 2...');
+			console.log('Starting direct Guild War attacks on slots 8, 9, 1, and 2...');
 			
-			// Attack slot 1
+			// Attack slot 8 (Titan battle)
+			try {
+				console.log('Attacking slot 8...');
+				setProgress(`${I18N('GUILD_WAR')}: Attacking slot 8 (Titans)`);
+				await this.attackSlot(8);
+				this.victories++;
+				console.log('Slot 8 attack completed successfully');
+			} catch (error) {
+				console.error('Error attacking slot 8:', error);
+				this.end(`Slot 8 attack failed: ${error.message}`);
+				return;
+			}
+
+			// Small delay between attacks
+			await new Promise(resolve => setTimeout(resolve, 1000));
+
+			// Attack slot 9 (Titan battle)
+			try {
+				console.log('Attacking slot 9...');
+				setProgress(`${I18N('GUILD_WAR')}: Attacking slot 9 (Titans)`);
+				await this.attackSlot(9);
+				this.victories++;
+				console.log('Slot 9 attack completed successfully');
+			} catch (error) {
+				console.error('Error attacking slot 9:', error);
+				this.end(`Slot 9 attack failed: ${error.message}`);
+				return;
+			}
+
+			// Small delay between attacks
+			await new Promise(resolve => setTimeout(resolve, 1000));
+
+			// Attack slot 1 (Hero battle)
 			try {
 				console.log('Attacking slot 1...');
 				setProgress(`${I18N('GUILD_WAR')}: Attacking slot 1`);
@@ -8250,7 +8312,7 @@
 			// Small delay between attacks
 			await new Promise(resolve => setTimeout(resolve, 1000));
 
-			// Attack slot 2
+			// Attack slot 2 (Hero battle)
 			try {
 				console.log('Attacking slot 2...');
 				setProgress(`${I18N('GUILD_WAR')}: Attacking slot 2`);
@@ -8269,24 +8331,46 @@
 		this.attackSlot = async function(slotId) {
 			console.log(`Attacking slot ${slotId}...`);
 			
-			// Get arena team configuration (same as arena attack)
-			const teamConfig = this.getArenaTeamConfiguration();
+			// Determine if this is a titan battle (slots 8 and 9)
+			const isTitanBattle = (slotId === 8 || slotId === 9);
 			
-			if (!teamConfig.heroes || teamConfig.heroes.length < 5) {
-				throw new Error('Arena team not properly configured - need at least 5 heroes');
+			let teamConfig;
+			if (isTitanBattle) {
+				// Get titan team configuration
+				teamConfig = this.getTitanTeamConfiguration();
+				
+				if (!teamConfig.titans || teamConfig.titans.length < 5) {
+					throw new Error('Titan team not properly configured - need at least 5 titans');
+				}
+			} else {
+				// Get arena team configuration (same as arena attack)
+				teamConfig = this.getArenaTeamConfiguration();
+				
+				if (!teamConfig.heroes || teamConfig.heroes.length < 5) {
+					throw new Error('Arena team not properly configured - need at least 5 heroes');
+				}
 			}
 
-			// Prepare attack request using arena team structure
+			// Prepare attack request
+			let attackArgs = {
+				slotId: slotId,
+				heroes: isTitanBattle ? teamConfig.titans.slice(0, 5) : teamConfig.heroes.slice(0, 5)
+			};
+
+			if (isTitanBattle) {
+				// Titan battles: no pet, no banner, empty favor
+				attackArgs.favor = {};
+			} else {
+				// Hero battles: include pet, favor, and banner
+				attackArgs.pet = teamConfig.pet;
+				attackArgs.favor = teamConfig.favor;
+				attackArgs.banner = teamConfig.banners && teamConfig.banners.length > 0 ? teamConfig.banners[0] : 1;
+			}
+
 			const calls = [
 				{
 					name: "clanWarAttack",
-					args: {
-						slotId: slotId,
-						heroes: teamConfig.heroes.slice(0, 5), // Take first 5 heroes
-						pet: teamConfig.pet,
-						favor: teamConfig.favor,
-						banner: teamConfig.banners && teamConfig.banners.length > 0 ? teamConfig.banners[0] : 1
-					},
+					args: attackArgs,
 					context: {
 						actionTs: Date.now()
 					},
@@ -8352,11 +8436,48 @@
 				pet = arenaTeam[5]; // 6th element is pet
 			}
 
+			// Get banner from userInfo if available, otherwise use default
+			let banners = [1]; // Default banner ID
+			try {
+				const userInfo = getUserInfo();
+				if (userInfo && userInfo.banner) {
+					// If banner is a number, wrap it in array
+					banners = typeof userInfo.banner === 'number' ? [userInfo.banner] : 
+					         Array.isArray(userInfo.banner) ? userInfo.banner : [1];
+				}
+			} catch (e) {
+				console.log('Could not get banner from userInfo, using default');
+			}
+
 			return {
 				heroes: heroes,
 				pet: pet,
 				favor: arenaFavor,
-				banners: [] // Will be handled by system
+				banners: banners
+			};
+		}
+
+		this.getTitanTeamConfiguration = function() {
+			// Get titan team configuration for Guild War Titan battles
+			if (!this.teamInfo || !this.teamInfo.teams) {
+				console.error('Team info not available, using fallback titan configuration');
+				return this.getFallbackTitanTeamConfiguration();
+			}
+
+			const teamData = this.teamInfo.teams;
+
+			// Use clan_pvp_titan if available, otherwise fallback to titan_arena
+			const titanTeam = teamData.clan_pvp_titan || teamData.titan_arena || [];
+
+			console.log('Titan team from system:', titanTeam);
+
+			if (!titanTeam || titanTeam.length < 5) {
+				console.warn('Titan team not properly configured, using fallback');
+				return this.getFallbackTitanTeamConfiguration();
+			}
+
+			return {
+				titans: titanTeam.slice(0, 5) // Take first 5 titans
 			};
 		}
 
@@ -8367,7 +8488,15 @@
 				heroes: [46, 57, 40, 16, 65], // Default hero team
 				pet: 6004, // Default pet
 				favor: {}, // No favor assignments
-				banners: []
+				banners: [1] // Default banner ID
+			};
+		}
+
+		this.getFallbackTitanTeamConfiguration = function() {
+			// Fallback titan configuration if team data is not available
+			console.log('Using fallback titan team configuration');
+			return {
+				titans: [4033, 4003, 4001, 4032, 4000] // Default titan team
 			};
 		}
 
