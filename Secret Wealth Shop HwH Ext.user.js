@@ -8,6 +8,8 @@
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
 // @grant        none
 // @run-at       document-end
+// @downloadURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/Secret%20Wealth%20Shop%20HwH%20Ext.user.js
+// @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/Secret%20Wealth%20Shop%20HwH%20Ext.user.js
 // ==/UserScript==
 
 (function() {
