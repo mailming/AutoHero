@@ -317,17 +317,29 @@
                     const shopId = shop.id;
                     const shoppingList = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId) || '{}');
                     const fixedSlotIds = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId + '_slots') || '[]');
-                    const currentShopData = shopsData[shopId];
-                    if (!currentShopData || !currentShopData.slots) continue;
+                    
+                    // Try both string and number format for shopId (API may return string IDs)
+                    const currentShopData = shopsData[shopId] || shopsData[String(shopId)] || shopsData[Number(shopId)];
+                    if (!currentShopData || !currentShopData.slots) {
+                        console.log(`Shop ${shop.name} (ID: ${shopId}): No shop data or slots found`);
+                        continue;
+                    }
                     
                     const wantedNames = new Set();
                     for(const name in shoppingList) { if(shoppingList[name] === true) { wantedNames.add(name); } }
                     
+                    console.log(`Shop ${shop.name} (ID: ${shopId}): Found ${Object.keys(currentShopData.slots).length} slots, ${wantedNames.size} wanted items, ${fixedSlotIds.length} fixed slots`);
+                    
                     // Check if we have anything to buy (names or fixed slots)
-                    if (wantedNames.size === 0 && fixedSlotIds.length === 0) continue;
+                    if (wantedNames.size === 0 && fixedSlotIds.length === 0) {
+                        console.log(`Shop ${shop.name} (ID: ${shopId}): No items to buy (no checkboxes selected and no fixed slot IDs)`);
+                        continue;
+                    }
                     
                     for (const slot of Object.values(currentShopData.slots)) {
-                        if (!slot.reward || slot.bought || !slot.cost) continue;
+                        // Don't check if item is available - submit API call even if not available
+                        // Skip only if slot data is completely missing
+                        if (!slot) continue;
                         
                         let shouldBuy = false;
                         let itemDisplayName = `Slot ${slot.id}`;
@@ -361,30 +373,41 @@
                         }
                         
                         if (shouldBuy) {
-                            const currencyType = Object.keys(slot.cost)[0];
+                            // Use slot.cost if available, otherwise use empty object (API will handle validation)
+                            const slotCost = slot.cost || {};
+                            const currencyType = slotCost ? Object.keys(slotCost)[0] : null;
+                            
                             // Support multiple payment types: gold, coin (standard shops), consumable, starmoney (Secret Wealth Shop)
-                            if (currencyType === 'gold' || currencyType === 'coin' || currencyType === 'consumable' || currencyType === 'starmoney') {
+                            // If no cost, still submit the call (API will return error if needed)
+                            if (!slotCost || currencyType === 'gold' || currencyType === 'coin' || currencyType === 'consumable' || currencyType === 'starmoney') {
                                 // Convert cost values from strings to numbers if needed
                                 // The API sometimes returns string values but expects numbers in shopBuy
                                 const normalizedCost = {};
-                                for (const costType in slot.cost) {
-                                    if (typeof slot.cost[costType] === 'object' && slot.cost[costType] !== null) {
-                                        // For nested objects like coin: { "18": "12" }
-                                        normalizedCost[costType] = {};
-                                        for (const costKey in slot.cost[costType]) {
-                                            const costValue = slot.cost[costType][costKey];
-                                            // Convert string numbers to actual numbers
-                                            normalizedCost[costType][costKey] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
+                                if (slotCost) {
+                                    for (const costType in slotCost) {
+                                        if (typeof slotCost[costType] === 'object' && slotCost[costType] !== null) {
+                                            // For nested objects like coin: { "18": "12" }
+                                            normalizedCost[costType] = {};
+                                            for (const costKey in slotCost[costType]) {
+                                                const costValue = slotCost[costType][costKey];
+                                                // Convert string numbers to actual numbers
+                                                normalizedCost[costType][costKey] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
+                                            }
+                                        } else {
+                                            // For direct values like gold: "1000"
+                                            const costValue = slotCost[costType];
+                                            normalizedCost[costType] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
                                         }
-                                    } else {
-                                        // For direct values like gold: "1000"
-                                        const costValue = slot.cost[costType];
-                                        normalizedCost[costType] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
                                     }
                                 }
                                 
-                                // Build shopBuy arguments
-                                const shopBuyArgs = { shopId: shopId, slot: slot.id, cost: normalizedCost, reward: slot.reward };
+                                // Build shopBuy arguments - use slot data or defaults
+                                const shopBuyArgs = { 
+                                    shopId: shopId, 
+                                    slot: slot.id, 
+                                    cost: normalizedCost, 
+                                    reward: slot.reward || {}
+                                };
                                 
                                 // Secret Wealth Shop (shopId 1576000026) - fixed purchases only (no amount parameter)
                                 // Titan Artifact Shop (shopId 13) - supports bulk purchases via amount parameter
@@ -397,106 +420,124 @@
                                 }
                                 // For Secret Wealth Shop and other shops, don't include amount (fixed purchase)
                                 
-                                callsToMake.push({ name: 'shopBuy', args: shopBuyArgs });
-                                itemsToLog.push(`- ${itemDisplayName} (Slot ${slot.id}) from ${shop.name}`);
+                                // Store purchase info with item details for individual API calls
+                                callsToMake.push({ 
+                                    name: 'shopBuy', 
+                                    args: shopBuyArgs,
+                                    itemInfo: `- ${itemDisplayName} (Slot ${slot.id}) from ${shop.name}`
+                                });
                             }
                         }
                     }
                 }
+                // Process purchases one by one (1 API call per item)
+                // This way, if one purchase fails, others can still succeed
                 if (callsToMake.length > 0) {
-                    HWHFuncs.setProgress(`Auto-Buyer: Attempting to buy ${callsToMake.length} item(s)...`);
-                    try {
-                        const caller = new Caller(callsToMake);
-                        
-                        // Set up error handler to catch global errors from Caller
-                        let globalError = null;
-                        const originalOnError = Caller.globalHooks.onError;
-                        Caller.globalHooks.onError = (error) => {
-                            globalError = error;
-                            console.error('%c--- Global API Error ---', 'color: red; font-weight: bold;', error);
-                            return true; // Continue with normal error handling
-                        };
+                    HWHFuncs.setProgress(`Auto-Buyer: Attempting to buy ${callsToMake.length} item(s) (one at a time)...`);
+                    const errors = [];
+                    const successes = [];
+                    
+                    for (let i = 0; i < callsToMake.length; i++) {
+                        const purchaseCall = callsToMake[i];
+                        const itemInfo = purchaseCall.itemInfo || `Item ${i + 1}`;
                         
                         try {
-                            await caller.send();
-                        } finally {
-                            // Restore original error handler
-                            Caller.globalHooks.onError = originalOnError;
-                        }
-                        
-                        // Check for global error first
-                        if (globalError) {
-                            const errorMsg = typeof globalError === 'string' ? globalError : (globalError.name || globalError.description || JSON.stringify(globalError));
-                            console.error('%c--- Auto-Buyer Purchase Error ---', 'color: red; font-weight: bold;');
-                            console.error('Global error:', globalError);
-                            console.error('Failed items:', itemsToLog.join('\n'));
-                            HWHFuncs.setProgress(`Auto-Buyer Error: ${errorMsg}`, true);
-                            return;
-                        }
-                        
-                        // Check for errors in the response
-                        const errors = [];
-                        const successes = [];
-                        
-                        // Check each call result individually
-                        for (let i = 0; i < callsToMake.length; i++) {
-                            const callName = callsToMake[i].name;
-                            const itemInfo = itemsToLog[i] || `Item ${i + 1}`;
+                            HWHFuncs.setProgress(`Auto-Buyer: Purchasing item ${i + 1}/${callsToMake.length}...`);
                             
-                            try {
-                                // Get result for this call
-                                const callResult = caller.result(callName);
-                                
-                                // Check if there's an error in side results
-                                const sideResults = caller.sideResults[callName];
-                                
-                                // Check for errors in sideResults
-                                if (sideResults && sideResults.length > 0) {
-                                    const sideResult = sideResults[0];
-                                    if (sideResult.error) {
-                                        const error = sideResult.error;
-                                        const errorMsg = typeof error === 'string' ? error : (error.name || error.description || JSON.stringify(error));
-                                        errors.push(`${itemInfo}: ${errorMsg}`);
-                                        console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', error);
-                                        continue;
-                                    }
-                                }
-                                
-                                // Check if we have a valid result
-                                if (callResult && callResult.length > 0 && callResult[0]) {
+                            // Send individual API call for this purchase
+                            const caller = new Caller([{ name: purchaseCall.name, args: purchaseCall.args }]);
+                            await caller.send();
+                            
+                            // Check for errors first
+                            const sideResults = caller.sideResults[purchaseCall.name] || [];
+                            
+                            // Check if there's an error in side results
+                            if (sideResults && sideResults.length > 0 && sideResults[0] && sideResults[0].error) {
+                                const error = sideResults[0].error;
+                                const errorMsg = typeof error === 'string' ? error : (error.name || error.description || JSON.stringify(error));
+                                errors.push(`${itemInfo}: ${errorMsg}`);
+                                console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', error);
+                                continue;
+                            }
+                            
+                            // Get result - caller.result() returns an array of response objects
+                            // For shopBuy, the response is: [{"fragmentTitanArtifact":{"2005":5}}] or similar
+                            const callResult = caller.result(purchaseCall.name);
+                            
+                            // Debug logging
+                            console.log(`%cPurchase result for ${itemInfo}:`, 'color: blue;', {
+                                callResult,
+                                callResultType: typeof callResult,
+                                callResultIsArray: Array.isArray(callResult),
+                                callResultLength: callResult ? callResult.length : 0,
+                                firstElement: callResult && callResult.length > 0 ? callResult[0] : null,
+                                sideResults
+                            });
+                            
+                            // Check if we have a valid result
+                            // If callResult is an array with at least one element, and no error in sideResults, it's a success
+                            // The response object can be empty {} or contain data - both mean success if no error
+                            if (callResult && Array.isArray(callResult) && callResult.length > 0) {
+                                // We got a response - check the first element
+                                const responseObj = callResult[0];
+                                // If responseObj is an object (even empty), it's a success
+                                // If responseObj is null/undefined, might still be success if no error
+                                if (responseObj !== null && responseObj !== undefined) {
                                     // Success - we got a response
                                     successes.push(itemInfo);
-                                    console.log(`%cPurchase Success: ${itemInfo}`, 'color: lightgreen; font-weight: bold;');
+                                    console.log(`%cPurchase Success: ${itemInfo}`, 'color: lightgreen; font-weight: bold;', responseObj);
+                                } else if (sideResults.length === 0 || !sideResults[0] || !sideResults[0].error) {
+                                    // Response is null/undefined but no error - might still be success (API returned successfully)
+                                    successes.push(itemInfo);
+                                    console.log(`%cPurchase Success: ${itemInfo} (no response data but no error)`, 'color: lightgreen; font-weight: bold;');
                                 } else {
-                                    // No result - might be an error
+                                    // Response is null/undefined and there's an error
+                                    errors.push(`${itemInfo}: No response data`);
+                                    console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', 'No response data');
+                                }
+                            } else {
+                                // No result array or empty array - check if there's an error
+                                // If no error in sideResults, might still be success (unlikely but possible)
+                                if (sideResults.length === 0 || !sideResults[0] || !sideResults[0].error) {
+                                    // No error but no result - might be success
+                                    successes.push(itemInfo);
+                                    console.log(`%cPurchase Success: ${itemInfo} (no result array but no error)`, 'color: lightgreen; font-weight: bold;');
+                                } else {
+                                    // No result and there's an error
+                                    console.warn(`%cPurchase result check failed for ${itemInfo}`, 'color: orange;', {
+                                        callResult,
+                                        callResultType: typeof callResult,
+                                        callResultIsArray: Array.isArray(callResult),
+                                        callResultLength: callResult ? callResult.length : 0,
+                                        sideResults
+                                    });
                                     errors.push(`${itemInfo}: No response received`);
                                     console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', 'No response received');
                                 }
-                            } catch (callError) {
-                                errors.push(`${itemInfo}: ${callError.message || 'Unknown error'}`);
-                                console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', callError);
                             }
+                        } catch (callError) {
+                            errors.push(`${itemInfo}: ${callError.message || 'Unknown error'}`);
+                            console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', callError);
                         }
                         
-                        if (errors.length > 0) {
-                            console.error('%c--- Purchase Errors ---', 'color: red; font-weight: bold;');
-                            errors.forEach(error => console.error(`%c${error}`, 'color: red;'));
+                        // Small delay between purchases to avoid rate limiting
+                        if (i < callsToMake.length - 1) {
+                            await new Promise(resolve => setTimeout(resolve, 100));
                         }
-                        
-                        if (successes.length > 0) {
-                            console.log('%c--- Items Bought Successfully ---', 'color: lightgreen; font-weight: bold;');
-                            successes.forEach(success => console.log(`%c${success}`, 'color: lightgreen;'));
-                        }
-                        
-                        const summary = `Bought ${successes.length}/${callsToMake.length} items. ${errors.length > 0 ? `${errors.length} failed - check console.` : ''}`;
-                        HWHFuncs.setProgress(summary, true);
-                    } catch (error) {
-                        console.error('%c--- Auto-Buyer Purchase Error ---', 'color: red; font-weight: bold;');
-                        console.error('Error details:', error);
-                        console.error('Stack trace:', error.stack);
-                        console.error('Failed items:', itemsToLog.join('\n'));
-                        HWHFuncs.setProgress(`Auto-Buyer Error: ${error.message || 'Check console for details'}`, true);
                     }
+                    
+                    if (errors.length > 0) {
+                        console.error('%c--- Purchase Errors ---', 'color: red; font-weight: bold;');
+                        errors.forEach(error => console.error(`%c${error}`, 'color: red;'));
+                    }
+                    
+                    if (successes.length > 0) {
+                        console.log('%c--- Items Bought Successfully ---', 'color: lightgreen; font-weight: bold;');
+                        successes.forEach(success => console.log(`%c${success}`, 'color: lightgreen;'));
+                    }
+                    
+                    const summary = `Bought ${successes.length}/${callsToMake.length} items. ${errors.length > 0 ? `${errors.length} failed - check console.` : ''}`;
+                    HWHFuncs.setProgress(summary, true);
                 } else {
                     HWHFuncs.setProgress("Auto-Buyer: No items to buy.", true);
                 }
