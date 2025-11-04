@@ -399,12 +399,20 @@
                 HWHFuncs.setProgress(`Error: ${error.message}`, true);
             }
 
-            HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+            // Use confirm with proper async handling
+            const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+            
+            // Wait a tick for popup to initialize, then replace content
+            await new Promise(resolve => setTimeout(resolve, 0));
+            
             const popupBody = document.querySelector('.PopUp_Container');
             if (popupBody) {
                 popupBody.innerHTML = '';
                 popupBody.appendChild(popupContent);
             }
+            
+            // Wait for popup to close before returning
+            await popupPromise;
         }
 
         // --- AUTO-PURCHASE ON SCRIPT LOAD ---
