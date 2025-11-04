@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Secret Wealth Shop HwH Ext
 // @namespace    HeroWarsHelper.SecretWealthShop
-// @version      1.0
+// @version      1.1
 // @description  Manual purchase interface for Secret Wealth Shop with consumable and GEM payment options
 // @author       YourName
 // @match        https://www.hero-wars.com/*
@@ -200,6 +200,142 @@
                 shopInfo.style.cssText = 'margin-bottom: 15px; padding: 8px; background: #3a2e24; border-radius: 4px;';
                 shopInfo.innerHTML = `<strong>Shop ID:</strong> ${actualShopId}<br><strong>Available Slots:</strong> ${Object.keys(secretWealthShop.slots).length}`;
                 contentContainer.appendChild(shopInfo);
+
+                // --- FIXED PURCHASE ITEMS (from documentation) ---
+                const fixedItemsSection = document.createElement('div');
+                fixedItemsSection.style.cssText = 'margin-bottom: 30px; padding: 15px; background: #2a1f18; border: 2px solid #ffcc66; border-radius: 4px;';
+                
+                const fixedItemsTitle = document.createElement('h3');
+                fixedItemsTitle.textContent = '📌 Fixed Purchase Items';
+                fixedItemsTitle.style.cssText = 'margin: 0 0 15px 0; color: #ffcc66; border-bottom: 1px solid #ce9767; padding-bottom: 8px;';
+                fixedItemsSection.appendChild(fixedItemsTitle);
+
+                // Fixed Item 1: Slot 6 - Consumable Payment (Pet Potion for Titan Artifact Sphere)
+                const fixedItem1 = {
+                    slot: 6,
+                    cost: {
+                        consumable: {
+                            "85": 40000 // Pet potion
+                        }
+                    },
+                    reward: {
+                        consumable: {
+                            "55": 80 // Titan artifact sphere
+                        }
+                    },
+                    paymentType: 'Consumable'
+                };
+
+                const fixedItem1Div = document.createElement('div');
+                fixedItem1Div.style.cssText = 'margin-bottom: 15px; padding: 12px; background: #1a1510; border: 1px solid #ce9767; border-radius: 4px;';
+                
+                const fixedItem1Header = document.createElement('div');
+                fixedItem1Header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
+                const fixedItem1Title = document.createElement('h4');
+                fixedItem1Title.textContent = 'Fixed Item: Slot 6';
+                fixedItem1Title.style.cssText = 'margin: 0; color: #ffcc66;';
+                fixedItem1Header.appendChild(fixedItem1Title);
+                fixedItem1Div.appendChild(fixedItem1Header);
+
+                const fixedItem1Reward = document.createElement('div');
+                fixedItem1Reward.style.cssText = 'margin-bottom: 8px;';
+                fixedItem1Reward.innerHTML = `<strong>Reward:</strong> ${getItemName(fixedItem1.reward)}`;
+                fixedItem1Div.appendChild(fixedItem1Reward);
+
+                const fixedItem1Cost = document.createElement('div');
+                fixedItem1Cost.style.cssText = 'margin-bottom: 12px;';
+                fixedItem1Cost.innerHTML = `<strong>Cost:</strong> ${getCostDescription(fixedItem1.cost)}`;
+                fixedItem1Div.appendChild(fixedItem1Cost);
+
+                const fixedItem1Btn = document.createElement('button');
+                fixedItem1Btn.textContent = '💰 Buy with Consumable';
+                fixedItem1Btn.style.cssText = 'padding: 8px 16px; border: 1px solid #4a7c3e; background: #3a5a2e; color: #aaffaa; cursor: pointer; border-radius: 4px; font-weight: bold;';
+                fixedItem1Btn.onclick = async () => {
+                    fixedItem1Btn.disabled = true;
+                    fixedItem1Btn.textContent = 'Processing...';
+                    const success = await purchaseItem(actualShopId, fixedItem1.slot, fixedItem1.cost, fixedItem1.reward, fixedItem1.paymentType);
+                    if (success) {
+                        setTimeout(() => {
+                            popupContent.innerHTML = '';
+                            popupContent.appendChild(headerContainer);
+                            openShopInterface();
+                        }, 1000);
+                    } else {
+                        fixedItem1Btn.disabled = false;
+                        fixedItem1Btn.textContent = '💰 Buy with Consumable';
+                    }
+                };
+                fixedItem1Div.appendChild(fixedItem1Btn);
+                fixedItemsSection.appendChild(fixedItem1Div);
+
+                // Fixed Item 2: Slot 3 - GEM Payment (GEMs for Crystal)
+                const fixedItem2 = {
+                    slot: 3,
+                    cost: {
+                        starmoney: 890 // GEMs
+                    },
+                    reward: {
+                        consumable: {
+                            "201": 100 // Crystal
+                        }
+                    },
+                    paymentType: 'GEMs'
+                };
+
+                const fixedItem2Div = document.createElement('div');
+                fixedItem2Div.style.cssText = 'margin-bottom: 15px; padding: 12px; background: #1a1510; border: 1px solid #ce9767; border-radius: 4px;';
+                
+                const fixedItem2Header = document.createElement('div');
+                fixedItem2Header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
+                const fixedItem2Title = document.createElement('h4');
+                fixedItem2Title.textContent = 'Fixed Item: Slot 3';
+                fixedItem2Title.style.cssText = 'margin: 0; color: #ffcc66;';
+                fixedItem2Header.appendChild(fixedItem2Title);
+                fixedItem2Div.appendChild(fixedItem2Header);
+
+                const fixedItem2Reward = document.createElement('div');
+                fixedItem2Reward.style.cssText = 'margin-bottom: 8px;';
+                fixedItem2Reward.innerHTML = `<strong>Reward:</strong> ${getItemName(fixedItem2.reward)}`;
+                fixedItem2Div.appendChild(fixedItem2Reward);
+
+                const fixedItem2Cost = document.createElement('div');
+                fixedItem2Cost.style.cssText = 'margin-bottom: 12px;';
+                fixedItem2Cost.innerHTML = `<strong>Cost:</strong> ${getCostDescription(fixedItem2.cost)}`;
+                fixedItem2Div.appendChild(fixedItem2Cost);
+
+                const fixedItem2Btn = document.createElement('button');
+                fixedItem2Btn.textContent = '💎 Buy with GEMs';
+                fixedItem2Btn.style.cssText = 'padding: 8px 16px; border: 1px solid #4a5a7c; background: #3a4a6a; color: #aaaaff; cursor: pointer; border-radius: 4px; font-weight: bold;';
+                fixedItem2Btn.onclick = async () => {
+                    fixedItem2Btn.disabled = true;
+                    fixedItem2Btn.textContent = 'Processing...';
+                    const success = await purchaseItem(actualShopId, fixedItem2.slot, fixedItem2.cost, fixedItem2.reward, fixedItem2.paymentType);
+                    if (success) {
+                        setTimeout(() => {
+                            popupContent.innerHTML = '';
+                            popupContent.appendChild(headerContainer);
+                            openShopInterface();
+                        }, 1000);
+                    } else {
+                        fixedItem2Btn.disabled = false;
+                        fixedItem2Btn.textContent = '💎 Buy with GEMs';
+                    }
+                };
+                fixedItem2Div.appendChild(fixedItem2Btn);
+                fixedItemsSection.appendChild(fixedItem2Div);
+
+                contentContainer.appendChild(fixedItemsSection);
+
+                // Add separator for dynamic shop items
+                const separator = document.createElement('div');
+                separator.style.cssText = 'margin: 20px 0; padding: 10px; text-align: center; color: #ce9767; border-top: 1px solid #ce9767; border-bottom: 1px solid #ce9767;';
+                separator.textContent = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+                contentContainer.appendChild(separator);
+
+                const dynamicItemsTitle = document.createElement('h3');
+                dynamicItemsTitle.textContent = '🛒 Shop Items';
+                dynamicItemsTitle.style.cssText = 'margin: 0 0 15px 0; color: #ffcc66;';
+                contentContainer.appendChild(dynamicItemsTitle);
 
                 // Display each slot
                 const slots = secretWealthShop.slots;
