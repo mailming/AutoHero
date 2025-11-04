@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Secret Wealth Shop HwH Ext
 // @namespace    HeroWarsHelper.SecretWealthShop
-// @version      1.0
+// @version      1.2
 // @description  Manual purchase interface for Secret Wealth Shop with consumable and GEM payment options
 // @author       YourName
 // @match        https://www.hero-wars.com/*
@@ -75,6 +75,84 @@
             }
             
             return JSON.stringify(cost);
+        }
+
+        // Auto-purchase function for slot 6 - uses actual shop data, always attempts purchase
+        async function autoPurchaseSlot6() {
+            try {
+                console.log('Secret Wealth Shop: Auto-purchasing slot 6 on script load...');
+                HWHFuncs.setProgress('Auto-purchasing slot 6...');
+                
+                // Fetch shop data to get actual slot 6 information
+                const caller = new Caller(['shopGetAll']);
+                await caller.send();
+                const shopsData = caller.result('shopGetAll');
+
+                // Find Secret Wealth Shop
+                let secretWealthShop = null;
+                let actualShopId = null;
+
+                // First try the known ID
+                if (shopsData[SECRET_WEALTH_SHOP_ID]) {
+                    secretWealthShop = shopsData[SECRET_WEALTH_SHOP_ID];
+                    actualShopId = SECRET_WEALTH_SHOP_ID;
+                } else {
+                    // Search for shop with slots that have consumable or starmoney costs
+                    for (const shopId in shopsData) {
+                        const shop = shopsData[shopId];
+                        if (shop && shop.slots) {
+                            const slots = shop.slots;
+                            for (const slotId in slots) {
+                                const slot = slots[slotId];
+                                if (slot.cost && (slot.cost.consumable || slot.cost.starmoney)) {
+                                    secretWealthShop = shop;
+                                    actualShopId = parseInt(shopId);
+                                    break;
+                                }
+                            }
+                            if (secretWealthShop) break;
+                        }
+                    }
+                }
+
+                if (!secretWealthShop || !secretWealthShop.slots || !secretWealthShop.slots[6]) {
+                    const errorMsg = 'Secret Wealth Shop: Slot 6 not found in shop data.';
+                    console.error(errorMsg);
+                    HWHFuncs.setProgress(`Auto-purchase error: ${errorMsg}`, true);
+                    return false;
+                }
+
+                const slot6 = secretWealthShop.slots[6];
+
+                // Determine payment type based on available cost
+                let paymentType = 'Unknown';
+                if (slot6.cost && slot6.cost.consumable) {
+                    paymentType = 'Consumable';
+                } else if (slot6.cost && slot6.cost.starmoney) {
+                    paymentType = 'GEMs';
+                }
+
+                const itemName = getItemName(slot6.reward);
+                console.log(`Secret Wealth Shop: Attempting to purchase slot 6 - ${itemName}`);
+                
+                // Always attempt purchase (no check for already bought)
+                const success = await purchaseItem(actualShopId, 6, slot6.cost, slot6.reward, paymentType);
+                
+                if (success) {
+                    console.log('%cSecret Wealth Shop: Auto-purchase successful!', 'color: lightgreen; font-weight: bold;');
+                    HWHFuncs.setProgress('Auto-purchase complete: Slot 6 purchased!', true);
+                } else {
+                    // Error is already shown by purchaseItem function
+                    console.log('Secret Wealth Shop: Auto-purchase failed - check error message above.');
+                }
+                
+                return success;
+            } catch (error) {
+                const errorMsg = `Auto-purchase error: ${error.message || error}`;
+                console.error('Secret Wealth Shop: Auto-purchase error:', error);
+                HWHFuncs.setProgress(errorMsg, true);
+                return false;
+            }
         }
 
         // Function to purchase an item
@@ -201,6 +279,12 @@
                 shopInfo.innerHTML = `<strong>Shop ID:</strong> ${actualShopId}<br><strong>Available Slots:</strong> ${Object.keys(secretWealthShop.slots).length}`;
                 contentContainer.appendChild(shopInfo);
 
+                // Auto-purchase info (always enabled)
+                const autoPurchaseInfo = document.createElement('div');
+                autoPurchaseInfo.style.cssText = 'margin-bottom: 15px; padding: 10px; background: #2a1f18; border: 1px solid #4a7c3e; border-radius: 4px;';
+                autoPurchaseInfo.innerHTML = '<strong style="color: #aaffaa;">✓ Auto-purchase enabled:</strong> <span style="color: #fce1ac;">Slot 6 will be purchased automatically on script load</span>';
+                contentContainer.appendChild(autoPurchaseInfo);
+
                 // Display each slot
                 const slots = secretWealthShop.slots;
                 const slotNumbers = Object.keys(slots).map(Number).sort((a, b) => a - b);
@@ -320,6 +404,12 @@
                 popupBody.appendChild(popupContent);
             }
         }
+
+        // --- AUTO-PURCHASE ON SCRIPT LOAD ---
+        // Always attempt to purchase slot 6 when script loads
+        autoPurchaseSlot6().catch(error => {
+            console.error('Secret Wealth Shop: Failed to auto-purchase on load:', error);
+        });
 
         // --- MENU INTEGRATION ---
         const { ScriptMenu } = HWHClasses;
