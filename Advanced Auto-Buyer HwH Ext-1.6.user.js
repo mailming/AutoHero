@@ -30,7 +30,7 @@
         const STORAGE_PREFIX = 'advAutoBuyer_';
 
         // --- DATA STRUCTURES & HELPERS ---
-        const SHOPS = [ { id: 1, name: 'Town Shop' }, { id: 4, name: 'Arena Shop' }, { id: 5, name: 'Grand Arena Shop' }, { id: 6, name: 'Tower Shop' }, { id: 8, name: 'Soul Shop' }, { id: 9, name: 'Friendship Shop' }, { id: 10, name: 'Outland Shop' }, { id: 13, name: 'Titan Artifact Shop' } ];
+        const SHOPS = [ { id: 1, name: 'Town Shop' }, { id: 4, name: 'Arena Shop' }, { id: 5, name: 'Grand Arena Shop' }, { id: 6, name: 'Tower Shop' }, { id: 8, name: 'Soul Shop' }, { id: 9, name: 'Friendship Shop' }, { id: 10, name: 'Outland Shop' }, { id: 13, name: 'Titan Artifact Shop' }, { id: 1576000026, name: 'Secret Wealth Shop' } ];
         const ITEMS_DATABASE = window.AUTO_BUYER_ITEM_DATABASE || {};
 
         // --- NEW: Import/Export Functions ---
@@ -99,7 +99,7 @@
         }
 
         // --- UI LOGIC (Heavily modified for multi-column) ---
-        function openSettingsPopup() {
+        async function openSettingsPopup() {
             const popupContent = document.createElement('div');
             popupContent.style.cssText = 'display: flex; flex-direction: column; height: 60vh; color: #fce1ac; text-shadow: 0 0 2px black;';
 
@@ -137,9 +137,95 @@
                 contentContainer.innerHTML = ''; // Clear previous content
                 const items = ITEMS_DATABASE[shopId] || [];
                 const savedItems = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId) || '{}');
+                const savedSlotIds = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId + '_slots') || '[]');
+                const savedAmount = parseInt(localStorage.getItem(STORAGE_PREFIX + shopId + '_amount') || '9999');
+
+                // --- NEW: Fixed Slot ID Section ---
+                const slotSection = document.createElement('div');
+                slotSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
+                
+                const slotTitle = document.createElement('h3');
+                slotTitle.textContent = 'Fixed Slot IDs';
+                slotTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
+                slotSection.appendChild(slotTitle);
+
+                const slotDescription = document.createElement('p');
+                slotDescription.textContent = 'Enter slot IDs (comma-separated) to purchase specific slots, e.g., "6, 3"';
+                slotDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
+                slotSection.appendChild(slotDescription);
+
+                const slotInputContainer = document.createElement('div');
+                slotInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+                
+                const slotInput = document.createElement('input');
+                slotInput.type = 'text';
+                slotInput.placeholder = 'e.g., 6, 3, 24';
+                slotInput.value = savedSlotIds.join(', ');
+                slotInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                
+                const saveSlotBtn = document.createElement('button');
+                saveSlotBtn.textContent = 'Save Slots';
+                saveSlotBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
+                saveSlotBtn.onclick = () => {
+                    const slotIds = slotInput.value.split(',').map(s => s.trim()).filter(s => s && !isNaN(parseInt(s))).map(s => parseInt(s));
+                    localStorage.setItem(STORAGE_PREFIX + shopId + '_slots', JSON.stringify(slotIds));
+                    alert(`Saved ${slotIds.length} slot ID(s): ${slotIds.join(', ')}`);
+                };
+                
+                slotInputContainer.appendChild(slotInput);
+                slotInputContainer.appendChild(saveSlotBtn);
+                slotSection.appendChild(slotInputContainer);
+                contentContainer.appendChild(slotSection);
+
+                // --- NEW: Bulk Purchase Amount Section (only for Titan Artifact Shop) ---
+                if (shopId === 13) {
+                    const amountSection = document.createElement('div');
+                    amountSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
+                    
+                    const amountTitle = document.createElement('h3');
+                    amountTitle.textContent = 'Bulk Purchase Amount';
+                    amountTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
+                    amountSection.appendChild(amountTitle);
+
+                    const amountDescription = document.createElement('p');
+                    amountDescription.textContent = 'Enter the number of items to purchase in bulk (e.g., 300). The API will enforce the maximum available.';
+                    amountDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
+                    amountSection.appendChild(amountDescription);
+
+                    const amountInputContainer = document.createElement('div');
+                    amountInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+                    
+                    const amountInput = document.createElement('input');
+                    amountInput.type = 'number';
+                    amountInput.min = '1';
+                    amountInput.placeholder = 'e.g., 300';
+                    amountInput.value = savedAmount;
+                    amountInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                    
+                    const saveAmountBtn = document.createElement('button');
+                    saveAmountBtn.textContent = 'Save Amount';
+                    saveAmountBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
+                    saveAmountBtn.onclick = () => {
+                        const amount = parseInt(amountInput.value) || 9999;
+                        if (amount < 1) {
+                            alert('Amount must be at least 1');
+                            return;
+                        }
+                        localStorage.setItem(STORAGE_PREFIX + shopId + '_amount', amount.toString());
+                        alert(`Saved bulk purchase amount: ${amount}`);
+                    };
+                    
+                    amountInputContainer.appendChild(amountInput);
+                    amountInputContainer.appendChild(saveAmountBtn);
+                    amountSection.appendChild(amountInputContainer);
+                    contentContainer.appendChild(amountSection);
+                }
 
                 if (items.length === 0) {
-                    contentContainer.innerHTML = '<p>No items configured for this shop yet.</p>';
+                    const noItemsMsg = document.createElement('p');
+                    noItemsMsg.textContent = 'No items configured for this shop yet.';
+                    noItemsMsg.style.cssText = 'color: #fce1ac; margin-top: 10px;';
+                    contentContainer.appendChild(noItemsMsg);
                     return;
                 }
 
@@ -199,12 +285,22 @@
                 }
             });
 
-            HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+            // Use confirm with proper async handling
+            const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+            
+            // Wait a tick for popup to initialize, then replace content
+            await new Promise(resolve => setTimeout(resolve, 0));
+            
             const popupBody = document.querySelector('.PopUp_Container');
             if (popupBody) {
+                // Clear and replace content (preserve the original close button in PopUp_buttons)
                 popupBody.innerHTML = '';
                 popupBody.appendChild(popupContent);
             }
+            
+            // Wait for popup to close before returning
+            // The original close button from popup.confirm should still be accessible
+            await popupPromise;
         }
 
         // --- ACTION LOGIC (Unchanged from v1.5) ---
@@ -220,40 +316,187 @@
                 for (const shop of SHOPS) {
                     const shopId = shop.id;
                     const shoppingList = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId) || '{}');
+                    const fixedSlotIds = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId + '_slots') || '[]');
                     const currentShopData = shopsData[shopId];
-                    if (!currentShopData || !currentShopData.slots || Object.keys(shoppingList).length === 0) continue;
+                    if (!currentShopData || !currentShopData.slots) continue;
+                    
                     const wantedNames = new Set();
                     for(const name in shoppingList) { if(shoppingList[name] === true) { wantedNames.add(name); } }
-                    if (wantedNames.size === 0) continue;
+                    
+                    // Check if we have anything to buy (names or fixed slots)
+                    if (wantedNames.size === 0 && fixedSlotIds.length === 0) continue;
+                    
                     for (const slot of Object.values(currentShopData.slots)) {
                         if (!slot.reward || slot.bought || !slot.cost) continue;
-                        const rewardType = Object.keys(slot.reward)[0];
-                        const rewardId = Object.keys(slot.reward[rewardType])[0];
-                        let libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
-                        const translationKey = `LIB_${libTypeForTranslate}_NAME_${rewardId}`;
-                        const itemName = cheats.translate(translationKey);
-                        if (wantedNames.has(itemName)) {
+                        
+                        let shouldBuy = false;
+                        let itemDisplayName = `Slot ${slot.id}`;
+                        
+                        // Check if this slot is in the fixed slot IDs list
+                        if (fixedSlotIds.includes(slot.id)) {
+                            shouldBuy = true;
+                            // Try to get item name for logging
+                            try {
+                                const rewardType = Object.keys(slot.reward)[0];
+                                const rewardId = Object.keys(slot.reward[rewardType])[0];
+                                let libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
+                                const translationKey = `LIB_${libTypeForTranslate}_NAME_${rewardId}`;
+                                itemDisplayName = cheats.translate(translationKey) || `Slot ${slot.id}`;
+                            } catch (e) {
+                                // Keep default slot ID if translation fails
+                            }
+                        }
+                        
+                        // Also check by name if not already matched
+                        if (!shouldBuy && wantedNames.size > 0) {
+                            const rewardType = Object.keys(slot.reward)[0];
+                            const rewardId = Object.keys(slot.reward[rewardType])[0];
+                            let libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
+                            const translationKey = `LIB_${libTypeForTranslate}_NAME_${rewardId}`;
+                            const itemName = cheats.translate(translationKey);
+                            if (wantedNames.has(itemName)) {
+                                shouldBuy = true;
+                                itemDisplayName = itemName;
+                            }
+                        }
+                        
+                        if (shouldBuy) {
                             const currencyType = Object.keys(slot.cost)[0];
-                            if (currencyType === 'gold' || currencyType === 'coin') {
-                                // Titan Artifact Shop (shopId 13) supports bulk purchases via amount parameter
-                                const shopBuyArgs = { shopId: shopId, slot: slot.id, cost: slot.cost, reward: slot.reward };
+                            // Support multiple payment types: gold, coin (standard shops), consumable, starmoney (Secret Wealth Shop)
+                            if (currencyType === 'gold' || currencyType === 'coin' || currencyType === 'consumable' || currencyType === 'starmoney') {
+                                // Convert cost values from strings to numbers if needed
+                                // The API sometimes returns string values but expects numbers in shopBuy
+                                const normalizedCost = {};
+                                for (const costType in slot.cost) {
+                                    if (typeof slot.cost[costType] === 'object' && slot.cost[costType] !== null) {
+                                        // For nested objects like coin: { "18": "12" }
+                                        normalizedCost[costType] = {};
+                                        for (const costKey in slot.cost[costType]) {
+                                            const costValue = slot.cost[costType][costKey];
+                                            // Convert string numbers to actual numbers
+                                            normalizedCost[costType][costKey] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
+                                        }
+                                    } else {
+                                        // For direct values like gold: "1000"
+                                        const costValue = slot.cost[costType];
+                                        normalizedCost[costType] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
+                                    }
+                                }
+                                
+                                // Build shopBuy arguments
+                                const shopBuyArgs = { shopId: shopId, slot: slot.id, cost: normalizedCost, reward: slot.reward };
+                                
+                                // Secret Wealth Shop (shopId 1576000026) - fixed purchases only (no amount parameter)
+                                // Titan Artifact Shop (shopId 13) - supports bulk purchases via amount parameter
                                 if (shopId === 13 && slot.staticShopMultiplePurchase === 1) {
                                     // For Titan Artifact Shop, we can specify amount for bulk purchase
-                                    // Default to 1 if not specified, but can be increased for bulk purchases
-                                    // Note: amount is optional and defaults to 1 if not provided
+                                    // Get the saved amount from localStorage, or use slot's maxAmount, or default to 9999
+                                    const savedAmount = parseInt(localStorage.getItem(STORAGE_PREFIX + shopId + '_amount') || '0');
+                                    const maxAmount = savedAmount > 0 ? savedAmount : (slot.maxAmount || slot.maxPurchaseAmount || 9999);
+                                    shopBuyArgs.amount = maxAmount;
                                 }
+                                // For Secret Wealth Shop and other shops, don't include amount (fixed purchase)
+                                
                                 callsToMake.push({ name: 'shopBuy', args: shopBuyArgs });
-                                itemsToLog.push(`- ${itemName} from ${shop.name}`);
+                                itemsToLog.push(`- ${itemDisplayName} (Slot ${slot.id}) from ${shop.name}`);
                             }
                         }
                     }
                 }
                 if (callsToMake.length > 0) {
                     HWHFuncs.setProgress(`Auto-Buyer: Attempting to buy ${callsToMake.length} item(s)...`);
-                    await new Caller(callsToMake).send();
-                    console.log('%c--- Items Bought Successfully ---', 'color: lightgreen; font-weight: bold;');
-                    console.log(itemsToLog.join('\n'));
-                    HWHFuncs.setProgress(`Bought ${itemsToLog.length} items! Check console for details.`, true);
+                    try {
+                        const caller = new Caller(callsToMake);
+                        
+                        // Set up error handler to catch global errors from Caller
+                        let globalError = null;
+                        const originalOnError = Caller.globalHooks.onError;
+                        Caller.globalHooks.onError = (error) => {
+                            globalError = error;
+                            console.error('%c--- Global API Error ---', 'color: red; font-weight: bold;', error);
+                            return true; // Continue with normal error handling
+                        };
+                        
+                        try {
+                            await caller.send();
+                        } finally {
+                            // Restore original error handler
+                            Caller.globalHooks.onError = originalOnError;
+                        }
+                        
+                        // Check for global error first
+                        if (globalError) {
+                            const errorMsg = typeof globalError === 'string' ? globalError : (globalError.name || globalError.description || JSON.stringify(globalError));
+                            console.error('%c--- Auto-Buyer Purchase Error ---', 'color: red; font-weight: bold;');
+                            console.error('Global error:', globalError);
+                            console.error('Failed items:', itemsToLog.join('\n'));
+                            HWHFuncs.setProgress(`Auto-Buyer Error: ${errorMsg}`, true);
+                            return;
+                        }
+                        
+                        // Check for errors in the response
+                        const errors = [];
+                        const successes = [];
+                        
+                        // Check each call result individually
+                        for (let i = 0; i < callsToMake.length; i++) {
+                            const callName = callsToMake[i].name;
+                            const itemInfo = itemsToLog[i] || `Item ${i + 1}`;
+                            
+                            try {
+                                // Get result for this call
+                                const callResult = caller.result(callName);
+                                
+                                // Check if there's an error in side results
+                                const sideResults = caller.sideResults[callName];
+                                
+                                // Check for errors in sideResults
+                                if (sideResults && sideResults.length > 0) {
+                                    const sideResult = sideResults[0];
+                                    if (sideResult.error) {
+                                        const error = sideResult.error;
+                                        const errorMsg = typeof error === 'string' ? error : (error.name || error.description || JSON.stringify(error));
+                                        errors.push(`${itemInfo}: ${errorMsg}`);
+                                        console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', error);
+                                        continue;
+                                    }
+                                }
+                                
+                                // Check if we have a valid result
+                                if (callResult && callResult.length > 0 && callResult[0]) {
+                                    // Success - we got a response
+                                    successes.push(itemInfo);
+                                    console.log(`%cPurchase Success: ${itemInfo}`, 'color: lightgreen; font-weight: bold;');
+                                } else {
+                                    // No result - might be an error
+                                    errors.push(`${itemInfo}: No response received`);
+                                    console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', 'No response received');
+                                }
+                            } catch (callError) {
+                                errors.push(`${itemInfo}: ${callError.message || 'Unknown error'}`);
+                                console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', callError);
+                            }
+                        }
+                        
+                        if (errors.length > 0) {
+                            console.error('%c--- Purchase Errors ---', 'color: red; font-weight: bold;');
+                            errors.forEach(error => console.error(`%c${error}`, 'color: red;'));
+                        }
+                        
+                        if (successes.length > 0) {
+                            console.log('%c--- Items Bought Successfully ---', 'color: lightgreen; font-weight: bold;');
+                            successes.forEach(success => console.log(`%c${success}`, 'color: lightgreen;'));
+                        }
+                        
+                        const summary = `Bought ${successes.length}/${callsToMake.length} items. ${errors.length > 0 ? `${errors.length} failed - check console.` : ''}`;
+                        HWHFuncs.setProgress(summary, true);
+                    } catch (error) {
+                        console.error('%c--- Auto-Buyer Purchase Error ---', 'color: red; font-weight: bold;');
+                        console.error('Error details:', error);
+                        console.error('Stack trace:', error.stack);
+                        console.error('Failed items:', itemsToLog.join('\n'));
+                        HWHFuncs.setProgress(`Auto-Buyer Error: ${error.message || 'Check console for details'}`, true);
+                    }
                 } else {
                     HWHFuncs.setProgress("Auto-Buyer: No items to buy.", true);
                 }
@@ -263,6 +506,12 @@
             }
             console.log("--- Advanced Auto-Buyer FINISHED ---");
         }
+
+        // --- AUTO-EXECUTE ON SCRIPT LOAD ---
+        // Automatically run auto-buy when script loads
+        runAutoBuy().catch(error => {
+            console.error('Advanced Auto-Buyer: Failed to auto-execute on load:', error);
+        });
 
         // --- MENU INTEGRATION ---
         const { ScriptMenu } = HWHClasses;
