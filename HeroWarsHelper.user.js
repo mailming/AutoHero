@@ -10563,9 +10563,9 @@
 		try {
 			console.log('%cAuto Raid Mission: Function started', 'color: green; font-weight: bold;');
 			
-			// Simple approach: Use mission ID 158 (from HAR file) and do 3 raids
+			// Simple approach: Use mission ID 158 (from HAR file) and do 6 raids
 			const missionId = 158;
-			const raidCount = 3;
+			const raidCount = 6;
 
 			setProgress(I18N('STARTING_RAID_MISSIONS', { 
 				missionId: missionId, 
