@@ -27,10 +27,15 @@ The CSV file can contain events in two formats:
 """
 import re
 import smtplib
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def parse_event_line(line):
@@ -502,11 +507,17 @@ def format_email_output_day_by_day(events, days_ahead=7):
 
 def send_email(email_body, to_email="mailming@gmail.com"):
     """Send email with schedule to recipient"""
-    # Gmail SMTP configuration
-    smtp_host = "smtp.gmail.com"
-    smtp_port = 587
-    smtp_user = "gamepla@gmail.com"
-    smtp_password = "oion zlfz rizm redm"  # Gmail App Password
+    # Gmail SMTP configuration - loaded from environment variables
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    
+    # Validate required credentials
+    if not smtp_user or not smtp_password:
+        print("[ERROR] SMTP credentials not found in .env file")
+        print("[ERROR] Please ensure SMTP_USER and SMTP_PASSWORD are set in .env")
+        return False
     
     try:
         # Create message
@@ -626,6 +637,12 @@ def main():
     print("=" * 80)
     if not scrape_fresh_schedule():
         print("[WARNING] Failed to fetch fresh data, using existing CSV file if available")
+    
+    # Check if CSV file exists before trying to parse
+    if not Path(csv_file).exists():
+        print(f"\n[ERROR] CSV file '{csv_file}' not found.")
+        print("[ERROR] Cannot proceed without schedule data. Please ensure scraping succeeded or file exists.")
+        return
     
     print("\n" + "=" * 80)
     print("PARSING SCHEDULE DATA")
