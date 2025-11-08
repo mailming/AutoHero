@@ -22,10 +22,16 @@ This file contains the planned features and improvements for the AutoHero projec
 - **Description**: Refactor functions to use browser extension format
 - **Notes**: Convert from userscript to proper browser extension structure
 
+### 4. Auto Raid Mission with Best Fragment
+- **Status**: Pending
+- **Priority**: Medium
+- **Description**: Auto raid one mission with the best fragment 10 times each time load
+- **Notes**: Need to implement mission raiding with fragment optimization and repeat functionality
+
 ## 📊 Progress Tracking
 
-- **Total Tasks**: 3
-- **Pending**: 3
+- **Total Tasks**: 4
+- **Pending**: 4
 - **In Progress**: 0
 - **Completed**: 0
 
