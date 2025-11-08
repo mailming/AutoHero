@@ -216,40 +216,48 @@
                         console.log('User info:', userInfo);
 
                         if (this.arenaType === 'grand') {
+                            // Grand Arena attempts are stored in refillable array with id: 21
+                            const grandAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === 21) : null;
+                            const grandAttempts = grandAttemptsItem ? grandAttemptsItem.amount : 0;
+
                             this.arenaInfo = {
-                                attempts: userInfo.grandAttempts || 0,
+                                attempts: grandAttempts,
                                 rank: userInfo.grandPlace || 1000,
-                                status: userInfo.grandAttempts > 0 ? 'active' : 'no_attempts',
+                                status: grandAttempts > 0 ? 'active' : 'no_attempts',
                                 rivals: [],
                                 canUpdateDefenders: false,
                                 battleStartTs: 0
                             };
-                            this.attemptsRemaining = 1;
+                            this.attemptsRemaining = grandAttempts > 0 ? 1 : 0; // Only do one battle per execution
 
-                            if (userInfo.grandAttempts <= 0) {
-                                setProgress(`${I18N('GRAND_ARENA')}: No attempts remaining (${userInfo.grandAttempts})`);
+                            if (grandAttempts <= 0) {
+                                setProgress(`${I18N('GRAND_ARENA')}: No attempts remaining (${grandAttempts})`);
                                 return;
                             }
 
-                            setProgress(`${I18N('GRAND_ARENA')}: ${userInfo.grandAttempts} attempts available - executing single battle`);
+                            setProgress(`${I18N('GRAND_ARENA')}: ${grandAttempts} attempts available - executing single battle`);
                             return;
                         } else {
+                            // Arena attempts are stored in refillable array with id: 6
+                            const arenaAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === 6) : null;
+                            const arenaAttempts = arenaAttemptsItem ? arenaAttemptsItem.amount : 0;
+
                             this.arenaInfo = {
-                                attempts: userInfo.arenaAttempts || 0,
+                                attempts: arenaAttempts,
                                 rank: userInfo.arenaPlace || 1000,
-                                status: userInfo.arenaAttempts > 0 ? 'active' : 'no_attempts',
+                                status: arenaAttempts > 0 ? 'active' : 'no_attempts',
                                 rivals: [],
                                 canUpdateDefenders: false,
                                 battleStartTs: 0
                             };
-                            this.attemptsRemaining = 1;
+                            this.attemptsRemaining = arenaAttempts > 0 ? 1 : 0; // Only do one battle per execution
 
-                            if (userInfo.arenaAttempts <= 0) {
-                                setProgress(`${I18N('ARENA')}: No attempts remaining (${userInfo.arenaAttempts})`);
+                            if (arenaAttempts <= 0) {
+                                setProgress(`${I18N('ARENA')}: No attempts remaining (${arenaAttempts})`);
                                 return;
                             }
 
-                            setProgress(`${I18N('ARENA')}: ${userInfo.arenaAttempts} attempts available - executing single battle`);
+                            setProgress(`${I18N('ARENA')}: ${arenaAttempts} attempts available - executing single battle`);
                             return;
                         }
                     }
@@ -1059,6 +1067,15 @@
                 const teamGetAll = res[1].result.response;
                 const teamGetFavor = res[2].result.response;
 
+                // Check attempts from clanRaid_getInfo - if 0, skip minion attack
+                const attempts = clanRaidInfo.attempts || 0;
+                if (attempts === 0) {
+                    console.log('AutoBattle: Minion attempts is 0, skipping minion attack');
+                    setProgress(`${I18N('MINION_RAID')}: No attempts remaining (attempts: 0)`, true);
+                    endRaidNodes('NoAttempts');
+                    return;
+                }
+
                 let index = 0;
                 let isNotFullPack = false;
                 for (let team of teamGetAll.clanRaid_nodes) {
@@ -1080,7 +1097,7 @@
                 }
 
                 raidData.nodes = clanRaidInfo.nodes;
-                raidData.attempts = clanRaidInfo.attempts;
+                raidData.attempts = attempts;
                 setIsCancalBattle(false);
 
                 checkNodes();
@@ -1245,10 +1262,191 @@
             }
         }
 
+        // ========== EXECUTE RAID BOSS CLASS ==========
+        function executeRaidBoss(resolve, reject) {
+            this.resolve = resolve;
+            this.reject = reject;
+            this.bossAttempts = 0;
+            this.attacksCompleted = 0;
+            this.heroTeams = [
+                [46, 52, 48, 40, 37],
+                [58, 50, 42, 9, 51],
+                [64, 13, 29, 1, 43],
+                [16, 65, 57, 31, 61],
+                [56, 62, 55, 63, 28]
+            ];
+            this.pets = [6005, 6005, 6005, 6005, 6006];
+            this.favorTeams = [
+                { "37": 6000, "40": 6004, "46": 6001, "48": 6005, "52": 6006 },
+                { "9": 6004, "42": 6006, "50": 6001, "58": 6005 },
+                { "1": 6004, "13": 6008, "29": 6006, "43": 6002, "64": 6005 },
+                { "16": 6004, "31": 6006, "57": 6003, "61": 6001, "65": 6000 },
+                { "28": 6004, "55": 6005, "56": 6006, "62": 6008, "63": 6003 }
+            ];
+
+            this.start = async function() {
+                setProgress('Raid Boss: Initializing...');
+                try {
+                    await this.getRaidInfo();
+                    
+                    if (this.bossAttempts <= 0) {
+                        this.end('No boss attempts remaining');
+                        return;
+                    }
+
+                    await this.attackBoss();
+                } catch (error) {
+                    console.error('Raid Boss error:', error);
+                    this.end(`Error: ${error.message}`);
+                }
+            }
+
+            this.getRaidInfo = async function() {
+                const calls = [{
+                    name: "clanRaid_getInfo",
+                    args: {},
+                    context: { actionTs: Date.now() },
+                    ident: "clanRaid_getInfo"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`Raid info API error: ${response.error.name} - ${response.error.description}`);
+                }
+                
+                if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                    throw new Error('Invalid clanRaid_getInfo response');
+                }
+
+                this.raidInfo = response.results[0].result.response;
+                this.bossAttempts = this.raidInfo.bossAttempts || 0;
+                
+                const currentBoss = this.raidInfo.stats?.currentBoss || "1";
+                const bossName = currentBoss === "1" ? "OSH" : "Mastro";
+                
+                console.log(`Raid Boss: ${bossName}, Attempts: ${this.bossAttempts}`);
+                setProgress(`Raid Boss: ${bossName} - ${this.bossAttempts} attempts available`);
+            }
+
+
+            this.attackBoss = async function() {
+                const maxAttacks = Math.min(5, this.bossAttempts);
+                
+                for (let i = 0; i < maxAttacks; i++) {
+                    if (this.bossAttempts <= 0) {
+                        break;
+                    }
+
+                    setProgress(`Raid Boss: Attack ${i + 1}/${maxAttacks}`);
+                    
+                    try {
+                        const teamIndex = i % this.heroTeams.length;
+                        const heroes = this.heroTeams[teamIndex];
+                        const pet = this.pets[teamIndex];
+                        const favor = this.favorTeams[teamIndex];
+                        
+                        const battleData = await this.startBossBattle(heroes, pet, favor);
+                        const battleResult = await this.calculateBattleResult(battleData);
+                        await this.endBossBattle(battleResult);
+                        
+                        this.attacksCompleted++;
+                        this.bossAttempts--;
+                        
+                        if (i < maxAttacks - 1) {
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                    } catch (error) {
+                        console.error(`Error in attack ${i + 1}:`, error);
+                        break; // Stop on error to avoid wasting attempts
+                    }
+                }
+                
+                this.end(`Completed ${this.attacksCompleted} boss attacks`);
+            }
+
+
+            this.startBossBattle = async function(heroes, pet, favor) {
+                const calls = [{
+                    name: "clanRaid_startBossBattle",
+                    args: {
+                        heroes: heroes,
+                        pet: pet,
+                        favor: favor
+                    },
+                    context: { actionTs: Date.now() },
+                    ident: "body"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`Start boss battle failed: ${response.error.name} - ${response.error.description}`);
+                }
+                
+                if (!response.results || !response.results[0] || !response.results[0].result) {
+                    throw new Error('Invalid start boss battle response');
+                }
+
+                const battleData = response.results[0].result.response;
+                if (!battleData || !battleData.battle) {
+                    throw new Error('No battle data in response');
+                }
+
+                return battleData.battle;
+            }
+
+            this.calculateBattleResult = async function(battleData) {
+                return new Promise((resolve, reject) => {
+                    BattleCalc(battleData, getBattleType('clan_raid'), (result) => {
+                        if (!result || !result.result) {
+                            console.error('BattleCalc returned invalid result:', result);
+                            reject(new Error('Invalid battle calculation result'));
+                            return;
+                        }
+                        resolve({
+                            win: result.result.win,
+                            progress: result.progress,
+                            result: result.result,
+                            battleData: battleData
+                        });
+                    });
+                });
+            }
+
+            this.endBossBattle = async function(battleResult) {
+                const calls = [{
+                    name: "clanRaid_endBossBattle",
+                    args: {
+                        result: {
+                            win: battleResult.win,
+                            stars: battleResult.result.stars || 0
+                        },
+                        progress: battleResult.progress
+                    },
+                    context: { actionTs: Date.now() },
+                    ident: "group_1_body"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`End boss battle failed: ${response.error.name} - ${response.error.description}`);
+                }
+            }
+
+            this.end = function(reason) {
+                setProgress(`Raid Boss: ${reason}`, true);
+                console.log('Raid Boss completed:', reason);
+                this.resolve();
+            }
+        }
+
         // Store classes in HWHClasses for consistency
         HWHClasses.executeArena = executeArena;
         HWHClasses.executeGuildWar = executeGuildWar;
         HWHClasses.executeRaidNodes = executeRaidNodes;
+        HWHClasses.executeRaidBoss = executeRaidBoss;
 
         // Auto-execute all battles on script load
         async function autoBattle() {
@@ -1260,7 +1458,8 @@
                     arena: false,
                     grandArena: false,
                     guildWar: false,
-                    raidNodes: false
+                    raidNodes: false,
+                    raidBoss: false
                 };
 
                 // 1. Auto Arena
@@ -1319,6 +1518,28 @@
                     console.error('AutoBattle: Raid Nodes error:', error);
                 }
 
+                // 5. Auto Raid Boss (Saturday or Sunday only)
+                try {
+                    const today = new Date();
+                    const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+                    
+                    if (dayOfWeek === 0 || dayOfWeek === 6) {
+                        console.log('AutoBattle: Starting Raid Boss...');
+                        HWHFuncs.setProgress('AutoBattle: Raid Boss attacks...');
+                        await new Promise((resolve, reject) => {
+                            const raidBoss = new executeRaidBoss(resolve, reject);
+                            raidBoss.start();
+                        });
+                        results.raidBoss = true;
+                        console.log('%cAutoBattle: Raid Boss completed', 'color: lightgreen; font-weight: bold;');
+                    } else {
+                        console.log(`AutoBattle: Skipping Raid Boss (not Saturday/Sunday, current day: ${dayOfWeek})`);
+                        results.raidBoss = false;
+                    }
+                } catch (error) {
+                    console.error('AutoBattle: Raid Boss error:', error);
+                }
+
                 // Summary
                 const completed = Object.values(results).filter(v => v === true).length;
                 const total = Object.keys(results).length;
@@ -1326,7 +1547,8 @@
                     `Arena: ${results.arena ? '✓' : '✗'}`,
                     `Grand Arena: ${results.grandArena ? '✓' : '✗'}`,
                     `Guild War: ${results.guildWar ? '✓' : '✗'}`,
-                    `Raid Nodes: ${results.raidNodes ? '✓' : '✗'}`
+                    `Raid Nodes: ${results.raidNodes ? '✓' : '✗'}`,
+                    `Raid Boss: ${results.raidBoss ? '✓' : '✗'}`
                 ].join(' | ');
 
                 console.log(`%cAutoBattle: Completed ${completed}/${total} battle types`, 'color: cyan; font-weight: bold;');
@@ -1396,6 +1618,29 @@
             }
         }
 
+        async function runRaidBoss() {
+            try {
+                const today = new Date();
+                const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+                
+                if (dayOfWeek === 0 || dayOfWeek === 6) {
+                    HWHFuncs.setProgress('AutoBattle: Running Raid Boss...');
+                    await new Promise((resolve, reject) => {
+                        const raidBoss = new executeRaidBoss(resolve, reject);
+                        raidBoss.start();
+                    });
+                    HWHFuncs.setProgress('AutoBattle: Raid Boss complete!', true);
+                } else {
+                    const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+                    HWHFuncs.setProgress(`Raid Boss: Only available on Saturday or Sunday (today is ${dayName})`, true);
+                    console.log(`Raid Boss: Skipped - today is ${dayName}, only runs on Saturday/Sunday`);
+                }
+            } catch (error) {
+                console.error('Raid Boss error:', error);
+                HWHFuncs.setProgress(`Raid Boss error: ${error.message}`, true);
+            }
+        }
+
         // Auto-execute on script load
         autoBattle().catch(error => {
             console.error('AutoBattle: Failed to auto-execute:', error);
@@ -1405,11 +1650,12 @@
         const { ScriptMenu } = HWHClasses;
         const scriptMenu = ScriptMenu.getInst();
         scriptMenu.addCombinedButton([
-            { name: '⚔️ Auto Battle', title: 'Run all auto-battles (Arena, Grand Arena, Guild War, Raids)', onClick: autoBattle, color: 'green' },
+            { name: '⚔️ Auto Battle', title: 'Run all auto-battles (Arena, Grand Arena, Guild War, Raids, Boss)', onClick: autoBattle, color: 'green' },
             { name: 'Arena', title: 'Run Arena battles only', onClick: runArena, color: 'blue' },
             { name: 'Grand Arena', title: 'Run Grand Arena battles only', onClick: runGrandArena, color: 'blue' },
             { name: 'Guild War', title: 'Run Guild War attacks only', onClick: runGuildWar, color: 'purple' },
-            { name: 'Raid Nodes', title: 'Run Raid Nodes only', onClick: runRaidNodes, color: 'orange' }
+            { name: 'Raid Nodes', title: 'Run Raid Nodes only', onClick: runRaidNodes, color: 'orange' },
+            { name: 'Raid Boss', title: 'Run Raid Boss attacks only (5 attacks)', onClick: runRaidBoss, color: 'red' }
         ]);
 
         console.log('AutoBattle: UI initialized and attached to HWH menu.');

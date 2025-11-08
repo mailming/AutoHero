@@ -80,7 +80,7 @@
                 { name: 'epicBrawl_getWinStreak', args: {}, description: 'Get epic brawl win streak information' }
             ],
             'Boss & Rankings': [
-                { name: 'bossGetAll', args: {}, description: 'Get all boss information' },
+                { name: 'bossGetAll', args: {}, description: 'Get all Outland boss information' },
                 { name: 'topGet', args: { type: 'bossRatingTop', extraId: 0 }, description: 'Get top rankings' }
             ],
             'Mail & Rewards': [

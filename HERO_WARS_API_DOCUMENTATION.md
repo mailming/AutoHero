@@ -209,18 +209,32 @@ Send('{"calls":[{"name":"userGetInfo","args":{},"ident":"body"}]}')
 **Response Structure:**
 ```javascript
 {
-  userId: number,
+  userId: string,
+  name: string,
+  level: string,
   gold: number,
-  emerald: number,
   starMoney: number,
-  stamina: number,
-  arenaAttempts: number,
-  arenaPlace: number,
-  grandAttempts: number,
-  grandPlace: number,
+  refillable: [
+    {
+      id: number,        // Resource type ID
+      amount: number,    // Current amount
+      lastRefill: number,
+      boughtToday: number
+    }
+  ],
+  arenaPlace: number,   // Current arena rank
+  grandPlace: number,   // Current grand arena rank
   // ... many more fields
 }
 ```
+
+**Refillable Resource IDs:**
+- `id: 1` - Stamina/Energy
+- `id: 6` - **Arena attempts available** (number of remaining arena battle attempts)
+- `id: 21` - **Grand Arena attempts available** (number of remaining grand arena battle attempts)
+- Other IDs represent various game resources
+
+**Note:** Arena attempts are stored in the `refillable` array with `id: 6`. Grand Arena attempts are stored with `id: 21`. The `amount` field indicates how many battle attempts are currently available for each respective arena type.
 
 **Example Usage:**
 ```javascript
@@ -228,7 +242,20 @@ const userInfo = await Send('{"calls":[{"name":"userGetInfo","args":{},"ident":"
   .then(e => e.results[0].result.response);
 
 console.log(`Gold: ${userInfo.gold}`);
-console.log(`Arena attempts: ${userInfo.arenaAttempts}`);
+console.log(`Arena rank: ${userInfo.arenaPlace}`);
+console.log(`Grand Arena rank: ${userInfo.grandPlace}`);
+
+// Get arena attempts
+const arenaAttempts = userInfo.refillable.find(r => r.id === 6);
+if (arenaAttempts) {
+  console.log(`Arena attempts available: ${arenaAttempts.amount}`);
+}
+
+// Get Grand Arena attempts
+const grandArenaAttempts = userInfo.refillable.find(r => r.id === 21);
+if (grandArenaAttempts) {
+  console.log(`Grand Arena attempts available: ${grandArenaAttempts.amount}`);
+}
 ```
 
 ---
@@ -625,7 +652,7 @@ Send(JSON.stringify({
 
 #### guildWar_attackSlot
 
-Attack a slot in guild war.
+Attack a slot in Guild War. **Note:** This is an alternative API name. The primary Guild War APIs use the `clanWar` prefix (e.g., `clanWarAttack`).
 
 **Request:**
 ```javascript
@@ -1237,7 +1264,7 @@ Send('{"calls":[{"name":"epicBrawl_farmWinStreak","args":{},"ident":"body"}]}')
 
 #### bossGetAll
 
-Get all boss information.
+Get all Outland boss information.
 
 **Request:**
 ```javascript
@@ -1978,7 +2005,9 @@ Send({
 
 ### Overview
 
-Guild War is a clan-based PvP system where clans compete against each other by attacking defensive slots. The system involves multiple API calls for getting war information, defense data, and executing attacks.
+Guild War (API uses `clanWar` prefix) is a clan-based PvP system where clans compete against each other by attacking defensive slots. The system involves multiple API calls for getting war information, defense data, and executing attacks.
+
+**Note:** The API endpoints use the `clanWar` prefix (e.g., `clanWarGetInfo`, `clanWarAttack`), but this refers to the **Guild War** game mode.
 
 ### Endpoints
 
@@ -2009,8 +2038,8 @@ Send({
 **Response Fields:**
 - `slots`: Map of slot IDs (1-40) to defending player IDs
 - `teams`: Team configurations for different players
-  - `clanDefence_heroes`: Hero defense team (for slots 1-20)
-  - `clanDefence_titans`: Titan defense team (for slots 21-40)
+  - `clanDefence_heroes`: Hero defense team for Guild War (for slots 1-20)
+  - `clanDefence_titans`: Titan defense team for Guild War (for slots 21-40)
 
 #### clanWarAttack
 
@@ -2106,11 +2135,11 @@ Send({
 
 ---
 
-## Clan Raid API
+## Clan Raid API (Minions Attack)
 
 ### Overview
 
-Clan Raid is a cooperative PvE mode where clan members work together to defeat raid bosses. Multiple clan members can fight the same boss simultaneously, with damage persisting across all attempts.
+Clan Raid (also known as **Minions Attack** or **Minion Raid**) is a cooperative PvE mode where clan members work together to defeat raid bosses. Multiple clan members can fight the same boss simultaneously, with damage persisting across all attempts.
 
 ### Endpoints
 
@@ -2555,9 +2584,9 @@ Each team configuration is an array where:
   titan_mission: number[];            // Titan team for missions
   
   // Clan/Team Modes
-  clanDefence_heroes: number[];       // Heroes for clan defense
-  clanDefence_titans: number[];        // Titans for clan defense
-  clanRaid_nodes: number[][];         // [[team1], [team2], [team3]] - 3 teams for clan raid nodes
+  clanDefence_heroes: number[];       // Heroes for Guild War defense
+  clanDefence_titans: number[];        // Titans for Guild War defense
+  clanRaid_nodes: number[][];         // [[team1], [team2], [team3]] - 3 teams for clan raid nodes (Minions Attack)
   clan_global_pvp: number[];          // Heroes for global clan PvP
   clan_global_pvp_titan: number[];    // Titans for global clan PvP
   clan_pvp_hero: number[];           // Heroes for clan PvP
@@ -2709,7 +2738,7 @@ Send({
 - `ARENA_API_DOCUMENTATION.md` - Consolidated into Arena API section
 - `GrandArenaAPI_Documentation.md` - Consolidated into Grand Arena API section
 - `GUILD_WAR_API_DOCUMENTATION.md` - Consolidated into Guild War API section
-- `CLAN_RAID_API_DOCUMENTATION.md` - Consolidated into Clan Raid API section
+- `CLAN_RAID_API_DOCUMENTATION.md` - Consolidated into Clan Raid API (Minions Attack) section
 - `COW_API_DOCUMENTATION.md` - Consolidated into Cross Clan War API section
 - `SECRET_WEALTH_SHOP_API_DOCUMENTATION.md` - Consolidated into Secret Wealth Shop API section
 - `TITAN_ARTIFACT_SHOP_API_DOCUMENTATION.md` - Consolidated into Titan Artifact Shop API section

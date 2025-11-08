@@ -59,7 +59,293 @@ All API requests follow the same JSON structure:
 
 ## Guild Raid Boss Endpoints
 
-### 1. clanRaid_usersInBossBattle
+### 1. clanRaid_getInfo
+
+**Description:** Retrieves comprehensive information about the current Guild Raid (Minions Attack) status, including Asgard boss information, minion node status, shop items, buffs, and user statistics. This endpoint provides the current state of both boss battles and minion nodes.
+
+**Note:** This API returns information for **Asgard bosses**:
+- **Boss 1** = OSH
+- **Boss 2** = Mastro
+
+**Request:**
+
+```json
+{
+  "calls": [
+    {
+      "name": "clanRaid_getInfo",
+      "args": {},
+      "context": {
+        "actionTs": 1762577778086
+      },
+      "ident": "clanRaid_getInfo"
+    }
+  ]
+}
+```
+
+**Request Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| (none) | - | This endpoint takes no arguments |
+
+**Response Structure:**
+
+The response contains multiple sections:
+
+```json
+{
+  "boss": {
+    "timestamps": {
+      "start": 1762480800,
+      "end": 1762736400
+    },
+    "teams": [
+      {
+        "statLevel": 485,
+        "team": 21,
+        "unitLevel": 130,
+        "states": [
+          {
+            "1": {
+              "id": 2025,
+              "level": 130,
+              "hp": 447630109.82,
+              "state": {
+                "hp": 104142623,
+                "maxHp": 447979143,
+                "isDead": false
+              }
+              // ... boss stats ...
+            },
+            "2": {
+              "id": 2025,
+              "level": 130,
+              "hp": 859409061.01,
+              "state": {
+                "hp": 860079174,
+                "maxHp": 860079174,
+                "isDead": false
+              }
+              // ... boss stats ...
+            }
+          }
+        ]
+      }
+    ],
+    "level": 150
+  },
+  "nodes": {
+    "1": {
+      "reward": {
+        "consumable": {
+          "159": 15540,
+          "169": 37,
+          "170": 27
+        }
+      },
+      "victoryPoints": [80],
+      "timestamps": {
+        "start": 1762135200,
+        "end": 1762480800
+      },
+      "teams": [
+        {
+          "statLevel": 310,
+          "team": 19,
+          "unitLevel": 130,
+          "victoryPoints": 80,
+          "states": [
+            {
+              "1": {
+                "id": 2030,
+                "state": {
+                  "isDead": true,
+                  "hp": 0
+                }
+                // ... minion stats ...
+              }
+            }
+          ],
+          "points": 80
+        }
+      ]
+    }
+    // ... nodes 2-9 ...
+  },
+  "shop": {
+    "1": {
+      "buffId": 113,
+      "buffValue": 5,
+      "buyLimit": 5,
+      "cost": {
+        "gold": 1000000
+      },
+      "boughtCount": 0
+    }
+    // ... more shop items ...
+  },
+  "buffs": {
+    "114": {
+      "id": 114,
+      "value": 5
+    }
+    // ... active buffs ...
+  },
+  "stats": {
+    "currentBoss": "2",
+    "points": "24119",
+    "bossKilled": [],
+    "clanBuff": [
+      {
+        "id": 30,
+        "value": 24.119
+      }
+    ],
+    "weekStart": "1762135200"
+  },
+  "userStats": {
+    "damage": "21079289",
+    "points": "1000",
+    "usedHeroes": [46, 52, 48, 40, 37],
+    "bossReward": [],
+    "damageReward": {
+      "15000": {
+        "ascensionGear": {
+          "1": "1",
+          "2": "1",
+          "3": "1"
+        }
+      }
+      // ... more damage rewards ...
+    }
+  },
+  "attempts": 0,
+  "bossAttempts": 0,
+  "lastBossId": "1",
+  "coins": 0
+}
+```
+
+**Response Fields:**
+
+#### Boss Information (`boss`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `boss.timestamps.start` | Number | Boss event start timestamp |
+| `boss.timestamps.end` | Number | Boss event end timestamp |
+| `boss.teams` | Array | Boss team configurations with current states |
+| `boss.teams[].states[].1` | Object | **Boss 1 (OSH)** - First phase stats and state |
+| `boss.teams[].states[].2` | Object | **Boss 2 (Mastro)** - Second phase stats and state (if applicable) |
+| `boss.level` | Number | Current boss level (e.g., 150) |
+
+**Boss Identification:**
+- **Boss 1** = **OSH** (id: 2025, first phase)
+- **Boss 2** = **Mastro** (id: 2025, second phase, or separate boss)
+
+#### Minion Nodes Information (`nodes`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nodes[1-9]` | Object | Minion node status (nodes 1 through 9) |
+| `nodes[].reward` | Object | Rewards available for this node |
+| `nodes[].reward.consumable` | Object | Consumable items (fragments, etc.) |
+| `nodes[].victoryPoints` | Array | Victory points available (e.g., [80]) |
+| `nodes[].timestamps.start` | Number | Node start timestamp |
+| `nodes[].timestamps.end` | Number | Node end timestamp |
+| `nodes[].teams` | Array | Minion team configurations |
+| `nodes[].teams[].states[].1` | Object | Minion hero state (isDead, hp, etc.) |
+| `nodes[].teams[].points` | Number | Points earned from this team |
+
+#### Current Status (`stats`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stats.currentBoss` | String | Currently active boss ID ("1" = OSH, "2" = Mastro) |
+| `stats.points` | String | Total clan points |
+| `stats.bossKilled` | Array | Array of killed boss IDs |
+| `stats.clanBuff` | Array | Active clan buffs |
+| `stats.weekStart` | String | Week start timestamp |
+
+#### User Statistics (`userStats`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userStats.damage` | String | Total damage dealt by user |
+| `userStats.points` | String | User's contribution points |
+| `userStats.usedHeroes` | Array | Hero IDs that have been used in battles |
+| `userStats.bossReward` | Array | Boss rewards claimed |
+| `userStats.damageReward` | Object | Damage milestone rewards (keyed by damage threshold) |
+
+#### Attempts and Resources
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `attempts` | Number | Remaining minion node attempts |
+| `bossAttempts` | Number | Remaining boss battle attempts |
+| `lastBossId` | String | Last boss ID fought ("1" = OSH, "2" = Mastro) |
+| `coins` | Number | Raid coins available |
+
+#### Shop and Buffs
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `shop` | Object | Available shop items (keyed by item ID) |
+| `shop[].buffId` | Number | Buff ID this item provides |
+| `shop[].buffValue` | Number | Buff value/amount |
+| `shop[].buyLimit` | Number | Purchase limit for this item |
+| `shop[].cost` | Object | Cost (gold or coins) |
+| `shop[].boughtCount` | Number | Number of times already purchased |
+| `buffs` | Object | Currently active buffs (keyed by buff ID) |
+| `buffs[].id` | Number | Buff ID |
+| `buffs[].value` | Number | Buff value |
+
+**Usage Notes:**
+
+- This endpoint provides the complete current state of Guild Raid (Minions Attack)
+- **Boss Status**: The `boss` object contains current Asgard boss information (OSH and Mastro)
+- **Minion Status**: The `nodes` object contains status of all 9 minion nodes
+- Use `stats.currentBoss` to determine which boss is currently active
+- Use `bossAttempts` and `attempts` to check remaining battle attempts
+- `userStats.usedHeroes` tracks which heroes have been used (heroes can only be used once per day)
+- Shop items provide buffs that enhance battle performance
+- Active buffs are listed in the `buffs` object
+
+**Example Usage:**
+
+```javascript
+// Get current Guild Raid status
+const response = await Send(JSON.stringify({
+  calls: [{
+    name: "clanRaid_getInfo",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "clanRaid_getInfo"
+  }]
+}));
+
+const raidInfo = response.results[0].result.response;
+
+// Check current boss
+const currentBoss = raidInfo.stats.currentBoss; // "1" = OSH, "2" = Mastro
+console.log(`Current boss: ${currentBoss === "1" ? "OSH" : "Mastro"}`);
+
+// Check boss attempts
+console.log(`Boss attempts remaining: ${raidInfo.bossAttempts}`);
+
+// Check minion node status
+const node1 = raidInfo.nodes["1"];
+console.log(`Node 1 status: ${node1.teams[0].states[0]["1"].state.isDead ? "Defeated" : "Active"}`);
+
+// Check minion attempts
+console.log(`Minion attempts remaining: ${raidInfo.attempts}`);
+```
+
+---
+
+### 2. clanRaid_usersInBossBattle
 
 **Description:** Retrieves information about other clan members currently fighting the same boss. Returns an empty array if no one is currently in battle.
 
@@ -122,7 +408,7 @@ When users are in battle, the response contains an array of user objects with th
 
 ---
 
-### 2. clanRaid_startBossBattle
+### 3. clanRaid_startBossBattle
 
 **Description:** Initiates a battle against a guild raid boss. Returns detailed battle configuration including hero stats, boss stats, and battle effects.
 
@@ -552,7 +838,7 @@ The `effects.attackers` object contains various buffs:
 
 ---
 
-### 3. clanRaid_endBossBattle
+### 4. clanRaid_endBossBattle
 
 **Description:** Submits the battle result and progress to the server. Returns damage dealt, quest progress, and rewards.
 
