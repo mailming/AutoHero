@@ -544,6 +544,15 @@ async function executeGetDailyBonus() {
             } else {
                  const questManager = new HWHClasses.dailyQuests();
                  await questManager.autoInit();
+                 
+                 // Check if quest is already completed (state == 2 means completed and ready to collect)
+                 const questData = questManager.questInfo['questGetAll'].find(q => q.id == task.id);
+                 if (questData && questData.state == 2) {
+                     // Quest is already completed - don't execute it again
+                     HWHFuncs.setProgress(`${task.label} is already completed!`, true);
+                     return;
+                 }
+                 
                  if (questManager.dataQuests[task.id] && questManager.dataQuests[task.id].isWeCanDo.call(questManager)) {
                      let calls = [];
                      if (task.id === '10023') {
