@@ -459,7 +459,8 @@ async function executeGetDailyBonus() {
         const { newDay } = HWHData.buttons;
         const autoDailyButton = document.querySelector('[data-extension-button="auto-daily"]');
         if (!autoDailyButton) return;
-        const scriptMenuContainer = HWHData.buttons.doActions.button.parentElement;
+        const scriptMenuContainer = HWHData.buttons.doActions.button?.parentElement;
+        if (!scriptMenuContainer) return;
         if (combinedButton) { combinedButton.remove(); combinedButton = null; }
         autoDailyButton.style.display = 'flex';
         if(newDay && newDay.button) newDay.button.style.display = 'flex';
@@ -474,13 +475,23 @@ async function executeGetDailyBonus() {
                 title: 'Run Sync', color: 'green',
             }];
             combinedButton = HWHClasses.ScriptMenu.getInst().addCombinedButton(buttonList, scriptMenuContainer);
+            if (!combinedButton) return;
             const autoDailyCombined = combinedButton.children[0];
             const syncCombined = combinedButton.children[1];
-            autoDailyCombined.style.flexGrow = '1';
-            autoDailyCombined.querySelector('.scriptMenu_buttonText').style.whiteSpace = 'nowrap';
-            syncCombined.style.flexGrow = '0';
-            syncCombined.style.width = '45px';
-            scriptMenuContainer.insertBefore(combinedButton, HWHData.buttons.doActions.button);
+            if (autoDailyCombined) {
+                autoDailyCombined.style.flexGrow = '1';
+                const buttonText = autoDailyCombined.querySelector('.scriptMenu_buttonText');
+                if (buttonText) buttonText.style.whiteSpace = 'nowrap';
+            }
+            if (syncCombined) {
+                syncCombined.style.flexGrow = '0';
+                syncCombined.style.width = '45px';
+            }
+            if (HWHData.buttons.doActions.button && scriptMenuContainer.contains(HWHData.buttons.doActions.button)) {
+                scriptMenuContainer.insertBefore(combinedButton, HWHData.buttons.doActions.button);
+            } else {
+                scriptMenuContainer.appendChild(combinedButton);
+            }
         }
     }
     async function updateQuestStatus() {
