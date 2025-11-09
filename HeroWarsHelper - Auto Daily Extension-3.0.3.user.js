@@ -545,11 +545,19 @@ async function executeGetDailyBonus() {
                  const questManager = new HWHClasses.dailyQuests();
                  await questManager.autoInit();
                  
-                 // Check if quest is already completed (state == 2 means completed and ready to collect)
+                 // Check quest state - only execute if state == 1 (in progress) or state == 0 (not started)
+                 // Skip if state == 2 (completed) - matching main script behavior
                  const questData = questManager.questInfo['questGetAll'].find(q => q.id == task.id);
                  if (questData && questData.state == 2) {
                      // Quest is already completed - don't execute it again
                      HWHFuncs.setProgress(`${task.label} is already completed!`, true);
+                     return;
+                 }
+                 
+                 // Only process quests with state == 1 (in progress), matching main script logic
+                 // Main script only processes quest.state == 1 in dailyQuests.start()
+                 if (questData && questData.state != 1) {
+                     HWHFuncs.setProgress(`${task.label} is not in progress (state: ${questData.state})!`, true);
                      return;
                  }
                  
