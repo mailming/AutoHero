@@ -65,46 +65,11 @@
         } catch (e) { console.error("Error in executeOfferFarmAllReward", e); HWHFuncs.setProgress('Easter Eggs: Error!', true); }
     }
     async function executeQuestAllFarm() {
-         const { Send, HWHFuncs, I18N } = window;
-         try {
-             const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "body" }] });
-             const quests = questData.results[0].result.response;
-             
-             // Filter quests that are ready to collect (state == 2 means completed and ready to collect)
-             // Only process quests with id < 1000000 (regular daily quests)
-             // Match the exact logic from the main script's questAllFarm function
-             const questsToFarm = [];
-             for (let quest of quests) {
-                 const questId = +quest.id;
-                 // Only process regular daily quests (id < 1000000) that are ready to collect
-                 // state == 2 means completed and ready to collect (not already collected)
-                 // state > 2 would mean already collected, so we only want state == 2
-                 // Also ensure quest exists and has valid properties
-                 if (quest && questId < 1000000 && quest.state === 2 && typeof quest.id !== 'undefined') {
-                     questsToFarm.push(quest);
-                 }
-             }
-             
-             if (questsToFarm.length === 0) {
-                 // No quests ready to collect - already done
-                 console.log('executeQuestAllFarm: No quests ready to collect');
-                 return;
-             }
-             
-             console.log(`executeQuestAllFarm: Found ${questsToFarm.length} quest(s) ready to collect:`, questsToFarm.map(q => q.id));
-             
-             const questCalls = questsToFarm.map((q, index) => ({ 
-                 name: "questFarm", 
-                 args: { questId: q.id }, 
-                 ident: `questFarm_${q.id}_${index}`
-             }));
-             
-             await Send({ calls: questCalls });
-             console.log('executeQuestAllFarm: Successfully collected quest rewards');
-         } catch (e) {
-             console.error("Error in executeQuestAllFarm", e);
-             throw e;
-         }
+         const { Send } = window;
+         const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "body" }] });
+         const quests = questData.results[0].result.response;
+         const questCalls = quests.filter(q => q.id < 1000000 && q.state == 2).map(q => ({ name: "questFarm", args: { questId: q.id }, ident: `questFarm_${q.id}` }));
+         if(questCalls.length > 0) await Send({ calls: questCalls });
     }
     async function executeMailGetAll() {
          const { Send, HWHClasses } = window;
