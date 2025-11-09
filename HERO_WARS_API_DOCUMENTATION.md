@@ -209,18 +209,32 @@ Send('{"calls":[{"name":"userGetInfo","args":{},"ident":"body"}]}')
 **Response Structure:**
 ```javascript
 {
-  userId: number,
+  userId: string,
+  name: string,
+  level: string,
   gold: number,
-  emerald: number,
   starMoney: number,
-  stamina: number,
-  arenaAttempts: number,
-  arenaPlace: number,
-  grandAttempts: number,
-  grandPlace: number,
+  refillable: [
+    {
+      id: number,        // Resource type ID
+      amount: number,    // Current amount
+      lastRefill: number,
+      boughtToday: number
+    }
+  ],
+  arenaPlace: number,   // Current arena rank
+  grandPlace: number,   // Current grand arena rank
   // ... many more fields
 }
 ```
+
+**Refillable Resource IDs:**
+- `id: 1` - Stamina/Energy
+- `id: 6` - **Arena attempts available** (number of remaining arena battle attempts)
+- `id: 21` - **Grand Arena attempts available** (number of remaining grand arena battle attempts)
+- Other IDs represent various game resources
+
+**Note:** Arena attempts are stored in the `refillable` array with `id: 6`. Grand Arena attempts are stored with `id: 21`. The `amount` field indicates how many battle attempts are currently available for each respective arena type.
 
 **Example Usage:**
 ```javascript
@@ -228,7 +242,20 @@ const userInfo = await Send('{"calls":[{"name":"userGetInfo","args":{},"ident":"
   .then(e => e.results[0].result.response);
 
 console.log(`Gold: ${userInfo.gold}`);
-console.log(`Arena attempts: ${userInfo.arenaAttempts}`);
+console.log(`Arena rank: ${userInfo.arenaPlace}`);
+console.log(`Grand Arena rank: ${userInfo.grandPlace}`);
+
+// Get arena attempts
+const arenaAttempts = userInfo.refillable.find(r => r.id === 6);
+if (arenaAttempts) {
+  console.log(`Arena attempts available: ${arenaAttempts.amount}`);
+}
+
+// Get Grand Arena attempts
+const grandArenaAttempts = userInfo.refillable.find(r => r.id === 21);
+if (grandArenaAttempts) {
+  console.log(`Grand Arena attempts available: ${grandArenaAttempts.amount}`);
+}
 ```
 
 ---
@@ -625,7 +652,7 @@ Send(JSON.stringify({
 
 #### guildWar_attackSlot
 
-Attack a slot in guild war.
+Attack a slot in Guild War. **Note:** This is an alternative API name. The primary Guild War APIs use the `clanWar` prefix (e.g., `clanWarAttack`).
 
 **Request:**
 ```javascript
@@ -1237,7 +1264,7 @@ Send('{"calls":[{"name":"epicBrawl_farmWinStreak","args":{},"ident":"body"}]}')
 
 #### bossGetAll
 
-Get all boss information.
+Get all Outland boss information.
 
 **Request:**
 ```javascript
@@ -1775,9 +1802,948 @@ if (calls.length > 0) {
 
 ---
 
+## Specialized API Documentation
+
+The following sections provide detailed documentation for specialized game modes and features.
+
+---
+
+## Arena API
+
+### Overview
+
+The Arena API provides functionality for regular arena battles, including finding opponents, checking target availability, and executing attacks.
+
+### Endpoints
+
+#### arenaFindEnemies
+
+**Description:** Retrieves a list of available opponents in the arena.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "arenaFindEnemies",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response Structure:**
+```javascript
+{
+  results: [{
+    ident: "body",
+    result: {
+      response: [
+        {
+          userId: "60332840",
+          place: "11",
+          heroes: [/* hero objects */],
+          power: "1048578",
+          banners: [/* banner configs */],
+          user: {/* user info */}
+        }
+      ]
+    }
+  }]
+}
+```
+
+#### arenaAttack
+
+**Description:** Initiates an attack against an opponent in regular arena.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "arenaAttack",
+    args: {
+      userId: 60332840,
+      heroes: [57, 31, 55, 40, 16],
+      pet: 6008,
+      favor: {
+        "16": 6004,
+        "31": 6006,
+        "55": 6001,
+        "57": 6003
+      },
+      banners: [6]
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `userId` (number): Target opponent's user ID
+- `heroes` (array): Array of 5 hero IDs
+- `pet` (number): Pet ID to use in battle
+- `favor` (object): Favor pet assignments (hero ID → pet ID mapping)
+- `banners` (array): Banner IDs to use in battle
+
+**Response:** Includes detailed battle information, battle results, updated arena state, and available enemies.
+
+#### arenaCheckTargetRange
+
+**Description:** Validates if target opponents are still in valid attack range.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "arenaCheckTargetRange",
+    args: {
+      ids: ["47308606", "40990396", "35449277"]
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response:** Returns an object mapping user IDs to boolean values indicating if they're attackable.
+
+---
+
+## Grand Arena API
+
+### Overview
+
+The Grand Arena API provides functionality for Grand Arena battles, which use 3 teams instead of 1.
+
+### Key Differences from Regular Arena
+
+1. **Multiple Teams**: Grand Arena uses 3 teams instead of 1
+2. **Team Structure**: Heroes are organized in arrays of arrays (3 teams)
+3. **Pet Assignment**: Each team has its own pet configuration
+4. **Banner Configuration**: Each team can have different banners
+
+### Endpoints
+
+#### grandFindEnemies
+
+**Description:** Finds available opponents in Grand Arena.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "grandFindEnemies",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response:** Returns array of opponents with their 3 teams configured.
+
+#### grandAttack
+
+**Description:** Initiates a Grand Arena battle against an opponent.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "grandAttack",
+    args: {
+      userId: 47308606,
+      heroes: [
+        [58, 1, 64, 13, 55],  // Team 1
+        [42, 56, 9, 62, 43],  // Team 2
+        [16, 31, 57, 40, 48]  // Team 3
+      ],
+      pets: [6006, 6005, 6004],  // Pet for each team
+      favor: {
+        "1": 6002,
+        "9": 6005,
+        // ... more favor assignments
+      },
+      banners: [1, 6, 2]  // Banner for each team
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `userId` (number): Target opponent's user ID
+- `heroes` (array): Array of 3 hero teams (each team is an array of 5 hero IDs)
+- `pets` (array): Array of 3 pet IDs (one for each team)
+- `favor` (object): Favor pet assignments across all teams
+- `banners` (array): Array of 3 banner IDs (one for each team)
+
+#### grandCheckTargetRange
+
+**Description:** Checks if specific opponents are still available for attack.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "grandCheckTargetRange",
+    args: {
+      ids: ["48705148", "35986432", "47308606"]
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+---
+
+## Guild War API
+
+### Overview
+
+Guild War (API uses `clanWar` prefix) is a clan-based PvP system where clans compete against each other by attacking defensive slots. The system involves multiple API calls for getting war information, defense data, and executing attacks.
+
+**Note:** The API endpoints use the `clanWar` prefix (e.g., `clanWarGetInfo`, `clanWarAttack`), but this refers to the **Guild War** game mode.
+
+### Endpoints
+
+#### clanWarGetInfo / clanWarGetDefence
+
+**Description:** Retrieves current Guild War information including available slots and team data. These calls are typically combined in a single request.
+
+**Request:**
+```javascript
+Send({
+  calls: [
+    {
+      name: "clanWarGetDefence",
+      args: {},
+      context: { actionTs: Date.now() },
+      ident: "body"
+    },
+    {
+      name: "clanWarGetInfo",
+      args: {},
+      context: { actionTs: Date.now() },
+      ident: "clanWarGetInfo"
+    }
+  ]
+})
+```
+
+**Response Fields:**
+- `slots`: Map of slot IDs (1-40) to defending player IDs
+- `teams`: Team configurations for different players
+  - `clanDefence_heroes`: Hero defense team for Guild War (for slots 1-20)
+  - `clanDefence_titans`: Titan defense team for Guild War (for slots 21-40)
+
+#### clanWarAttack
+
+**Description:** Executes an attack against a specific Guild War slot. Can be used for both hero battles (slots 1-20) and titan battles (slots 21-40).
+
+**Request (Hero Battle):**
+```javascript
+Send({
+  calls: [{
+    name: "clanWarAttack",
+    args: {
+      slotId: 1,
+      heroes: [46, 9, 40, 16, 65],
+      pet: 6004,
+      favor: {
+        "9": 6006,
+        "16": 6004
+      },
+      banner: 1
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request (Titan Battle):**
+```javascript
+Send({
+  calls: [{
+    name: "clanWarAttack",
+    args: {
+      slotId: 8,
+      heroes: [4033, 4003, 4001, 4032, 4000],  // Titan IDs
+      favor: {}
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `slotId` (number): Target slot ID to attack (1-40, 1-20 for heroes, 21-40 for titans)
+- `heroes` (array): Array of 5 unit IDs (hero IDs for slots 1-20, titan IDs for slots 21-40)
+- `pet` (number, optional): Pet ID to use in battle (hero battles only)
+- `favor` (object, optional): Favor pet assignments (empty for titan battles)
+- `banner` (number, optional): Banner ID to use in battle (hero battles only)
+
+**Response:** Returns complete battle data including battle seed, attacker/defender stats, and battle type.
+
+#### clanWarEndBattle
+
+**Description:** Submits the battle result after completing a Guild War battle.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanWarEndBattle",
+    args: {
+      result: {
+        win: false,
+        stars: 0
+      },
+      progress: [{
+        v: 272,
+        b: 0,
+        seed: 1906504079,  // Must match clanWarAttack response seed
+        attackers: {
+          input: ["auto", 0, 0, "auto", 0, 0],
+          heroes: {
+            "9": { hp: 376777, energy: 594, isDead: false }
+            // ... more heroes
+          }
+        },
+        defenders: {
+          input: [],
+          heroes: {
+            "1": { hp: 58106758, energy: 1000, isDead: false }
+            // ... more defenders
+          }
+        }
+      }]
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response:** Returns updated slot information, victory points, and clan points.
+
+---
+
+## Clan Raid API (Minions Attack)
+
+### Overview
+
+Clan Raid (also known as **Minions Attack** or **Minion Raid**) is a cooperative PvE mode where clan members work together to defeat raid bosses. Multiple clan members can fight the same boss simultaneously, with damage persisting across all attempts.
+
+### Endpoints
+
+#### clanRaid_getInfo
+
+**Description:** Retrieves complete clan raid information including current boss, all bosses/nodes, shop, buffs, user stats, and rewards.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanRaid_getInfo",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response Fields:**
+- `boss`: Current active boss information with phases and HP
+- `nodes`: All raid bosses/nodes (numbered 1-9+)
+- `shop`: Raid shop items available for purchase
+- `buffs`: Currently active buffs
+- `stats`: Clan and user statistics
+- `userStats`: Player's damage, points, and rewards
+- `attempts`: Remaining free attempts
+- `bossAttempts`: Boss-specific attempts remaining
+
+#### clanRaid_startBossBattle
+
+**Description:** Initiates a battle against a clan raid boss.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanRaid_startBossBattle",
+    args: {
+      heroes: [50, 42, 58, 51, 9],
+      pet: 6005,
+      favor: {
+        "9": 6004,
+        "42": 6006,
+        "50": 6005,
+        "51": 6001,
+        "58": 6008
+      }
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response:** Returns detailed battle information with boss stats (can have multiple phases), player hero stats, battle seed, and battle type.
+
+#### clanRaid_endBossBattle
+
+**Description:** Submits the battle result after completing/ending a clan raid boss battle.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanRaid_endBossBattle",
+    args: {
+      result: {
+        win: false,
+        stars: 0
+      },
+      progress: [{
+        v: 272,
+        b: 0,
+        seed: -557779724,  // Must match startBossBattle response seed
+        attackers: {
+          input: ["auto", 0, 0, "auto", 0, 0],
+          heroes: {
+            "9": { hp: 376777, energy: 594, isDead: false }
+            // ... more heroes
+          }
+        },
+        defenders: {
+          input: [],
+          heroes: {
+            "1": {
+              hp: 58106758,
+              energy: 1000,
+              isDead: false,
+              extra: {
+                damageTaken: 5628015,
+                damageTakenNextLevel: 0
+              }
+            }
+            // ... more phases
+          }
+        }
+      }]
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response:** Returns damage dealt, total cumulative damage, raid currency earned, and quest updates.
+
+#### clanRaid_usersInBossBattle
+
+**Description:** Retrieves information about other clan members currently fighting the same boss.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanRaid_usersInBossBattle",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response:** Returns array of users currently in battle with their user IDs, names, levels, and start times.
+
+### Battle Mechanics
+
+**Raid Boss Structure:**
+- Multi-Phase Bosses: Bosses can have multiple phases (typically 2), each with separate HP pools
+- Massive HP Pools: Boss HP ranges from ~287M to ~448M per phase
+- Persistent Damage: Damage persists across all clan members' attempts
+- Time Limit: Battles have an end time (typically 3 minutes)
+
+**Raid Effects:**
+- `percentDamageBuff_any`: Overall damage buff percentage
+- `bossAstralMaterialAuraReduction`: Reduces boss astral material aura
+- `bossAstralAntihealAuraReduction`: Reduces boss anti-heal effects
+- `bossAstralHealOnAttack`: Heal amount on attack
+- `bossAstralSwitcherCDReduce`: Cooldown reduction for switching
+- `bossAstralParalyseHealReduction`: Reduces heal when paralyzed
+
+---
+
+## Cross Clan War (COW) API
+
+### Overview
+
+Cross Clan War is a competitive mode where clans battle against each other across multiple slots. Supports both hero battles and titan battles.
+
+### Endpoints
+
+#### crossClanWar_getInfo
+
+**Description:** Retrieves information about the current Cross Clan War status, including available battles, opponent clans, and war state.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "crossClanWar_getInfo",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "group_1_body"
+  }]
+})
+```
+
+**Response:** Contains detailed information about the Cross Clan War, including:
+- War status and timing
+- Available battle slots
+- Opponent clan information
+- Battle results
+- Rewards and standings
+
+#### crossClanWar_startBattle
+
+**Description:** Initiates a battle in the Cross Clan War against a specific slot. Supports both hero battles and titan battles.
+
+**Request (Hero Battle):**
+```javascript
+Send({
+  calls: [{
+    name: "crossClanWar_startBattle",
+    args: {
+      slotId: 2,
+      favor: {
+        "13": 6008,
+        "16": 6004,
+        "29": 6006,
+        "64": 6005
+      },
+      team: {
+        units: [29, 64, 13, 40, 16],
+        pet: 6008
+      },
+      banner: 2
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request (Titan Battle):**
+```javascript
+Send({
+  calls: [{
+    name: "crossClanWar_startBattle",
+    args: {
+      slotId: 16,
+      team: {
+        units: [4033, 4043, 4031, 4032, 4030]
+      }
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `slotId` (number): The battle slot ID to attack (1-16 for hero battles, higher for titan battles)
+- `team` (object): The attacking team configuration
+  - `team.units` (array): Array of hero IDs for the team (hero battles) or titan IDs (titan battles)
+  - `team.pet` (number, optional): Pet ID for the team (hero battles only)
+- `favor` (object, optional): Map of hero IDs to favor IDs (hero battles only)
+- `banner` (number, optional): Banner ID for the team (hero battles only)
+
+**Notes:**
+- Hero battles (typically slots 1-15) support pets, favors, and banners
+- Titan battles (typically slots 16+) only require unit IDs
+- The `favor` parameter is optional - can be an empty object `{}` if no favors are selected
+
+---
+
+## Secret Wealth Shop API
+
+### Overview
+
+The Secret Wealth Shop (Merchant Shop) is a shop where players can purchase items using consumables (such as pet potions) or GEMs (starmoney).
+
+### Endpoints
+
+#### shopBuy
+
+**Description:** Purchases an item from the Secret Wealth Shop.
+
+**Request (Purchase with Consumables):**
+```javascript
+Send({
+  calls: [{
+    name: "shopBuy",
+    args: {
+      shopId: 1576000026,  // Secret Wealth Shop ID
+      slot: 6,
+      cost: {
+        consumable: {
+          "85": 40000  // 85: pet potion
+        }
+      },
+      reward: {
+        consumable: {
+          "55": 80  // 55: titan artifact sphere
+        }
+      }
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request (Purchase with GEMs):**
+```javascript
+Send({
+  calls: [{
+    name: "shopBuy",
+    args: {
+      shopId: 1576000026,
+      slot: 3,
+      cost: {
+        starmoney: 890  // GEM payment
+      },
+      reward: {
+        consumable: {
+          "201": 100  // 201: Crystal
+        }
+      }
+    },
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `shopId` (number): Unique identifier for the shop instance (1576000026 for Secret Wealth Shop)
+- `slot` (number): The slot number of the item being purchased (typically 1-6)
+- `cost` (object): The cost of the item
+  - `cost.consumable` (object): Map of consumable IDs to amounts (when paying with consumables)
+  - `cost.starmoney` (number): GEM amount (when paying with GEMs)
+- `reward` (object): The reward being received (for validation)
+
+**Consumable ID Reference:**
+- `85`: Pet potion
+- `55`: Titan artifact sphere
+- `201`: Crystal
+
+**Response:** Returns purchase confirmation with rewarded items and quest updates.
+
+---
+
+## Titan Artifact Shop API
+
+### Overview
+
+The Titan Artifact Shop (shopId: 13) is a shop where players can purchase Titan Artifact fragments using coins. The shop supports bulk purchases.
+
+### Endpoints
+
+#### shopBuy
+
+**Description:** Purchases Titan Artifact fragments from the shop. Supports bulk purchases via the `amount` parameter.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "shopBuy",
+    args: {
+      shopId: 13,
+      slot: 24,
+      cost: {
+        coin: {
+          "18": 12
+        }
+      },
+      reward: {
+        fragmentTitanArtifact: {
+          "2005": 1
+        }
+      },
+      amount: 300  // Bulk purchase amount
+    },
+    context: { actionTs: Date.now() },
+    ident: "group_0_body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `shopId` (number): Fixed at `13` for the Titan Artifact Shop
+- `slot` (number): The slot number of the item being purchased (typically 1-25)
+- `cost.coin` (object): Map of coin type IDs to amounts (coin type `18` is standard)
+- `reward.fragmentTitanArtifact` (object): Map of fragment IDs to amounts
+- `amount` (number, optional): Number of items to purchase in bulk (defaults to 1)
+
+**Titan Artifact Fragment IDs:**
+- `1001-1016`: Standard Titan Artifact fragments
+- `1017-1020`: Additional Titan Artifact fragments
+- `2001-2005`: Advanced Titan Artifact fragments
+
+#### shopGet
+
+**Description:** Retrieves the current inventory and configuration of the Titan Artifact Shop.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "shopGet",
+    args: {
+      shopId: 13
+    },
+    context: { actionTs: Date.now() },
+    ident: "group_0_shopGet"
+  }]
+})
+```
+
+**Response:** Returns shop configuration including:
+- `slots`: Map of slot numbers to slot data
+- `slots[].reward`: Reward for this slot
+- `slots[].cost`: Cost object with coin type and amount
+- `slots[].bought`: Number of times this slot has been purchased
+- `slots[].staticShopMultiplePurchase`: Whether bulk purchase is enabled (1 = enabled)
+- `slots[].amountAvailable`: Available quantity (null = unlimited)
+
+---
+
+## TeamGetAll API
+
+### Overview
+
+The `teamGetAll` API provides comprehensive team configurations for all game modes in Hero Wars. It returns pre-configured teams that players have set up through the game's UI, including heroes, pets, and other team-related data.
+
+### Endpoint
+
+#### teamGetAll
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "teamGetAll",
+    args: {},
+    ident: "teamGetAll"
+  }]
+})
+```
+
+### Response Structure
+
+Each team configuration is an array where:
+- **First 5 elements**: Hero IDs (heroes with ID < 6000)
+- **6th element**: Pet ID (pets with ID >= 6000)
+
+### Team Configuration Fields
+
+```typescript
+{
+  // Adventure Mode
+  adventure_hero: number[];           // [hero1, hero2, hero3, hero4, hero5, pet]
+  
+  // Arena Modes
+  arena: number[];                     // [hero1, hero2, hero3, hero4, hero5, pet]
+  grand: number[][];                  // [[team1], [team2], [team3]] - 3 teams for grand arena
+  
+  // Dungeon Modes
+  dungeon_hero: number[];              // [hero1, hero2, hero3, hero4, hero5, pet]
+  dungeon_earth: number[];            // Titan team for earth dungeon
+  dungeon_fire: number[];             // Titan team for fire dungeon
+  dungeon_water: number[];            // Titan team for water dungeon
+  dungeon_neutral: number[];          // Titan team for neutral dungeon
+  
+  // Tower Mode
+  tower: number[];                    // [hero1, hero2, hero3, hero4, hero5, pet]
+  
+  // Titan Arena
+  titan_arena: number[];              // [titan1, titan2, titan3, titan4, titan5]
+  titan_arena_def: number[];          // Defense team for titan arena
+  titan_mission: number[];            // Titan team for missions
+  
+  // Clan/Team Modes
+  clanDefence_heroes: number[];       // Heroes for Guild War defense
+  clanDefence_titans: number[];        // Titans for Guild War defense
+  clanRaid_nodes: number[][];         // [[team1], [team2], [team3]] - 3 teams for clan raid nodes (Minions Attack)
+  clan_global_pvp: number[];          // Heroes for global clan PvP
+  clan_global_pvp_titan: number[];    // Titans for global clan PvP
+  clan_pvp_hero: number[];           // Heroes for clan PvP
+  clan_pvp_titan: number[];           // Titans for clan PvP
+  
+  // Cross-Clan Defense
+  crossClanDefence_heroes: number[][]; // [[team1], [team2], [team3]] - 3 teams
+  crossClanDefence_titans: number[][]; // [[team1], [team2]] - 2 titan teams
+  
+  // Mission Mode
+  mission: number[];                   // [hero1, hero2, hero3, hero4, hero5, pet]
+  
+  // Boss Battles
+  boss_10: number[];                  // Team for boss level 10
+  boss_11: number[];                 // Team for boss level 11
+  boss_12: number[];                 // Team for boss level 12
+  
+  // Invasion Bosses (182-225, 394-417)
+  invasion_boss_182: number[];        // Team for invasion boss 182
+  // ... (continues for all invasion boss levels)
+  
+  // Other Modes
+  brawl: number[];                    // Team for brawls
+  challenge: number[];                // Team for challenges
+}
+```
+
+### Entity ID Ranges
+
+- **Heroes**: 1-999 (e.g., 46 = Aurora, 57 = K'arkh, 40 = Jorgen)
+- **Pets**: 6000-6999 (e.g., 6008 = Axel, 6004 = Oliver, 6006 = Cain)
+- **Titans**: 4000-4999 (e.g., 4033 = Hyperion, 4003 = Eden, 4043 = Sigurd)
+
+### Usage Patterns
+
+**Single Team Modes:**
+```javascript
+const arenaTeam = teamGetAll.arena; // [46, 57, 40, 16, 65, 6008]
+const heroes = arenaTeam.slice(0, 5); // [46, 57, 40, 16, 65]
+const pet = arenaTeam[5]; // 6008
+```
+
+**Multi-Team Modes:**
+```javascript
+const grandArenaTeams = teamGetAll.grand; // [[team1], [team2], [team3]]
+const clanRaidTeams = teamGetAll.clanRaid_nodes; // [[team1], [team2], [team3]]
+```
+
+**Titan-Only Modes:**
+```javascript
+const titanArenaTeam = teamGetAll.titan_arena; // [4033, 4003, 4043, 4032, 4030]
+```
+
+---
+
+## Demo Battle API
+
+### Overview
+
+The Demo Battle API allows testing battle scenarios in Hero Wars without consuming actual battle attempts. This API simulates battles between attack and defense teams and returns detailed battle results.
+
+### Endpoint
+
+#### demoBattles_startBattle
+
+**Description:** Starts a demo battle simulation for testing purposes.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "demoBattles_startBattle",
+    args: {
+      mechanic: "arena",  // Battle type: "arena", "grand_arena", "titan_war", etc.
+      defenceMaxUpgrade: false,
+      defenceTeam: {
+        units: [9, 40, 56, 16, 1],
+        pet: 6005
+      },
+      defenceBanner: 6,
+      defenceFavor: {
+        "1": 6004,
+        "9": 6005,
+        "16": 6000,
+        "56": 6006
+      },
+      maxUpgrade: false,
+      team: {
+        units: [62, 9, 40, 56, 42],
+        pet: 6008
+      },
+      banner: 6,
+      favor: {
+        "9": 6007,
+        "40": 6004,
+        "42": 6006,
+        "56": 6001,
+        "62": 6003
+      },
+      defenceBuffs: {},
+      buffs: {},
+      parentId: 0,
+      entryId: 0
+    },
+    context: {
+      actionTs: Date.now()
+    },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `mechanic` (string): Battle type (e.g., "arena", "grand_arena", "titan_war")
+- `defenceMaxUpgrade` (boolean): Whether defense team uses max upgrades
+- `defenceTeam` (object): Defense team configuration
+  - `units` (array): Array of hero IDs
+  - `pet` (number): Pet ID
+- `defenceBanner` (number): Defense team banner ID
+- `defenceFavor` (object): Defense team favor pets mapping
+- `maxUpgrade` (boolean): Whether attack team uses max upgrades
+- `team` (object): Attack team configuration
+  - `units` (array): Array of hero IDs
+  - `pet` (number): Pet ID
+- `banner` (number): Attack team banner ID
+- `favor` (object): Attack team favor pets mapping
+- `defenceBuffs` (object): Defense team buffs (empty object `{}`)
+- `buffs` (object): Attack team buffs (empty object `{}`)
+- `parentId` (number): Parent battle ID (0 for standalone battles)
+- `entryId` (number): Entry ID (0 for standalone battles)
+
+**Response:** Returns detailed battle data including:
+- Battle metadata (userId, typeId, startTime, seed, type)
+- Attackers data (detailed hero statistics)
+- Defenders data (battle state information)
+- Battle effects (buffs, debuffs, banner effects)
+
+**Notes:**
+- Demo battles do not consume actual battle attempts
+- Battle results are calculated server-side
+- Can be used for testing team compositions and strategies
+- Supports various battle mechanics (arena, grand arena, titan war, etc.)
+
+---
+
 ## Additional Resources
 
-- See `COW_API_DOCUMENTATION.md` for Cross Clan War API details
-- See `GUILD_WAR_API_DOCUMENTATION.md` for Guild War API details
-- See `CLAN_RAID_API_DOCUMENTATION.md` for Clan Raid API details
+**Note:** All specialized API documentation has been consolidated into this document. The following separate documentation files are now deprecated:
+- `ARENA_API_DOCUMENTATION.md` - Consolidated into Arena API section
+- `GrandArenaAPI_Documentation.md` - Consolidated into Grand Arena API section
+- `GUILD_WAR_API_DOCUMENTATION.md` - Consolidated into Guild War API section
+- `CLAN_RAID_API_DOCUMENTATION.md` - Consolidated into Clan Raid API (Minions Attack) section
+- `COW_API_DOCUMENTATION.md` - Consolidated into Cross Clan War API section
+- `SECRET_WEALTH_SHOP_API_DOCUMENTATION.md` - Consolidated into Secret Wealth Shop API section
+- `TITAN_ARTIFACT_SHOP_API_DOCUMENTATION.md` - Consolidated into Titan Artifact Shop API section
+- `TEAMGETALL_API_DOCUMENTATION.md` - Consolidated into TeamGetAll API section
+- `DEMO_BATTLE_API_DOCUMENTATION.md` - Consolidated into Demo Battle API section
+
+For the most up-to-date API documentation, refer to this consolidated document.
 
