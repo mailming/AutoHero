@@ -65,11 +65,33 @@
         } catch (e) { console.error("Error in executeOfferFarmAllReward", e); HWHFuncs.setProgress('Easter Eggs: Error!', true); }
     }
     async function executeQuestAllFarm() {
-         const { Send } = window;
-         const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "body" }] });
-         const quests = questData.results[0].result.response;
-         const questCalls = quests.filter(q => q.id < 1000000 && q.state == 2).map(q => ({ name: "questFarm", args: { questId: q.id }, ident: `questFarm_${q.id}` }));
-         if(questCalls.length > 0) await Send({ calls: questCalls });
+         const { Send, HWHFuncs, I18N } = window;
+         try {
+             const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "body" }] });
+             const quests = questData.results[0].result.response;
+             
+             // Filter quests that are ready to collect (state == 2 means completed and ready to collect)
+             // Only process quests with id < 1000000 (regular daily quests)
+             const questsToFarm = quests.filter(q => {
+                 return q && typeof q.id !== 'undefined' && q.id < 1000000 && q.state === 2;
+             });
+             
+             if (questsToFarm.length === 0) {
+                 // No quests ready to collect - already done
+                 return;
+             }
+             
+             const questCalls = questsToFarm.map(q => ({ 
+                 name: "questFarm", 
+                 args: { questId: q.id }, 
+                 ident: `questFarm_${q.id}` 
+             }));
+             
+             await Send({ calls: questCalls });
+         } catch (e) {
+             console.error("Error in executeQuestAllFarm", e);
+             throw e;
+         }
     }
     async function executeMailGetAll() {
          const { Send, HWHClasses } = window;
