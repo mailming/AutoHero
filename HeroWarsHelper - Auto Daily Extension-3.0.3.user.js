@@ -66,10 +66,32 @@
     }
     async function executeQuestAllFarm() {
          const { Send } = window;
+         // Get current quest state from API
          const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "body" }] });
          const quests = questData.results[0].result.response;
-         const questCalls = quests.filter(q => q.id < 1000000 && q.state == 2).map(q => ({ name: "questFarm", args: { questId: q.id }, ident: `questFarm_${q.id}` }));
-         if(questCalls.length > 0) await Send({ calls: questCalls });
+         
+         // Filter quests that are completed and ready to collect (state == 2)
+         // Only process regular daily quests (id < 1000000)
+         // According to API docs: state 0 = not started, 1 = in progress, 2 = completed (ready to collect)
+         // After collection, quest should be removed or state should change
+         const questsToFarm = quests.filter(q => {
+             // Only collect if quest exists, is a regular daily quest, and is completed (state == 2)
+             return q && typeof q.id !== 'undefined' && q.id < 1000000 && q.state == 2;
+         });
+         
+         if (questsToFarm.length === 0) {
+             // No quests ready to collect - all done
+             return;
+         }
+         
+         // Collect the quest rewards
+         const questCalls = questsToFarm.map(q => ({ 
+             name: "questFarm", 
+             args: { questId: q.id }, 
+             ident: `questFarm_${q.id}` 
+         }));
+         
+         await Send({ calls: questCalls });
     }
     async function executeMailGetAll() {
          const { Send, HWHClasses } = window;
