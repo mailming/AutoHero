@@ -556,6 +556,7 @@ async function executeGetDailyBonus() {
         const origOthersButton = HWHData.buttons.doOthers.button;
         if (!origOthersButton) return;
         const scriptMenuContainer = origOthersButton.parentElement;
+        if (!scriptMenuContainer) return;
         origOthersButton.style.display = 'none';
         customOthersButton = HWHClasses.ScriptMenu.getInst().addButton({
             name: I18N('OTHERS'),
@@ -563,7 +564,7 @@ async function executeGetDailyBonus() {
             onClick: onCustomOthersClick
         }, scriptMenuContainer);
         const referenceButton = HWHData.buttons.testTitanArena.button || HWHData.buttons.testDungeon.button;
-        if (referenceButton) {
+        if (referenceButton && scriptMenuContainer.contains(referenceButton)) {
              scriptMenuContainer.insertBefore(customOthersButton, referenceButton);
         } else {
              scriptMenuContainer.appendChild(customOthersButton);
