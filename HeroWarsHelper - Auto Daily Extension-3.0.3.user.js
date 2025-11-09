@@ -537,50 +537,99 @@ async function executeGetDailyBonus() {
     }
     async function executeSingleTask(task) {
         const { HWHFuncs, Send, HWHClasses } = window;
+        console.log(`[executeSingleTask] Starting task: ${task.label} (ID: ${task.id})`);
         HWHFuncs.setProgress(`Executing: ${task.label}`, true);
         try {
             if (task.func) {
+                console.log(`[executeSingleTask] Task ${task.id} has a function, executing it directly`);
                 await task.func();
             } else {
+                 console.log(`[executeSingleTask] Task ${task.id} is a quest task, initializing quest manager...`);
                  const questManager = new HWHClasses.dailyQuests();
                  await questManager.autoInit();
                  
                  // Check quest state - only execute if state == 1 (in progress) or state == 0 (not started)
                  // Skip if state == 2 (completed) - matching main script behavior
                  const questData = questManager.questInfo['questGetAll'].find(q => q.id == task.id);
-                 if (questData && questData.state == 2) {
+                 
+                 console.log(`[executeSingleTask] Quest data lookup for ID ${task.id}:`, questData ? {
+                     id: questData.id,
+                     state: questData.state,
+                     progress: questData.progress,
+                     fullData: questData
+                 } : 'NOT FOUND');
+                 
+                 if (!questData) {
+                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in questGetAll!`);
+                     HWHFuncs.setProgress(`${task.label} not found in quest list!`, true);
+                     return;
+                 }
+                 
+                 console.log(`[executeSingleTask] Quest ${task.id} state check: state = ${questData.state} (type: ${typeof questData.state})`);
+                 
+                 if (questData.state == 2) {
                      // Quest is already completed - don't execute it again
+                     console.log(`[executeSingleTask] SKIPPING ${task.id} (${task.label}): Quest is already completed (state == 2)`);
                      HWHFuncs.setProgress(`${task.label} is already completed!`, true);
                      return;
                  }
                  
                  // Only process quests with state == 1 (in progress), matching main script logic
                  // Main script only processes quest.state == 1 in dailyQuests.start()
-                 if (questData && questData.state != 1) {
+                 if (questData.state != 1) {
+                     console.log(`[executeSingleTask] SKIPPING ${task.id} (${task.label}): Quest state is ${questData.state}, not 1 (in progress)`);
                      HWHFuncs.setProgress(`${task.label} is not in progress (state: ${questData.state})!`, true);
                      return;
                  }
                  
-                 if (questManager.dataQuests[task.id] && questManager.dataQuests[task.id].isWeCanDo.call(questManager)) {
-                     let calls = [];
-                     if (task.id === '10023') {
-                         const heroId = questManager.getHeroIdTitanGift();
-                         calls = [
-                             { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_1' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_1' },
-                             { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_2' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_2' }
-                         ];
-                     } else {
-                         calls = questManager.dataQuests[task.id].doItCall.call(questManager);
-                     }
-                     if(calls.length > 0) await Send({ calls });
-                 } else {
+                 console.log(`[executeSingleTask] Quest ${task.id} passed state check (state == 1), checking isWeCanDo...`);
+                 
+                 const hasDataQuest = questManager.dataQuests[task.id];
+                 console.log(`[executeSingleTask] Quest ${task.id} in dataQuests:`, hasDataQuest ? 'YES' : 'NO');
+                 
+                 if (!hasDataQuest) {
+                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in dataQuests!`);
                      HWHFuncs.setProgress(`${task.label} is not available!`, true);
                      return;
                  }
+                 
+                 const isWeCanDo = questManager.dataQuests[task.id].isWeCanDo;
+                 const canDo = isWeCanDo.call(questManager);
+                 console.log(`[executeSingleTask] Quest ${task.id} isWeCanDo result:`, canDo);
+                 
+                 if (!canDo) {
+                     console.log(`[executeSingleTask] SKIPPING ${task.id} (${task.label}): isWeCanDo returned false`);
+                     HWHFuncs.setProgress(`${task.label} is not available!`, true);
+                     return;
+                 }
+                 
+                 console.log(`[executeSingleTask] Quest ${task.id} passed all checks, preparing to execute...`);
+                 
+                 let calls = [];
+                 if (task.id === '10023') {
+                     const heroId = questManager.getHeroIdTitanGift();
+                     calls = [
+                         { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_1' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_1' },
+                         { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_2' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_2' }
+                     ];
+                 } else {
+                     calls = questManager.dataQuests[task.id].doItCall.call(questManager);
+                 }
+                 
+                 console.log(`[executeSingleTask] Quest ${task.id} calls to execute:`, calls);
+                 
+                 if(calls.length > 0) {
+                     console.log(`[executeSingleTask] EXECUTING ${task.id} (${task.label}) with ${calls.length} API call(s)`);
+                     await Send({ calls });
+                     console.log(`[executeSingleTask] Quest ${task.id} execution completed`);
+                 } else {
+                     console.warn(`[executeSingleTask] Quest ${task.id} has no calls to execute!`);
+                 }
             }
+            console.log(`[executeSingleTask] Task ${task.id} (${task.label}) finished successfully`);
             HWHFuncs.setProgress(`${task.label} finished!`, true);
         } catch (e) {
-            console.error(`Error executing task ${task.id}:`, e);
+            console.error(`[executeSingleTask] ERROR executing task ${task.id} (${task.label}):`, e);
             HWHFuncs.setProgress(`Error with ${task.label}!`, true);
         }
     }
