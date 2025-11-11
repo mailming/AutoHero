@@ -30,14 +30,39 @@
         const STORAGE_PREFIX = 'advAutoBuyer_';
 
         // --- DATA STRUCTURES & HELPERS ---
-        const SHOPS = [ { id: 1, name: 'Town Shop' }, { id: 4, name: 'Arena Shop' }, { id: 5, name: 'Grand Arena Shop' }, { id: 6, name: 'Tower Shop' }, { id: 8, name: 'Soul Shop' }, { id: 9, name: 'Friendship Shop' }, { id: 10, name: 'Outland Shop' }, { id: 13, name: 'Titan Artifact Shop' }, { id: 1576000026, name: 'Secret Wealth Shop' } ];
+        const SHOPS = [ { id: 1, name: 'Town Shop' }, { id: 4, name: 'Arena Shop' }, { id: 5, name: 'Grand Arena Shop' }, { id: 6, name: 'Tower Shop' }, { id: 8, name: 'Soul Shop' }, { id: 9, name: 'Friendship Shop' }, { id: 10, name: 'Outland Shop' }, { id: 13, name: 'Titan Artifact Shop' }, { id: 'SECRET_WEALTH', name: 'Secret Wealth Shop' } ];
         const ITEMS_DATABASE = window.AUTO_BUYER_ITEM_DATABASE || {};
+        
+        // Helper function to find Secret Wealth Shop by pattern (ends with 0026)
+        function findSecretWealthShop(shopsData) {
+            for (const shopId in shopsData) {
+                const shopIdNum = typeof shopId === 'string' ? parseInt(shopId) : shopId;
+                if (!isNaN(shopIdNum) && shopIdNum.toString().endsWith('0026')) {
+                    const shop = shopsData[shopId];
+                    // Verify it's actually a Secret Wealth Shop by checking for consumable/starmoney costs
+                    if (shop && shop.slots) {
+                        for (const slotId in shop.slots) {
+                            const slot = shop.slots[slotId];
+                            if (slot.cost && (slot.cost.consumable || slot.cost.starmoney)) {
+                                return { id: shopIdNum, shop: shop };
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+        
+        // Helper function to get storage key for Secret Wealth Shop (consistent regardless of actual ID)
+        function getSecretWealthStorageKey() {
+            return STORAGE_PREFIX + 'SECRET_WEALTH';
+        }
 
         // --- NEW: Import/Export Functions ---
         function exportSettings() {
             const settingsToExport = {};
             SHOPS.forEach(shop => {
-                const key = STORAGE_PREFIX + shop.id;
+                const key = shop.id === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shop.id;
                 const data = localStorage.getItem(key);
                 if (data) {
                     settingsToExport[key] = JSON.parse(data);
@@ -133,12 +158,34 @@
             popupContent.appendChild(headerContainer);
             popupContent.appendChild(contentContainer);
 
-            const loadShopContent = (shopId) => {
+            const loadShopContent = async (shopId) => {
                 contentContainer.innerHTML = ''; // Clear previous content
-                const items = ITEMS_DATABASE[shopId] || [];
-                const savedItems = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId) || '{}');
-                const savedSlotIds = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId + '_slots') || '[]');
-                const savedAmount = parseInt(localStorage.getItem(STORAGE_PREFIX + shopId + '_amount') || '9999');
+                
+                // Handle Secret Wealth Shop - need to fetch actual shop ID
+                let actualShopId = shopId;
+                if (shopId === 'SECRET_WEALTH') {
+                    try {
+                        const caller = new Caller(['shopGetAll']);
+                        await caller.send();
+                        const shopsData = caller.result('shopGetAll');
+                        const secretShop = findSecretWealthShop(shopsData);
+                        if (secretShop) {
+                            actualShopId = secretShop.id;
+                        } else {
+                            contentContainer.innerHTML = '<p style="color: #ff6666;">Secret Wealth Shop not found. It may not be available at this time.</p>';
+                            return;
+                        }
+                    } catch (error) {
+                        contentContainer.innerHTML = `<p style="color: #ff6666;">Error loading Secret Wealth Shop: ${error.message}</p>`;
+                        return;
+                    }
+                }
+                
+                const items = ITEMS_DATABASE[actualShopId] || ITEMS_DATABASE[shopId] || [];
+                const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                const savedItems = JSON.parse(localStorage.getItem(storageKey) || '{}');
+                const savedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
+                const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '9999');
 
                 // --- NEW: Fixed Slot ID Section ---
                 const slotSection = document.createElement('div');
@@ -168,7 +215,8 @@
                 saveSlotBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
                 saveSlotBtn.onclick = () => {
                     const slotIds = slotInput.value.split(',').map(s => s.trim()).filter(s => s && !isNaN(parseInt(s))).map(s => parseInt(s));
-                    localStorage.setItem(STORAGE_PREFIX + shopId + '_slots', JSON.stringify(slotIds));
+                    const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                    localStorage.setItem(storageKey + '_slots', JSON.stringify(slotIds));
                     alert(`Saved ${slotIds.length} slot ID(s): ${slotIds.join(', ')}`);
                 };
                 
@@ -178,7 +226,7 @@
                 contentContainer.appendChild(slotSection);
 
                 // --- NEW: Bulk Purchase Amount Section (only for Titan Artifact Shop) ---
-                if (shopId === 13) {
+                if (actualShopId === 13) {
                     const amountSection = document.createElement('div');
                     amountSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
                     
@@ -211,7 +259,8 @@
                             alert('Amount must be at least 1');
                             return;
                         }
-                        localStorage.setItem(STORAGE_PREFIX + shopId + '_amount', amount.toString());
+                        const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                        localStorage.setItem(storageKey + '_amount', amount.toString());
                         alert(`Saved bulk purchase amount: ${amount}`);
                     };
                     
@@ -254,11 +303,12 @@
                     itemDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px;';
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
-                    checkbox.id = `item-${shopId}-${item.name.replace(/\s/g, '')}`;
+                    checkbox.id = `item-${actualShopId}-${item.name.replace(/\s/g, '')}`;
                     checkbox.checked = savedItems[item.name] || false;
                     checkbox.onchange = () => {
                         savedItems[item.name] = checkbox.checked;
-                        localStorage.setItem(STORAGE_PREFIX + shopId, JSON.stringify(savedItems));
+                        const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                        localStorage.setItem(storageKey, JSON.stringify(savedItems));
                     };
                     const label = document.createElement('label');
                     label.setAttribute('for', checkbox.id);
@@ -311,19 +361,43 @@
                 const caller = new Caller(['shopGetAll']);
                 await caller.send();
                 const shopsData = caller.result('shopGetAll');
+                
+                // Find Secret Wealth Shop dynamically by pattern
+                const secretWealthShop = findSecretWealthShop(shopsData);
+                if (secretWealthShop) {
+                    console.log(`Secret Wealth Shop detected with ID: ${secretWealthShop.id}`);
+                } else {
+                    console.log("Secret Wealth Shop not found (no shop ID ending in 0026)");
+                }
+                
                 const callsToMake = [];
                 const itemsToLog = [];
                 for (const shop of SHOPS) {
-                    const shopId = shop.id;
-                    const shoppingList = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId) || '{}');
-                    const fixedSlotIds = JSON.parse(localStorage.getItem(STORAGE_PREFIX + shopId + '_slots') || '[]');
+                    let shopId = shop.id;
+                    let currentShopData = null;
                     
-                    // Try both string and number format for shopId (API may return string IDs)
-                    const currentShopData = shopsData[shopId] || shopsData[String(shopId)] || shopsData[Number(shopId)];
+                    // Handle Secret Wealth Shop dynamically
+                    if (shopId === 'SECRET_WEALTH') {
+                        if (!secretWealthShop) {
+                            console.log(`Shop ${shop.name}: Not available (no shop ID ending in 0026 found)`);
+                            continue;
+                        }
+                        shopId = secretWealthShop.id;
+                        currentShopData = secretWealthShop.shop;
+                    } else {
+                        // Try both string and number format for shopId (API may return string IDs)
+                        currentShopData = shopsData[shopId] || shopsData[String(shopId)] || shopsData[Number(shopId)];
+                    }
+                    
                     if (!currentShopData || !currentShopData.slots) {
                         console.log(`Shop ${shop.name} (ID: ${shopId}): No shop data or slots found`);
                         continue;
                     }
+                    
+                    // Get storage key - use consistent key for Secret Wealth Shop
+                    const storageKey = shop.id === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shop.id;
+                    const shoppingList = JSON.parse(localStorage.getItem(storageKey) || '{}');
+                    const fixedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
                     
                     const wantedNames = new Set();
                     for(const name in shoppingList) { if(shoppingList[name] === true) { wantedNames.add(name); } }
@@ -409,16 +483,17 @@
                                     reward: slot.reward || {}
                                 };
                                 
-                                // Secret Wealth Shop (shopId 1576000026) - fixed purchases only (no amount parameter)
+                                // Secret Wealth Shop (dynamic ID ending in 0026) - fixed purchases only (no amount parameter)
                                 // Titan Artifact Shop (shopId 13) - supports bulk purchases via amount parameter
                                 if (shopId === 13 && slot.staticShopMultiplePurchase === 1) {
                                     // For Titan Artifact Shop, we can specify amount for bulk purchase
                                     // Get the saved amount from localStorage, or use slot's maxAmount, or default to 9999
-                                    const savedAmount = parseInt(localStorage.getItem(STORAGE_PREFIX + shopId + '_amount') || '0');
+                                    const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '0');
                                     const maxAmount = savedAmount > 0 ? savedAmount : (slot.maxAmount || slot.maxPurchaseAmount || 9999);
                                     shopBuyArgs.amount = maxAmount;
                                 }
                                 // For Secret Wealth Shop and other shops, don't include amount (fixed purchase)
+                                // Note: Secret Wealth Shop is identified by pattern matching (ends with 0026)
                                 
                                 // Store purchase info with item details for individual API calls
                                 callsToMake.push({ 
