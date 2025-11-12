@@ -32,6 +32,41 @@ def find_and_click_list_tab(driver):
     """Find and click the List tab using JavaScript"""
     wait = WebDriverWait(driver, 20)
     
+    # First, check if we're already on the List view
+    js_check_list_active = """
+    // Check if List tab is already active/selected
+    var buttons = document.querySelectorAll('ion-segment-button');
+    for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        var text = btn.textContent || btn.innerText || '';
+        if (text.toLowerCase().includes('list')) {
+            // Check if button has 'checked' attribute or 'selected' class
+            if (btn.hasAttribute('checked') || btn.classList.contains('segment-button-checked') || 
+                btn.classList.contains('selected') || btn.getAttribute('aria-pressed') === 'true') {
+                return true;
+            }
+        }
+    }
+    
+    // Also check if schedule grid is visible (indicates we're on List view)
+    var grid = document.querySelector('ion-grid.schedule-grid') || document.querySelector('.schedule-grid');
+    if (grid && grid.offsetParent !== null) {
+        // Grid is visible, likely already on List view
+        return true;
+    }
+    
+    return false;
+    """
+    
+    try:
+        is_already_on_list = driver.execute_script(js_check_list_active)
+        if is_already_on_list:
+            print("[OK] Already on List view, no need to click")
+            return True
+    except Exception as e:
+        # If check fails, proceed with clicking attempt
+        pass
+    
     # Use JavaScript to find and click the List tab
     js_click_list = """
     // Find all ion-segment-button elements
@@ -77,6 +112,7 @@ def find_and_click_list_tab(driver):
     return false;
     """
     
+    js_click_succeeded = False
     try:
         result = driver.execute_script(js_click_list)
         if result:
@@ -85,26 +121,30 @@ def find_and_click_list_tab(driver):
             return True
     except Exception as e:
         print(f"[DEBUG] JavaScript click failed: {e}")
+        js_click_succeeded = False
     
-    # Fallback: try XPath selectors
-    list_tab_selectors = [
-        "//ion-segment-button[contains(., 'List')]",
-        "//ion-segment-button[2]",  # Second button is usually List
-        "//ion-segment//ion-segment-button[position()=2]"
-    ]
-    
-    for selector in list_tab_selectors:
-        try:
-            list_tab = wait.until(EC.presence_of_element_located((By.XPATH, selector)))
-            driver.execute_script("arguments[0].scrollIntoView(true);", list_tab)
-            time.sleep(0.5)
-            driver.execute_script("arguments[0].click();", list_tab)
-            print(f"[OK] Clicked List tab using XPath: {selector}")
-            time.sleep(3)
-            return True
-        except Exception as e:
-            print(f"[DEBUG] Failed with XPath {selector}: {e}")
-            continue
+    # Fallback: try XPath selectors (only if JavaScript failed)
+    if not js_click_succeeded:
+        list_tab_selectors = [
+            "//ion-segment-button[contains(., 'List')]",
+            "//ion-segment-button[2]",  # Second button is usually List
+            "//ion-segment//ion-segment-button[position()=2]"
+        ]
+        
+        for selector in list_tab_selectors:
+            try:
+                list_tab = wait.until(EC.presence_of_element_located((By.XPATH, selector)))
+                driver.execute_script("arguments[0].scrollIntoView(true);", list_tab)
+                time.sleep(0.5)
+                driver.execute_script("arguments[0].click();", list_tab)
+                print(f"[OK] Clicked List tab using XPath: {selector}")
+                time.sleep(3)
+                return True
+            except Exception as e:
+                # Only show debug message if this is the last attempt
+                if selector == list_tab_selectors[-1]:
+                    print(f"[DEBUG] All XPath selectors failed, last attempt: {selector}")
+                continue
     
     return False
 
