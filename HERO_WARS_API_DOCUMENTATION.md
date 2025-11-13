@@ -2732,6 +2732,963 @@ Send({
 
 ---
 
+## Area of Conquest (Clan Domination) API
+
+Area of Conquest (also known as Clan Domination) is a clan-based PvP mode where clans compete to control territories on a map.
+
+### clanDomination_getBattleJournal
+
+Get the battle journal/log for Area of Conquest battles.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanDomination_getBattleJournal",
+    args: {
+      type: "clan_domination",
+      limit: 40,
+      offset: 0
+    },
+    context: { actionTs: 1143874 },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `type` (string): Battle type, should be `"clan_domination"`
+- `limit` (number): Maximum number of events to return (default: 40)
+- `offset` (number): Number of events to skip (default: 0)
+
+**Example Response:**
+```json
+{
+  "date": 1762932596.002743,
+  "results": [{
+    "ident": "body",
+    "result": {
+      "response": {
+        "users": {
+          "8009806": {
+            "id": "8009806",
+            "name": "Hershey",
+            "lastLoginTime": "1762915250",
+            "serverId": "46",
+            "level": "130",
+            "clanId": "71205",
+            "clanRole": "4",
+            "commander": true,
+            "avatarId": "1514",
+            "isChatModerator": false,
+            "frameId": 154,
+            "leagueId": 3,
+            "allowPm": "all",
+            "clanTitle": "Fairy Tail",
+            "clanIcon": {
+              "flagColor1": 19,
+              "flagColor2": 19,
+              "flagShape": 14,
+              "iconColor": 0,
+              "iconShape": 17,
+              "frame": 2
+            }
+          },
+          "35979991": {
+            "id": "35979991",
+            "name": "One Peace",
+            "lastLoginTime": "1762931456",
+            "serverId": "218",
+            "level": "130",
+            "clanId": "328621",
+            "clanRole": "4",
+            "commander": false,
+            "avatarId": "690",
+            "isChatModerator": false,
+            "frameId": 136,
+            "leagueId": 3,
+            "allowPm": "all",
+            "clanTitle": "Peaks End",
+            "clanIcon": {
+              "flagColor1": 19,
+              "flagColor2": 19,
+              "flagShape": 12,
+              "iconColor": 7,
+              "iconShape": 14
+            }
+          }
+        },
+        "events": [
+          {
+            "replayId": "1762932389588391261",
+            "userId": 47417806,
+            "targetId": 35961156,
+            "result": "lose",
+            "reward": [],
+            "ctime": 1762932389,
+            "endTime": 1762932389
+          },
+          {
+            "replayId": "1762932203341325664",
+            "userId": 8009806,
+            "targetId": 35891708,
+            "result": "defence",
+            "reward": {
+              "coin": {
+                "46": 100
+              }
+            },
+            "ctime": 1762932203,
+            "endTime": 1762932203
+          },
+          {
+            "replayId": "1762929762844980034",
+            "userId": 35979991,
+            "targetId": 47429573,
+            "result": "win",
+            "reward": {
+              "coin": {
+                "46": 100
+              }
+            },
+            "ctime": 1762929762,
+            "endTime": 1762929762
+          },
+          {
+            "replayId": "1762924106898277273",
+            "userId": 35449277,
+            "targetId": 28415350,
+            "result": "conquer",
+            "reward": {
+              "coin": {
+                "46": 124
+              }
+            },
+            "ctime": 1762924106,
+            "endTime": 1762924106
+          }
+        ]
+      }
+    }
+  }]
+}
+```
+
+**Response Fields:**
+- `users`: Object mapping user IDs to user information
+- `events`: Array of battle events with results and rewards
+  - `result`: Battle outcome
+    - `"win"`: Attacker won
+    - `"lose"`: Attacker lost
+    - `"defence"`: Successfully defended
+    - `"conquer"`: Successfully conquered territory
+
+---
+
+### clanDomination_stats
+
+Get statistics for all clans participating in Area of Conquest.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanDomination_stats",
+    args: {},
+    context: { actionTs: 1144748 },
+    ident: "body"
+  }]
+})
+```
+
+**Example Response:**
+```json
+{
+  "date": 1762932596.871387,
+  "results": [{
+    "ident": "body",
+    "result": {
+      "response": {
+        "71205": {
+          "power": 196793770,
+          "coins": 131683,
+          "towns": 6,
+          "castle": 32
+        },
+        "368696": {
+          "power": 159466657,
+          "coins": 113165,
+          "towns": 10,
+          "castle": 39
+        },
+        "312133": {
+          "power": 127974259,
+          "coins": 125445,
+          "towns": 9,
+          "castle": 40
+        },
+        "328621": {
+          "power": 137851121,
+          "coins": 156356,
+          "towns": 6,
+          "castle": 40
+        }
+      }
+    }
+  }]
+}
+```
+
+**Response Fields:**
+- `power`: Total clan power
+- `coins`: Total coins collected
+- `towns`: Number of towns controlled
+- `castle`: Castle level/position
+
+---
+
+### clanDomination_move
+
+Move your character to a specific level/position on the map.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanDomination_move",
+    args: {
+      levelId: 7
+    },
+    context: { actionTs: 1203030 },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `levelId` (number): The level/position ID to move to
+
+**Example Response:**
+```json
+{
+  "date": 1762932655.203018,
+  "results": [{
+    "ident": "body",
+    "result": {
+      "response": {
+        "userId": 35979991,
+        "move": {
+          "2": 7
+        },
+        "visibleLevels": [696, 606, 612, 690, 702, 786, 792, 522, 528, 600, 534, 618, 684, 780, 708, 798, 882, 888, 894, 444, 450, 516, 456, 462, 540, 624, 372, 378, 438, 384, 390, 396, 468, 546, 630, 306, 312, 366, 318, 432, 324, 330, 277, 337, 403, 475, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 72, 77, 78, 83, 84, 89, 90, 95, 101, 102, 107, 108, 114, 120, 128, 131, 133, 137, 138, 143, 144, 149, 150, 156, 162, 163, 169, 170, 173, 175, 179, 180, 181, 185, 186, 191, 192, 197, 198, 204, 205, 210, 211, 216, 217, 218, 222, 223, 227, 228, 229, 233, 234, 235, 239, 240, 245, 246, 252, 253, 258, 259, 264, 265, 270, 271, 276, 282, 283, 287, 288, 289, 293, 294, 299, 300, 313, 319, 325, 329, 331, 336, 342, 343, 348, 349, 354, 355, 360, 379, 385, 389, 391, 395, 402, 408, 409, 414, 415, 420, 421, 426, 461, 467, 474, 480, 481, 486, 487, 493, 539, 545],
+        "changedLevels": null,
+        "castlePositions": null,
+        "userPositions": {
+          "7659541": 33,
+          "23385341": 51,
+          "24417949": 6,
+          "28103487": 101,
+          "28569253": 29,
+          "28572153": 426,
+          "59720486": 107,
+          "47570368": 26,
+          "35448204": 696,
+          "35449277": 336,
+          "35461323": 252,
+          "35473076": 696,
+          "35538758": 36,
+          "35538770": 696,
+          "35581685": 696,
+          "35621043": 696,
+          "35659090": 696,
+          "35695193": 198,
+          "35698714": 696,
+          "35718205": 294,
+          "35769428": 696,
+          "35776732": 696,
+          "35818082": 696,
+          "35891708": 1,
+          "35900525": 696,
+          "35902122": 696,
+          "35911013": 265,
+          "35961156": 185,
+          "35979991": 7,
+          "35986432": 150,
+          "36005478": 696,
+          "36039664": 223,
+          "36040671": 696,
+          "48705148": 696,
+          "59891179": 378,
+          "59895273": 468,
+          "60608426": 343
+        },
+        "townPositions": {
+          "1": {
+            "position": 1,
+            "status": 1,
+            "userId": 35891708,
+            "townId": 5,
+            "farmStart": 1762931386
+          },
+          "26": {
+            "position": 26,
+            "status": 1,
+            "userId": 47570368,
+            "townId": 3,
+            "farmStart": 1762920223
+          },
+          "29": {
+            "position": 29,
+            "status": 1,
+            "userId": 28569253,
+            "townId": 3,
+            "farmStart": 1762932617
+          },
+          "33": {
+            "position": 33,
+            "status": 1,
+            "userId": 7659541,
+            "townId": 3,
+            "farmStart": 1762932579
+          },
+          "36": {
+            "position": 36,
+            "status": 1,
+            "userId": 35538758,
+            "townId": 3,
+            "farmStart": 1762915383
+          },
+          "101": {
+            "position": 101,
+            "status": 1,
+            "userId": 28103487,
+            "townId": 4,
+            "farmStart": 1762932620
+          },
+          "336": {
+            "position": 336,
+            "status": 1,
+            "userId": 35449277,
+            "townId": 3,
+            "farmStart": 1762925012
+          },
+          "343": {
+            "position": 343,
+            "status": 1,
+            "userId": 60608426,
+            "townId": 2,
+            "farmStart": 1762928106
+          },
+          "378": {
+            "position": 378,
+            "status": 1,
+            "userId": 59891179,
+            "townId": 1,
+            "farmStart": 1762912781
+          },
+          "426": {
+            "position": 426,
+            "status": 1,
+            "userId": 28572153,
+            "townId": 2,
+            "farmStart": 1762931984
+          },
+          "468": {
+            "position": 468,
+            "status": 1,
+            "userId": 59895273,
+            "townId": 1,
+            "farmStart": 1762923004
+          }
+        },
+        "chestPositions": {
+          "264": {
+            "position": 264,
+            "farmed": true
+          },
+          "186": {
+            "position": 186,
+            "farmed": true
+          },
+          "235": {
+            "position": 235,
+            "farmed": true
+          },
+          "233": {
+            "position": 233,
+            "farmed": true
+          },
+          "319": {
+            "position": 319,
+            "farmed": true
+          }
+        },
+        "portalPositions": null,
+        "altarPositions": null,
+        "farmedChest": null,
+        "user": {
+          "id": "35979991",
+          "name": "One Peace",
+          "lastLoginTime": "1762931456",
+          "serverId": "218",
+          "level": "130",
+          "clanId": "328621",
+          "clanRole": "4",
+          "commander": false,
+          "avatarId": "690",
+          "isChatModerator": false,
+          "frameId": 136,
+          "leagueId": 3,
+          "allowPm": "all",
+          "clanTitle": "Peaks End",
+          "clanIcon": {
+            "flagColor1": 19,
+            "flagColor2": 19,
+            "flagShape": 12,
+            "iconColor": 7,
+            "iconShape": 14
+          }
+        },
+        "autoMove": false,
+        "refillable": {
+          "id": 55,
+          "amount": 11,
+          "lastRefill": 1762932312,
+          "boughtToday": 0,
+          "refillTime": 720
+        },
+        "mapVersion": 17100
+      }
+    }
+  }]
+}
+```
+
+**Response Fields:**
+- `move`: Object showing the new position for the user
+- `visibleLevels`: Array of level IDs that are visible/accessible
+- `userPositions`: Map of all user positions on the map
+- `townPositions`: Map of town positions with ownership and farming status
+- `chestPositions`: Map of chest positions and whether they've been farmed
+- `refillable`: Information about movement energy/charges
+  - `id`: Refillable item ID (55 for movement energy)
+  - `amount`: Current amount of energy
+  - `lastRefill`: Timestamp of last refill
+  - `refillTime`: Time in seconds until next refill
+
+---
+
+### clanDomination_getEnemyTeams
+
+Get enemy team information for a specific level/position.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanDomination_getEnemyTeams",
+    args: {
+      levelId: 6
+    },
+    context: { actionTs: 1204346 },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `levelId` (number): The level/position ID to get enemy teams for
+
+**Example Response:**
+```json
+{
+  "date": 1762932656.4668911,
+  "results": [{
+    "ident": "body",
+    "result": {
+      "response": [{
+        "userId": 24417949,
+        "defense": {
+          "powerSum": 1048206,
+          "units": {
+            "9": {
+              "id": 9,
+              "level": 130,
+              "star": 6,
+              "power": 169909,
+              "color": 18,
+              "favorPetId": 6006,
+              "favorPower": 11064
+            },
+            "48": {
+              "id": 48,
+              "level": 130,
+              "star": 6,
+              "power": 195511,
+              "color": 18,
+              "favorPetId": 6005,
+              "favorPower": 11064
+            },
+            "40": {
+              "id": 40,
+              "level": 130,
+              "star": 6,
+              "power": 139207,
+              "color": 18,
+              "favorPetId": 0,
+              "favorPower": 0
+            },
+            "43": {
+              "id": 43,
+              "level": 130,
+              "star": 6,
+              "power": 157387,
+              "color": 18,
+              "favorPetId": 6008,
+              "favorPower": 7301
+            },
+            "16": {
+              "id": 16,
+              "level": 130,
+              "star": 6,
+              "power": 204249,
+              "color": 18,
+              "favorPetId": 6004,
+              "favorPower": 10154
+            },
+            "6006": {
+              "id": 6006,
+              "level": 130,
+              "star": 6,
+              "power": 181943,
+              "color": 10,
+              "favorPetId": null,
+              "favorPower": null,
+              "type": "pet"
+            }
+          },
+          "banner": {
+            "id": 1,
+            "slots": {
+              "1": 29,
+              "2": 41,
+              "0": 65
+            }
+          }
+        },
+        "defenseState": {
+          "9": {
+            "hp": 348525,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 348525
+          },
+          "48": {
+            "hp": 566017,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 566017
+          },
+          "40": {
+            "hp": 386912,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 386912
+          },
+          "43": {
+            "hp": 343417,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 343417
+          },
+          "16": {
+            "hp": 449732,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 449732
+          },
+          "6006": {
+            "hp": -1,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": -1
+          }
+        },
+        "healed": null
+      }]
+    }
+  }]
+}
+```
+
+**Response Fields:**
+- Array of enemy teams at the specified level
+- `defense`: Defense team composition with heroes, pets, and banner
+- `defenseState`: Current state of defense team (HP, energy, etc.)
+
+---
+
+### clanDomination_startBattle
+
+Start a battle against a target player in Area of Conquest.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanDomination_startBattle",
+    args: {
+      targetId: "24417949"
+    },
+    context: { actionTs: 1205429 },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- `targetId` (string | number): The user ID of the target to attack
+
+**Example Response (truncated for readability):**
+```json
+{
+  "date": 1762932658.0034771,
+  "results": [{
+    "ident": "body",
+    "result": {
+      "response": {
+        "battle": {
+          "userId": "35979991",
+          "typeId": 24417949,
+          "attackers": {
+            "1": {
+              "id": 62,
+              "level": 130,
+              "star": 6,
+              "power": 163592,
+              "color": 18,
+              "petId": 6008,
+              "type": "hero",
+              "state": {
+                "hp": 426584,
+                "energy": 0,
+                "isDead": false,
+                "maxHp": 426584
+              }
+            },
+            "2": {
+              "id": 29,
+              "level": 130,
+              "star": 6,
+              "power": 96656,
+              "color": 18,
+              "petId": 6002,
+              "type": "hero",
+              "state": {
+                "hp": 341941,
+                "energy": 0,
+                "isDead": false,
+                "maxHp": 341941
+              }
+            },
+            "6": {
+              "id": 6008,
+              "level": 130,
+              "star": 6,
+              "power": 181943,
+              "type": "pet",
+              "state": {
+                "hp": -1,
+                "energy": 0,
+                "isDead": false,
+                "maxHp": -1
+              }
+            }
+          },
+          "defenders": [{
+            "1": {
+              "id": 9,
+              "level": 130,
+              "star": 6,
+              "power": 169909,
+              "color": 18,
+              "petId": 6006,
+              "type": "hero",
+              "state": {
+                "hp": 348525,
+                "energy": 0,
+                "isDead": false,
+                "maxHp": 348525
+              }
+            },
+            "2": {
+              "id": 48,
+              "level": 130,
+              "star": 6,
+              "power": 195511,
+              "color": 18,
+              "petId": 6005,
+              "type": "hero",
+              "state": {
+                "hp": 566017,
+                "energy": 0,
+                "isDead": false,
+                "maxHp": 566017
+              }
+            }
+          }],
+          "effects": {
+            "defenders": {
+              "percentBuffByPerk_energyIncrease_4": 10,
+              "percentBuffAll_physicalAttack": 5,
+              "percentBuffAll_armor": 9.5,
+              "percentBuffAll_armorPenetration": 6
+            },
+            "defendersBanner": {
+              "id": 1,
+              "slots": {
+                "1": 29,
+                "2": 41,
+                "0": 65
+              }
+            },
+            "attackers": {
+              "levelDecreaseAuraOnEnemy_8_18_400": 2,
+              "percentBuffAll_magicPower": 16,
+              "redPatternScaling": 3,
+              "percentBuffAll_armor": 14,
+              "percentDebuffAllEnemy_physicalCritChance": 16.5
+            },
+            "attackersBanner": {
+              "id": 6,
+              "slots": [15, 45, 79]
+            }
+          },
+          "reward": [],
+          "startTime": 1762932657,
+          "seed": 3167111373,
+          "type": "clan_domination",
+          "id": "1762932657569315883",
+          "progress": [{
+            "v": 273,
+            "b": 0,
+            "seed": 3167111373,
+            "attackers": {
+              "input": [],
+              "heroes": {
+                "6": {
+                  "hp": -1,
+                  "energy": 506,
+                  "isDead": false
+                },
+                "1": {
+                  "hp": 374710,
+                  "energy": 0,
+                  "isDead": false
+                }
+              }
+            },
+            "defenders": {
+              "input": [],
+              "heroes": {
+                "6": {
+                  "hp": -1,
+                  "energy": 439,
+                  "isDead": false
+                }
+              }
+            }
+          }],
+          "endTime": 1762932657,
+          "result": {
+            "win": true,
+            "stars": 3,
+            "serverVersion": 273
+          }
+        },
+        "reward": {
+          "coin": {
+            "46": 100
+          }
+        },
+        "attackersState": {
+          "62": {
+            "hp": 374710,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 426584
+          },
+          "29": {
+            "hp": 67773,
+            "energy": 603,
+            "isDead": false,
+            "maxHp": 341941
+          },
+          "58": {
+            "hp": 554696,
+            "energy": 1000,
+            "isDead": false,
+            "maxHp": 561958
+          },
+          "40": {
+            "hp": 410924,
+            "energy": 1000,
+            "isDead": false,
+            "maxHp": 470771
+          },
+          "56": {
+            "hp": 392296,
+            "energy": 552,
+            "isDead": false,
+            "maxHp": 397431
+          },
+          "6008": {
+            "hp": -1,
+            "energy": 506,
+            "isDead": false,
+            "maxHp": -1
+          }
+        },
+        "defendersState": {
+          "9": {
+            "isDead": true,
+            "hp": 0,
+            "energy": 0,
+            "maxHp": 348525
+          },
+          "48": {
+            "isDead": true,
+            "hp": 0,
+            "energy": 0,
+            "maxHp": 566017
+          },
+          "40": {
+            "isDead": true,
+            "hp": 0,
+            "energy": 0,
+            "maxHp": 386912
+          },
+          "43": {
+            "isDead": true,
+            "hp": 0,
+            "energy": 0,
+            "maxHp": 343417
+          },
+          "16": {
+            "isDead": true,
+            "hp": 0,
+            "energy": 0,
+            "maxHp": 449732
+          },
+          "6006": {
+            "hp": -1,
+            "energy": 439,
+            "isDead": false,
+            "maxHp": -1
+          }
+        },
+        "refillable": {
+          "id": 55,
+          "amount": 10,
+          "lastRefill": 1762932312,
+          "boughtToday": 0,
+          "refillTime": 720
+        },
+        "quests": [
+          {
+            "id": "1779403298",
+            "state": 3,
+            "progress": 11,
+            "reward": {
+              "coin": {
+                "46": "200"
+              }
+            },
+            "createTime": 1762740095
+          },
+          {
+            "id": "1779403303",
+            "state": 1,
+            "progress": 11,
+            "reward": {
+              "coin": {
+                "46": "1000"
+              },
+              "consumable": {
+                "470": "1"
+              }
+            },
+            "createTime": 1762740095
+          }
+        ]
+      }
+    }
+  }]
+}
+```
+
+**Response Fields:**
+- `battle`: Complete battle data including:
+  - `attackers`: Your team composition
+  - `defenders`: Enemy team composition
+  - `result`: Battle outcome with `win`, `stars`, and `serverVersion`
+- `reward`: Rewards earned from the battle
+- `attackersState`: Final state of your team after battle
+- `defendersState`: Final state of enemy team after battle
+- `refillable`: Updated movement energy/charges
+- `quests`: Updated quest progress
+
+**Notes:**
+- The battle result is calculated server-side and returned immediately
+- Battle consumes movement energy (refillable id: 55)
+- Winning battles can reward coins and contribute to quest progress
+- Battle type is `"clan_domination"`
+
+---
+
+### clanDomination_heal
+
+Heal your team in Area of Conquest. This API is used to restore HP to heroes after battles.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanDomination_heal",
+    args: {},
+    context: { actionTs: 1758453 },
+    ident: "body"
+  }]
+})
+```
+
+**Request Parameters:**
+- No parameters required (empty `args` object)
+
+**Example Response:**
+```json
+{
+  "date": 1762933210.8294661,
+  "results": [{
+    "ident": "body",
+    "result": {
+      "response": null
+    }
+  }]
+}
+```
+
+**Response Fields:**
+- `response`: Returns `null` on success
+
+**Notes:**
+- This API heals your team's heroes after battles
+- The response is `null` when the heal action is successful
+- Healing may have cooldown or resource requirements (check game mechanics)
+- Typically used after battles to restore HP before the next engagement
+
+---
+
 ## Additional Resources
 
 **Note:** All specialized API documentation has been consolidated into this document. The following separate documentation files are now deprecated:

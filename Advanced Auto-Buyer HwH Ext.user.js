@@ -125,232 +125,237 @@
 
         // --- UI LOGIC (Heavily modified for multi-column) ---
         async function openSettingsPopup() {
-            const popupContent = document.createElement('div');
-            popupContent.style.cssText = 'display: flex; flex-direction: column; height: 60vh; color: #fce1ac; text-shadow: 0 0 2px black;';
+            try {
+                const popupContent = document.createElement('div');
+                popupContent.style.cssText = 'display: flex; flex-direction: column; height: 60vh; color: #fce1ac; text-shadow: 0 0 2px black;';
 
-            const headerContainer = document.createElement('div');
-            headerContainer.style.cssText = 'display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ce9767; margin-bottom: 10px;';
+                const headerContainer = document.createElement('div');
+                headerContainer.style.cssText = 'display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ce9767; margin-bottom: 10px;';
 
-            const tabContainer = document.createElement('div');
-            tabContainer.style.cssText = 'display: flex; flex-wrap: wrap;';
+                const tabContainer = document.createElement('div');
+                tabContainer.style.cssText = 'display: flex; flex-wrap: wrap;';
 
-            // --- NEW: Import/Export Button Container ---
-            const buttonContainer = document.createElement('div');
-            const exportBtn = document.createElement('button');
-            exportBtn.textContent = 'Export';
-            exportBtn.style.cssText = 'padding: 4px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin-left: 5px;';
-            exportBtn.onclick = exportSettings;
+                // --- NEW: Import/Export Button Container ---
+                const buttonContainer = document.createElement('div');
+                const exportBtn = document.createElement('button');
+                exportBtn.textContent = 'Export';
+                exportBtn.style.cssText = 'padding: 4px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin-left: 5px;';
+                exportBtn.onclick = exportSettings;
 
-            const importBtn = document.createElement('button');
-            importBtn.textContent = 'Import';
-            importBtn.style.cssText = 'padding: 4px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin-left: 5px;';
-            importBtn.onclick = importSettings;
+                const importBtn = document.createElement('button');
+                importBtn.textContent = 'Import';
+                importBtn.style.cssText = 'padding: 4px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin-left: 5px;';
+                importBtn.onclick = importSettings;
 
-            buttonContainer.appendChild(importBtn);
-            buttonContainer.appendChild(exportBtn);
-            headerContainer.appendChild(tabContainer);
-            headerContainer.appendChild(buttonContainer);
+                buttonContainer.appendChild(importBtn);
+                buttonContainer.appendChild(exportBtn);
+                headerContainer.appendChild(tabContainer);
+                headerContainer.appendChild(buttonContainer);
 
-            // --- MODIFIED: Main content area is now a flex container for columns ---
-            const contentContainer = document.createElement('div');
-            contentContainer.style.cssText = 'flex-grow: 1; overflow-y: auto; padding: 5px; display: flex; flex-direction: row; align-items: flex-start;';
+                // --- MODIFIED: Main content area is now a flex container for columns ---
+                const contentContainer = document.createElement('div');
+                contentContainer.style.cssText = 'flex-grow: 1; overflow-y: auto; padding: 5px; display: flex; flex-direction: row; align-items: flex-start;';
 
-            popupContent.appendChild(headerContainer);
-            popupContent.appendChild(contentContainer);
+                popupContent.appendChild(headerContainer);
+                popupContent.appendChild(contentContainer);
 
-            const loadShopContent = async (shopId) => {
-                contentContainer.innerHTML = ''; // Clear previous content
-                
-                // Handle Secret Wealth Shop - need to fetch actual shop ID
-                let actualShopId = shopId;
-                if (shopId === 'SECRET_WEALTH') {
-                    try {
-                        const caller = new Caller(['shopGetAll']);
-                        await caller.send();
-                        const shopsData = caller.result('shopGetAll');
-                        const secretShop = findSecretWealthShop(shopsData);
-                        if (secretShop) {
-                            actualShopId = secretShop.id;
-                        } else {
-                            contentContainer.innerHTML = '<p style="color: #ff6666;">Secret Wealth Shop not found. It may not be available at this time.</p>';
+                const loadShopContent = async (shopId) => {
+                    contentContainer.innerHTML = ''; // Clear previous content
+                    
+                    // Handle Secret Wealth Shop - need to fetch actual shop ID
+                    let actualShopId = shopId;
+                    if (shopId === 'SECRET_WEALTH') {
+                        try {
+                            const caller = new Caller(['shopGetAll']);
+                            await caller.send();
+                            const shopsData = caller.result('shopGetAll');
+                            const secretShop = findSecretWealthShop(shopsData);
+                            if (secretShop) {
+                                actualShopId = secretShop.id;
+                            } else {
+                                contentContainer.innerHTML = '<p style="color: #ff6666;">Secret Wealth Shop not found. It may not be available at this time.</p>';
+                                return;
+                            }
+                        } catch (error) {
+                            contentContainer.innerHTML = `<p style="color: #ff6666;">Error loading Secret Wealth Shop: ${error.message}</p>`;
                             return;
                         }
-                    } catch (error) {
-                        contentContainer.innerHTML = `<p style="color: #ff6666;">Error loading Secret Wealth Shop: ${error.message}</p>`;
+                    }
+                    
+                    const items = ITEMS_DATABASE[actualShopId] || ITEMS_DATABASE[shopId] || [];
+                    const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                    const savedItems = JSON.parse(localStorage.getItem(storageKey) || '{}');
+                    const savedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
+                    const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '9999');
+
+                    // --- NEW: Fixed Slot ID Section ---
+                    const slotSection = document.createElement('div');
+                    slotSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
+                    
+                    const slotTitle = document.createElement('h3');
+                    slotTitle.textContent = 'Fixed Slot IDs';
+                    slotTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
+                    slotSection.appendChild(slotTitle);
+
+                    const slotDescription = document.createElement('p');
+                    slotDescription.textContent = 'Enter slot IDs (comma-separated) to purchase specific slots, e.g., "6, 3"';
+                    slotDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
+                    slotSection.appendChild(slotDescription);
+
+                    const slotInputContainer = document.createElement('div');
+                    slotInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+                    
+                    const slotInput = document.createElement('input');
+                    slotInput.type = 'text';
+                    slotInput.placeholder = 'e.g., 6, 3, 24';
+                    slotInput.value = savedSlotIds.join(', ');
+                    slotInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                    
+                    const saveSlotBtn = document.createElement('button');
+                    saveSlotBtn.textContent = 'Save Slots';
+                    saveSlotBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
+                    saveSlotBtn.onclick = () => {
+                        const slotIds = slotInput.value.split(',').map(s => s.trim()).filter(s => s && !isNaN(parseInt(s))).map(s => parseInt(s));
+                        const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                        localStorage.setItem(storageKey + '_slots', JSON.stringify(slotIds));
+                        alert(`Saved ${slotIds.length} slot ID(s): ${slotIds.join(', ')}`);
+                    };
+                    
+                    slotInputContainer.appendChild(slotInput);
+                    slotInputContainer.appendChild(saveSlotBtn);
+                    slotSection.appendChild(slotInputContainer);
+                    contentContainer.appendChild(slotSection);
+
+                    // --- NEW: Bulk Purchase Amount Section (only for Titan Artifact Shop) ---
+                    if (actualShopId === 13) {
+                        const amountSection = document.createElement('div');
+                        amountSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
+                        
+                        const amountTitle = document.createElement('h3');
+                        amountTitle.textContent = 'Bulk Purchase Amount';
+                        amountTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
+                        amountSection.appendChild(amountTitle);
+
+                        const amountDescription = document.createElement('p');
+                        amountDescription.textContent = 'Enter the number of items to purchase in bulk (e.g., 300). The API will enforce the maximum available.';
+                        amountDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
+                        amountSection.appendChild(amountDescription);
+
+                        const amountInputContainer = document.createElement('div');
+                        amountInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+                        
+                        const amountInput = document.createElement('input');
+                        amountInput.type = 'number';
+                        amountInput.min = '1';
+                        amountInput.placeholder = 'e.g., 300';
+                        amountInput.value = savedAmount;
+                        amountInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                        
+                        const saveAmountBtn = document.createElement('button');
+                        saveAmountBtn.textContent = 'Save Amount';
+                        saveAmountBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
+                        saveAmountBtn.onclick = () => {
+                            const amount = parseInt(amountInput.value) || 9999;
+                            if (amount < 1) {
+                                alert('Amount must be at least 1');
+                                return;
+                            }
+                            const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                            localStorage.setItem(storageKey + '_amount', amount.toString());
+                            alert(`Saved bulk purchase amount: ${amount}`);
+                        };
+                        
+                        amountInputContainer.appendChild(amountInput);
+                        amountInputContainer.appendChild(saveAmountBtn);
+                        amountSection.appendChild(amountInputContainer);
+                        contentContainer.appendChild(amountSection);
+                    }
+
+                    if (items.length === 0) {
+                        const noItemsMsg = document.createElement('p');
+                        noItemsMsg.textContent = 'No items configured for this shop yet.';
+                        noItemsMsg.style.cssText = 'color: #fce1ac; margin-top: 10px;';
+                        contentContainer.appendChild(noItemsMsg);
                         return;
                     }
-                }
-                
-                const items = ITEMS_DATABASE[actualShopId] || ITEMS_DATABASE[shopId] || [];
-                const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                const savedItems = JSON.parse(localStorage.getItem(storageKey) || '{}');
-                const savedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
-                const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '9999');
 
-                // --- NEW: Fixed Slot ID Section ---
-                const slotSection = document.createElement('div');
-                slotSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
-                
-                const slotTitle = document.createElement('h3');
-                slotTitle.textContent = 'Fixed Slot IDs';
-                slotTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
-                slotSection.appendChild(slotTitle);
+                    // --- NEW: Column and Title generation logic ---
+                    let currentColumn = document.createElement('div');
+                    currentColumn.style.cssText = 'display: flex; flex-direction: column; margin-right: 20px;';
+                    contentContainer.appendChild(currentColumn);
 
-                const slotDescription = document.createElement('p');
-                slotDescription.textContent = 'Enter slot IDs (comma-separated) to purchase specific slots, e.g., "6, 3"';
-                slotDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
-                slotSection.appendChild(slotDescription);
+                    items.forEach(item => {
+                        // Handle special types: title and newColumn
+                        if (item.type === 'title' || item.type === 'newColumn') {
+                            if (item.type === 'newColumn') {
+                                currentColumn = document.createElement('div');
+                                currentColumn.style.cssText = 'display: flex; flex-direction: column; margin-right: 20px;';
+                                contentContainer.appendChild(currentColumn);
+                            }
+                            const title = document.createElement('h3');
+                            title.textContent = item.name;
+                            title.style.cssText = 'color: #ffcc66; margin: 10px 0 5px 0; border-bottom: 1px solid #ce9767; padding-bottom: 3px;';
+                            currentColumn.appendChild(title);
+                            return; // Continue to next item
+                        }
 
-                const slotInputContainer = document.createElement('div');
-                slotInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
-                
-                const slotInput = document.createElement('input');
-                slotInput.type = 'text';
-                slotInput.placeholder = 'e.g., 6, 3, 24';
-                slotInput.value = savedSlotIds.join(', ');
-                slotInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
-                
-                const saveSlotBtn = document.createElement('button');
-                saveSlotBtn.textContent = 'Save Slots';
-                saveSlotBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
-                saveSlotBtn.onclick = () => {
-                    const slotIds = slotInput.value.split(',').map(s => s.trim()).filter(s => s && !isNaN(parseInt(s))).map(s => parseInt(s));
-                    const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                    localStorage.setItem(storageKey + '_slots', JSON.stringify(slotIds));
-                    alert(`Saved ${slotIds.length} slot ID(s): ${slotIds.join(', ')}`);
+                        // Handle regular items
+                        const itemDiv = document.createElement('div');
+                        itemDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px;';
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.id = `item-${actualShopId}-${item.name.replace(/\s/g, '')}`;
+                        checkbox.checked = savedItems[item.name] || false;
+                        checkbox.onchange = () => {
+                            savedItems[item.name] = checkbox.checked;
+                            const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+                            localStorage.setItem(storageKey, JSON.stringify(savedItems));
+                        };
+                        const label = document.createElement('label');
+                        label.setAttribute('for', checkbox.id);
+                        label.textContent = item.name;
+                        label.style.marginLeft = '10px';
+                        itemDiv.appendChild(checkbox);
+                        itemDiv.appendChild(label);
+                        currentColumn.appendChild(itemDiv);
+                    });
                 };
-                
-                slotInputContainer.appendChild(slotInput);
-                slotInputContainer.appendChild(saveSlotBtn);
-                slotSection.appendChild(slotInputContainer);
-                contentContainer.appendChild(slotSection);
 
-                // --- NEW: Bulk Purchase Amount Section (only for Titan Artifact Shop) ---
-                if (actualShopId === 13) {
-                    const amountSection = document.createElement('div');
-                    amountSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
-                    
-                    const amountTitle = document.createElement('h3');
-                    amountTitle.textContent = 'Bulk Purchase Amount';
-                    amountTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
-                    amountSection.appendChild(amountTitle);
-
-                    const amountDescription = document.createElement('p');
-                    amountDescription.textContent = 'Enter the number of items to purchase in bulk (e.g., 300). The API will enforce the maximum available.';
-                    amountDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
-                    amountSection.appendChild(amountDescription);
-
-                    const amountInputContainer = document.createElement('div');
-                    amountInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
-                    
-                    const amountInput = document.createElement('input');
-                    amountInput.type = 'number';
-                    amountInput.min = '1';
-                    amountInput.placeholder = 'e.g., 300';
-                    amountInput.value = savedAmount;
-                    amountInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
-                    
-                    const saveAmountBtn = document.createElement('button');
-                    saveAmountBtn.textContent = 'Save Amount';
-                    saveAmountBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
-                    saveAmountBtn.onclick = () => {
-                        const amount = parseInt(amountInput.value) || 9999;
-                        if (amount < 1) {
-                            alert('Amount must be at least 1');
-                            return;
-                        }
-                        const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                        localStorage.setItem(storageKey + '_amount', amount.toString());
-                        alert(`Saved bulk purchase amount: ${amount}`);
+                SHOPS.forEach((shop, index) => {
+                    const tab = document.createElement('button');
+                    tab.textContent = shop.name;
+                    tab.style.cssText = 'padding: 8px 12px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin: 2px;';
+                    tab.onclick = () => {
+                        Array.from(tabContainer.children).forEach(t => t.style.background = '#3a2e24');
+                        tab.style.background = '#5c4b3a';
+                        loadShopContent(shop.id);
                     };
-                    
-                    amountInputContainer.appendChild(amountInput);
-                    amountInputContainer.appendChild(saveAmountBtn);
-                    amountSection.appendChild(amountInputContainer);
-                    contentContainer.appendChild(amountSection);
-                }
-
-                if (items.length === 0) {
-                    const noItemsMsg = document.createElement('p');
-                    noItemsMsg.textContent = 'No items configured for this shop yet.';
-                    noItemsMsg.style.cssText = 'color: #fce1ac; margin-top: 10px;';
-                    contentContainer.appendChild(noItemsMsg);
-                    return;
-                }
-
-                // --- NEW: Column and Title generation logic ---
-                let currentColumn = document.createElement('div');
-                currentColumn.style.cssText = 'display: flex; flex-direction: column; margin-right: 20px;';
-                contentContainer.appendChild(currentColumn);
-
-                items.forEach(item => {
-                    // Handle special types: title and newColumn
-                    if (item.type === 'title' || item.type === 'newColumn') {
-                        if (item.type === 'newColumn') {
-                            currentColumn = document.createElement('div');
-                            currentColumn.style.cssText = 'display: flex; flex-direction: column; margin-right: 20px;';
-                            contentContainer.appendChild(currentColumn);
-                        }
-                        const title = document.createElement('h3');
-                        title.textContent = item.name;
-                        title.style.cssText = 'color: #ffcc66; margin: 10px 0 5px 0; border-bottom: 1px solid #ce9767; padding-bottom: 3px;';
-                        currentColumn.appendChild(title);
-                        return; // Continue to next item
+                    tabContainer.appendChild(tab);
+                    if (index === 0) {
+                        setTimeout(() => tab.click(), 0);
                     }
-
-                    // Handle regular items
-                    const itemDiv = document.createElement('div');
-                    itemDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px;';
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.id = `item-${actualShopId}-${item.name.replace(/\s/g, '')}`;
-                    checkbox.checked = savedItems[item.name] || false;
-                    checkbox.onchange = () => {
-                        savedItems[item.name] = checkbox.checked;
-                        const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                        localStorage.setItem(storageKey, JSON.stringify(savedItems));
-                    };
-                    const label = document.createElement('label');
-                    label.setAttribute('for', checkbox.id);
-                    label.textContent = item.name;
-                    label.style.marginLeft = '10px';
-                    itemDiv.appendChild(checkbox);
-                    itemDiv.appendChild(label);
-                    currentColumn.appendChild(itemDiv);
                 });
-            };
 
-            SHOPS.forEach((shop, index) => {
-                const tab = document.createElement('button');
-                tab.textContent = shop.name;
-                tab.style.cssText = 'padding: 8px 12px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin: 2px;';
-                tab.onclick = () => {
-                    Array.from(tabContainer.children).forEach(t => t.style.background = '#3a2e24');
-                    tab.style.background = '#5c4b3a';
-                    loadShopContent(shop.id);
-                };
-                tabContainer.appendChild(tab);
-                if (index === 0) {
-                    setTimeout(() => tab.click(), 0);
+                // Use confirm with proper async handling
+                const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+                
+                // Wait a tick for popup to initialize, then replace content
+                await new Promise(resolve => setTimeout(resolve, 0));
+                
+                const popupBody = document.querySelector('.PopUp_Container');
+                if (popupBody) {
+                    // Clear and replace content (preserve the original close button in PopUp_buttons)
+                    popupBody.innerHTML = '';
+                    popupBody.appendChild(popupContent);
                 }
-            });
-
-            // Use confirm with proper async handling
-            const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
-            
-            // Wait a tick for popup to initialize, then replace content
-            await new Promise(resolve => setTimeout(resolve, 0));
-            
-            const popupBody = document.querySelector('.PopUp_Container');
-            if (popupBody) {
-                // Clear and replace content (preserve the original close button in PopUp_buttons)
-                popupBody.innerHTML = '';
-                popupBody.appendChild(popupContent);
+                
+                // Wait for popup to close before returning
+                // The original close button from popup.confirm should still be accessible
+                await popupPromise;
+            } catch (error) {
+                console.error('Advanced Auto-Buyer: Popup error:', error);
+                HWHFuncs.setProgress(`Settings popup error: ${error.message}`, true);
             }
-            
-            // Wait for popup to close before returning
-            // The original close button from popup.confirm should still be accessible
-            await popupPromise;
         }
 
         // --- ACTION LOGIC (Unchanged from v1.5) ---
@@ -623,12 +628,6 @@
             console.log("--- Advanced Auto-Buyer FINISHED ---");
         }
 
-        // --- AUTO-EXECUTE ON SCRIPT LOAD ---
-        // Automatically run auto-buy when script loads
-        runAutoBuy().catch(error => {
-            console.error('Advanced Auto-Buyer: Failed to auto-execute on load:', error);
-        });
-
         // --- MENU INTEGRATION ---
         const { ScriptMenu } = HWHClasses;
         const scriptMenu = ScriptMenu.getInst();
@@ -637,5 +636,14 @@
             { name: '⚙️', title: 'Open Auto-Buyer Settings', onClick: openSettingsPopup }
         ]);
         console.log('Advanced Auto-Buyer: UI initialized and attached to HWH menu.');
+
+        // --- AUTO-EXECUTE ON SCRIPT LOAD ---
+        // Automatically run auto-buy when script loads (after menu is set up)
+        // Use setTimeout to ensure menu initialization completes first
+        setTimeout(() => {
+            runAutoBuy().catch(error => {
+                console.error('Advanced Auto-Buyer: Failed to auto-execute on load:', error);
+            });
+        }, 100);
     }
 })();
