@@ -26,8 +26,11 @@
     function initializeExtension() {
         console.log('Advanced Auto-Buyer: HWH UI is ready, initializing extension...');
 
-        const { HWHClasses, HWHFuncs, cheats, Caller, lib } = window;
+        const { HWHClasses, HWHFuncs, cheats, Caller, lib, HWHData } = window;
         const STORAGE_PREFIX = 'advAutoBuyer_';
+        
+        // Get buttons from HWHData (like HWHhuntFragmentExt does)
+        const { buttons } = HWHData;
 
         // --- DATA STRUCTURES & HELPERS ---
         const SHOPS = [ { id: 1, name: 'Town Shop' }, { id: 4, name: 'Arena Shop' }, { id: 5, name: 'Grand Arena Shop' }, { id: 6, name: 'Tower Shop' }, { id: 8, name: 'Soul Shop' }, { id: 9, name: 'Friendship Shop' }, { id: 10, name: 'Outland Shop' }, { id: 13, name: 'Titan Artifact Shop' }, { id: 'SECRET_WEALTH', name: 'Secret Wealth Shop' } ];
@@ -124,25 +127,8 @@
         }
 
         // --- UI LOGIC (Heavily modified for multi-column) ---
-        let popupOpen = false;
         async function openSettingsPopup() {
-            // Prevent multiple popups from opening simultaneously
-            if (popupOpen) {
-                console.log('Advanced Auto-Buyer: Popup already open, ignoring request');
-                return;
-            }
-            
-            // Check if popup is already visible in DOM
-            const existingPopup = document.querySelector('.PopUp_:not(.PopUp_hideBlock)');
-            if (existingPopup) {
-                console.log('Advanced Auto-Buyer: Another popup is already visible, ignoring request');
-                return;
-            }
-            
-            let popupPromise = null;
             try {
-                popupOpen = true;
-                
                 const popupContent = document.createElement('div');
                 popupContent.style.cssText = 'display: flex; flex-direction: column; height: 60vh; color: #fce1ac; text-shadow: 0 0 2px black;';
 
@@ -353,69 +339,24 @@
                     }
                 });
 
-                // Use confirm with proper async handling
-                popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+                // Use confirm with proper async handling (simplified like HWHhuntFragmentExt)
+                const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
                 
                 // Wait a tick for popup to initialize, then replace content
-                await new Promise(resolve => setTimeout(resolve, 50));
+                await new Promise(resolve => setTimeout(resolve, 0));
                 
                 const popupBody = document.querySelector('.PopUp_Container');
-                if (popupBody && popupOpen) {
+                if (popupBody) {
                     // Clear and replace content (preserve the original close button in PopUp_buttons)
                     popupBody.innerHTML = '';
                     popupBody.appendChild(popupContent);
-                } else {
-                    // Popup was closed or not found, clean up and return
-                    popupOpen = false;
-                    return;
                 }
                 
                 // Wait for popup to close before returning
-                // The original close button from popup.confirm should still be accessible
-                try {
-                    await popupPromise;
-                } catch (promiseError) {
-                    console.error('Advanced Auto-Buyer: Popup promise error:', promiseError);
-                    // Ensure popup is closed even if promise fails
-                    if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.hide) {
-                        HWHFuncs.popup.hide();
-                    }
-                }
-                
-                // CRITICAL: Clear the popup content when it closes to prevent interference
-                // Use the popup system's clearCustomBlock method to ensure proper cleanup
-                // Do this AFTER the promise resolves to ensure popup is closed
-                if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.clearCustomBlock) {
-                    HWHFuncs.popup.clearCustomBlock();
-                } else {
-                    // Fallback to manual clearing
-                    const popupBody = document.querySelector('.PopUp_Container');
-                    if (popupBody) {
-                        popupBody.innerHTML = '';
-                    }
-                }
-                
-                // Small delay to ensure cleanup is complete before allowing other popups
-                await new Promise(resolve => setTimeout(resolve, 50));
+                await popupPromise;
             } catch (error) {
                 console.error('Advanced Auto-Buyer: Popup error:', error);
                 HWHFuncs.setProgress(`Settings popup error: ${error.message}`, true);
-                // Ensure popup is closed on error
-                if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.hide) {
-                    HWHFuncs.popup.hide();
-                }
-                // Clear content on error too using popup system method
-                if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.clearCustomBlock) {
-                    HWHFuncs.popup.clearCustomBlock();
-                } else {
-                    const popupBody = document.querySelector('.PopUp_Container');
-                    if (popupBody) {
-                        popupBody.innerHTML = '';
-                    }
-                }
-            } finally {
-                // Always reset the flag when done
-                popupOpen = false;
             }
         }
 
@@ -688,13 +629,34 @@
             console.log("--- Advanced Auto-Buyer FINISHED ---");
         }
 
-        // --- MENU INTEGRATION ---
-        const { ScriptMenu } = HWHClasses;
-        const scriptMenu = ScriptMenu.getInst();
-        scriptMenu.addCombinedButton([
-            { name: 'Auto-Buy', title: 'Run the automatic buyer based on your settings', onClick: runAutoBuy, color: 'green' },
-            { name: '⚙️', title: 'Open Auto-Buyer Settings', onClick: openSettingsPopup }
-        ]);
+        // --- MENU INTEGRATION (using HWHhuntFragmentExt pattern) ---
+        // Define button configuration object
+        const autoBuyerButton = {
+            autoBuyerButton: {
+                isCombine: true,
+                combineList: [
+                    {
+                        name: 'Auto-Buy',
+                        title: 'Run the automatic buyer based on your settings',
+                        onClick: runAutoBuy,
+                        hide: false,
+                        color: 'green'
+                    },
+                    {
+                        name: '⚙️',
+                        title: 'Open Auto-Buyer Settings',
+                        onClick: openSettingsPopup,
+                        hide: false,
+                        color: 'green'
+                    }
+                ]
+            }
+        };
+        
+        // Add buttons using Object.assign pattern (like HWHhuntFragmentExt)
+        Object.assign(buttons, autoBuyerButton);
+        HWHData.buttons = buttons;
+        
         console.log('Advanced Auto-Buyer: UI initialized and attached to HWH menu.');
 
         // --- AUTO-EXECUTE ON SCRIPT LOAD ---
