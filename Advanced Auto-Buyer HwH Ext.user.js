@@ -26,7 +26,7 @@
     function initializeExtension() {
         console.log('Advanced Auto-Buyer: HWH UI is ready, initializing extension...');
 
-        const { HWHClasses, HWHFuncs, Send, cheats, Caller, lib } = window;
+        const { HWHClasses, HWHFuncs, cheats, Caller, lib } = window;
         const STORAGE_PREFIX = 'advAutoBuyer_';
 
         // --- DATA STRUCTURES & HELPERS ---
@@ -381,12 +381,37 @@
                         HWHFuncs.popup.hide();
                     }
                 }
+                
+                // CRITICAL: Clear the popup content when it closes to prevent interference
+                // Use the popup system's clearCustomBlock method to ensure proper cleanup
+                // Do this AFTER the promise resolves to ensure popup is closed
+                if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.clearCustomBlock) {
+                    HWHFuncs.popup.clearCustomBlock();
+                } else {
+                    // Fallback to manual clearing
+                    const popupBody = document.querySelector('.PopUp_Container');
+                    if (popupBody) {
+                        popupBody.innerHTML = '';
+                    }
+                }
+                
+                // Small delay to ensure cleanup is complete before allowing other popups
+                await new Promise(resolve => setTimeout(resolve, 50));
             } catch (error) {
                 console.error('Advanced Auto-Buyer: Popup error:', error);
                 HWHFuncs.setProgress(`Settings popup error: ${error.message}`, true);
                 // Ensure popup is closed on error
                 if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.hide) {
                     HWHFuncs.popup.hide();
+                }
+                // Clear content on error too using popup system method
+                if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.clearCustomBlock) {
+                    HWHFuncs.popup.clearCustomBlock();
+                } else {
+                    const popupBody = document.querySelector('.PopUp_Container');
+                    if (popupBody) {
+                        popupBody.innerHTML = '';
+                    }
                 }
             } finally {
                 // Always reset the flag when done
@@ -412,7 +437,6 @@
                 }
                 
                 const callsToMake = [];
-                const itemsToLog = [];
                 for (const shop of SHOPS) {
                     let shopId = shop.id;
                     let currentShopData = null;
