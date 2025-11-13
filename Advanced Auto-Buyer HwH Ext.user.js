@@ -124,8 +124,25 @@
         }
 
         // --- UI LOGIC (Heavily modified for multi-column) ---
+        let popupOpen = false;
         async function openSettingsPopup() {
+            // Prevent multiple popups from opening simultaneously
+            if (popupOpen) {
+                console.log('Advanced Auto-Buyer: Popup already open, ignoring request');
+                return;
+            }
+            
+            // Check if popup is already visible in DOM
+            const existingPopup = document.querySelector('.PopUp_:not(.PopUp_hideBlock)');
+            if (existingPopup) {
+                console.log('Advanced Auto-Buyer: Another popup is already visible, ignoring request');
+                return;
+            }
+            
+            let popupPromise = null;
             try {
+                popupOpen = true;
+                
                 const popupContent = document.createElement('div');
                 popupContent.style.cssText = 'display: flex; flex-direction: column; height: 60vh; color: #fce1ac; text-shadow: 0 0 2px black;';
 
@@ -337,24 +354,43 @@
                 });
 
                 // Use confirm with proper async handling
-                const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+                popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
                 
                 // Wait a tick for popup to initialize, then replace content
-                await new Promise(resolve => setTimeout(resolve, 0));
+                await new Promise(resolve => setTimeout(resolve, 50));
                 
                 const popupBody = document.querySelector('.PopUp_Container');
-                if (popupBody) {
+                if (popupBody && popupOpen) {
                     // Clear and replace content (preserve the original close button in PopUp_buttons)
                     popupBody.innerHTML = '';
                     popupBody.appendChild(popupContent);
+                } else {
+                    // Popup was closed or not found, clean up and return
+                    popupOpen = false;
+                    return;
                 }
                 
                 // Wait for popup to close before returning
                 // The original close button from popup.confirm should still be accessible
-                await popupPromise;
+                try {
+                    await popupPromise;
+                } catch (promiseError) {
+                    console.error('Advanced Auto-Buyer: Popup promise error:', promiseError);
+                    // Ensure popup is closed even if promise fails
+                    if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.hide) {
+                        HWHFuncs.popup.hide();
+                    }
+                }
             } catch (error) {
                 console.error('Advanced Auto-Buyer: Popup error:', error);
                 HWHFuncs.setProgress(`Settings popup error: ${error.message}`, true);
+                // Ensure popup is closed on error
+                if (HWHFuncs && HWHFuncs.popup && HWHFuncs.popup.hide) {
+                    HWHFuncs.popup.hide();
+                }
+            } finally {
+                // Always reset the flag when done
+                popupOpen = false;
             }
         }
 
