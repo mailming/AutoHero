@@ -588,7 +588,7 @@ async function executeGetDailyBonus() {
                  
                  if (!questData) {
                      // Quest not found - this is normal if quest is not available or not unlocked
-                     HWHFuncs.setProgress(`${task.label}: Not available`, true);
+                     HWHFuncs.setProgress(`${task.label}: No Quest`, true);
                      return;
                  }
                  
