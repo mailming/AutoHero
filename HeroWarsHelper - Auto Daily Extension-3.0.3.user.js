@@ -568,17 +568,17 @@ async function executeGetDailyBonus() {
                  const questId = parseInt(task.id, 10);
                  const questData = allQuests.find(q => q.id === questId);
                  
-                 console.log(`[executeSingleTask] Quest data lookup for ID ${task.id}:`, questData ? {
+                 if (!questData) {
+                     // Quest not found - this is normal if quest is not available, completed, or not unlocked
+                     // Silently skip without logging (these are expected cases)
+                     return;
+                 }
+                 
+                 console.log(`[executeSingleTask] Quest data lookup for ID ${task.id}:`, {
                      id: questData.id,
                      state: questData.state,
                      progress: questData.progress
-                 } : 'NOT FOUND');
-                 
-                 if (!questData) {
-                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in questGetAll!`);
-                     HWHFuncs.setProgress(`${task.label} not found in quest list!`, true);
-                     return;
-                 }
+                 });
                  
                  console.log(`[executeSingleTask] Quest ${task.id} state check: state = ${questData.state} (type: ${typeof questData.state})`);
                  
