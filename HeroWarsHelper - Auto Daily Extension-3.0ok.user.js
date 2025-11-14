@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.0.3
+// @version      3.0
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.0.3";
+    const EXTENSION_VERSION = "3.0";
     const EXTENSION_AUTHOR = "You";
 
     // --- STATE VARIABLES ---
@@ -66,32 +66,10 @@
     }
     async function executeQuestAllFarm() {
          const { Send } = window;
-         // Get current quest state from API - following API documentation pattern
-         const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
+         const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "body" }] });
          const quests = questData.results[0].result.response;
-         
-         // Filter quests that are completed and ready to collect (state === 2)
-         // Only process regular daily quests (id < 1000000)
-         // According to API docs: state 0 = not started, 1 = in progress, 2 = completed (ready to collect)
-         // After collection, quest should be removed or state should change
-         const questsToFarm = quests.filter(q => {
-             // Only collect if quest exists, is a regular daily quest, and is completed (state === 2)
-             return q && typeof q.id !== 'undefined' && q.id < 1000000 && q.state === 2;
-         });
-         
-         if (questsToFarm.length === 0) {
-             // No quests ready to collect - all done
-             return;
-         }
-         
-         // Collect the quest rewards
-         const questCalls = questsToFarm.map(q => ({ 
-             name: "questFarm", 
-             args: { questId: q.id }, 
-             ident: `questFarm_${q.id}` 
-         }));
-         
-         await Send({ calls: questCalls });
+         const questCalls = quests.filter(q => q.id < 1000000 && q.state == 2).map(q => ({ name: "questFarm", args: { questId: q.id }, ident: `questFarm_${q.id}` }));
+         if(questCalls.length > 0) await Send({ calls: questCalls });
     }
     async function executeMailGetAll() {
          const { Send, HWHClasses } = window;
@@ -120,55 +98,13 @@
             HWHFuncs.setProgress('Seer: Done!', true);
         } catch (e) { console.error("Error in executeRollAscension", e); HWHFuncs.setProgress('Seer: Error!', true); }
     }
-    // NEWLY ADDED FUNCTION
-async function executeGetDailyBonus() {
-    const { Send, lib, HWHFuncs, I18N } = window;
-    HWHFuncs.setProgress('Executing: Daily Bonus', true);
-    try {
-        // Chiediamo al server SIA le info sul bonus SIA quelle sull'utente, per essere sicuri
-        const response = await Send({
-            calls: [
-                { name: "dailyBonusGetInfo", args: {}, ident: "dailyBonus" },
-                { name: "userGetInfo", args: {}, ident: "userInfo" }
-            ]
-        });
-
-        const dailyBonusInfo = response.results.find(r => r.ident === 'dailyBonus').result.response;
-        const userInfo = response.results.find(r => r.ident === 'userInfo').result.response;
-
-        if (!dailyBonusInfo.availableToday) {
-            HWHFuncs.setProgress('Daily Bonus already collected', true);
-            return;
-        }
-
-        const vipInfo = lib.getData('level').vip;
-        let currentVipLevel = 0;
-        for (let i in vipInfo) {
-            if (+userInfo.vipPoints >= vipInfo[i].vipPoints) { // <-- ORA FUNZIONA
-                currentVipLevel = vipInfo[i].level;
-            }
-        }
-        const dailyBonusStat = lib.getData('dailyBonusStatic');
-        const vipLevelDouble = dailyBonusStat[`${dailyBonusInfo.currentDay}_0_0`].vipLevelDouble;
-        const collectVipBonus = dailyBonusInfo.availableVip && currentVipLevel >= vipLevelDouble;
-
-        await Send({
-            calls: [{ name: "dailyBonusFarm", args: { vip: collectVipBonus ? 1 : 0 }, ident: "body" }]
-        });
-        HWHFuncs.setProgress('Daily Bonus: Done!', true);
-    } catch (e) {
-        console.error("Error in executeGetDailyBonus", e);
-        HWHFuncs.setProgress('Daily Bonus: Error!', true);
-    }
-}
 
     // --- DATA STRUCTURES ---
     const doAllTasks = [
         { id: 'getOutland', label: 'Outland', func: executeGetOutland }, { id: 'testTower', label: 'Tower', func: executeTestTower },
         { id: 'checkExpedition', label: 'Expeditions', func: executeCheckExpedition }, { id: 'offerFarmAllReward', label: 'Easter Eggs', func: executeOfferFarmAllReward },
         { id: 'questAllFarm', label: 'Rewards', func: executeQuestAllFarm }, { id: 'mailGetAll', label: 'Mail', func: executeMailGetAll },
-        { id: 'rewardsAndMailFarm', label: 'Rewards & Mail', func: executeRewardsAndMailFarm }, { id: 'rollAscension', label: 'Seer', func: executeRollAscension },
-         { id: 'getDailyBonus', label: 'Daily Bonus', func: executeGetDailyBonus }
+        { id: 'rewardsAndMailFarm', label: 'Rewards & Mail', func: executeRewardsAndMailFarm }, { id: 'rollAscension', label: 'Seer', func: executeRollAscension }
     ];
     const upgradeTasks = [
         { id: '10001', label: 'Upgrade Skills' }, { id: '10018', label: 'Use EXP Potion' },
@@ -481,8 +417,7 @@ async function executeGetDailyBonus() {
         const { newDay } = HWHData.buttons;
         const autoDailyButton = document.querySelector('[data-extension-button="auto-daily"]');
         if (!autoDailyButton) return;
-        const scriptMenuContainer = HWHData.buttons.doActions.button?.parentElement;
-        if (!scriptMenuContainer) return;
+        const scriptMenuContainer = HWHData.buttons.doActions.button.parentElement;
         if (combinedButton) { combinedButton.remove(); combinedButton = null; }
         autoDailyButton.style.display = 'flex';
         if(newDay && newDay.button) newDay.button.style.display = 'flex';
@@ -497,45 +432,29 @@ async function executeGetDailyBonus() {
                 title: 'Run Sync', color: 'green',
             }];
             combinedButton = HWHClasses.ScriptMenu.getInst().addCombinedButton(buttonList, scriptMenuContainer);
-            if (!combinedButton) return;
             const autoDailyCombined = combinedButton.children[0];
             const syncCombined = combinedButton.children[1];
-            if (autoDailyCombined) {
-                autoDailyCombined.style.flexGrow = '1';
-                const buttonText = autoDailyCombined.querySelector('.scriptMenu_buttonText');
-                if (buttonText) buttonText.style.whiteSpace = 'nowrap';
-            }
-            if (syncCombined) {
-                syncCombined.style.flexGrow = '0';
-                syncCombined.style.width = '45px';
-            }
-            if (HWHData.buttons.doActions.button && scriptMenuContainer.contains(HWHData.buttons.doActions.button)) {
-                scriptMenuContainer.insertBefore(combinedButton, HWHData.buttons.doActions.button);
-            } else {
-                scriptMenuContainer.appendChild(combinedButton);
-            }
+            autoDailyCombined.style.flexGrow = '1';
+            autoDailyCombined.querySelector('.scriptMenu_buttonText').style.whiteSpace = 'nowrap';
+            syncCombined.style.flexGrow = '0';
+            syncCombined.style.width = '45px';
+            scriptMenuContainer.insertBefore(combinedButton, HWHData.buttons.doActions.button);
         }
     }
     async function updateQuestStatus() {
-        const { HWHClasses, Send } = window;
-        // Check quest completion status using API pattern from documentation
-        // API docs: state 0 = not started, 1 = in progress, 2 = completed
-        const questResponse = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
-        const allQuests = questResponse.results[0].result.response;
-        
+        const { HWHClasses } = window;
         const questManager = new HWHClasses.dailyQuests();
         await questManager.autoInit();
         [...questTasks, ...upgradeTasks].forEach(task => {
-            // Convert task.id to number for comparison (API returns numeric IDs)
             const questId = parseInt(task.id, 10);
-            // Use direct API call result with proper ID comparison
-            const questData = allQuests.find(q => q.id === questId);
+            const questData = questManager.questInfo && questManager.questInfo['questGetAll']
+                ? questManager.questInfo['questGetAll'].find(q => q.id == questId)
+                : null;
             const questUI = document.querySelector(`.auto-daily-status-icon[data-task-id="${task.id}"]`);
             if (!questUI) return;
             let iconHTML = `<span title="Not available">🌑</span>`;
             if (questData) {
-                 // Check if quest is completed (state === 2) - following API documentation
-                 if (questData.state === 2) {
+                 if (questData.state >= 2) {
                     iconHTML = `<span title="Already done">✅</span>`;
                 } else {
                     // Try both string and numeric key for dataQuests
@@ -554,25 +473,21 @@ async function executeGetDailyBonus() {
         HWHFuncs.setProgress(`Executing: ${task.label}`, true);
         try {
             if (task.func) {
-                console.log(`[executeSingleTask] Task ${task.id} has a function, executing it directly`);
                 await task.func();
             } else {
-                 console.log(`[executeSingleTask] Task ${task.id} is a quest task, checking quest completion status...`);
-                 
-                 // Check quest completion status using API pattern from documentation
-                 // API docs: state 0 = not started, 1 = in progress, 2 = completed
-                 const questResponse = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
-                 const allQuests = questResponse.results[0].result.response;
+                 const questManager = new HWHClasses.dailyQuests();
+                 await questManager.autoInit();
                  
                  // Convert task.id to number for comparison (API returns numeric IDs)
                  const questId = parseInt(task.id, 10);
-                 const questData = allQuests.find(q => q.id === questId);
                  
-                 console.log(`[executeSingleTask] Quest data lookup for ID ${task.id}:`, questData ? {
-                     id: questData.id,
-                     state: questData.state,
-                     progress: questData.progress
-                 } : 'NOT FOUND');
+                 // First check if quest exists in questGetAll response
+                 const questData = questManager.questInfo && questManager.questInfo['questGetAll'] 
+                     ? questManager.questInfo['questGetAll'].find(q => q.id == questId)
+                     : null;
+                 
+                 console.log(`[executeSingleTask] Task ${task.id} is a quest task, checking quest completion status...`);
+                 console.log(`[executeSingleTask] Quest data lookup for ID ${task.id}:`, questData ? 'FOUND' : 'NOT FOUND');
                  
                  if (!questData) {
                      console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in questGetAll!`);
@@ -580,80 +495,37 @@ async function executeGetDailyBonus() {
                      return;
                  }
                  
-                 console.log(`[executeSingleTask] Quest ${task.id} state check: state = ${questData.state} (type: ${typeof questData.state})`);
-                 
-                 // Check if quest is completed (state === 2) - skip if completed
-                 // Following API documentation pattern: state 2 = completed
-                 if (questData.state === 2) {
-                     // Quest is already completed - don't execute it again
-                     console.log(`[executeSingleTask] SKIPPING ${task.id} (${task.label}): Quest is already completed (state === 2)`);
-                     HWHFuncs.setProgress(`${task.label} is already completed!`, true);
-                     return;
-                 }
-                 
-                 // Only process quests with state === 1 (in progress)
-                 // State 0 = not started, State 1 = in progress, State 2 = completed
-                 if (questData.state !== 1) {
-                     console.log(`[executeSingleTask] SKIPPING ${task.id} (${task.label}): Quest state is ${questData.state}, not 1 (in progress)`);
-                     HWHFuncs.setProgress(`${task.label} is not in progress (state: ${questData.state})!`, true);
-                     return;
-                 }
-                 
-                 // Initialize quest manager for execution
-                 console.log(`[executeSingleTask] Quest ${task.id} passed completion check, initializing quest manager...`);
-                 const questManager = new HWHClasses.dailyQuests();
-                 await questManager.autoInit();
-                 
-                 console.log(`[executeSingleTask] Quest ${task.id} passed state check (state === 1), checking isWeCanDo...`);
-                 
-                 // Use either string or numeric key to get the quest handler
-                 const questHandler = questManager.dataQuests[task.id] || questManager.dataQuests[questId];
-                 const hasDataQuest = !!questHandler;
-                 console.log(`[executeSingleTask] Quest ${task.id} in dataQuests:`, hasDataQuest ? 'YES' : 'NO');
-                 
-                 if (!hasDataQuest) {
-                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in dataQuests!`);
+                 // Check if quest handler exists in dataQuests
+                 if (!questManager.dataQuests[task.id] && !questManager.dataQuests[questId]) {
+                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) has no handler in dataQuests!`);
                      HWHFuncs.setProgress(`${task.label} has no handler!`, true);
                      return;
                  }
                  
-                 const isWeCanDo = questHandler.isWeCanDo;
-                 const canDo = isWeCanDo.call(questManager);
-                 console.log(`[executeSingleTask] Quest ${task.id} isWeCanDo result:`, canDo);
+                 // Use either string or numeric key to get the quest handler
+                 const questHandler = questManager.dataQuests[task.id] || questManager.dataQuests[questId];
                  
-                 if (!canDo) {
-                     console.log(`[executeSingleTask] SKIPPING ${task.id} (${task.label}): isWeCanDo returned false`);
+                 // Check if quest can be done
+                 if (questHandler && questHandler.isWeCanDo && questHandler.isWeCanDo.call(questManager)) {
+                     let calls = [];
+                     if (task.id === '10023') {
+                         const heroId = questManager.getHeroIdTitanGift();
+                         calls = [
+                             { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_1' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_1' },
+                             { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_2' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_2' }
+                         ];
+                     } else {
+                         calls = questHandler.doItCall.call(questManager);
+                     }
+                     if(calls.length > 0) await Send({ calls });
+                 } else {
                      HWHFuncs.setProgress(`${task.label} is not available!`, true);
                      return;
                  }
-                 
-                 console.log(`[executeSingleTask] Quest ${task.id} passed all checks, preparing to execute...`);
-                 
-                 let calls = [];
-                 if (task.id === '10023') {
-                     const heroId = questManager.getHeroIdTitanGift();
-                     calls = [
-                         { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_1' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_1' },
-                         { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_2' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_2' }
-                     ];
-                 } else {
-                     calls = questHandler.doItCall.call(questManager);
-                 }
-                 
-                 console.log(`[executeSingleTask] Quest ${task.id} calls to execute:`, calls);
-                 
-                 if(calls.length > 0) {
-                     console.log(`[executeSingleTask] EXECUTING ${task.id} (${task.label}) with ${calls.length} API call(s)`);
-                     await Send({ calls });
-                     console.log(`[executeSingleTask] Quest ${task.id} execution completed`);
-                 } else {
-                     console.warn(`[executeSingleTask] Quest ${task.id} has no calls to execute!`);
-                 }
             }
-            console.log(`[executeSingleTask] Task ${task.id} (${task.label}) finished successfully`);
             HWHFuncs.setProgress(`${task.label} finished!`, true);
         } catch (e) {
-            console.error(`[executeSingleTask] ERROR executing task ${task.id} (${task.label}):`, e);
+            console.error(`Error executing task ${task.id}:`, e);
             HWHFuncs.setProgress(`Error with ${task.label}!`, true);
         }
     }
@@ -679,7 +551,6 @@ async function executeGetDailyBonus() {
         const origOthersButton = HWHData.buttons.doOthers.button;
         if (!origOthersButton) return;
         const scriptMenuContainer = origOthersButton.parentElement;
-        if (!scriptMenuContainer) return;
         origOthersButton.style.display = 'none';
         customOthersButton = HWHClasses.ScriptMenu.getInst().addButton({
             name: I18N('OTHERS'),
@@ -687,7 +558,7 @@ async function executeGetDailyBonus() {
             onClick: onCustomOthersClick
         }, scriptMenuContainer);
         const referenceButton = HWHData.buttons.testTitanArena.button || HWHData.buttons.testDungeon.button;
-        if (referenceButton && scriptMenuContainer.contains(referenceButton)) {
+        if (referenceButton) {
              scriptMenuContainer.insertBefore(customOthersButton, referenceButton);
         } else {
              scriptMenuContainer.appendChild(customOthersButton);
