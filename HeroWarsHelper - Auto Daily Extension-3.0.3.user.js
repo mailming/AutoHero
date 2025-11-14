@@ -538,10 +538,17 @@ async function executeGetDailyBonus() {
                  if (questData.state === 2) {
                     iconHTML = `<span title="Already done">✅</span>`;
                 } else {
-                    // Try both string and numeric key for dataQuests
-                    const questHandler = questManager.dataQuests[task.id] || questManager.dataQuests[questId];
-                    if (questHandler && questHandler.isWeCanDo && questHandler.isWeCanDo.call(questManager)) {
-                        iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                    // Try numeric key first (as that's what the API uses), then string key
+                    const questHandler = questManager.dataQuests[questId] || questManager.dataQuests[task.id];
+                    if (questHandler && questHandler.isWeCanDo && typeof questHandler.isWeCanDo === 'function') {
+                        try {
+                            if (questHandler.isWeCanDo.call(questManager)) {
+                                iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                            }
+                        } catch (e) {
+                            // If isWeCanDo check fails, just show as not available
+                            console.warn(`[updateQuestStatus] Quest ${task.id} isWeCanDo check failed:`, e);
+                        }
                     }
                 }
             }
@@ -604,22 +611,44 @@ async function executeGetDailyBonus() {
                  const questManager = new HWHClasses.dailyQuests();
                  await questManager.autoInit();
                  
-                 console.log(`[executeSingleTask] Quest ${task.id} passed state check (state === 1), checking isWeCanDo...`);
+                 console.log(`[executeSingleTask] Quest ${task.id} passed state check (state === 1), checking quest handler...`);
                  
                  // Use either string or numeric key to get the quest handler
-                 const questHandler = questManager.dataQuests[task.id] || questManager.dataQuests[questId];
+                 // Try numeric key first (as that's what the API uses)
+                 const questHandler = questManager.dataQuests[questId] || questManager.dataQuests[task.id];
                  const hasDataQuest = !!questHandler;
-                 console.log(`[executeSingleTask] Quest ${task.id} in dataQuests:`, hasDataQuest ? 'YES' : 'NO');
+                 
+                 console.log(`[executeSingleTask] Quest ${task.id} lookup:`, {
+                     questId: questId,
+                     taskId: task.id,
+                     hasNumericKey: !!questManager.dataQuests[questId],
+                     hasStringKey: !!questManager.dataQuests[task.id],
+                     hasHandler: hasDataQuest
+                 });
                  
                  if (!hasDataQuest) {
-                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in dataQuests!`);
+                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in dataQuests! Available keys:`, Object.keys(questManager.dataQuests).filter(k => k == questId || k == task.id || String(k) == task.id).slice(0, 10));
                      HWHFuncs.setProgress(`${task.label} has no handler!`, true);
                      return;
                  }
                  
+                 // Check if quest can be done
                  const isWeCanDo = questHandler.isWeCanDo;
-                 const canDo = isWeCanDo.call(questManager);
-                 console.log(`[executeSingleTask] Quest ${task.id} isWeCanDo result:`, canDo);
+                 if (!isWeCanDo || typeof isWeCanDo !== 'function') {
+                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) has no isWeCanDo function!`);
+                     HWHFuncs.setProgress(`${task.label} has invalid handler!`, true);
+                     return;
+                 }
+                 
+                 let canDo = false;
+                 try {
+                     canDo = isWeCanDo.call(questManager);
+                     console.log(`[executeSingleTask] Quest ${task.id} isWeCanDo result:`, canDo);
+                 } catch (e) {
+                     console.error(`[executeSingleTask] Quest ${task.id} isWeCanDo check failed:`, e);
+                     HWHFuncs.setProgress(`${task.label} check failed!`, true);
+                     return;
+                 }
                  
                  if (!canDo) {
                      console.log(`[executeSingleTask] SKIPPING ${task.id} (${task.label}): isWeCanDo returned false`);
