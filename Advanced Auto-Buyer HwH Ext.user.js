@@ -26,11 +26,8 @@
     function initializeExtension() {
         console.log('Advanced Auto-Buyer: HWH UI is ready, initializing extension...');
 
-        const { HWHClasses, HWHFuncs, cheats, Caller, lib, HWHData } = window;
+        const { HWHClasses, HWHFuncs, cheats, Caller, lib } = window;
         const STORAGE_PREFIX = 'advAutoBuyer_';
-        
-        // Get buttons from HWHData (like HWHhuntFragmentExt does)
-        const { buttons } = HWHData;
 
         // --- DATA STRUCTURES & HELPERS ---
         const SHOPS = [ { id: 1, name: 'Town Shop' }, { id: 4, name: 'Arena Shop' }, { id: 5, name: 'Grand Arena Shop' }, { id: 6, name: 'Tower Shop' }, { id: 8, name: 'Soul Shop' }, { id: 9, name: 'Friendship Shop' }, { id: 10, name: 'Outland Shop' }, { id: 13, name: 'Titan Artifact Shop' }, { id: 'SECRET_WEALTH', name: 'Secret Wealth Shop' } ];
@@ -629,34 +626,13 @@
             console.log("--- Advanced Auto-Buyer FINISHED ---");
         }
 
-        // --- MENU INTEGRATION (using HWHhuntFragmentExt pattern) ---
-        // Define button configuration object
-        const autoBuyerButton = {
-            autoBuyerButton: {
-                isCombine: true,
-                combineList: [
-                    {
-                        name: 'Auto-Buy',
-                        title: 'Run the automatic buyer based on your settings',
-                        onClick: runAutoBuy,
-                        hide: false,
-                        color: 'green'
-                    },
-                    {
-                        name: '⚙️',
-                        title: 'Open Auto-Buyer Settings',
-                        onClick: openSettingsPopup,
-                        hide: false,
-                        color: 'green'
-                    }
-                ]
-            }
-        };
-        
-        // Add buttons using Object.assign pattern (like HWHhuntFragmentExt)
-        Object.assign(buttons, autoBuyerButton);
-        HWHData.buttons = buttons;
-        
+        // --- MENU INTEGRATION ---
+        const { ScriptMenu } = HWHClasses;
+        const scriptMenu = ScriptMenu.getInst();
+        scriptMenu.addCombinedButton([
+            { name: 'Auto-Buy', title: 'Run the automatic buyer based on your settings', onClick: runAutoBuy, color: 'green' },
+            { name: '⚙️', title: 'Open Auto-Buyer Settings', onClick: openSettingsPopup, color: 'green' }
+        ]);
         console.log('Advanced Auto-Buyer: UI initialized and attached to HWH menu.');
 
         // --- AUTO-EXECUTE ON SCRIPT LOAD ---
