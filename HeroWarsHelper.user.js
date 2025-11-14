@@ -3,7 +3,7 @@
 // @name:en			HeroWarsHelper
 // @name:ru			HeroWarsHelper
 // @namespace		HeroWarsHelper
-// @version			2.376
+// @version			2.405
 // @description		Automation of actions for the game Hero Wars
 // @description:en	Automation of actions for the game Hero Wars
 // @description:ru	Автоматизация действий для игры Хроники Хаоса
@@ -2786,7 +2786,7 @@
 				 */
 				if (isChecked('countControl') &&
 					(call.name == 'artifactChestOpen' ||
-					call.name == 'titanArtifactChestOpen') &&
+					call.name == '-titanArtifactChestOpen') &&
 					call.args.amount > 1 &&
 					call.args.free &&
 					!changeRequest) {
@@ -3912,7 +3912,7 @@
 		}
 	}
 
-	let extintionsList = [];
+	const extintionsList = [];
 	/**
 	 * Creates an interface
 	 *
@@ -3925,6 +3925,7 @@
 		scriptMenu.init();
 		scriptMenu.addHeader(GM_info.script.name, justInfo);
 		const versionHeader = scriptMenu.addHeader('v' + GM_info.script.version);
+		const { extintionsList } = HWHData;
 		if (extintionsList.length) {
 			versionHeader.title = '';
 			versionHeader.style.color = 'red';
@@ -3959,6 +3960,7 @@
 	}
 
 	function addExtentionName(name, ver, author) {
+		const { extintionsList } = HWHData;
 		extintionsList.push({
 			name,
 			ver,
@@ -4218,6 +4220,7 @@
 		countPredictionCard,
 		actionsPopupButtons,
 		othersPopupButtons,
+		extintionsList,
 	};
 
 	/**
