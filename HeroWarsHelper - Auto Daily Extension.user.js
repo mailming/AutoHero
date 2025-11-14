@@ -25,6 +25,22 @@
     let isProviderActive = false;
     let customOthersButton = null;
     let combinedButton = null;
+    let cachedQuestData = null; // Cache for questGetAll results
+
+    // --- QUEST DATA CACHE ---
+    async function getQuestData(forceRefresh = false) {
+        if (cachedQuestData && !forceRefresh) {
+            return cachedQuestData;
+        }
+        const { Send } = window;
+        const questResponse = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
+        cachedQuestData = questResponse.results[0].result.response;
+        return cachedQuestData;
+    }
+    
+    function invalidateQuestCache() {
+        cachedQuestData = null;
+    }
 
     // --- REIMPLEMENTED CORE FUNCTIONS (WRAPPERS) ---
     async function executeGetOutland() {
@@ -66,9 +82,8 @@
     }
     async function executeQuestAllFarm() {
          const { Send } = window;
-         // Get current quest state from API - following API documentation pattern
-         const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
-         const quests = questData.results[0].result.response;
+         // Get current quest state from cache - following API documentation pattern
+         const quests = await getQuestData();
          
          // Filter quests that are completed and ready to collect (state === 2)
          // Only process regular daily quests (id < 1000000)
@@ -92,6 +107,8 @@
          }));
          
          await Send({ calls: questCalls });
+         // Invalidate cache after collecting quest rewards to get fresh data
+         invalidateQuestCache();
     }
     async function executeMailGetAll() {
          const { Send, HWHClasses } = window;
@@ -517,11 +534,10 @@ async function executeGetDailyBonus() {
         }
     }
     async function updateQuestStatus() {
-        const { HWHClasses, Send } = window;
-        // Check quest completion status using API pattern from documentation
+        const { HWHClasses } = window;
+        // Check quest completion status using cached data - following API documentation pattern
         // API docs: state 0 = not started, 1 = in progress, 2 = completed
-        const questResponse = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
-        const allQuests = questResponse.results[0].result.response;
+        const allQuests = await getQuestData();
         
         const questManager = new HWHClasses.dailyQuests();
         await questManager.autoInit();
@@ -557,42 +573,42 @@ async function executeGetDailyBonus() {
     }
     async function executeSingleTask(task) {
         const { HWHFuncs, Send, HWHClasses } = window;
-        HWHFuncs.setProgress(`Executing: ${task.label}`, true);
         try {
             if (task.func) {
+                HWHFuncs.setProgress(`Executing: ${task.label}`, true);
                 await task.func();
             } else {
-                 // Check quest completion status using API pattern from documentation
+                 // Check quest completion status using cached data - following API documentation pattern
                  // API docs: state 0 = not started, 1 = in progress, 2 = completed
-                 const questResponse = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
-                 const allQuests = questResponse.results[0].result.response;
+                 const allQuests = await getQuestData();
                  
                  // Convert task.id to number for comparison (API returns numeric IDs)
                  const questId = parseInt(task.id, 10);
                  const questData = allQuests.find(q => q.id === questId);
                  
                  if (!questData) {
-                     // Quest not found - this is normal if quest is not available, completed, or not unlocked
-                     // Silently skip without logging (these are expected cases)
+                     // Quest not found - this is normal if quest is not available or not unlocked
+                     HWHFuncs.setProgress(`${task.label}: Not available`, true);
                      return;
                  }
                  
-                 // Check if quest is completed (state === 2) - skip if completed
-                 // Following API documentation pattern: state 2 = completed
+                 // Check quest state and show appropriate message
+                 // Following API documentation pattern: state 0 = not started, 1 = in progress, 2 = completed
                  if (questData.state === 2) {
-                     // Quest is already completed - show clear message
-                     HWHFuncs.setProgress(`${task.label}: Already completed - no action needed`, true);
+                     // Quest is already completed
+                     HWHFuncs.setProgress(`${task.label}: Already completed`, true);
                      return;
                  }
                  
-                 // Only process quests with state === 1 (in progress)
-                 // State 0 = not started, State 1 = in progress, State 2 = completed
-                 if (questData.state !== 1) {
-                     HWHFuncs.setProgress(`${task.label}: Not ready (state: ${questData.state === 0 ? 'not started' : questData.state})`, true);
+                 if (questData.state === 0) {
+                     // Quest not started yet
+                     HWHFuncs.setProgress(`${task.label}: Not started yet`, true);
                      return;
                  }
                  
                  // Quest is in progress (state === 1) - proceed with execution
+                 HWHFuncs.setProgress(`Executing: ${task.label}`, true);
+                 
                  // Initialize quest manager for execution
                  const questManager = new HWHClasses.dailyQuests();
                  await questManager.autoInit();
@@ -640,12 +656,14 @@ async function executeGetDailyBonus() {
                      calls = questHandler.doItCall.call(questManager);
                  }
                  
-                 if(calls.length > 0) {
-                     await Send({ calls });
-                 } else {
-                     HWHFuncs.setProgress(`${task.label}: No actions available`, true);
-                     return;
-                 }
+                if(calls.length > 0) {
+                    await Send({ calls });
+                    // Invalidate cache after executing quest to get fresh data
+                    invalidateQuestCache();
+                } else {
+                    HWHFuncs.setProgress(`${task.label}: No actions available`, true);
+                    return;
+                }
             }
             HWHFuncs.setProgress(`${task.label} finished!`, true);
         } catch (e) {
