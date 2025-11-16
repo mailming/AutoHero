@@ -1634,12 +1634,70 @@ Send('{"calls":[{"name":"getTime","args":{},"ident":"getTime"}]}')
 
 #### gacha_refill
 
-Refill gacha.
+Refill gacha (hero summoning system). This API call refreshes the gacha system and provides rewards.
 
 **Request:**
 ```javascript
-Send('{"calls":[{"name":"gacha_refill","args":{"ident":"heroGacha"},"ident":"gacha_refill"}]}')
+Send({
+  calls: [{
+    name: "gacha_refill",
+    args: {
+      ident: "heroGacha"  // Identifier for the gacha type
+    },
+    context: {
+      actionTs: Date.now()
+    },
+    ident: "body"
+  }]
+})
 ```
+
+**Response Structure:**
+```javascript
+{
+  "date": 1763321343.088197,
+  "results": [
+    {
+      "ident": "body",
+      "result": {
+        "response": {
+          "coin": {
+            "38": 1  // Coin ID and amount received
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+**Response Fields:**
+- `coin`: Object containing coin rewards received
+  - Key: Coin ID (number)
+  - Value: Amount received (number)
+  - Example: `{"38": 1}` means 1 unit of coin ID 38 was received
+
+**Example Usage:**
+```javascript
+const response = await Send({
+  calls: [{
+    name: "gacha_refill",
+    args: { ident: "heroGacha" },
+    ident: "body"
+  }]
+});
+
+const coins = response.results[0].result.response.coin;
+console.log('Received coins:', coins);
+```
+
+---
+
+### Hero GotCha
+
+**Note:** The `heroGotCha` API was not found in the provided HAR file. This section will be updated when API calls for this feature are captured.
+
+If you have HAR file data containing `heroGotCha` API calls, please provide it for documentation.
 
 ---
 

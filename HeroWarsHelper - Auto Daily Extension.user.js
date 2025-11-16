@@ -183,6 +183,25 @@ async function executeGetDailyBonus() {
         HWHFuncs.setProgress('Daily Bonus: Error!', true);
     }
 }
+    async function executeGachaRefill() {
+        const { Send, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Gacha Refill', true);
+        try {
+            await Send({
+                calls: [{
+                    name: "gacha_refill",
+                    args: {
+                        ident: "heroGacha"
+                    },
+                    ident: "body"
+                }]
+            });
+            HWHFuncs.setProgress('Gacha Refill: Done!', true);
+        } catch (e) {
+            console.error("Error in executeGachaRefill", e);
+            HWHFuncs.setProgress('Gacha Refill: Error!', true);
+        }
+    }
 
     // --- DATA STRUCTURES ---
     const doAllTasks = [
@@ -191,7 +210,8 @@ async function executeGetDailyBonus() {
         { id: 'offerFarmAllReward', label: 'Easter Eggs', func: executeOfferFarmAllReward },
         { id: 'questAllFarm', label: 'Rewards', func: executeQuestAllFarm }, { id: 'mailGetAll', label: 'Mail', func: executeMailGetAll },
         { id: 'rewardsAndMailFarm', label: 'Rewards & Mail', func: executeRewardsAndMailFarm }, { id: 'rollAscension', label: 'Seer', func: executeRollAscension },
-         { id: 'getDailyBonus', label: 'Daily Bonus', func: executeGetDailyBonus }
+        { id: 'getDailyBonus', label: 'Daily Bonus', func: executeGetDailyBonus },
+        { id: 'gachaRefill', label: 'Gacha Refill', func: executeGachaRefill }
     ];
     const upgradeTasks = [
         { id: '10001', label: 'Upgrade Skills' }, { id: '10018', label: 'Use EXP Potion' },
