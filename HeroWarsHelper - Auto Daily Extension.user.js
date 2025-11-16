@@ -68,6 +68,11 @@
         HWHFuncs.setProgress('Executing: Expeditions', true);
         return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
     }
+    async function executeTestDungeon() {
+        const { HWHClasses, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Dungeon', true);
+        return new Promise((resolve) => { new HWHClasses.executeDungeon(resolve, resolve).start(); });
+    }
     async function executeOfferFarmAllReward() {
         const { Send, HWHFuncs } = window;
         HWHFuncs.setProgress('Executing: Easter Eggs', true);
@@ -182,7 +187,8 @@ async function executeGetDailyBonus() {
     // --- DATA STRUCTURES ---
     const doAllTasks = [
         { id: 'getOutland', label: 'Outland', func: executeGetOutland }, { id: 'testTower', label: 'Tower', func: executeTestTower },
-        { id: 'checkExpedition', label: 'Expeditions', func: executeCheckExpedition }, { id: 'offerFarmAllReward', label: 'Easter Eggs', func: executeOfferFarmAllReward },
+        { id: 'testDungeon', label: 'Dungeon', func: executeTestDungeon }, { id: 'checkExpedition', label: 'Expeditions', func: executeCheckExpedition },
+        { id: 'offerFarmAllReward', label: 'Easter Eggs', func: executeOfferFarmAllReward },
         { id: 'questAllFarm', label: 'Rewards', func: executeQuestAllFarm }, { id: 'mailGetAll', label: 'Mail', func: executeMailGetAll },
         { id: 'rewardsAndMailFarm', label: 'Rewards & Mail', func: executeRewardsAndMailFarm }, { id: 'rollAscension', label: 'Seer', func: executeRollAscension },
          { id: 'getDailyBonus', label: 'Daily Bonus', func: executeGetDailyBonus }
@@ -195,8 +201,9 @@ async function executeGetDailyBonus() {
     const questTasks = [
         { id: '10003', label: 'Heroic Missions' }, { id: '10006', label: 'Exchange Emeralds' },
         { id: '10007', label: 'Soul Atrium' }, { id: '10016', label: 'Send Gifts' },
-        { id: '10020', label: 'Outland Chests' }, { id: '10029', label: 'Titan Artifact Orbs' },
-        { id: '10044', label: 'Summon Pets' }, { id: '10047', label: 'Guild Activity' }
+        { id: '10020', label: 'Outland Chests' }, { id: '10022', label: 'Guild Dungeon' },
+        { id: '10029', label: 'Titan Artifact Orbs' }, { id: '10044', label: 'Summon Pets' },
+        { id: '10047', label: 'Guild Activity' }
     ];
     const othersTasks = [
         { id: 'GET_ENERGY', label: 'Get Energy' }, { id: 'ITEM_EXCHANGE', label: 'Item Exchange' },
@@ -556,14 +563,20 @@ async function executeGetDailyBonus() {
                 } else {
                     // Try numeric key first (as that's what the API uses), then string key
                     const questHandler = questManager.dataQuests[questId] || questManager.dataQuests[task.id];
-                    if (questHandler && questHandler.isWeCanDo && typeof questHandler.isWeCanDo === 'function') {
-                        try {
-                            if (questHandler.isWeCanDo.call(questManager)) {
-                                iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                    if (questHandler) {
+                        // Handle quests with doItFunc (like dungeon quest 10022)
+                        // These quests can be executed even if isWeCanDo returns false
+                        if (questHandler.doItFunc && questData.state === 1) {
+                            iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                        } else if (questHandler.isWeCanDo && typeof questHandler.isWeCanDo === 'function') {
+                            try {
+                                if (questHandler.isWeCanDo.call(questManager)) {
+                                    iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                                }
+                            } catch (e) {
+                                // If isWeCanDo check fails, just show as not available
+                                console.warn(`[updateQuestStatus] Quest ${task.id} isWeCanDo check failed:`, e);
                             }
-                        } catch (e) {
-                            // If isWeCanDo check fails, just show as not available
-                            console.warn(`[updateQuestStatus] Quest ${task.id} isWeCanDo check failed:`, e);
                         }
                     }
                 }
@@ -623,7 +636,23 @@ async function executeGetDailyBonus() {
                      return;
                  }
                  
-                 // Check if quest can be done
+                 // Handle quests with doItFunc (like dungeon quest 10022)
+                 if (questHandler.doItFunc) {
+                     // Quest uses a function instead of API calls
+                     if (task.id === '10022') {
+                         // Special handling for dungeon quest
+                         await executeTestDungeon();
+                         invalidateQuestCache();
+                         return;
+                     } else {
+                         // For other doItFunc quests, call the function directly
+                         await questHandler.doItFunc();
+                         invalidateQuestCache();
+                         return;
+                     }
+                 }
+                 
+                 // Check if quest can be done (only for doItCall quests)
                  const isWeCanDo = questHandler.isWeCanDo;
                  if (!isWeCanDo || typeof isWeCanDo !== 'function') {
                      console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) has no isWeCanDo function!`);
@@ -652,8 +681,11 @@ async function executeGetDailyBonus() {
                          { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_1' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_1' },
                          { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_2' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_2' }
                      ];
-                 } else {
+                 } else if (questHandler.doItCall) {
                      calls = questHandler.doItCall.call(questManager);
+                 } else {
+                     HWHFuncs.setProgress(`${task.label}: No execution method available`, true);
+                     return;
                  }
                  
                 if(calls.length > 0) {
