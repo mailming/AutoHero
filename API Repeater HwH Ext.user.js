@@ -310,21 +310,31 @@
         try {
             HWHFuncs.setProgress(`API Repeater: Executing ${recording.name}...`, true);
             
-            // Prepare calls with updated timestamps
-            const calls = recording.apiCalls.map(call => ({
-                name: call.name,
-                args: call.args,
-                context: { actionTs: Math.floor(performance.now()) },
-                ident: call.ident
-            }));
+            // Execute API calls one by one to avoid duplicate ident errors
+            for (let i = 0; i < recording.apiCalls.length; i++) {
+                const call = recording.apiCalls[i];
+                
+                // Prepare call with updated timestamp and unique ident
+                const callToExecute = {
+                    name: call.name,
+                    args: call.args,
+                    context: { actionTs: Math.floor(performance.now()) },
+                    ident: 'body' // Use 'body' for single calls (API requirement)
+                };
 
-            // Execute API calls
-            await Send({ calls });
+                // Execute single API call
+                await Send({ calls: [callToExecute] });
+                
+                // Add delay between calls (similar to Auto Daily Extension)
+                if (i < recording.apiCalls.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+                }
+            }
             
-            HWHFuncs.setProgress(`API Repeater: ${recording.name} - Done!`, true);
+            HWHFuncs.setProgress(`API Repeater: ${recording.name} - Done! (${recording.apiCalls.length} calls)`, true);
         } catch (e) {
             console.error(`API Repeater: Error executing ${recording.name}:`, e);
-            HWHFuncs.setProgress(`API Repeater: ${recording.name} - Error!`, true);
+            HWHFuncs.setProgress(`API Repeater: ${recording.name} - Error: ${e.message || e}`, true);
         }
     }
 
