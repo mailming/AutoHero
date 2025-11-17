@@ -34,8 +34,11 @@
     function waitForHWH(callback) {
         const interval = setInterval(() => {
             if (window.HWHClasses && window.HWHClasses.ScriptMenu && window.HWHFuncs && window.Send) {
-                clearInterval(interval);
-                callback();
+                const scriptMenu = window.HWHClasses.ScriptMenu.getInst();
+                if (scriptMenu && scriptMenu.mainMenu) {
+                    clearInterval(interval);
+                    callback();
+                }
             }
         }, 200);
     }
