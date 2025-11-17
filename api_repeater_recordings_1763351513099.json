@@ -1,0 +1,283 @@
+{
+  "recordings": [
+    {
+      "id": "1763342481504_exxy2zke5",
+      "name": "MultipleupgradeElectra",
+      "description": "upgrade electra 8 times on different skills",
+      "createdAt": 1763342481504,
+      "expirationDays": 6,
+      "expiresAt": 1763860881504,
+      "autoRun": true,
+      "apiCalls": [
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 1
+          },
+          "context": {
+            "actionTs": 182885
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 2
+          },
+          "context": {
+            "actionTs": 183884
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 3
+          },
+          "context": {
+            "actionTs": 185068
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 4
+          },
+          "context": {
+            "actionTs": 186320
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 1
+          },
+          "context": {
+            "actionTs": 188318
+          },
+          "ident": "group_0_body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 2
+          },
+          "context": {
+            "actionTs": 189035
+          },
+          "ident": "group_1_body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 3
+          },
+          "context": {
+            "actionTs": 189818
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 1
+          },
+          "context": {
+            "actionTs": 182885
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 2
+          },
+          "context": {
+            "actionTs": 183884
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 3
+          },
+          "context": {
+            "actionTs": 185068
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 4
+          },
+          "context": {
+            "actionTs": 186320
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 1
+          },
+          "context": {
+            "actionTs": 188318
+          },
+          "ident": "group_0_body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 2
+          },
+          "context": {
+            "actionTs": 189035
+          },
+          "ident": "group_1_body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 3
+          },
+          "context": {
+            "actionTs": 189818
+          },
+          "ident": "body"
+        },
+        {
+          "name": "heroUpgradeSkill",
+          "args": {
+            "heroId": 70,
+            "skill": 4
+          },
+          "context": {
+            "actionTs": 191195
+          },
+          "ident": "body"
+        }
+      ]
+    },
+    {
+      "id": "1763351434350_zlgko4ifq",
+      "name": "DailyCharge",
+      "description": "ElectraEvent",
+      "createdAt": 1763351434350,
+      "expirationDays": 6,
+      "expiresAt": 1763869834350,
+      "autoRun": true,
+      "apiCalls": [
+        {
+          "name": "specialOffer_farmReward",
+          "args": {
+            "offerId": 1778001657
+          },
+          "context": {
+            "actionTs": 90232
+          },
+          "ident": "body"
+        },
+        {
+          "name": "specialOffer_check",
+          "args": {
+            "offerId": 1778001725
+          },
+          "context": {
+            "actionTs": 90712
+          },
+          "ident": "group_0_body"
+        },
+        {
+          "name": "specialOffer_check",
+          "args": {
+            "offerId": 1778001678
+          },
+          "context": {
+            "actionTs": 90712
+          },
+          "ident": "group_1_body"
+        },
+        {
+          "name": "specialOffer_check",
+          "args": {
+            "offerId": 1778001660
+          },
+          "context": {
+            "actionTs": 90713
+          },
+          "ident": "group_2_body"
+        },
+        {
+          "name": "specialOffer_farmReward",
+          "args": {
+            "offerId": 1778001657
+          },
+          "context": {
+            "actionTs": 91649
+          },
+          "ident": "group_1_body"
+        },
+        {
+          "name": "specialOffer_check",
+          "args": {
+            "offerId": 1778001725
+          },
+          "context": {
+            "actionTs": 92148
+          },
+          "ident": "group_0_body"
+        },
+        {
+          "name": "specialOffer_check",
+          "args": {
+            "offerId": 1778001678
+          },
+          "context": {
+            "actionTs": 92148
+          },
+          "ident": "group_1_body"
+        },
+        {
+          "name": "specialOffer_check",
+          "args": {
+            "offerId": 1778001660
+          },
+          "context": {
+            "actionTs": 92148
+          },
+          "ident": "group_2_body"
+        },
+        {
+          "name": "specialOffer_check",
+          "args": {
+            "offerId": 100
+          },
+          "context": {
+            "actionTs": 92148
+          },
+          "ident": "group_3_body"
+        }
+      ]
+    }
+  ],
+  "exportDate": "2025-11-17T03:51:53.098Z",
+  "version": "1.0"
+}

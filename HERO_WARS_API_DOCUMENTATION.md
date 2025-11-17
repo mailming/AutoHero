@@ -269,6 +269,8 @@ const refillableValues = userInfo.refillable;
 
 **Note:** Arena attempts are stored in the `refillable` array with `id: 6`. Grand Arena attempts are stored with `id: 21`. The `amount` field indicates how many battle attempts are currently available for each respective arena type.
 
+**Important:** Guild War attempts are **NOT** stored in the `refillable` array. Instead, Guild War attempts are tracked separately in the `clanWarGetInfo` API response as `myTries`. See the [Guild War API](#guild-war-api) section for details.
+
 **Console Usage:**
 These commands can be executed directly in the browser console when using the HeroWarsHelper script:
 ```javascript
@@ -1477,20 +1479,319 @@ Send('{"calls":[{"name":"specialOffer_getAll","args":{},"ident":"specialOffer_ge
 
 #### specialOffer_farmReward
 
-Farm a special offer reward.
+**Description:** Claims/farms rewards from a special offer. This API is typically used for stage-based reward offers where players can claim rewards after completing certain stages. The API returns the claimed rewards and updates the special offers list.
 
 **Request:**
 ```javascript
-Send(JSON.stringify({
+Send({
   calls: [{
-    name: "specialOffer_farmReward",
+    name: 'specialOffer_farmReward',
     args: {
-      offerId: offerId
+      offerId: 1778001657
     },
-    ident: "body"
+    context: {
+      actionTs: Date.now()
+    },
+    ident: 'body'
   }]
-}))
+})
 ```
+
+**Request Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `offerId` | Number | Yes | The unique identifier of the special offer to claim rewards from |
+
+**Response Structure:**
+```javascript
+{
+  "date": 1763273826.1036711,
+  "results": [{
+    "ident": "body",
+    "result": {
+      "response": {
+        "starmoney": 100,
+        "coin": {
+          "1778001091": 1
+        }
+      },
+      "specialOffers": [
+        // Updated list of all active special offers
+      ],
+      "endSpecialOffers": [8]  // Array of offer IDs that have ended
+    }
+  }]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `results[].result.response` | Object | The claimed rewards |
+| `results[].result.response.starmoney` | Number | Amount of starmoney claimed |
+| `results[].result.response.coin` | Object | Object mapping coin IDs to amounts claimed |
+| `results[].result.specialOffers` | Array | Updated list of special offers |
+| `results[].result.endSpecialOffers` | Array | Array of special offer IDs that have ended |
+
+**Response Notes:**
+
+- The `response` object contains the actual rewards claimed (starmoney and coins)
+- The `specialOffers` array contains updated information about all active special offers
+- The `endSpecialOffers` array contains IDs of offers that have ended
+- Coin IDs in the `coin` object are strings representing different currency types
+
+**Example Usage:**
+```javascript
+const response = await Send({
+  calls: [{
+    name: 'specialOffer_farmReward',
+    args: {
+      offerId: 1778001657
+    },
+    context: {
+      actionTs: Date.now()
+    },
+    ident: 'body'
+  }]
+});
+
+// Access the claimed rewards
+const rewards = response.results[0].result.response;
+console.log('Starmoney:', rewards.starmoney);
+console.log('Coins:', rewards.coin);
+```
+
+#### specialOffer_check
+
+**Description:** Checks if a special offer is available. This API is used to verify the availability status of one or more special offers before attempting to claim rewards. Multiple offers can be checked in a single request.
+
+**Request:**
+```javascript
+Send({
+  calls: [
+    {
+      name: 'specialOffer_check',
+      args: { offerId: 1778001725 },
+      context: { actionTs: Date.now() },
+      ident: 'offer1'
+    },
+    {
+      name: 'specialOffer_check',
+      args: { offerId: 1778001678 },
+      context: { actionTs: Date.now() },
+      ident: 'offer2'
+    }
+  ]
+})
+```
+
+**Request Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `offerId` | Number | Yes | The unique identifier of the special offer to check |
+
+**Response Structure:**
+```javascript
+{
+  "date": 1763273827.9898541,
+  "results": [
+    {
+      "ident": "offer1",
+      "result": {
+        "response": {
+          "available": true,
+          "failedChecks": null
+        }
+      }
+    },
+    {
+      "ident": "offer2",
+      "result": {
+        "response": {
+          "available": false,
+          "failedChecks": {
+            "offerUnavailable": true
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `results[].result.response.available` | Boolean | Whether the offer is available |
+| `results[].result.response.failedChecks` | Object/null | Object containing failed check reasons, or null if available |
+
+**Failed Checks:**
+
+When `available` is `false`, the `failedChecks` object may contain:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `offerUnavailable` | Boolean | Set to `true` if the offer is not available (expired, not started, or already claimed) |
+
+**Example Usage:**
+```javascript
+// Check a single offer
+const response = await Send({
+  calls: [{
+    name: 'specialOffer_check',
+    args: {
+      offerId: 1778001725
+    },
+    context: {
+      actionTs: Date.now()
+    },
+    ident: 'body'
+  }]
+});
+
+const isAvailable = response.results[0].result.response.available;
+if (isAvailable) {
+  console.log('Offer is available');
+} else {
+  console.log('Offer is not available:', response.results[0].result.response.failedChecks);
+}
+
+// Check multiple offers at once
+const multiCheckResponse = await Send({
+  calls: [
+    {
+      name: 'specialOffer_check',
+      args: { offerId: 1778001725 },
+      context: { actionTs: Date.now() },
+      ident: 'offer1'
+    },
+    {
+      name: 'specialOffer_check',
+      args: { offerId: 1778001678 },
+      context: { actionTs: Date.now() },
+      ident: 'offer2'
+    }
+  ]
+});
+
+// Process each result
+multiCheckResponse.results.forEach(result => {
+  const offerId = result.ident;
+  const available = result.result.response.available;
+  console.log(`Offer ${offerId}: ${available ? 'Available' : 'Unavailable'}`);
+});
+```
+
+**Common Usage Patterns:**
+
+**Pattern 1: Check Before Claiming**
+```javascript
+async function claimRewardIfAvailable(offerId) {
+  // First check if the offer is available
+  const checkResponse = await Send({
+    calls: [{
+      name: 'specialOffer_check',
+      args: { offerId: offerId },
+      context: { actionTs: Date.now() },
+      ident: 'check'
+    }]
+  });
+
+  const isAvailable = checkResponse.results[0].result.response.available;
+  
+  if (!isAvailable) {
+    console.log('Offer is not available');
+    return null;
+  }
+
+  // Claim the reward
+  const claimResponse = await Send({
+    calls: [{
+      name: 'specialOffer_farmReward',
+      args: { offerId: offerId },
+      context: { actionTs: Date.now() },
+      ident: 'claim'
+    }]
+  });
+
+  return claimResponse.results[0].result.response;
+}
+```
+
+**Pattern 2: Batch Check Multiple Offers**
+```javascript
+async function checkMultipleOffers(offerIds) {
+  const calls = offerIds.map((offerId, index) => ({
+    name: 'specialOffer_check',
+    args: { offerId: offerId },
+    context: { actionTs: Date.now() },
+    ident: `offer_${index}`
+  }));
+
+  const response = await Send({ calls });
+  
+  return response.results.map((result, index) => ({
+    offerId: offerIds[index],
+    available: result.result.response.available,
+    failedChecks: result.result.response.failedChecks
+  }));
+}
+```
+
+**Pattern 3: Claim All Available Rewards**
+```javascript
+async function claimAllAvailableRewards(offerIds) {
+  // First check all offers
+  const checkCalls = offerIds.map((offerId, index) => ({
+    name: 'specialOffer_check',
+    args: { offerId: offerId },
+    context: { actionTs: Date.now() },
+    ident: `check_${index}`
+  }));
+
+  const checkResponse = await Send({ calls: checkCalls });
+  
+  // Filter available offers
+  const availableOffers = checkResponse.results
+    .map((result, index) => ({
+      offerId: offerIds[index],
+      available: result.result.response.available
+    }))
+    .filter(offer => offer.available);
+
+  if (availableOffers.length === 0) {
+    console.log('No available offers');
+    return [];
+  }
+
+  // Claim all available rewards
+  const claimCalls = availableOffers.map((offer, index) => ({
+    name: 'specialOffer_farmReward',
+    args: { offerId: offer.offerId },
+    context: { actionTs: Date.now() },
+    ident: `claim_${index}`
+  }));
+
+  const claimResponse = await Send({ calls: claimCalls });
+  
+  return claimResponse.results.map(result => result.result.response);
+}
+```
+
+**Error Handling:**
+
+Both APIs follow the standard Hero Wars API error response format. If an error occurs, the response will contain an error object instead of the expected result.
+
+**Common Error Scenarios:**
+
+1. **Invalid offerId**: The offer ID does not exist or is invalid
+2. **Offer already claimed**: Attempting to claim rewards from an offer that has already been claimed
+3. **Offer expired**: The offer has ended and is no longer available
+4. **Authentication failure**: Invalid or expired authentication headers
 
 ---
 
@@ -2141,6 +2442,23 @@ Send({
 - `teams`: Team configurations for different players
   - `clanDefence_heroes`: Hero defense team for Guild War (for slots 1-20)
   - `clanDefence_titans`: Titan defense team for Guild War (for slots 21-40)
+- `myTries`: **Number of remaining Guild War attack attempts** (not stored in refillable system)
+- `arePointsMax`: Boolean indicating if maximum points have been reached
+
+**Note:** Unlike Arena and Grand Arena which track attempts in the `refillable` array, Guild War attempts are tracked directly in the `clanWarGetInfo` response as `myTries`.
+
+**Example Usage:**
+```javascript
+const response = await Send({
+  calls: [
+    { name: "clanWarGetInfo", args: {}, ident: "clanWarGetInfo" }
+  ]
+});
+
+const guildWarInfo = response.results[0].result.response;
+const attemptsRemaining = guildWarInfo.myTries ?? 0;
+console.log(`Guild War attempts remaining: ${attemptsRemaining}`);
+```
 
 #### clanWarAttack
 
@@ -3790,6 +4108,166 @@ Send({
 
 ---
 
+## Reference Tables
+
+### Hero ID Reference
+
+The following table provides a reference for Hero IDs used throughout the Hero Wars API. These IDs may be referenced in reward responses or other API calls.
+
+| ID | Hero Name |
+|----|-----------|
+| 1 | Aurora |
+| 2 | Galahad |
+| 3 | Keira |
+| 4 | Astaroth |
+| 5 | Kai |
+| 6 | Phobos |
+| 7 | Thea |
+| 8 | Daredevil |
+| 9 | Heidi |
+| 10 | Faceless |
+| 11 | Chabba |
+| 12 | Arachne |
+| 13 | Orion |
+| 14 | Fox |
+| 15 | Ginger |
+| 16 | Dante |
+| 17 | Mojo |
+| 18 | Judge |
+| 19 | Dark Star |
+| 20 | Artemis |
+| 21 | Markus |
+| 22 | Peppy |
+| 23 | Lian |
+| 24 | Cleaver |
+| 25 | Ishmael |
+| 26 | Lilith |
+| 27 | Luther |
+| 28 | Qing Mao |
+| 29 | Dorian |
+| 30 | Cornelius |
+| 31 | Jet |
+| 32 | Helios |
+| 33 | Lars |
+| 34 | Krista |
+| 35 | Jorgen |
+| 36 | Maya |
+| 37 | Jhu |
+| 38 | Elmir |
+| 39 | Ziri |
+| 40 | Nebula |
+| 41 | K'arkh |
+| 42 | Rufus |
+| 43 | Celeste |
+| 44 | Astrid and Lucas |
+| 45 | Satori |
+| 46 | Martha |
+| 47 | Andvari |
+| 48 | Sebastian |
+| 49 | Yasmine |
+| 50 | Corvus |
+| 51 | Morrigan |
+| 52 | Isaac |
+| 53 | Alvanor |
+| 54 | Tristan |
+| 55 | Iris |
+| 56 | Amira |
+| 57 | Fafnir |
+| 58 | Aidan |
+| 59 | Kayla |
+| 60 | Mushy and Shroom |
+| 61 | Julius |
+| 62 | Polaris |
+| 63 | Lara Croft |
+| 64 | Augustus |
+| 65 | Ninja Turtles |
+| 66 | Folio |
+| 67 | Lyria |
+| 68 | Guus |
+| 69 | Cascade |
+| 70 | Electra von Grave |
+
+---
+
+### Timer/Cooldown ID Reference
+
+The following table provides a reference for Timer/Cooldown IDs used throughout the Hero Wars API. These IDs are used to track various game timers, cooldowns, and reset mechanisms.
+
+| ID | Identifier | Description |
+|----|------------|-------------|
+| 1 | stamina | Stamina refill timer |
+| 2 | skill_point | Skill point refill timer |
+| 3 | bronzeFreeChest | Bronze free chest timer |
+| 4 | goldFreeChest | Gold free chest timer |
+| 5 | arena_cooldown | Arena cooldown timer |
+| 6 | arena_battle | Arena battle attempts |
+| 7 | nicknameChangeCooldown | Nickname change cooldown |
+| 8 | timezoneChangeCooldown | Timezone change cooldown |
+| 9 | eliteMission | Elite mission attempts |
+| 10 | shopReset_merchant | Merchant shop reset |
+| 11 | shopReset_goblin | Goblin shop reset |
+| 12 | shopReset_godfather | Godfather shop reset |
+| 13 | shopReset_arena | Arena shop reset |
+| 14 | shopReset_grandArena | Grand Arena shop reset |
+| 15 | shopReset_crusade | Crusade shop reset |
+| 16 | shopReset_guild | Guild shop reset |
+| 17 | shopReset_soulShop | Soul shop reset |
+| 19 | alchemy | Alchemy attempts |
+| 20 | grand_arena_cooldown | Grand Arena cooldown timer |
+| 21 | grand_arena_battle | Grand Arena battle attempts |
+| 22 | shopReset_socialShop | Social shop reset |
+| 23 | trial_chrono_gold | Chrono Gold trial attempts |
+| 24 | trial_chrono_gold_cooldown | Chrono Gold trial cooldown |
+| 25 | trial_chrono_exp | Chrono EXP trial attempts |
+| 26 | trial_chrono_exp_cooldown | Chrono EXP trial cooldown |
+| 27 | trial_phys | Physical trial attempts |
+| 28 | trial_phys_cooldown | Physical trial cooldown |
+| 29 | trial_mag | Magic trial attempts |
+| 30 | trial_mag_cooldown | Magic trial cooldown |
+| 31 | trial_perk | Perk trial attempts |
+| 32 | trial_perk_cooldown | Perk trial cooldown |
+| 33 | clanReenter_cooldown | Clan re-enter cooldown |
+| 34 | clanAdmire | Clan admire attempts |
+| 35 | diamondFreeChest | Diamond free chest timer |
+| 36 | boss_battle | Boss battle attempts |
+| 37 | chest_town | Town chest reset |
+| 38 | shopReset_boss | Boss shop reset |
+| 39 | boss_cooldown | Boss cooldown timer |
+| 40 | lootBox_egg_blue | Blue egg loot box timer |
+| 41 | lootBox_egg_purple | Purple egg loot box timer |
+| 42 | lootBox_egg_orange | Orange egg loot box timer |
+| 43 | shopReset_gvg | Guild War shop reset |
+| 44 | shopReset_titanArtifact | Titan Artifact shop reset |
+| 45 | adventure | Adventure attempts |
+| 46 | shopReset_petSoulShop | Pet Soul shop reset |
+| 47 | ascensionChest_free | Free ascension chest timer |
+| 48 | brawl_battle | Brawl battle attempts |
+| 49 | newGacha_key | New gacha key timer |
+| 50 | shopReset_merchantPromo | Merchant promo shop reset |
+| 51 | shopReset_merchantPromoV2 | Merchant promo V2 shop reset |
+| 52 | epic_brawl_battle | Epic brawl battle attempts |
+| 53 | epic_brawl_battle_reroll | Epic brawl battle reroll |
+| 54 | rewardedVideo_cooldown | Rewarded video cooldown |
+| 55 | clan_domination | Clan domination timer |
+| 56 | leagueArena_battle | League Arena battle attempts |
+| 57 | leagueArena_enemyRefresh | League Arena enemy refresh timer |
+| 58 | leagueArena_wheelTicket | League Arena wheel ticket timer |
+| 59 | leagueArena_battle_altRefresh | League Arena battle alternate refresh |
+| 60 | tmntRerollCost | TMNT reroll cost |
+| 61 | LavkaRefill | Lavka refill timer |
+
+**Note:** Timer/Cooldown objects typically contain the following properties:
+- `id`: The timer ID
+- `ident`: The identifier string
+- `refillSeconds`: Time in seconds until refill (if applicable)
+- `maxValue`: Maximum value array
+- `maxRefillCount`: Maximum refill count array
+- `refillByReset`: Whether refill resets on daily reset (0 = no, 1 = yes)
+- `refillCountResetLocalTime`: Array indicating local time reset
+- `serverTimeRefill`: Whether server time is used for refill (if applicable)
+
+---
+
 ## Additional Resources
 
 **Note:** All specialized API documentation has been consolidated into this document. The following separate documentation files are now deprecated:
@@ -3802,6 +4280,7 @@ Send({
 - `TITAN_ARTIFACT_SHOP_API_DOCUMENTATION.md` - Consolidated into Titan Artifact Shop API section
 - `TEAMGETALL_API_DOCUMENTATION.md` - Consolidated into TeamGetAll API section
 - `DEMO_BATTLE_API_DOCUMENTATION.md` - Consolidated into Demo Battle API section
+- `REWARDS_API_DOCUMENTATION.md` - Consolidated into Special Offers section and Reference Tables section
 
 For the most up-to-date API documentation, refer to this consolidated document.
 
