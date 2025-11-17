@@ -142,12 +142,37 @@
             HWHFuncs.setProgress('Seer: Done!', true);
         } catch (e) { console.error("Error in executeRollAscension", e); HWHFuncs.setProgress('Seer: Error!', true); }
     }
-    // NEWLY ADDED FUNCTION
+    // NEWLY ADDED FUNCTION - Reuses doYourBest functions from HeroWarsHelper
 async function executeGetDailyBonus() {
-    const { Send, lib, HWHFuncs, I18N } = window;
+    const { HWHClasses, HWHFuncs } = window;
     HWHFuncs.setProgress('Executing: Daily Bonus', true);
     try {
-        // Chiediamo al server SIA le info sul bonus SIA quelle sull'utente, per essere sicuri
+        // Reuse getDailyBonus from doYourBest class if available
+        if (HWHClasses && HWHClasses.doYourBest) {
+            const doYourBestInstance = new HWHClasses.doYourBest(() => {}, () => {});
+            if (doYourBestInstance.functions && doYourBestInstance.functions.getDailyBonus) {
+                await doYourBestInstance.functions.getDailyBonus();
+                
+                // Also collect subscription and zeppelin gifts using collectAllStuff pattern
+                if (doYourBestInstance.functions.collectAllStuff) {
+                    // collectAllStuff includes: offerFarmAllReward, subscriptionFarm, zeppelinGiftFarm, grandFarmCoins, gacha_refill
+                    // But we only want subscriptionFarm and zeppelinGiftFarm here
+                    const { Send } = window;
+                    await Send({
+                        calls: [
+                            { name: "subscriptionFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "body" },
+                            { name: "zeppelinGiftFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "zeppelinGiftFarm" }
+                        ]
+                    });
+                }
+                
+                HWHFuncs.setProgress('Daily Bonus: Done!', true);
+                return;
+            }
+        }
+        
+        // Fallback: implement our own if doYourBest is not available
+        const { Send, lib } = window;
         const response = await Send({
             calls: [
                 { name: "dailyBonusGetInfo", args: {}, ident: "dailyBonus" },
@@ -166,7 +191,7 @@ async function executeGetDailyBonus() {
         const vipInfo = lib.getData('level').vip;
         let currentVipLevel = 0;
         for (let i in vipInfo) {
-            if (+userInfo.vipPoints >= vipInfo[i].vipPoints) { // <-- ORA FUNZIONA
+            if (+userInfo.vipPoints >= vipInfo[i].vipPoints) {
                 currentVipLevel = vipInfo[i].level;
             }
         }
@@ -175,8 +200,13 @@ async function executeGetDailyBonus() {
         const collectVipBonus = dailyBonusInfo.availableVip && currentVipLevel >= vipLevelDouble;
 
         await Send({
-            calls: [{ name: "dailyBonusFarm", args: { vip: collectVipBonus ? 1 : 0 }, ident: "body" }]
+            calls: [
+                { name: "dailyBonusFarm", args: { vip: collectVipBonus ? 1 : 0 }, context: { actionTs: Math.floor(performance.now()) }, ident: "body" },
+                { name: "subscriptionFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "body" },
+                { name: "zeppelinGiftFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "zeppelinGiftFarm" }
+            ]
         });
+        
         HWHFuncs.setProgress('Daily Bonus: Done!', true);
     } catch (e) {
         console.error("Error in executeGetDailyBonus", e);
