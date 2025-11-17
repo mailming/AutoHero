@@ -234,7 +234,50 @@ Send('{"calls":[{"name":"userGetInfo","args":{},"ident":"body"}]}')
 - `id: 21` - **Grand Arena attempts available** (number of remaining grand arena battle attempts)
 - Other IDs represent various game resources
 
+**Accessing Refillable Data:**
+
+To get descriptions and metadata for all refillable resources, access `lib.data.refillable`:
+```javascript
+// Get all refillable resource descriptions
+const refillableData = lib.data.refillable;
+// This object contains metadata for all refillable types including:
+// - id: Resource ID
+// - ident: Identifier string (e.g., 'stamina', 'arena_battle')
+// - refillSeconds: Time in seconds until refill
+// - maxValue: Maximum value array
+// - maxRefillCount: Maximum refill count array
+// - refillByReset: Whether refill resets on daily reset
+// - refillCountResetLocalTime: Local time reset array
+// - serverTimeRefill: Whether server time is used for refill
+```
+
+To get the actual current values of refillable resources, use:
+```javascript
+// Using Caller class (recommended)
+const refillableValues = (await Caller.send('userGetInfo')).refillable;
+// Returns array of objects with:
+// - id: Resource type ID
+// - amount: Current amount/value
+// - lastRefill: Timestamp of last refill
+// - boughtToday: Number purchased today
+
+// Using Send function
+const userInfo = await Send('{"calls":[{"name":"userGetInfo","args":{},"ident":"body"}]}')
+  .then(e => e.results[0].result.response);
+const refillableValues = userInfo.refillable;
+```
+
 **Note:** Arena attempts are stored in the `refillable` array with `id: 6`. Grand Arena attempts are stored with `id: 21`. The `amount` field indicates how many battle attempts are currently available for each respective arena type.
+
+**Console Usage:**
+These commands can be executed directly in the browser console when using the HeroWarsHelper script:
+```javascript
+// Get refillable descriptions/metadata
+lib.data.refillable
+
+// Get current refillable values
+(await Caller.send('userGetInfo')).refillable
+```
 
 **Example Usage:**
 ```javascript

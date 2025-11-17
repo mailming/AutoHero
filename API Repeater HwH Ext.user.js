@@ -7,7 +7,7 @@
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
 // @grant        none
-// @run-at       document-end
+// @run-at       document-start
 // @downloadURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/API%20Repeater%20HwH%20Ext.user.js
 // @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/API%20Repeater%20HwH%20Ext.user.js
 // ==/UserScript==
@@ -29,6 +29,90 @@
     // --- STORAGE KEYS ---
     const STORAGE_RECORDINGS = 'apiRepeater_recordings';
     const STORAGE_SETTINGS = 'apiRepeater_settings';
+
+    // --- EARLY API INTERCEPTION (before HWH loads) ---
+    // Intercept XMLHttpRequest immediately to catch all API calls
+    // This runs at document-start, before HeroWarsHelper wraps XMLHttpRequest
+    (function() {
+        // Store original functions before any other script modifies them
+        const originalXHRSend = XMLHttpRequest.prototype.send;
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        
+        // Intercept open to capture URL
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+            this._apiRepeaterUrl = url;
+            this._apiRepeaterMethod = method;
+            return originalXHROpen.apply(this, [method, url, ...args]);
+        };
+        
+        // Intercept send to capture API calls
+        // Make it async to match HeroWarsHelper's wrapper
+        XMLHttpRequest.prototype.send = async function(sourceData) {
+            // Check if recording is active and this is an API call
+            if (isRecording && this._apiRepeaterUrl && typeof this._apiRepeaterUrl === 'string') {
+                const isApiCall = this._apiRepeaterUrl.includes('/api/') || 
+                                 this._apiRepeaterUrl.includes('heroes-wb.nextersglobal.com') ||
+                                 this._apiRepeaterUrl.includes('nextersglobal.com');
+                
+                if (isApiCall) {
+                    try {
+                        let callData = null;
+                        let tempData = null;
+                        
+                        // Handle data the same way HeroWarsHelper does (line 2119-2123)
+                        if (sourceData && typeof sourceData === 'string') {
+                            tempData = sourceData;
+                        } else if (sourceData instanceof ArrayBuffer) {
+                            // Handle ArrayBuffer (HeroWarsHelper uses this)
+                            const decoder = new TextDecoder('utf-8');
+                            tempData = decoder.decode(sourceData);
+                        } else {
+                            tempData = sourceData;
+                        }
+                        
+                        if (tempData && typeof tempData === 'string') {
+                            callData = JSON.parse(tempData);
+                            
+                            if (callData) {
+                                if (callData.calls && Array.isArray(callData.calls)) {
+                                    // Store each call in the buffer
+                                    callData.calls.forEach(call => {
+                                        const capturedCall = {
+                                            name: call.name,
+                                            args: call.args || {},
+                                            context: call.context || { actionTs: Date.now() },
+                                            ident: call.ident || 'body'
+                                        };
+                                        recordingBuffer.push(capturedCall);
+                                        console.log(`API Repeater: ✓ Captured API call - ${call.name}`, capturedCall);
+                                    });
+                                    console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                                } else if (callData.name && callData.args) {
+                                    // Handle single call object (not wrapped in calls array)
+                                    const capturedCall = {
+                                        name: callData.name,
+                                        args: callData.args || {},
+                                        context: callData.context || { actionTs: Date.now() },
+                                        ident: callData.ident || 'body'
+                                    };
+                                    recordingBuffer.push(capturedCall);
+                                    console.log(`API Repeater: ✓ Captured single API call - ${callData.name}`, capturedCall);
+                                    console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.error('API Repeater: Error capturing API call:', e, sourceData);
+                    }
+                }
+            }
+            
+            // Call original send (this will be the wrapped version if HWH has already wrapped it)
+            return await originalXHRSend.apply(this, arguments);
+        };
+        
+        console.log('API Repeater: Early XHR interception setup complete (document-start)');
+    })();
 
     // --- INITIALIZATION ---
     function waitForHWH(callback) {
@@ -54,6 +138,13 @@
 
         // Setup API interception
         setupAPIInterseption();
+        
+        // Verify interception worked
+        if (originalSend) {
+            console.log('API Repeater: API interception setup complete');
+        } else {
+            console.warn('API Repeater: API interception may not be working - originalSend is null');
+        }
 
         // Add menu button
         const scriptMenu = HWHClasses.ScriptMenu.getInst();
@@ -69,39 +160,47 @@
 
     // --- API INTERCEPTION ---
     function setupAPIInterseption() {
-        if (!window.Send || originalSend) return;
-        
-        originalSend = window.Send;
-        window.Send = function(data) {
-            // Call original Send function
-            const result = originalSend.apply(this, arguments);
-            
-            // Capture API call if recording is active
-            if (isRecording) {
-                try {
-                    let callData = data;
-                    if (typeof data === 'string') {
-                        callData = JSON.parse(data);
-                    }
-                    
-                    if (callData && callData.calls && Array.isArray(callData.calls)) {
-                        // Store each call in the buffer
-                        callData.calls.forEach(call => {
-                            recordingBuffer.push({
-                                name: call.name,
-                                args: call.args || {},
-                                context: call.context || { actionTs: Date.now() },
-                                ident: call.ident || 'body'
+        // XMLHttpRequest is already intercepted early, just wrap Send function here
+        // Store original Send if available (for replay)
+        if (window.Send && !originalSend) {
+            originalSend = window.Send;
+            window.Send = async function(data) {
+                // Capture API call if recording is active (before calling original)
+                if (isRecording) {
+                    try {
+                        let callData = data;
+                        if (typeof data === 'string') {
+                            callData = JSON.parse(data);
+                        } else if (data && typeof data === 'object') {
+                            callData = data;
+                        }
+                        
+                        if (callData && callData.calls && Array.isArray(callData.calls)) {
+                            // Store each call in the buffer
+                            callData.calls.forEach(call => {
+                                const capturedCall = {
+                                    name: call.name,
+                                    args: call.args || {},
+                                    context: call.context || { actionTs: Date.now() },
+                                    ident: call.ident || 'body'
+                                };
+                                recordingBuffer.push(capturedCall);
+                                console.log(`API Repeater: ✓ Captured API call via Send - ${call.name}`, capturedCall);
                             });
-                        });
+                            console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                        }
+                    } catch (e) {
+                        console.error('API Repeater: Error capturing API call from Send:', e, data);
                     }
-                } catch (e) {
-                    console.error('API Repeater: Error capturing API call:', e);
                 }
-            }
-            
-            return result;
-        };
+                
+                // Call original Send function (preserve async behavior)
+                return await originalSend.apply(this, arguments);
+            };
+            console.log('API Repeater: Send function wrapped');
+        }
+        
+        console.log('API Repeater: API interception setup complete (XHR already intercepted early)');
     }
 
     // --- STORAGE SYSTEM ---
@@ -139,13 +238,18 @@
         isRecording = true;
         recordingBuffer = [];
         const { HWHFuncs } = window;
+        console.log('API Repeater: Recording started. Buffer cleared.');
+        console.log('API Repeater: Send function type:', typeof window.Send);
+        console.log('API Repeater: originalSend type:', typeof originalSend);
+        console.log('API Repeater: isRecording =', isRecording);
         HWHFuncs.setProgress('API Repeater: Recording started', true);
     }
 
     function stopRecording() {
         isRecording = false;
         const { HWHFuncs } = window;
-        HWHFuncs.setProgress('API Repeater: Recording stopped', true);
+        console.log(`API Repeater: Recording stopped. Captured ${recordingBuffer.length} API call(s)`);
+        HWHFuncs.setProgress(`API Repeater: Recording stopped - ${recordingBuffer.length} calls captured`, true);
     }
 
     function createRecording(name, description, expirationDays, autoRun) {
@@ -410,14 +514,21 @@
         document.getElementById('start-recording-btn').addEventListener('click', () => {
             if (isRecording) {
                 stopRecording();
+                backdrop.remove();
+                // If we have captured calls, open the save dialog
                 if (recordingBuffer.length > 0) {
                     openCreateRecordingPopup();
+                } else {
+                    // No calls captured, just refresh the main popup
+                    const { HWHFuncs } = window;
+                    HWHFuncs.setProgress('API Repeater: No API calls captured', true);
+                    openMainPopup();
                 }
             } else {
                 startRecording();
+                backdrop.remove();
+                openMainPopup();
             }
-            backdrop.remove();
-            openMainPopup();
         });
         
         document.getElementById('export-btn').addEventListener('click', exportRecordings);
@@ -554,6 +665,12 @@
         backdrop.addEventListener('click', (e) => {
             if (e.target === backdrop || e.target.classList.contains('api-repeater-close-btn') || e.target.id === 'cancel-recording-btn') {
                 backdrop.remove();
+                // Clear the buffer if user cancels
+                if (e.target.id === 'cancel-recording-btn' || e.target.classList.contains('api-repeater-close-btn')) {
+                    recordingBuffer = [];
+                }
+                // Refresh main popup
+                openMainPopup();
             }
         });
         

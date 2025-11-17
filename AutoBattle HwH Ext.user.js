@@ -1459,7 +1459,8 @@
                     grandArena: false,
                     guildWar: false,
                     raidNodes: false,
-                    raidBoss: false
+                    raidBoss: false,
+                    titanArena: false
                 };
 
                 // 1. Auto Arena
@@ -1518,7 +1519,40 @@
                     console.error('AutoBattle: Raid Nodes error:', error);
                 }
 
-                // 5. Auto Raid Boss (Saturday or Sunday only)
+                // 5. Auto Titan Arena (Monday - Saturday only, not Sunday)
+                try {
+                    const today = new Date();
+                    const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+                    
+                    if (dayOfWeek >= 1 && dayOfWeek <= 6) {
+                        console.log('AutoBattle: Starting Titan Arena (ToE)...');
+                        HWHFuncs.setProgress('AutoBattle: Titan Arena (ToE)...');
+                        
+                        // Use HWHClasses.executeTitanArena if available, otherwise use local implementation
+                        if (window.HWHClasses && window.HWHClasses.executeTitanArena) {
+                            await new Promise((resolve, reject) => {
+                                const titanArena = new window.HWHClasses.executeTitanArena(resolve, reject);
+                                titanArena.start();
+                            });
+                        } else {
+                            // Fallback: use testTitanArena function if available
+                            if (window.testTitanArena && typeof window.testTitanArena === 'function') {
+                                await window.testTitanArena();
+                            } else {
+                                throw new Error('Titan Arena execution class not available');
+                            }
+                        }
+                        results.titanArena = true;
+                        console.log('%cAutoBattle: Titan Arena (ToE) completed', 'color: lightgreen; font-weight: bold;');
+                    } else {
+                        console.log(`AutoBattle: Skipping Titan Arena (not Monday-Saturday, current day: ${dayOfWeek})`);
+                        results.titanArena = false;
+                    }
+                } catch (error) {
+                    console.error('AutoBattle: Titan Arena error:', error);
+                }
+
+                // 6. Auto Raid Boss (Saturday or Sunday only)
                 try {
                     const today = new Date();
                     const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
@@ -1548,6 +1582,7 @@
                     `Grand Arena: ${results.grandArena ? '✓' : '✗'}`,
                     `Guild War: ${results.guildWar ? '✓' : '✗'}`,
                     `Raid Nodes: ${results.raidNodes ? '✓' : '✗'}`,
+                    `Titan Arena: ${results.titanArena ? '✓' : '✗'}`,
                     `Raid Boss: ${results.raidBoss ? '✓' : '✗'}`
                 ].join(' | ');
 
@@ -1618,6 +1653,40 @@
             }
         }
 
+        async function runTitanArena() {
+            try {
+                const today = new Date();
+                const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+                
+                if (dayOfWeek >= 1 && dayOfWeek <= 6) {
+                    HWHFuncs.setProgress('AutoBattle: Running Titan Arena (ToE)...');
+                    
+                    // Use HWHClasses.executeTitanArena if available, otherwise use local implementation
+                    if (window.HWHClasses && window.HWHClasses.executeTitanArena) {
+                        await new Promise((resolve, reject) => {
+                            const titanArena = new window.HWHClasses.executeTitanArena(resolve, reject);
+                            titanArena.start();
+                        });
+                    } else {
+                        // Fallback: use testTitanArena function if available
+                        if (window.testTitanArena && typeof window.testTitanArena === 'function') {
+                            await window.testTitanArena();
+                        } else {
+                            throw new Error('Titan Arena execution class not available');
+                        }
+                    }
+                    HWHFuncs.setProgress('AutoBattle: Titan Arena (ToE) complete!', true);
+                } else {
+                    const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+                    HWHFuncs.setProgress(`Titan Arena: Only available Monday-Saturday (today is ${dayName})`, true);
+                    console.log(`Titan Arena: Skipped - today is ${dayName}, only runs Monday-Saturday`);
+                }
+            } catch (error) {
+                console.error('Titan Arena error:', error);
+                HWHFuncs.setProgress(`Titan Arena error: ${error.message}`, true);
+            }
+        }
+
         async function runRaidBoss() {
             try {
                 const today = new Date();
@@ -1649,12 +1718,27 @@
         // Menu integration
         const { ScriptMenu } = HWHClasses;
         const scriptMenu = ScriptMenu.getInst();
+        
+        // Helper function to get I18N translation
+        function getI18N(key) {
+            if (window.I18N && typeof window.I18N === 'function') {
+                return window.I18N(key);
+            }
+            // Fallback translations
+            const fallbacks = {
+                'TITAN_ARENA': 'ToE',
+                'TITAN_ARENA_TITLE': 'Tournament of Elements'
+            };
+            return fallbacks[key] || key;
+        }
+        
         scriptMenu.addCombinedButton([
-            { name: '⚔️ Auto Battle', title: 'Run all auto-battles (Arena, Grand Arena, Guild War, Raids, Boss)', onClick: autoBattle, color: 'green' },
+            { name: '⚔️ Auto Battle', title: 'Run all auto-battles (Arena, Grand Arena, Guild War, Raids, ToE, Boss)', onClick: autoBattle, color: 'green' },
             { name: 'Arena', title: 'Run Arena battles only', onClick: runArena, color: 'blue' },
             { name: 'Grand Arena', title: 'Run Grand Arena battles only', onClick: runGrandArena, color: 'blue' },
             { name: 'Guild War', title: 'Run Guild War attacks only', onClick: runGuildWar, color: 'purple' },
             { name: 'Raid Nodes', title: 'Run Raid Nodes only', onClick: runRaidNodes, color: 'orange' },
+            { name: getI18N('TITAN_ARENA'), title: `Run ${getI18N('TITAN_ARENA')} only (Monday-Saturday)`, onClick: runTitanArena, color: 'cyan' },
             { name: 'Raid Boss', title: 'Run Raid Boss attacks only (5 attacks)', onClick: runRaidBoss, color: 'red' }
         ]);
 
