@@ -307,13 +307,17 @@
             return;
         }
 
-        try {
-            HWHFuncs.setProgress(`API Repeater: Executing ${recording.name}...`, true);
+        HWHFuncs.setProgress(`API Repeater: Executing ${recording.name}...`, true);
+        
+        let successCount = 0;
+        let failureCount = 0;
+        const errors = [];
+        
+        // Execute API calls one by one to avoid duplicate ident errors
+        for (let i = 0; i < recording.apiCalls.length; i++) {
+            const call = recording.apiCalls[i];
             
-            // Execute API calls one by one to avoid duplicate ident errors
-            for (let i = 0; i < recording.apiCalls.length; i++) {
-                const call = recording.apiCalls[i];
-                
+            try {
                 // Prepare call with updated timestamp and unique ident
                 const callToExecute = {
                     name: call.name,
@@ -323,18 +327,55 @@
                 };
 
                 // Execute single API call
-                await Send({ calls: [callToExecute] });
+                const response = await Send({ calls: [callToExecute] });
                 
-                // Add delay between calls (similar to Auto Daily Extension)
-                if (i < recording.apiCalls.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+                // Check for API errors in response
+                if (response && response.error) {
+                    const errorMsg = `API Error: ${response.error.name || 'Unknown'} - ${response.error.description || 'No description'}`;
+                    errors.push({
+                        callIndex: i + 1,
+                        callName: call.name,
+                        error: errorMsg,
+                        fullError: response.error
+                    });
+                    failureCount++;
+                    console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed:`, errorMsg);
+                    HWHFuncs.setProgress(`API Repeater: ${recording.name} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed: ${errorMsg}`, true);
+                } else {
+                    successCount++;
+                    console.log(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) succeeded`);
                 }
+                
+            } catch (e) {
+                // Handle execution errors (network, timeout, etc.)
+                const errorMsg = e.message || String(e);
+                errors.push({
+                    callIndex: i + 1,
+                    callName: call.name,
+                    error: errorMsg,
+                    fullError: e
+                });
+                failureCount++;
+                console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) threw error:`, e);
+                HWHFuncs.setProgress(`API Repeater: ${recording.name} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) error: ${errorMsg}`, true);
             }
             
-            HWHFuncs.setProgress(`API Repeater: ${recording.name} - Done! (${recording.apiCalls.length} calls)`, true);
-        } catch (e) {
-            console.error(`API Repeater: Error executing ${recording.name}:`, e);
-            HWHFuncs.setProgress(`API Repeater: ${recording.name} - Error: ${e.message || e}`, true);
+            // Add delay between calls (similar to Auto Daily Extension)
+            if (i < recording.apiCalls.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+            }
+        }
+        
+        // Final summary
+        const summary = `API Repeater: ${recording.name} - Completed: ${successCount} succeeded, ${failureCount} failed out of ${recording.apiCalls.length} total`;
+        console.log(summary);
+        
+        if (errors.length > 0) {
+            console.error(`API Repeater: ${recording.name} - Errors:`, errors);
+            const errorDetails = errors.map(e => `Call ${e.callIndex} (${e.callName}): ${e.error}`).join('; ');
+            HWHFuncs.setProgress(`${summary}. Errors: ${errorDetails}`, true);
+        } else {
+            HWHFuncs.setProgress(`${summary}`, true);
         }
     }
 
