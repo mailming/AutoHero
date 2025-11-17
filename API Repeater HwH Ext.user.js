@@ -30,6 +30,13 @@
     const STORAGE_RECORDINGS = 'apiRepeater_recordings';
     const STORAGE_SETTINGS = 'apiRepeater_settings';
 
+    // --- API CALLS TO SKIP DURING RECORDING ---
+    // These API calls will be ignored when recording
+    const SKIP_API_CALLS = new Set([
+        'specialOffer_check',
+        'stashClient'
+    ]);
+
     // --- EARLY API INTERCEPTION (before HWH loads) ---
     // Intercept XMLHttpRequest immediately to catch all API calls
     // This runs at document-start, before HeroWarsHelper wraps XMLHttpRequest
@@ -75,8 +82,14 @@
                             
                             if (callData) {
                                 if (callData.calls && Array.isArray(callData.calls)) {
-                                    // Store each call in the buffer
+                                    // Store each call in the buffer (skip filtered APIs)
                                     callData.calls.forEach(call => {
+                                        // Skip API calls in the skip list
+                                        if (SKIP_API_CALLS.has(call.name)) {
+                                            console.log(`API Repeater: ⊘ Skipped API call - ${call.name} (in skip list)`);
+                                            return;
+                                        }
+                                        
                                         const capturedCall = {
                                             name: call.name,
                                             args: call.args || {},
@@ -88,16 +101,21 @@
                                     });
                                     console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
                                 } else if (callData.name && callData.args) {
-                                    // Handle single call object (not wrapped in calls array)
-                                    const capturedCall = {
-                                        name: callData.name,
-                                        args: callData.args || {},
-                                        context: callData.context || { actionTs: Date.now() },
-                                        ident: callData.ident || 'body'
-                                    };
-                                    recordingBuffer.push(capturedCall);
-                                    console.log(`API Repeater: ✓ Captured single API call - ${callData.name}`, capturedCall);
-                                    console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                                    // Skip API calls in the skip list
+                                    if (SKIP_API_CALLS.has(callData.name)) {
+                                        console.log(`API Repeater: ⊘ Skipped API call - ${callData.name} (in skip list)`);
+                                    } else {
+                                        // Handle single call object (not wrapped in calls array)
+                                        const capturedCall = {
+                                            name: callData.name,
+                                            args: callData.args || {},
+                                            context: callData.context || { actionTs: Date.now() },
+                                            ident: callData.ident || 'body'
+                                        };
+                                        recordingBuffer.push(capturedCall);
+                                        console.log(`API Repeater: ✓ Captured single API call - ${callData.name}`, capturedCall);
+                                        console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                                    }
                                 }
                             }
                         }
@@ -176,8 +194,14 @@
                         }
                         
                         if (callData && callData.calls && Array.isArray(callData.calls)) {
-                            // Store each call in the buffer
+                            // Store each call in the buffer (skip filtered APIs)
                             callData.calls.forEach(call => {
+                                // Skip API calls in the skip list
+                                if (SKIP_API_CALLS.has(call.name)) {
+                                    console.log(`API Repeater: ⊘ Skipped API call via Send - ${call.name} (in skip list)`);
+                                    return;
+                                }
+                                
                                 const capturedCall = {
                                     name: call.name,
                                     args: call.args || {},
