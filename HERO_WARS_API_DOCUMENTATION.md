@@ -2438,11 +2438,102 @@ Send({
 ```
 
 **Response Fields:**
+
+**War Information:**
+- `avgLevel` (string): Average level of clan members
+- `season` (string): Current war season identifier (e.g., "202547")
+- `day` (string): Current day of the war (e.g., "1")
+- `league` (string): League level (e.g., "1")
+- `enemyId` (string): ID of the enemy clan
+- `points` (string): Your clan's current war points
+- `enemyPoints` (string): Enemy clan's current war points
+
+**Enemy Clan Information:**
+- `enemyClan` (object): Complete enemy clan information
+  - `id` (string): Clan ID
+  - `ownerId` (string): Clan owner's user ID
+  - `level` (string): Clan level
+  - `title` (string): Clan name
+  - `description` (string): Clan description
+  - `icon` (object): Clan icon configuration
+    - `flagColor1` (number): First flag color
+    - `flagColor2` (number): Second flag color
+    - `flagShape` (number): Flag shape ID
+    - `iconColor` (number): Icon color ID
+    - `iconShape` (number): Icon shape ID
+  - `country` (string): Country code
+  - `minLevel` (string): Minimum level requirement
+  - `serverId` (string): Server ID
+  - `membersCount` (string): Number of clan members
+  - `disbanding` (boolean): Whether clan is disbanding
+  - `topActivity` (string): Top activity score
+  - `topDungeon` (string): Top dungeon score
+  - `roleNames` (array): Role names array
+  - `frameId` (number): Frame ID
+
+**Enemy Clan Members:**
+- `enemyClanMembers` (object): Map of user IDs (as string keys) to member information
+  - **Structure:** Each key is a user ID string, and the value is a member object
+  - Each member object contains:
+    - `id` (string): User ID (same as the map key)
+    - `name` (string): Player name
+    - `lastLoginTime` (string): Unix timestamp of last login
+    - `serverId` (string): Server ID
+    - `level` (string): Player level
+    - `clanId` (string): Clan ID
+    - `clanRole` (string): Role in clan
+      - `"255"`: Clan leader/owner
+      - `"4"`: Commander
+      - `"3"`: Officer
+      - `"2"`: Member
+    - `commander` (boolean): Whether player is a commander (true for commanders and leaders)
+    - `avatarId` (string): Avatar ID
+    - `isChatModerator` (boolean): Chat moderator status
+    - `frameId` (number): Frame ID
+    - `leagueId` (number): League ID
+    - `allowPm` (string): PM permission setting ("all", "friends", "none")
+    - `clanTitle` (string): Clan name
+    - `clanIcon` (object): Clan icon configuration (same structure as enemyClan.icon)
+      - `flagColor1` (number): First flag color
+      - `flagColor2` (number): Second flag color
+      - `flagShape` (number): Flag shape ID
+      - `iconColor` (number): Icon color ID
+      - `iconShape` (number): Icon shape ID
+
+**Attack Attempts:**
+- `myTries` (number, **conditional**): **Number of remaining Guild War attack attempts** (not stored in refillable system)
+  - **Important:** This field only exists when ClanWar is **active**. If there is no active war, this field will not be present in the response.
+- `clanTries` (object): Map of user IDs to their remaining attack attempts
+  - Each user ID maps to a number (0-2, typically 2 max attempts per day)
+  - `clan` (number): Total clan attempts used
+- `enemyClanTries` (object): Map of enemy user IDs to their remaining attack attempts
+  - Same structure as `clanTries`
+  - `clan` (number): Total enemy clan attempts used
+
+**Enemy Defense Slots:**
+- `enemySlots` (object): Map of slot IDs (1-40) to slot defense information
+  - Slot IDs 1-20 are hero battles
+  - Slot IDs 21-40 are titan battles
+  - Each slot contains:
+    - `team` (array): Array of team members (heroes or titans)
+      - Each team member is an object with position key ("1", "2", etc.)
+        - `id` (number): Hero or titan ID
+        - `star` (number): Star level
+        - `color` (number): Color/ascension level
+        - `level` (number): Unit level
+        - `power` (number): Unit power
+        - `type` (string): "hero" or "titan"
+        - `state` (object): Current battle state
+          - `hp` (number): Current HP
+          - `energy` (number): Current energy
+          - `isDead` (boolean): Whether unit is dead
+          - `maxHp` (number): Maximum HP
+
+**Defense Teams (from clanWarGetDefence):**
 - `slots`: Map of slot IDs (1-40) to defending player IDs
 - `teams`: Team configurations for different players
   - `clanDefence_heroes`: Hero defense team for Guild War (for slots 1-20)
   - `clanDefence_titans`: Titan defense team for Guild War (for slots 21-40)
-- `myTries`: **Number of remaining Guild War attack attempts** (not stored in refillable system)
 - `arePointsMax`: Boolean indicating if maximum points have been reached
 
 **Note:** Unlike Arena and Grand Arena which track attempts in the `refillable` array, Guild War attempts are tracked directly in the `clanWarGetInfo` response as `myTries`.
@@ -2456,8 +2547,115 @@ const response = await Send({
 });
 
 const guildWarInfo = response.results[0].result.response;
-const attemptsRemaining = guildWarInfo.myTries ?? 0;
-console.log(`Guild War attempts remaining: ${attemptsRemaining}`);
+
+// Check attack attempts (only exists when war is active)
+if ('myTries' in guildWarInfo) {
+  const attemptsRemaining = guildWarInfo.myTries ?? 0;
+  console.log(`Guild War attempts remaining: ${attemptsRemaining}`);
+} else {
+  console.log('No active Guild War - myTries field not available');
+}
+
+// Get war information
+console.log(`Season: ${guildWarInfo.season}, Day: ${guildWarInfo.day}, League: ${guildWarInfo.league}`);
+console.log(`Points: ${guildWarInfo.points} vs ${guildWarInfo.enemyPoints}`);
+
+// Get enemy clan information
+const enemyClan = guildWarInfo.enemyClan;
+console.log(`Enemy Clan: ${enemyClan.title} (Level ${enemyClan.level}, ${enemyClan.membersCount} members)`);
+
+// Get enemy clan members
+const enemyMembers = guildWarInfo.enemyClanMembers;
+console.log(`Enemy has ${Object.keys(enemyMembers).length} members`);
+
+// Iterate through enemy clan members with detailed information
+for (const [userId, member] of Object.entries(enemyMembers)) {
+  console.log(`\nMember: ${member.name} (ID: ${member.id})`);
+  console.log(`  Level: ${member.level}`);
+  console.log(`  Server ID: ${member.serverId}`);
+  
+  // Role information
+  let roleName = 'Member';
+  if (member.clanRole === "255") roleName = 'Leader/Owner';
+  else if (member.clanRole === "4") roleName = 'Commander';
+  else if (member.clanRole === "3") roleName = 'Officer';
+  console.log(`  Role: ${roleName} (clanRole: ${member.clanRole})`);
+  console.log(`  Is Commander: ${member.commander}`);
+  
+  // Activity information
+  const lastLogin = new Date(parseInt(member.lastLoginTime) * 1000);
+  const daysSinceLogin = Math.floor((Date.now() - lastLogin.getTime()) / (1000 * 60 * 60 * 24));
+  console.log(`  Last Login: ${lastLogin.toLocaleString()} (${daysSinceLogin} days ago)`);
+  
+  // Profile information
+  console.log(`  Avatar ID: ${member.avatarId}`);
+  console.log(`  Frame ID: ${member.frameId}`);
+  console.log(`  League ID: ${member.leagueId}`);
+  console.log(`  PM Allowed: ${member.allowPm}`);
+  console.log(`  Chat Moderator: ${member.isChatModerator}`);
+  
+  // Clan information
+  console.log(`  Clan: ${member.clanTitle} (ID: ${member.clanId})`);
+  console.log(`  Clan Icon: flagColor1=${member.clanIcon.flagColor1}, flagColor2=${member.clanIcon.flagColor2}, flagShape=${member.clanIcon.flagShape}`);
+}
+
+// Find commanders and leaders
+const commanders = Object.values(enemyMembers).filter(m => m.commander);
+const leaders = Object.values(enemyMembers).filter(m => m.clanRole === "255");
+const officers = Object.values(enemyMembers).filter(m => m.clanRole === "3");
+const regularMembers = Object.values(enemyMembers).filter(m => m.clanRole === "2");
+
+console.log(`\nEnemy clan structure:`);
+console.log(`  Leaders: ${leaders.length}`);
+console.log(`  Commanders: ${commanders.length}`);
+console.log(`  Officers: ${officers.length}`);
+console.log(`  Regular Members: ${regularMembers.length}`);
+
+// Find most active members (recent login)
+const activeMembers = Object.values(enemyMembers)
+  .filter(m => {
+    const lastLogin = parseInt(m.lastLoginTime) * 1000;
+    const daysSinceLogin = (Date.now() - lastLogin) / (1000 * 60 * 60 * 24);
+    return daysSinceLogin <= 7; // Active within last 7 days
+  })
+  .sort((a, b) => parseInt(b.lastLoginTime) - parseInt(a.lastLoginTime));
+
+console.log(`\nMost active members (last 7 days): ${activeMembers.length}`);
+activeMembers.slice(0, 5).forEach(m => {
+  const lastLogin = new Date(parseInt(m.lastLoginTime) * 1000);
+  console.log(`  ${m.name} (Level ${m.level}) - Last login: ${lastLogin.toLocaleString()}`);
+});
+
+// Find highest level members
+const topLevelMembers = Object.values(enemyMembers)
+  .sort((a, b) => parseInt(b.level) - parseInt(a.level))
+  .slice(0, 5);
+
+console.log(`\nTop 5 highest level members:`);
+topLevelMembers.forEach(m => {
+  console.log(`  ${m.name} - Level ${m.level}, Power: ${m.power || 'N/A'}`);
+});
+
+// Get enemy defense slots
+const enemySlots = guildWarInfo.enemySlots;
+for (const [slotId, slotData] of Object.entries(enemySlots)) {
+  const slotNum = parseInt(slotId);
+  const battleType = slotNum <= 20 ? 'Hero' : 'Titan';
+  const team = slotData.team;
+  console.log(`Slot ${slotId} (${battleType}): ${team.length} units`);
+  
+  // Access individual team members
+  team.forEach((memberObj, index) => {
+    const position = Object.keys(memberObj)[0];
+    const member = memberObj[position];
+    console.log(`  Position ${position}: ${member.type} ID ${member.id}, Level ${member.level}, Power ${member.power}`);
+  });
+}
+
+// Get clan attack attempts
+const clanTries = guildWarInfo.clanTries;
+console.log(`Total clan attempts used: ${clanTries.clan}`);
+console.log(`Enemy clan attempts used: ${guildWarInfo.enemyClanTries.clan}`);
 ```
 
 #### clanWarAttack
@@ -2726,12 +2924,101 @@ Send({
 })
 ```
 
-**Response:** Contains detailed information about the Cross Clan War, including:
-- War status and timing
-- Available battle slots
-- Opponent clan information
-- Battle results
-- Rewards and standings
+**Response Fields:**
+
+**Season and Timing Information:**
+- `season` (number): Current season number (e.g., 13)
+- `plannedSeason` (number): Planned/upcoming season number
+- `seasonEndTime` (number): Unix timestamp when current season ends
+- `nextSeasonStartTime` (number): Unix timestamp when next season starts
+- `nextWarTime` (number): Unix timestamp of next war start
+- `nextLockTime` (number): Unix timestamp when war locks (defense setup deadline)
+
+**War Status:**
+- `war` (object): Current war information (null if no active war)
+  - `id` (number): War ID
+  - `endTime` (number): Unix timestamp when war ends
+  - `enemyClan` (object): Enemy clan information
+    - `id` (string): Enemy clan ID
+    - `serverId` (string): Server ID where enemy clan is located
+    - `title` (string): Enemy clan name
+    - `icon` (object): Enemy clan icon configuration
+      - `flagColor1` (number): First flag color
+      - `flagColor2` (number): Second flag color
+      - `flagShape` (number): Flag shape ID
+      - `iconColor` (number): Icon color ID
+      - `iconShape` (number): Icon shape ID
+  - `myTries` (object): Your attack attempts information
+    - `heroes` (number): Remaining hero battle attempts
+    - `titans` (number): Remaining titan battle attempts
+    - `usedHeroes` (array): Array of slot IDs where hero battles were used
+    - `usedTitans` (array): Array of slot IDs where titan battles were used
+  - `points` (string): Your clan's current war points
+  - `enemyPoints` (string): Enemy clan's current war points
+
+**Defense Status:**
+- `defendedSlots` (number): Number of slots currently defended
+- `requiredDefendedSlots` (number): Minimum number of slots required to be defended
+
+**Settings:**
+- `settings` (object): War configuration settings
+  - `restrictAttackForeignOrder` (boolean): Whether attacks must follow a specific order
+  - `fillDefenceByCommander` (boolean): Whether defense is auto-filled by commanders
+
+**Rating and League:**
+- `rating` (string): Current clan rating
+- `division` (number): Current division number
+- `league` (number): Current league level
+- `maxLeague` (number): Maximum league level achieved
+
+**Example Usage:**
+```javascript
+const response = await Send({
+  calls: [{
+    name: "crossClanWar_getInfo",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "group_1_body"
+  }]
+});
+
+const cowInfo = response.results[0].result.response;
+
+// Check if war is active
+if (cowInfo.war) {
+  const war = cowInfo.war;
+  console.log(`War ID: ${war.id}`);
+  console.log(`Enemy Clan: ${war.enemyClan.title} (Server ${war.enemyClan.serverId})`);
+  console.log(`Points: ${war.points} vs ${war.enemyPoints}`);
+  
+  // Check attack attempts
+  const myTries = war.myTries;
+  console.log(`Hero attempts remaining: ${myTries.heroes}`);
+  console.log(`Titan attempts remaining: ${myTries.titans}`);
+  console.log(`Used hero slots: ${myTries.usedHeroes.join(', ')}`);
+  console.log(`Used titan slots: ${myTries.usedTitans.join(', ')}`);
+  
+  // Check war timing
+  const now = Math.floor(Date.now() / 1000);
+  const timeRemaining = war.endTime - now;
+  console.log(`War ends in: ${Math.floor(timeRemaining / 3600)} hours`);
+} else {
+  console.log('No active war');
+}
+
+// Season information
+console.log(`Season: ${cowInfo.season}`);
+console.log(`Rating: ${cowInfo.rating}`);
+console.log(`League: ${cowInfo.league}/${cowInfo.maxLeague}`);
+console.log(`Division: ${cowInfo.division}`);
+
+// Defense status
+console.log(`Defended slots: ${cowInfo.defendedSlots}/${cowInfo.requiredDefendedSlots}`);
+
+// Next war timing
+const nextWarTime = new Date(cowInfo.nextWarTime * 1000);
+console.log(`Next war starts: ${nextWarTime.toLocaleString()}`);
+```
 
 #### crossClanWar_startBattle
 

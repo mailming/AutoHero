@@ -743,17 +743,56 @@
             this.teamInfo = null;
             this.slots = [];
             this.currentSlot = 1;
+            this.myTries = null;
 
             this.start = async function() {
                 setProgress(`${I18N('GUILD_WAR')}: ${I18N('INITIALIZING')}...`);
 
                 try {
+                    await this.getGuildWarInfo();
                     await this.getTeamData();
                     await this.attackDirectSlots();
                 } catch (error) {
                     console.error('Guild War error:', error);
                     this.end(`Error: ${error.message}`);
                 }
+            }
+
+            this.getGuildWarInfo = async function() {
+                console.log('Getting Guild War info...');
+                
+                const calls = [{
+                    name: "clanWarGetInfo",
+                    args: {},
+                    context: { actionTs: Date.now() },
+                    ident: "clanWarGetInfo"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`Guild War info API error: ${response.error.name} - ${response.error.description}`);
+                }
+                
+                if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                    throw new Error('Invalid clanWarGetInfo response');
+                }
+
+                this.guildWarInfo = response.results[0].result.response;
+                
+                // Check if myTries exists (only exists when war is active)
+                if ('myTries' in this.guildWarInfo) {
+                    this.myTries = this.guildWarInfo.myTries;
+                    console.log(`Guild War attempts remaining: ${this.myTries}`);
+                    
+                    if (this.myTries <= 0) {
+                        throw new Error('No Guild War attempts remaining');
+                    }
+                } else {
+                    throw new Error('Guild War is not currently active - myTries field not available');
+                }
+
+                console.log('Guild War info loaded');
             }
 
             this.getTeamData = async function() {
@@ -872,6 +911,15 @@
             this.attackSlot = async function(slotId) {
                 console.log(`Attacking slot ${slotId}...`);
                 
+                // Check if myTries exists and is greater than 0 before attacking
+                if (this.myTries === null || this.myTries === undefined) {
+                    throw new Error('Guild War attempts not available - war may not be active');
+                }
+                
+                if (this.myTries <= 0) {
+                    throw new Error(`No Guild War attempts remaining (myTries: ${this.myTries})`);
+                }
+                
                 const isTitanBattle = (slotId === 8 || slotId === 9);
                 
                 let teamConfig;
@@ -939,6 +987,13 @@
                 }
 
                 console.log(`Slot ${slotId} attack completed successfully`);
+                
+                // Decrement myTries after successful attack
+                if (this.myTries !== null && this.myTries !== undefined) {
+                    this.myTries--;
+                    console.log(`Guild War attempts remaining: ${this.myTries}`);
+                }
+                
                 return result;
             }
 
