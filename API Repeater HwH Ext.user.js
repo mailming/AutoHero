@@ -31,11 +31,26 @@
     const STORAGE_SETTINGS = 'apiRepeater_settings';
 
     // --- API CALLS TO SKIP DURING RECORDING ---
-    // These API calls will be ignored when recording
+    // These API calls will be ignored when recording (case-insensitive check)
     const SKIP_API_CALLS = new Set([
         'specialOffer_check',
         'stashClient'
     ]);
+    
+    // Helper function to check if API call should be skipped (case-insensitive)
+    function shouldSkipAPICall(apiName) {
+        if (!apiName || typeof apiName !== 'string') return false;
+        // Check exact match first (most common case)
+        if (SKIP_API_CALLS.has(apiName)) return true;
+        // Check case-insensitive match
+        const lowerName = apiName.toLowerCase();
+        for (const skipName of SKIP_API_CALLS) {
+            if (skipName.toLowerCase() === lowerName) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // --- EARLY API INTERCEPTION (before HWH loads) ---
     // Intercept XMLHttpRequest immediately to catch all API calls
@@ -85,7 +100,8 @@
                                     // Store each call in the buffer (skip filtered APIs)
                                     callData.calls.forEach(call => {
                                         // Skip API calls in the skip list
-                                        if (SKIP_API_CALLS.has(call.name)) {
+                                        if (!call || !call.name) return;
+                                        if (shouldSkipAPICall(call.name)) {
                                             console.log(`API Repeater: ⊘ Skipped API call - ${call.name} (in skip list)`);
                                             return;
                                         }
@@ -101,10 +117,8 @@
                                     });
                                     console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
                                 } else if (callData.name && callData.args) {
-                                    // Skip API calls in the skip list
-                                    if (SKIP_API_CALLS.has(callData.name)) {
-                                        console.log(`API Repeater: ⊘ Skipped API call - ${callData.name} (in skip list)`);
-                                    } else {
+                                    // Skip API calls in the skip list - check first before processing
+                                    if (!shouldSkipAPICall(callData.name)) {
                                         // Handle single call object (not wrapped in calls array)
                                         const capturedCall = {
                                             name: callData.name,
@@ -115,6 +129,8 @@
                                         recordingBuffer.push(capturedCall);
                                         console.log(`API Repeater: ✓ Captured single API call - ${callData.name}`, capturedCall);
                                         console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                                    } else {
+                                        console.log(`API Repeater: ⊘ Skipped single API call - ${callData.name} (in skip list)`);
                                     }
                                 }
                             }
@@ -197,7 +213,8 @@
                             // Store each call in the buffer (skip filtered APIs)
                             callData.calls.forEach(call => {
                                 // Skip API calls in the skip list
-                                if (SKIP_API_CALLS.has(call.name)) {
+                                if (!call || !call.name) return;
+                                if (shouldSkipAPICall(call.name)) {
                                     console.log(`API Repeater: ⊘ Skipped API call via Send - ${call.name} (in skip list)`);
                                     return;
                                 }
@@ -277,6 +294,12 @@
     }
 
     function createRecording(name, description, expirationDays, autoRun) {
+        // Filter out any skipped API calls as a safety measure
+        const filteredCalls = recordingBuffer.filter(call => {
+            if (!call || !call.name) return false;
+            return !shouldSkipAPICall(call.name);
+        });
+        
         const recording = {
             id: Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9),
             name: name || 'Unnamed Recording',
@@ -285,7 +308,7 @@
             expirationDays: expirationDays || 0,
             expiresAt: expirationDays > 0 ? Date.now() + (expirationDays * 24 * 60 * 60 * 1000) : null,
             autoRun: autoRun || false,
-            apiCalls: [...recordingBuffer]
+            apiCalls: filteredCalls
         };
         
         recordings.push(recording);
