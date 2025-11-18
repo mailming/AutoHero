@@ -646,6 +646,130 @@
             }
         }
 
+        // Function to open adventure configuration and start popup
+        async function openAdventureConfigPopup() {
+            try {
+                // Check if user is already on an adventure
+                const hasActive = await hasActiveAdventure();
+                if (hasActive) {
+                    await popup.confirm('You are already on an adventure. Please complete it first.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                // Check portal charges
+                const portalCharge = await getPortalCharge();
+                if (portalCharge === 0) {
+                    await popup.confirm('No portal charges available.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                // Create popup content
+                const popupContent = document.createElement('div');
+                popupContent.style.cssText = 'display: flex; flex-direction: column; gap: 15px; padding: 15px; color: #fce1ac;';
+
+                // Adventure Level Input Section
+                const adventureLevelSection = document.createElement('div');
+                adventureLevelSection.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 10px; background: rgba(58, 46, 36, 0.5); border-radius: 4px;';
+                
+                const adventureLevelLabel = document.createElement('label');
+                adventureLevelLabel.textContent = 'Adventure Level:';
+                adventureLevelLabel.style.cssText = 'min-width: 140px; font-weight: bold; font-size: 14px;';
+                
+                const adventureLevelInput = document.createElement('input');
+                adventureLevelInput.type = 'number';
+                adventureLevelInput.value = getSaveVal('adventureId', 13);
+                adventureLevelInput.min = 1;
+                adventureLevelInput.max = 13;
+                adventureLevelInput.style.cssText = 'flex: 1; padding: 8px; background: #3a2e24; border: 1px solid #ce9767; color: #fce1ac; border-radius: 4px; font-size: 14px;';
+                
+                adventureLevelSection.appendChild(adventureLevelLabel);
+                adventureLevelSection.appendChild(adventureLevelInput);
+                popupContent.appendChild(adventureLevelSection);
+
+                // Info Section
+                const infoSection = document.createElement('div');
+                infoSection.style.cssText = 'padding: 10px; background: rgba(58, 46, 36, 0.3); border-radius: 4px; font-size: 12px;';
+                infoSection.innerHTML = `
+                    <div style="margin-bottom: 5px;"><strong>Portal Charges:</strong> ${portalCharge}</div>
+                    <div><strong>Note:</strong> Adventure will start with orange path automatically.</div>
+                `;
+                popupContent.appendChild(infoSection);
+
+                // Create popup
+                const popupPromise = popup.confirm('Configure Adventure Level and Start', [
+                    { msg: 'Start Adventure', result: true, color: 'green' },
+                    { msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red' }
+                ]);
+
+                // Wait for popup to initialize, then replace content
+                await new Promise(resolve => setTimeout(resolve, 0));
+                
+                const popupBody = document.querySelector('.PopUp_Container');
+                if (popupBody) {
+                    popupBody.innerHTML = '';
+                    popupBody.appendChild(popupContent);
+                }
+
+                const answer = await popupPromise;
+
+                if (!answer) {
+                    return; // User cancelled
+                }
+
+                // Save adventure level
+                const newAdventureId = parseInt(adventureLevelInput.value) || 13;
+                if (newAdventureId < 1 || newAdventureId > 13) {
+                    await popup.confirm('Invalid adventure level. Must be between 1 and 13.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                setSaveVal('adventureId', newAdventureId);
+                console.log(`Adventure level saved: ${newAdventureId}`);
+
+                // Check again if user started an adventure while popup was open
+                const hasActiveNow = await hasActiveAdventure();
+                if (hasActiveNow) {
+                    await popup.confirm('An adventure was already started. Please complete it first.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                // Start adventure
+                setProgress(`Starting adventure ${newAdventureId}...`, false);
+                await startNewAdventure(newAdventureId);
+                
+                // Wait a bit for adventure to initialize
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Run adventure with orange path
+                setProgress('Running adventure with orange path...', false);
+                await runAdventureWithOrangePath();
+                setProgress('Adventure started and running', true);
+            } catch (error) {
+                console.error('Error in adventure config popup:', error);
+                setProgress(`Error: ${error.message}`, true);
+            }
+        }
+
+        // Add menu button for adventure configuration
+        const { ScriptMenu } = window.HWHClasses;
+        const scriptMenu = ScriptMenu.getInst();
+        scriptMenu.addCombinedButton([
+            { 
+                name: '⚙️ Adventure Config', 
+                title: 'Configure adventure level and start adventure (when not on adventure)', 
+                onClick: openAdventureConfigPopup, 
+                color: 'purple' 
+            }
+        ]);
+
         // Auto-execute on initialization
         autoAdventureRaidOrStart().catch(error => {
             console.error('Auto adventure raid/start failed:', error);
