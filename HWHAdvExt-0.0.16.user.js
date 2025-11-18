@@ -54,7 +54,8 @@
 
         injectCustomStyles();
 
-        const { addExtentionName, getSaveVal, I18N, popup, setSaveVal } = window.HWHFuncs;
+        const { addExtentionName, getSaveVal, I18N, popup, setSaveVal, setProgress } = window.HWHFuncs;
+        const { Send } = window;
         addExtentionName(GM_info.script.name, GM_info.script.version, GM_info.script.author);
 
         // This object now contains separate keys for 'adventure' and 'storm' paths.
@@ -379,6 +380,276 @@
         }
 
         window.HWHClasses.executeAdventure = ExtCombinedAdventureStorm;
+
+        // Auto-execute adventure raid or start logic
+        async function autoAdventureRaidOrStart() {
+            try {
+                setProgress('Checking adventure raid availability...', false);
+                
+                // Check if can raid adventure
+                const canRaid = await canRaidAdventure();
+                if (canRaid.canRaid) {
+                    console.log(`%cCan raid adventure ${canRaid.adventureId}`, 'color: green');
+                    setProgress(`Raid available for adventure ${canRaid.adventureId}. Raiding...`, false);
+                    await raidAdventure(canRaid.adventureId, canRaid.maxCount);
+                    setProgress(`Raid completed ${canRaid.maxCount} times`, true);
+                    return;
+                }
+
+                // Check if portal charge available and no active adventure
+                setProgress('Checking portal charges and adventure status...', false);
+                const portalCharge = await getPortalCharge();
+                const hasActive = await hasActiveAdventure();
+
+                if (portalCharge > 0 && !hasActive) {
+                    console.log(`%cPortal charges available (${portalCharge}) and no active adventure. Starting new adventure...`, 'color: green');
+                    const adventureId = getSaveVal('adventureId', 13);
+                    setProgress(`Starting adventure ${adventureId}...`, false);
+                    await startNewAdventure(adventureId);
+                    
+                    // Wait a bit for adventure to initialize
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // Run adventure with orange path
+                    setProgress('Running adventure with orange path...', false);
+                    await runAdventureWithOrangePath();
+                    setProgress('Adventure started and running', true);
+                } else {
+                    if (portalCharge === 0) {
+                        console.log('%cNo portal charges available', 'color: yellow');
+                        setProgress('No portal charges available', true);
+                    } else if (hasActive) {
+                        console.log('%cAdventure already active', 'color: yellow');
+                        setProgress('Adventure already active', true);
+                    }
+                }
+            } catch (error) {
+                console.error('Auto adventure raid/start error:', error);
+                setProgress(`Error: ${error.message}`, true);
+            }
+        }
+
+        // Check if adventure can be raided
+        async function canRaidAdventure() {
+            try {
+                const calls = [
+                    {
+                        name: "userGetInfo",
+                        args: {},
+                        ident: "userGetInfo"
+                    },
+                    {
+                        name: "adventure_raidGetInfo",
+                        args: {},
+                        ident: "adventure_raidGetInfo"
+                    }
+                ];
+                const result = await Send(JSON.stringify({ calls }))
+                    .then(e => e.results.map(n => n.result.response));
+
+                const portalSphere = result[0].refillable.find(n => n.id == 45);
+                const adventureRaid = Object.entries(result[1].raid).filter(e => e[1]).pop();
+                const adventureId = adventureRaid ? adventureRaid[0] : 0;
+
+                if (!portalSphere || !portalSphere.amount || !adventureId) {
+                    return { canRaid: false, adventureId: 0, maxCount: 0 };
+                }
+
+                return {
+                    canRaid: true,
+                    adventureId: parseInt(adventureId),
+                    maxCount: portalSphere.amount
+                };
+            } catch (error) {
+                console.error('Error checking raid availability:', error);
+                return { canRaid: false, adventureId: 0, maxCount: 0 };
+            }
+        }
+
+        // Perform adventure raid
+        async function raidAdventure(adventureId, maxCount) {
+            try {
+                const countRaid = maxCount; // Use max available
+                
+                const resultRaid = await Send(JSON.stringify({
+                    calls: [...Array(countRaid)].map((e, i) => ({
+                        name: "adventure_raid",
+                        args: {
+                            adventureId
+                        },
+                        ident: `body_${i}`
+                    }))
+                })).then(e => e.results.map(n => n.result.response));
+
+                if (!resultRaid.length) {
+                    console.error('Raid failed:', resultRaid);
+                    throw new Error('Raid failed - no results');
+                }
+
+                console.log(`Raid completed: ${resultRaid.length} times for adventure ${adventureId}`);
+                return resultRaid;
+            } catch (error) {
+                console.error('Error performing raid:', error);
+                throw error;
+            }
+        }
+
+        // Get portal charge amount
+        async function getPortalCharge() {
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "userGetInfo",
+                        args: {},
+                        ident: "userGetInfo"
+                    }]
+                }));
+                const userInfo = response.results[0].result.response;
+                const portalSphere = userInfo.refillable.find(n => n.id == 45);
+                return portalSphere ? portalSphere.amount : 0;
+            } catch (error) {
+                console.error('Error getting portal charge:', error);
+                return 0;
+            }
+        }
+
+        // Check if adventure is active
+        async function hasActiveAdventure() {
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "adventure_getInfo",
+                        args: {},
+                        context: {
+                            actionTs: Date.now()
+                        },
+                        ident: "group_1_body"
+                    }]
+                }));
+
+                // Check if response is null or error
+                if (!response || !response.results || !response.results[0]) {
+                    return false;
+                }
+
+                const result = response.results[0].result;
+                if (!result || !result.response) {
+                    return false;
+                }
+
+                const adventureInfo = result.response;
+                // Check if adventure has valid data (id, users, etc.)
+                if (!adventureInfo.id || !adventureInfo.users) {
+                    return false;
+                }
+
+                return true;
+            } catch (error) {
+                // If error, assume no active adventure
+                console.log('adventure_getInfo returned error (no active adventure):', error);
+                return false;
+            }
+        }
+
+        // Start new adventure
+        async function startNewAdventure(adventureId) {
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "adventure_start",
+                        args: {
+                            adventureId: parseInt(adventureId),
+                            private: false,
+                            isClan: true
+                        },
+                        context: {
+                            actionTs: Date.now()
+                        },
+                        ident: "body"
+                    }]
+                }));
+
+                if (response.error) {
+                    throw new Error(`Failed to start adventure: ${response.error.description || response.error.name}`);
+                }
+
+                console.log(`Adventure ${adventureId} started successfully`);
+                return response;
+            } catch (error) {
+                console.error('Error starting adventure:', error);
+                throw error;
+            }
+        }
+
+        // Run adventure with orange path
+        async function runAdventureWithOrangePath() {
+            try {
+                // Get adventure info to get mapIdent
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "adventure_getInfo",
+                        args: {},
+                        context: {
+                            actionTs: Date.now()
+                        },
+                        ident: "group_1_body"
+                    }]
+                }));
+
+                const adventureInfo = response.results[0].result.response;
+                const mapIdent = adventureInfo.mapIdent;
+
+                if (!mapIdent) {
+                    throw new Error('Could not get map identifier');
+                }
+
+                // Get orange path for this map
+                const currentAdventureWays = defaultWays.adventure[mapIdent];
+                if (!currentAdventureWays || !currentAdventureWays.orange || !currentAdventureWays.orange.path) {
+                    throw new Error(`No orange path found for map: ${mapIdent}`);
+                }
+
+                const orangePathStr = currentAdventureWays.orange.path.trim();
+                if (!orangePathStr) {
+                    throw new Error(`Orange path is empty for map: ${mapIdent}`);
+                }
+
+                // Parse path string to array (handle spaces and empty values)
+                let path = orangePathStr.split(',')
+                    .map(p => p.trim())
+                    .filter(p => p.length > 0)
+                    .map(p => parseInt(p))
+                    .filter(p => !isNaN(p));
+                
+                if (path.length < 2) {
+                    throw new Error(`Invalid orange path: ${orangePathStr}`);
+                }
+
+                console.log(`Using orange path for ${mapIdent}:`, path);
+
+                // Create a custom executeAdventure instance that uses orange path
+                class AutoOrangeAdventure extends ExtCombinedAdventureStorm {
+                    async getPath() {
+                        // Return orange path directly without popup
+                        return path;
+                    }
+                }
+
+                // Run adventure
+                return new Promise((resolve, reject) => {
+                    const adventure = new AutoOrangeAdventure(resolve, reject);
+                    adventure.start('default').catch(reject);
+                });
+            } catch (error) {
+                console.error('Error running adventure with orange path:', error);
+                throw error;
+            }
+        }
+
+        // Auto-execute on initialization
+        autoAdventureRaidOrStart().catch(error => {
+            console.error('Auto adventure raid/start failed:', error);
+        });
     }
 })();
 
