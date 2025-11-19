@@ -576,11 +576,47 @@
                         throw new Error('No valid recordings found in file');
                     }
                     
-                    // Replace existing recordings
-                    recordings = validRecordings;
+                    // Merge imported recordings with existing ones (don't replace)
+                    // Create a Set of existing recording IDs for quick lookup
+                    const existingIds = new Set(recordings.map(rec => rec.id));
+                    
+                    // Add all recordings, assigning new sequential IDs to duplicates
+                    let addedCount = 0;
+                    let duplicateCount = 0;
+                    let idCounter = 0; // Counter to ensure sequential IDs
+                    
+                    validRecordings.forEach(importedRec => {
+                        let recToAdd = importedRec;
+                        
+                        if (existingIds.has(importedRec.id)) {
+                            // Recording with this ID already exists, assign new sequential ID
+                            duplicateCount++;
+                            recToAdd = { ...importedRec }; // Create a copy to avoid modifying original
+                            // Generate new ID using same format as createRecording: timestamp_random
+                            // Add counter to ensure sequential uniqueness
+                            recToAdd.id = (Date.now() + idCounter).toString() + '_' + Math.random().toString(36).substr(2, 9);
+                            idCounter++; // Increment for next duplicate
+                            // Ensure new ID is unique (very unlikely but check anyway)
+                            while (existingIds.has(recToAdd.id)) {
+                                recToAdd.id = (Date.now() + idCounter).toString() + '_' + Math.random().toString(36).substr(2, 9);
+                                idCounter++;
+                            }
+                        }
+                        
+                        // Add recording (either original or with new ID)
+                        recordings.push(recToAdd);
+                        existingIds.add(recToAdd.id); // Add to set to avoid duplicates in same import
+                        addedCount++;
+                    });
+                    
                     saveRecordings();
                     
-                    HWHFuncs.setProgress(`API Repeater: Imported ${validRecordings.length} recording(s)!`, true);
+                    let message = `API Repeater: Imported ${addedCount} recording(s)`;
+                    if (duplicateCount > 0) {
+                        message += ` (${duplicateCount} assigned new IDs due to duplicates)`;
+                    }
+                    message += `!`;
+                    HWHFuncs.setProgress(message, true);
                     
                     // Refresh popup if open
                     const popup = document.getElementById('api-repeater-popup-container');
@@ -747,7 +783,7 @@
                     </div>
                 </div>
                 <div class="api-repeater-recording-actions">
-                    <button class="api-repeater-btn api-repeater-btn-success" title="Run" data-action="run" data-id="${recording.id}">🔥</button>
+                    <button class="api-repeater-btn api-repeater-btn-success" title="Run" data-action="run" data-id="${recording.id}">▶️</button>
                     <label style="cursor: pointer;">
                         <input type="checkbox" ${recording.autoRun ? 'checked' : ''} data-action="toggle-autorun" data-id="${recording.id}" style="margin-right: 5px;">
                         <span style="font-size: 0.9em;">Auto</span>
@@ -774,10 +810,8 @@
             if (actionType === 'run') {
                 executeRecording(recording);
             } else if (actionType === 'delete') {
-                if (confirm(`Delete recording "${recording.name}"?`)) {
-                    deleteRecording(recordingId);
-                    populateRecordingsList();
-                }
+                deleteRecording(recordingId);
+                populateRecordingsList();
             } else if (actionType === 'edit') {
                 openEditRecordingPopup(recording);
             }
