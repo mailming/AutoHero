@@ -696,34 +696,13 @@
             }
 
             this.endArenaBattle = async function(battleResult) {
-                const calls = [{
-                    name: "stashClient",
-                    args: {
-                        data: [{
-                            type: ".client.window.close",
-                            params: {
-                                actionTs: Date.now(),
-                                windowName: "game.view.popup.battle.BattlePausePopup",
-                                timestamp: Math.floor(Date.now() / 1000),
-                                sessionNumber: 83,
-                                windowCounter: 21,
-                                assetsReloadNum: 0,
-                                assetsType: "web",
-                                assetsLoadingPercent: 0,
-                                assetsLoadingTime: 0
-                            }
-                        }]
-                    },
-                    context: { actionTs: Date.now() },
-                    ident: "group_1_body"
-                }];
-
-                try {
-                    const response = await Send(JSON.stringify({calls}));
-                    console.log('End battle API response:', response);
-                } catch (error) {
-                    console.error('Error ending battle:', error);
-                }
+                // Skip stashClient call - battles auto-close and this can cause NotFound errors
+                // The battle popup will close automatically after battle completion
+                // Calling stashClient can trigger errors if the battle type doesn't match
+                console.log('Battle completed, popup will auto-close');
+                
+                // Optional: Add a small delay to ensure battle processing completes
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
 
             this.end = function(message) {
