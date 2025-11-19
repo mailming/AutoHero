@@ -25,6 +25,8 @@
     let isRecording = false;
     let recordingBuffer = [];
     let originalSend = null;
+    let recordingButton = null; // Reference to the recording button
+    let updateButtonInterval = null; // Interval for updating button
 
     // --- STORAGE KEYS ---
     const STORAGE_RECORDINGS = 'apiRepeater_recordings';
@@ -180,11 +182,25 @@
             console.warn('API Repeater: API interception may not be working - originalSend is null');
         }
 
-        // Add menu button
+        // Add menu button and recording button
         const scriptMenu = HWHClasses.ScriptMenu.getInst();
-        scriptMenu.addCombinedButton([
-            { name: 'API Repeater', title: 'Record and replay API calls', onClick: openMainPopup, color: 'purple' }
-        ]);
+        const menuButton = scriptMenu.addButton({
+            name: 'Repeater',
+            title: 'Record and replay API calls',
+            onClick: openMainPopup,
+            color: 'purple'
+        });
+        
+        // Add recording button
+        recordingButton = scriptMenu.addButton({
+            name: '⏺ 0',
+            title: 'Click to start/stop recording',
+            onClick: toggleRecording,
+            color: 'red'
+        });
+        
+        // Start interval to update recording button
+        updateButtonInterval = setInterval(updateRecordingButton, 500);
 
         // Auto-execute enabled recordings
         scheduleAutoRuns();
@@ -275,6 +291,37 @@
     }
 
     // --- RECORDING MANAGEMENT ---
+    function toggleRecording() {
+        if (isRecording) {
+            stopRecording();
+            // Always open the save dialog when stopping (same as popup behavior)
+            if (recordingBuffer.length > 0) {
+                openCreateRecordingPopup();
+            } else {
+                // No calls captured, show message
+                const { HWHFuncs } = window;
+                HWHFuncs.setProgress('API Repeater: No API calls captured', true);
+            }
+        } else {
+            startRecording();
+        }
+    }
+
+    function updateRecordingButton() {
+        if (!recordingButton) return;
+        
+        const buttonText = recordingButton.querySelector('.scriptMenu_btnPlate');
+        if (!buttonText) return;
+        
+        if (isRecording) {
+            buttonText.textContent = `⏹ ${recordingBuffer.length}`;
+            recordingButton.title = `Stop recording (${recordingBuffer.length} calls captured)`;
+        } else {
+            buttonText.textContent = `⏺ ${recordingBuffer.length}`;
+            recordingButton.title = `Start recording (${recordingBuffer.length} calls in buffer)`;
+        }
+    }
+
     function startRecording() {
         isRecording = true;
         recordingBuffer = [];
@@ -284,6 +331,7 @@
         console.log('API Repeater: originalSend type:', typeof originalSend);
         console.log('API Repeater: isRecording =', isRecording);
         HWHFuncs.setProgress('API Repeater: Recording started', true);
+        updateRecordingButton();
     }
 
     function stopRecording() {
@@ -291,6 +339,7 @@
         const { HWHFuncs } = window;
         console.log(`API Repeater: Recording stopped. Captured ${recordingBuffer.length} API call(s)`);
         HWHFuncs.setProgress(`API Repeater: Recording stopped - ${recordingBuffer.length} calls captured`, true);
+        updateRecordingButton();
     }
 
     function createRecording(name, description, expirationDays, autoRun) {
@@ -314,6 +363,7 @@
         recordings.push(recording);
         saveRecordings();
         recordingBuffer = [];
+        updateRecordingButton();
         return recording;
     }
 
@@ -766,6 +816,7 @@
                 // Clear the buffer if user cancels
                 if (e.target.id === 'cancel-recording-btn' || e.target.classList.contains('api-repeater-close-btn')) {
                     recordingBuffer = [];
+                    updateRecordingButton();
                 }
                 // Refresh main popup
                 openMainPopup();
