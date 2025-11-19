@@ -658,8 +658,12 @@
             .api-repeater-popup-main h2 { text-align: center; margin-top: 0; border-bottom: 1px solid #ce9767; padding-bottom: 10px; }
             .api-repeater-controls { display: flex; gap: 10px; align-items: center; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 5px; }
             .api-repeater-recording-list { list-style: none; padding: 0; margin: 0; }
-            .api-repeater-recording-item { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid #4a3422; background: rgba(0,0,0,0.2); }
+            .api-repeater-recording-item { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid #4a3422; background: rgba(0,0,0,0.2); cursor: move; }
             .api-repeater-recording-item:last-child { border-bottom: none; }
+            .api-repeater-recording-item.dragging { opacity: 0.5; background: rgba(76, 175, 80, 0.3); }
+            .api-repeater-recording-item.drag-over { border-color: #4CAF50; border-width: 2px; }
+            .api-repeater-recording-drag-handle { color: #aaa; margin-right: 8px; cursor: grab; font-size: 16px; }
+            .api-repeater-recording-drag-handle:active { cursor: grabbing; }
             .api-repeater-recording-info { flex-grow: 1; margin-right: 15px; }
             .api-repeater-recording-name { font-weight: bold; color: #ffd700; margin-bottom: 5px; }
             .api-repeater-recording-description { font-size: 0.9em; color: #ccc; margin-bottom: 5px; }
@@ -677,6 +681,20 @@
             .api-repeater-status-recording { background: #ff4444; color: white; animation: pulse 1s infinite; }
             @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
             .api-repeater-edit-popup-main { min-width: 500px !important; }
+            .api-repeater-calls-list { list-style: none; padding: 0; margin: 10px 0; max-height: 300px; overflow-y: auto; }
+            .api-repeater-call-item { display: flex; align-items: center; padding: 8px; margin: 5px 0; background: rgba(0,0,0,0.3); border: 1px solid #4a3422; border-radius: 4px; cursor: move; }
+            .api-repeater-call-item:hover { background: rgba(0,0,0,0.5); border-color: #ce9767; }
+            .api-repeater-call-item.dragging { opacity: 0.5; background: rgba(76, 175, 80, 0.3); }
+            .api-repeater-call-item.drag-over { border-color: #4CAF50; border-width: 2px; }
+            .api-repeater-call-number { min-width: 30px; color: #aaa; font-weight: bold; margin-right: 10px; }
+            .api-repeater-call-name { flex-grow: 1; color: #fce1ac; }
+            .api-repeater-drag-handle { color: #aaa; margin-right: 8px; cursor: grab; }
+            .api-repeater-drag-handle:active { cursor: grabbing; }
+            .api-repeater-call-delete { color: #ff6b6b; cursor: pointer; margin-left: 8px; font-size: 14px; padding: 2px 6px; }
+            .api-repeater-call-delete:hover { color: #ff4444; transform: scale(1.2); }
+            .api-repeater-expand-btn { cursor: pointer; color: #aaa; font-size: 0.9em; margin-left: 10px; }
+            .api-repeater-expand-btn:hover { color: #fce1ac; }
+            .api-repeater-calls-expanded { margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 4px; max-height: 400px; overflow-y: auto; }
         `;
         
         const styleSheet = document.createElement("style");
@@ -762,24 +780,32 @@
             return;
         }
         
-        recordings.forEach(recording => {
+        recordings.forEach((recording, index) => {
             const li = document.createElement('li');
             li.className = 'api-repeater-recording-item';
+            li.draggable = true;
+            li.dataset.recordingIndex = index;
             
             const expired = isExpired(recording);
             const expiredBadge = expired ? '<span class="api-repeater-status-badge api-repeater-status-expired">Expired</span>' : '';
             const activeBadge = recording.autoRun ? '<span class="api-repeater-status-badge api-repeater-status-active">Auto-Run</span>' : '';
             
             li.innerHTML = `
-                <div class="api-repeater-recording-info">
+                <span class="api-repeater-recording-drag-handle">☰</span>
+                <div class="api-repeater-recording-info" style="flex-grow: 1;">
                     <div class="api-repeater-recording-name">
                         ${recording.name} ${expiredBadge} ${activeBadge}
+                        <span class="api-repeater-expand-btn" data-action="expand" data-id="${recording.id}" title="Show/hide API calls">▼</span>
                     </div>
                     <div class="api-repeater-recording-description">${recording.description || 'No description'}</div>
                     <div class="api-repeater-recording-meta">
                         Calls: ${recording.apiCalls.length} | 
                         Created: ${formatDate(recording.createdAt)} | 
                         Expires: ${recording.expirationDays === 0 ? 'Never' : formatDate(recording.expiresAt)}
+                    </div>
+                    <div class="api-repeater-calls-expanded" id="calls-${recording.id}" style="display: none;">
+                        <div style="font-weight: bold; margin-bottom: 8px;">API Calls (drag to reorder):</div>
+                        <ul class="api-repeater-calls-list" id="calls-list-${recording.id}"></ul>
                     </div>
                 </div>
                 <div class="api-repeater-recording-actions">
@@ -793,7 +819,101 @@
                 </div>
             `;
             
+            // Add direct click handler for expand button
+            const expandBtn = li.querySelector('.api-repeater-expand-btn');
+            if (expandBtn) {
+                expandBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    const recordingId = expandBtn.dataset.id;
+                    const expandedDiv = document.getElementById(`calls-${recordingId}`);
+                    if (expandedDiv) {
+                        const isVisible = expandedDiv.style.display !== 'none';
+                        expandedDiv.style.display = isVisible ? 'none' : 'block';
+                        expandBtn.textContent = isVisible ? '▼' : '▲';
+                        
+                        // If expanding, ensure API calls list is populated
+                        if (!isVisible) {
+                            const callsList = document.getElementById(`calls-list-${recordingId}`);
+                            if (callsList) {
+                                // Always re-setup when expanding to ensure it's populated
+                                setupApiCallsDragDrop(recordingId, recording.apiCalls);
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Drag and drop handlers for recording item
+            li.addEventListener('dragstart', (e) => {
+                // Don't start drag if clicking on buttons, expand button, or inside expanded API calls
+                if (e.target.closest('button') || 
+                    e.target.closest('.api-repeater-expand-btn') || 
+                    e.target.closest('.api-repeater-calls-expanded') ||
+                    e.target.closest('.api-repeater-call-item')) {
+                    e.preventDefault();
+                    return;
+                }
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', index.toString());
+                li.classList.add('dragging');
+            });
+            
+            li.addEventListener('dragend', () => {
+                li.classList.remove('dragging');
+                list.querySelectorAll('.api-repeater-recording-item').forEach(item => {
+                    item.classList.remove('drag-over');
+                });
+            });
+            
+            li.addEventListener('dragover', (e) => {
+                // Don't allow drag over if clicking on buttons, expand button, or inside expanded API calls
+                if (e.target.closest('button') || 
+                    e.target.closest('.api-repeater-expand-btn') || 
+                    e.target.closest('.api-repeater-calls-expanded') ||
+                    e.target.closest('.api-repeater-call-item')) {
+                    return;
+                }
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                li.classList.add('drag-over');
+            });
+            
+            li.addEventListener('dragleave', () => {
+                li.classList.remove('drag-over');
+            });
+            
+            li.addEventListener('drop', (e) => {
+                // Don't allow drop if clicking on buttons, expand button, or inside expanded API calls
+                if (e.target.closest('button') || 
+                    e.target.closest('.api-repeater-expand-btn') || 
+                    e.target.closest('.api-repeater-calls-expanded') ||
+                    e.target.closest('.api-repeater-call-item')) {
+                    return;
+                }
+                e.preventDefault();
+                li.classList.remove('drag-over');
+                
+                const draggedIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                const targetIndex = parseInt(li.dataset.recordingIndex);
+                
+                if (!isNaN(draggedIndex) && !isNaN(targetIndex) && draggedIndex !== targetIndex) {
+                    // Reorder recordings array
+                    const [movedRecording] = recordings.splice(draggedIndex, 1);
+                    recordings.splice(targetIndex, 0, movedRecording);
+                    
+                    // Save the new order
+                    saveRecordings();
+                    
+                    // Re-render the list
+                    populateRecordingsList();
+                }
+            });
+            
             list.appendChild(li);
+            
+            // Setup drag and drop for API calls in main menu
+            setupApiCallsDragDrop(recording.id, recording.apiCalls);
         });
         
         // Add event listeners for actions
@@ -814,6 +934,23 @@
                 populateRecordingsList();
             } else if (actionType === 'edit') {
                 openEditRecordingPopup(recording);
+            } else if (actionType === 'expand') {
+                e.stopPropagation(); // Prevent event bubbling
+                const expandedDiv = document.getElementById(`calls-${recordingId}`);
+                if (expandedDiv) {
+                    const isVisible = expandedDiv.style.display !== 'none';
+                    expandedDiv.style.display = isVisible ? 'none' : 'block';
+                    action.textContent = isVisible ? '▼' : '▲';
+                    
+                    // If expanding, ensure API calls list is populated
+                    if (!isVisible) {
+                        const callsList = document.getElementById(`calls-list-${recordingId}`);
+                        if (callsList && callsList.children.length === 0) {
+                            // Re-setup drag and drop if list is empty
+                            setupApiCallsDragDrop(recordingId, recording.apiCalls);
+                        }
+                    }
+                }
             }
         });
         
@@ -824,6 +961,109 @@
                 populateRecordingsList();
             }
         });
+    }
+
+    function setupApiCallsDragDrop(recordingId, apiCalls) {
+        const callsList = document.getElementById(`calls-list-${recordingId}`);
+        if (!callsList) return;
+        
+        let reorderedApiCalls = [...apiCalls];
+        
+        function renderCallsList() {
+            callsList.innerHTML = '';
+            reorderedApiCalls.forEach((call, index) => {
+                const li = document.createElement('li');
+                li.className = 'api-repeater-call-item';
+                li.draggable = true;
+                li.dataset.index = index;
+                li.innerHTML = `
+                    <span class="api-repeater-drag-handle">☰</span>
+                    <span class="api-repeater-call-number">${index + 1}.</span>
+                    <span class="api-repeater-call-name">${call.name}</span>
+                    <span class="api-repeater-call-delete" data-action="delete-call" data-call-index="${index}" title="Delete this API call">🗑️</span>
+                `;
+                
+                // Drag and drop event handlers
+                li.addEventListener('dragstart', (e) => {
+                    // Don't start drag if clicking delete button
+                    if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
+                        e.preventDefault();
+                        return;
+                    }
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', index.toString());
+                    li.classList.add('dragging');
+                });
+                
+                li.addEventListener('dragend', () => {
+                    li.classList.remove('dragging');
+                    callsList.querySelectorAll('.api-repeater-call-item').forEach(item => {
+                        item.classList.remove('drag-over');
+                    });
+                });
+                
+                li.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    li.classList.add('drag-over');
+                });
+                
+                li.addEventListener('dragleave', () => {
+                    li.classList.remove('drag-over');
+                });
+                
+                li.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    li.classList.remove('drag-over');
+                    
+                    const draggedIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                    const targetIndex = parseInt(li.dataset.index);
+                    
+                    if (!isNaN(draggedIndex) && !isNaN(targetIndex) && draggedIndex !== targetIndex) {
+                        // Reorder array
+                        const [movedItem] = reorderedApiCalls.splice(draggedIndex, 1);
+                        reorderedApiCalls.splice(targetIndex, 0, movedItem);
+                        
+                        // Update the recording
+                        const recording = recordings.find(r => r.id === recordingId);
+                        if (recording) {
+                            recording.apiCalls = reorderedApiCalls;
+                            saveRecordings();
+                        }
+                        
+                        // Re-render list
+                        renderCallsList();
+                    }
+                });
+                
+                callsList.appendChild(li);
+            });
+            
+            // Add click handler for delete buttons
+            callsList.addEventListener('click', (e) => {
+                if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
+                    const deleteBtn = e.target.classList.contains('api-repeater-call-delete') ? e.target : e.target.closest('.api-repeater-call-delete');
+                    const callIndex = parseInt(deleteBtn.dataset.callIndex);
+                    
+                    if (!isNaN(callIndex) && callIndex >= 0 && callIndex < reorderedApiCalls.length) {
+                        // Remove the API call
+                        reorderedApiCalls.splice(callIndex, 1);
+                        
+                        // Update the recording
+                        const recording = recordings.find(r => r.id === recordingId);
+                        if (recording) {
+                            recording.apiCalls = reorderedApiCalls;
+                            saveRecordings();
+                        }
+                        
+                        // Re-render list
+                        renderCallsList();
+                    }
+                }
+            });
+        }
+        
+        renderCallsList();
     }
 
     async function openCreateRecordingPopup() {
@@ -947,8 +1187,9 @@
                         <span>Auto-run on game load</span>
                     </label>
                 </div>
-                <div style="color: #aaa; font-size: 0.9em;">
-                    Contains ${recording.apiCalls.length} API call(s)
+                <div>
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">API Calls (drag to reorder):</label>
+                    <ul class="api-repeater-calls-list" id="edit-api-calls-list"></ul>
                 </div>
                 <div style="display: flex; justify-content: space-around; margin-top: 15px;">
                     <button id="update-recording-btn" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">Update</button>
@@ -959,6 +1200,93 @@
         
         backdrop.appendChild(popup);
         document.body.appendChild(backdrop);
+        
+        // Populate API calls list with drag and drop
+        const apiCallsList = document.getElementById('edit-api-calls-list');
+        let reorderedApiCalls = [...recording.apiCalls]; // Copy for reordering
+        
+        function renderApiCallsList() {
+            apiCallsList.innerHTML = '';
+            reorderedApiCalls.forEach((call, index) => {
+                const li = document.createElement('li');
+                li.className = 'api-repeater-call-item';
+                li.draggable = true;
+                li.dataset.index = index;
+                li.innerHTML = `
+                    <span class="api-repeater-drag-handle">☰</span>
+                    <span class="api-repeater-call-number">${index + 1}.</span>
+                    <span class="api-repeater-call-name">${call.name}</span>
+                    <span class="api-repeater-call-delete" data-action="delete-call" data-call-index="${index}" title="Delete this API call">🗑️</span>
+                `;
+                
+                // Drag and drop event handlers
+                li.addEventListener('dragstart', (e) => {
+                    // Don't start drag if clicking delete button
+                    if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
+                        e.preventDefault();
+                        return;
+                    }
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', index.toString());
+                    li.classList.add('dragging');
+                });
+                
+                li.addEventListener('dragend', () => {
+                    li.classList.remove('dragging');
+                    // Remove drag-over class from all items
+                    apiCallsList.querySelectorAll('.api-repeater-call-item').forEach(item => {
+                        item.classList.remove('drag-over');
+                    });
+                });
+                
+                li.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    li.classList.add('drag-over');
+                });
+                
+                li.addEventListener('dragleave', () => {
+                    li.classList.remove('drag-over');
+                });
+                
+                li.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    li.classList.remove('drag-over');
+                    
+                    const draggedIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                    const targetIndex = parseInt(li.dataset.index);
+                    
+                    if (!isNaN(draggedIndex) && !isNaN(targetIndex) && draggedIndex !== targetIndex) {
+                        // Reorder array
+                        const [movedItem] = reorderedApiCalls.splice(draggedIndex, 1);
+                        reorderedApiCalls.splice(targetIndex, 0, movedItem);
+                        
+                        // Re-render list
+                        renderApiCallsList();
+                    }
+                });
+                
+                apiCallsList.appendChild(li);
+            });
+            
+            // Add click handler for delete buttons in edit popup
+            apiCallsList.addEventListener('click', (e) => {
+                if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
+                    const deleteBtn = e.target.classList.contains('api-repeater-call-delete') ? e.target : e.target.closest('.api-repeater-call-delete');
+                    const callIndex = parseInt(deleteBtn.dataset.callIndex);
+                    
+                    if (!isNaN(callIndex) && callIndex >= 0 && callIndex < reorderedApiCalls.length) {
+                        // Remove the API call
+                        reorderedApiCalls.splice(callIndex, 1);
+                        
+                        // Re-render list
+                        renderApiCallsList();
+                    }
+                }
+            });
+        }
+        
+        renderApiCallsList();
         
         backdrop.addEventListener('click', (e) => {
             if (e.target === backdrop || e.target.classList.contains('api-repeater-close-btn') || e.target.id === 'cancel-edit-btn') {
@@ -981,7 +1309,8 @@
                 name,
                 description,
                 expirationDays,
-                autoRun
+                autoRun,
+                apiCalls: reorderedApiCalls // Save reordered API calls
             });
             
             backdrop.remove();
