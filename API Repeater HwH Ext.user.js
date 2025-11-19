@@ -29,6 +29,7 @@
     let recordingButtonText = null; // Cached reference to button text element
     let updateButtonInterval = null; // Interval for updating button
     let lastBufferCount = 0; // Track last buffer count to avoid unnecessary DOM updates
+    let lastRecordingState = null; // Track last recording state to force update on state change
 
     // --- STORAGE KEYS ---
     const STORAGE_RECORDINGS = 'apiRepeater_recordings';
@@ -314,13 +315,16 @@
         if (isRecording) {
             stopRecording();
             // Always open the save dialog when stopping (same as popup behavior)
-            if (recordingBuffer.length > 0) {
-                openCreateRecordingPopup();
-            } else {
-                // No calls captured, show message
-                const { HWHFuncs } = window;
-                HWHFuncs.setProgress('API Repeater: No API calls captured', true);
-            }
+            // Use setTimeout to ensure button state is updated first
+            setTimeout(() => {
+                if (recordingBuffer.length > 0) {
+                    openCreateRecordingPopup();
+                } else {
+                    // No calls captured, show message
+                    const { HWHFuncs } = window;
+                    HWHFuncs.setProgress('API Repeater: No API calls captured', true);
+                }
+            }, 50);
         } else {
             startRecording();
         }
@@ -332,9 +336,14 @@
         
         const bufferCount = recordingBuffer.length;
         
-        // Skip DOM update if count hasn't changed (performance optimization)
-        if (!isRecording && bufferCount === lastBufferCount) return;
+        // Force update if recording state changed (important for stop button)
+        const stateChanged = lastRecordingState !== isRecording;
+        
+        // Skip DOM update only if state hasn't changed AND count hasn't changed
+        if (!stateChanged && !isRecording && bufferCount === lastBufferCount) return;
+        
         lastBufferCount = bufferCount;
+        lastRecordingState = isRecording;
         
         if (isRecording) {
             recordingButtonText.textContent = `⏹ ${bufferCount}`;
@@ -349,6 +358,7 @@
         isRecording = true;
         recordingBuffer = [];
         lastBufferCount = 0; // Reset counter
+        lastRecordingState = null; // Force update
         const { HWHFuncs } = window;
         // Removed excessive console.log calls for performance
         HWHFuncs.setProgress('API Repeater: Recording started', true);
@@ -357,6 +367,7 @@
 
     function stopRecording() {
         isRecording = false;
+        lastRecordingState = null; // Force update
         const { HWHFuncs } = window;
         // Removed console.log for performance
         HWHFuncs.setProgress(`API Repeater: Recording stopped - ${recordingBuffer.length} calls captured`, true);
@@ -783,6 +794,12 @@
 
     async function openCreateRecordingPopup() {
         const { HWHFuncs } = window;
+        
+        // Check if popup already exists
+        const existingPopup = document.getElementById('api-repeater-create-popup-container');
+        if (existingPopup) {
+            existingPopup.remove();
+        }
         
         if (recordingBuffer.length === 0) {
             HWHFuncs.setProgress('API Repeater: No API calls captured', true);
