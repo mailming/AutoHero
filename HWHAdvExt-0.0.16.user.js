@@ -63,6 +63,7 @@
             adventure: {
                 //Галахад, 1-я
                 "adv_strongford_2pl_easy": {
+                    default: { path: '1,2,4,7,6', label: 'Default (Orange)' },
                     blue: { path: '1,2,3,5,6', label: 'Solfors Blue' },
                     orange: { path: '1,2,4,7,6', label: 'Solfors Orange' },
                     green: { path: '1,2,3,5,6', label: 'Solfors Green' },
@@ -75,6 +76,7 @@
                 },
                 //Джинджер, 2-я
                 "adv_valley_3pl_easy": {
+                    default: { path: '1,3,6,9,11', label: 'Default (Orange)' },
                     blue: { path: '1,2,5,8,9,11', label: 'Solfors Blue' },
                     orange: { path: '1,3,6,9,11', label: 'Solfors Orange' },
                     green: { path: '1,4,7,10,9,11', label: 'Solfors Green' },
@@ -87,6 +89,7 @@
                 },
                 //Орион, 3-я
                 "adv_ghirwil_3pl_easy": {
+                    default: { path: '1,4,12,13,11', label: 'Default (Orange)' },
                     blue: { path: '1,5,6,9,11', label: 'Solfors Blue' },
                     orange: { path: '1,4,12,13,11', label: 'Solfors Orange' },
                     green: { path: '1,2,3,7,10,11', label: 'Solfors Green' },
@@ -99,6 +102,7 @@
                 },
                 //Тесак, 4-я
                 "adv_angels_3pl_easy_fire": {
+                    default: { path: '1,3,6,11,17,10,16,21,22,23', label: 'Default (Orange)' },
                     blue: { path: '1,2,4,7,18,8,12,19,22,23', label: 'Solfors Blue' },
                     orange: { path: '1,3,6,11,17,10,16,21,22,23', label: 'Solfors Orange' },
                     green: { path: '1,5,24,25,9,14,15,20,22,23', label: 'Solfors Green' },
@@ -111,6 +115,7 @@
                 },
                 //Галахад, 5-я
                 "adv_strongford_3pl_normal_2": {
+                    default: { path: '1,4,6,10,11,15,22,15,19,18,24', label: 'Default (Orange)' },
                     blue: { path: '1,2,7,8,12,16,23,26,25,21,24', label: 'Solfors Blue' },
                     orange: { path: '1,4,6,10,11,15,22,15,19,18,24', label: 'Solfors Orange' },
                     green: { path: '1,5,9,10,14,17,20,27,25,21,24', label: 'Solfors Green' },
@@ -123,6 +128,7 @@
                 },
                 //Джинджер, 6-я
                 "adv_valley_3pl_normal": {
+                    default: { path: '05,07,08,11,14,17,20,23,25', label: 'Default (Orange)' },
                     blue: { path: '02,04,07,10,13,16,19,24,22,25', label: 'Solfors Blue' },
                     orange: { path: '05,07,08,11,14,17,20,23,25', label: 'Solfors Orange' },
                     green: { path: '03,06,09,12,15,18,21,26,25', label: 'Solfors Green' },
@@ -135,6 +141,7 @@
                 },
                 //Орион, 7-я
                 "adv_ghirwil_3pl_normal_2": {
+                    default: { path: '11,10,14,17,13,19,20,24,27', label: 'Default (Orange)' },
                     blue: { path: '08,01,11,12,15,12,11,21,25,27', label: 'Solfors Blue' },
                     orange: { path: '11,10,14,17,13,19,20,24,27', label: 'Solfors Orange' },
                     green: { path: '07,03,04,05,09,16,23,22,26,27', label: 'Solfors Green' },
@@ -147,6 +154,7 @@
                 },
                 //Тесак, 8-я
                 "adv_angels_3pl_normal": {
+                    default: { path: '03,05,07,09,11,14,18,20,22,24,27,30,26,29,25', label: 'Default (Orange)' },
                     blue: { path: '03,02,06,07,09,10,13,17,16,20,22,21,28,32', label: 'Solfors Blue' },
                     orange: { path: '03,05,07,09,11,14,18,20,22,24,27,30,26,29,25', label: 'Solfors Orange' },
                     green: { path: '03,04,08,07,09,11,15,19,20,22,23,31,32', label: 'Solfors Green' },
@@ -159,6 +167,7 @@
                 },
                 //Галахад, 9-я
                 "adv_strongford_3pl_hard_2": {
+                    default: { path: '03,08,12,11,07,16,21,26,30,31,32,35,37,40,45', label: 'Default (Orange)' },
                     blue: { path: '02,06,10,15,20,14,24,29,25,36,39,42,44,45', label: 'Solfors Blue' },
                     orange: { path: '03,08,12,11,07,16,21,26,30,31,32,35,37,40,45', label: 'Solfors Orange' },
                     green: { path: '03,04,13,19,18,23,17,22,38,41,43,46,45', label: 'Solfors Green' },
@@ -171,6 +180,7 @@
                 },
                 //Джинджер, 10-я
                 "adv_valley_3pl_hard": {
+                    default: { path: '1,4,8,13,18,22,26,31,36,40,45,44,43,38,33,28', label: 'Default (Orange)' },
                     blue: { path: '1,3,2,6,11,17,25,30,35,34,29,24,21,17,12,7', label: 'Solfors Blue' },
                     orange: { path: '1,4,8,13,18,22,26,31,36,40,45,44,43,38,33,28', label: 'Solfors Orange' },
                     green: { path: '1,5,9,14,19,23,27,32,37,42,48,51,50,49,46,52', label: 'Solfors Green' },
@@ -183,6 +193,7 @@
                 },
                 //Орион, 11-я
                 "adv_ghirwil_3pl_hard": {
+                    default: { path: '1,2,4,6,9,13,18,17,16,22,28,29,30,31,25,19', label: 'Default (Orange)' },
                     blue: { path: '1,2,3,6,8,12,11,15,21,27,36,34,33,35,37', label: 'Solfors Blue' },
                     orange: { path: '1,2,4,6,9,13,18,17,16,22,28,29,30,31,25,19', label: 'Solfors Orange' },
                     green: { path: '1,2,5,6,10,13,14,20,26,32,38,41,40,39,37', label: 'Solfors Green' },
@@ -195,6 +206,7 @@
                 },
                 //Тесак, 12-я
                 "adv_angels_3pl_hard": {
+                    default: { path: '08,02,04,07,16,23,32,23,24,17,11,08,01,09,13', label: 'No Wait' },
                     blue: { path: '9,3,6,10,22,31,36,35,29,34,29,30,21,13', label: 'Solfors Blue' },
                     orange: { path: '1,5,12,15,28,20,12,14,26,18,19,20,27', label: 'Solfors Orange' },
                     green: { path: '8,2,4,7,16,23,32,33,25,24,17,11', label: 'Solfors Green' },
@@ -207,6 +219,7 @@
                 },
                 //Тесак, 13-я map12 (probabilmente hard o superiore)
                 "adv_angels_3pl_hell": {
+                    default: { path: '07,02,04,06,16,23,33,23,24,17,11,07,01,09,13', label: 'Default (Orange)' },
                     blue: { path: ' 09,03,05,10,22,31,36,35,29,32,29,30,21,13 ', label: 'Solfors Blue' },
                     orange: { path: ' 08,12,15,28,20,12,14,26,18,19,20,27 ', label: 'Solfors Orange' },
                     green: { path: ' 07,02,04,06,16,23,33,34,25,24,17,11 ', label: 'Solfors Green' },
@@ -219,11 +232,12 @@
                 },
                 //Galhad, 13-a map9 (probabilmente hard o superiore)
                 "adv_strongford_3pl_hell": {
+                    default: { path: '1,2,6,12,15,7,16,17,23,22,27,42,34,36,39,44', label: '1 NoWait | Goodwin B' },
                     blue: { path: ' 2,06,12,15,20,14,24,29,25,35,38,41,43 ', label: 'Solfors Blue' },
                     orange: { path: ' 03,08,09,13,07,16,21,26,30,31,42,34,36,39 ', label: 'Solfors Orange' },
                     green: { path: ' 03,04,10,19,18,23,17,22,37,40,32,45 ', label: 'Solfors Green' },
                     yellow: { path: '1,2,5,11,14,20,26,21,30,35,38,41,43,44', label: '2/3 NoWait | Goodwin A' },
-                    purple: { path: '1,2,6,12,15,7,16,17,23,22,27,42,34,36,39,44', label: ' 1 NoWait | Goodwin B' },
+                    purple: { path: '1,2,6,12,15,7,16,17,23,22,27,42,34,36,39,44', label: '1 NoWait | Goodwin B' },
                     red: { path: '1,3,8,9,13,18,19,28,0,33,37,40,32,45,44', label: '3/2 NoWait | Goodwin C' },
                     white: { path: '', label: 'NoWait 1' },
                     black: { path: '', label: 'NoWait 2' },
@@ -231,6 +245,7 @@
                 },
                 //Orion, 13-a mp11 (probabilmente hard o superiore)
                 "adv_ghirwil_3pl_hell": {
+                    default: { path: ' 2,4,6,8,12,17,18,19,25,31,30,29,28,22,16 ', label: 'Default (Orange)' },
                     blue: { path: ' 2,3,6,7,12,11,15,21,27,36,39,40,41 ', label: '2/3 Solfors Blue' },
                     orange: { path: ' 2,4,6,8,12,17,18,19,25,31,30,29,28,22,16 ', label: '1 Solfors Orange' },
                     green: { path: ' 2,5,6,9,13,14,20,26,32,38,35,33,34 ', label: '3/2 Solfors Green' },
@@ -243,6 +258,7 @@
                 },
                 //Ginger, 13-a map10 (probabilmente hard o superiore)
                 "adv_valley_3pl_hell": {
+                    default: { path: '01,03,02,06,11,17,25,30,35,34,29,24,21,17,12,7', label: '3 Solfors Blue' },
                     blue: { path: '1,3,2,6,11,17,25,30,35,34,29,24,21,17,12,7', label: '3 Solfors Blue' },
                     orange: { path: '1,4,8,13,18,22,26,31,36,40,45,44,43,38,33,28', label: '1 Solfors Orange' },
                     green: { path: '1,5,9,14,19,23,27,32,37,42,48,51,50,49,46,52', label: '2 Solfors Green' },
@@ -267,6 +283,92 @@
 
         const originalExecuteAdventure = window.HWHClasses.executeAdventure;
 
+        // Function to start adventure with level input
+        async function startAdventureWithLevel() {
+            try {
+                // Check if user is already on an adventure
+                const hasActive = await hasActiveAdventure();
+                if (hasActive) {
+                    await popup.confirm('You are already on an adventure. Please complete it first.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                // Check portal charges
+                const portalCharge = await getPortalCharge();
+                if (portalCharge === 0) {
+                    await popup.confirm('No portal charges available.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                // Create popup message with info
+                const savedLevel = getSaveVal('adventureId', 13);
+                const popupMessage = `
+                    <div style="padding: 10px; color: #fce1ac;">
+                        <div style="margin-bottom: 10px;"><strong>Portal Charges:</strong> ${portalCharge}</div>
+                        <div style="margin-bottom: 10px;"><strong>Note:</strong> Level will be saved and adventure will start with default path automatically.</div>
+                        <div><strong>Enter Adventure Level (1-13):</strong></div>
+                    </div>
+                `;
+
+                // Use popup's built-in input functionality
+                const answer = await popup.confirm(popupMessage, [
+                    { 
+                        msg: 'Start Adventure', 
+                        isInput: true,
+                        placeholder: 'Enter level (1-13)',
+                        default: savedLevel.toString(),
+                        color: 'green' 
+                    },
+                    { msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red' }
+                ]);
+
+                if (!answer) {
+                    return; // User cancelled
+                }
+
+                // Validate and save adventure level
+                const newAdventureId = parseInt(answer) || 13;
+                if (newAdventureId < 1 || newAdventureId > 13) {
+                    await popup.confirm('Invalid adventure level. Must be between 1 and 13.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                // Save adventure level
+                setSaveVal('adventureId', newAdventureId);
+                console.log(`Adventure level saved: ${newAdventureId}`);
+
+                // Check again if user started an adventure while popup was open
+                const hasActiveNow = await hasActiveAdventure();
+                if (hasActiveNow) {
+                    await popup.confirm('An adventure was already started. Please complete it first.', [
+                        { msg: 'OK', result: true, color: 'green' }
+                    ]);
+                    return;
+                }
+
+                // Start adventure and run default path
+                setProgress(`Starting adventure ${newAdventureId}...`, false);
+                await startNewAdventure(newAdventureId);
+                
+                // Wait a bit for adventure to initialize
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Run adventure with default path
+                setProgress('Running adventure with default path...', false);
+                await runAdventureWithDefaultPath();
+                setProgress('Adventure started and running', true);
+            } catch (error) {
+                console.error('Error starting adventure:', error);
+                setProgress(`Error: ${error.message}`, true);
+            }
+        }
+
         class ExtCombinedAdventureStorm extends originalExecuteAdventure {
             async getPath() {
                 console.log(`Current adventure type: ${this.type}, Map Identifier: ${this.mapIdent}`);
@@ -277,44 +379,33 @@
                 const oldVal = getSaveVal('adventurePath', '');
                 const keyPath = `adventurePath:${this.mapIdent}`;
 
-                // We need a way to reference the input field later.
-                let inputFieldRef = {};
-
-                const popupButtons = [
-                    {
-                        msg: I18N('START_ADVENTURE'),
-                        placeholder: 'Click a path or enter your own',
-                        isInput: true,
-                        default: getSaveVal(keyPath, oldVal),
-                        result: 'input_value',
-                        // This is a custom property to hold a reference to the input element
-                        inputRef: inputFieldRef
-                    },
-                    {
-                        msg: I18N('BTN_CANCEL'),
-                        result: false,
-                        isCancel: true
-                    }
-                ];
-                
-                // Note: The popup implementation in HwH needs to assign the input element to `button.inputRef.current`
-                // Since we cannot modify HwH's popup, we will retrieve the final input value in a different way.
-
+                const popupButtons = [];
                 const colorEmojis = {
                     blue: '🔵', orange: '🟠', green: '🟢', yellow: '🟡',
                     purple: '🟣', red: '🔴', white: '⚪', black: '⚫', brown: '🟤'
                 };
 
                 if (currentAdventureWays) {
+                    // Add default path first if available
+                    if (currentAdventureWays.default && currentAdventureWays.default.path) {
+                        const defaultPath = currentAdventureWays.default.path.trim();
+                        if (defaultPath) {
+                            popupButtons.push({
+                                msg: `⭐ ${currentAdventureWays.default.label} | ${defaultPath}`,
+                                result: defaultPath
+                            });
+                        }
+                    }
+                    
+                    // Add other color paths
                     const orderedColors = ['blue', 'orange', 'green', 'yellow', 'purple', 'red', 'white', 'black', 'brown'];
                     orderedColors.forEach((color) => {
                         const pathData = currentAdventureWays[color];
-                        if (pathData && pathData.path) {
+                        if (pathData && pathData.path && pathData.path.trim()) {
                             let buttonLabel = `${colorEmojis[color] || '⚪'} ${pathData.label} | ${pathData.path}`;
-                            popupButtons.unshift({
+                            popupButtons.push({
                                 msg: buttonLabel,
-                                result: pathData.path,
-                                isPathButton: true
+                                result: pathData.path
                             });
                         }
                     });
@@ -322,36 +413,60 @@
                     console.log(`%cNo predefined paths for ${adventureTypeKey} map: ${this.mapIdent}`, 'color: yellow');
                 }
 
-                let answer = await popup.confirm('SELECT A PREDEFINED PATH OR ENTER A CUSTOM ONE', popupButtons);
+                // Add input button at the end
+                popupButtons.push({
+                    msg: I18N('START_ADVENTURE'),
+                    placeholder: 'Click a path above or enter your own',
+                    isInput: true,
+                    default: getSaveVal(keyPath, oldVal),
+                    color: 'green'
+                });
 
-                if (typeof answer === 'string' && answer.length > 0 && answer !== 'input_value') {
-                    const newPopupButtons = [
-                        {
-                            msg: I18N('START_ADVENTURE'),
-                            placeholder: 'Click on a path or enter your path',
-                            isInput: true,
-                            default: answer,
-                            result: 'input_value'
-                        },
-                        {
-                            msg: I18N('BTN_CANCEL'),
-                            result: false,
-                            isCancel: true
-                        }
-                    ];
-                    answer = await popup.confirm('REVIEW AND CONFIRM PATH', newPopupButtons);
-                }
+                // Add cancel button
+                popupButtons.push({
+                    msg: I18N('BTN_CANCEL'),
+                    result: false,
+                    isCancel: true,
+                    color: 'red'
+                });
+
+                let answer = await popup.confirm('SELECT A PREDEFINED PATH OR ENTER A CUSTOM ONE', popupButtons);
                 
-                // This is the key change: When the user confirms, the popup implementation in HwH returns the input value.
-                // If the user cancels, it returns false.
-                if (answer === 'input_value') {
-                     // The HwH popup returns the input string, not 'input_value' when confirmed.
-                     // This part of the logic from the previous script might be based on a misunderstanding of the popup's return.
-                     // Let's assume the popup returns the final string directly.
-                     // The check `!answer` will handle the cancel case.
-                } else if (!answer) {
-                     this.terminatеReason = I18N('BTN_CANCELED');
-                     return false;
+                if (!answer) {
+                    this.terminatеReason = I18N('BTN_CANCELED');
+                    return false;
+                }
+
+                // If answer is a path string (from button click), show confirmation popup
+                if (typeof answer === 'string' && answer.length > 0) {
+                    // Check if it's a predefined path (contains comma and matches pattern)
+                    const isPredefinedPath = answer.includes(',') && /^[\d,\s]+$/.test(answer.replace(/\s/g, ''));
+                    
+                    if (isPredefinedPath) {
+                        // Show confirmation popup with the selected path
+                        const confirmButtons = [
+                            {
+                                msg: I18N('START_ADVENTURE'),
+                                placeholder: 'Review path or modify',
+                                isInput: true,
+                                default: answer,
+                                color: 'green'
+                            },
+                            {
+                                msg: I18N('BTN_CANCEL'),
+                                result: false,
+                                isCancel: true,
+                                color: 'red'
+                            }
+                        ];
+                        const confirmedAnswer = await popup.confirm('REVIEW AND CONFIRM PATH', confirmButtons);
+                        if (!confirmedAnswer) {
+                            this.terminatеReason = I18N('BTN_CANCELED');
+                            return false;
+                        }
+                        answer = confirmedAnswer;
+                    }
+                    // If it's from input field, use it directly (already processed)
                 }
 
 
@@ -410,9 +525,9 @@
                     // Wait a bit for adventure to initialize
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     
-                    // Run adventure with orange path
-                    setProgress('Running adventure with orange path...', false);
-                    await runAdventureWithOrangePath();
+                    // Run adventure with default path
+                    setProgress('Running adventure with default path...', false);
+                    await runAdventureWithDefaultPath();
                     setProgress('Adventure started and running', true);
                 } else {
                     if (portalCharge === 0) {
@@ -581,8 +696,8 @@
             }
         }
 
-        // Run adventure with orange path
-        async function runAdventureWithOrangePath() {
+        // Run adventure with default path
+        async function runAdventureWithDefaultPath() {
             try {
                 // Get adventure info to get mapIdent
                 const response = await Send(JSON.stringify({
@@ -603,170 +718,58 @@
                     throw new Error('Could not get map identifier');
                 }
 
-                // Get orange path for this map
+                // Get default path for this map
                 const currentAdventureWays = defaultWays.adventure[mapIdent];
-                if (!currentAdventureWays || !currentAdventureWays.orange || !currentAdventureWays.orange.path) {
-                    throw new Error(`No orange path found for map: ${mapIdent}`);
+                if (!currentAdventureWays || !currentAdventureWays.default || !currentAdventureWays.default.path) {
+                    throw new Error(`No default path found for map: ${mapIdent}`);
                 }
 
-                const orangePathStr = currentAdventureWays.orange.path.trim();
-                if (!orangePathStr) {
-                    throw new Error(`Orange path is empty for map: ${mapIdent}`);
+                const defaultPathStr = currentAdventureWays.default.path.trim();
+                if (!defaultPathStr) {
+                    throw new Error(`Default path is empty for map: ${mapIdent}`);
                 }
 
                 // Parse path string to array (handle spaces and empty values)
-                let path = orangePathStr.split(',')
+                let path = defaultPathStr.split(',')
                     .map(p => p.trim())
                     .filter(p => p.length > 0)
                     .map(p => parseInt(p))
                     .filter(p => !isNaN(p));
                 
                 if (path.length < 2) {
-                    throw new Error(`Invalid orange path: ${orangePathStr}`);
+                    throw new Error(`Invalid default path: ${defaultPathStr}`);
                 }
 
-                console.log(`Using orange path for ${mapIdent}:`, path);
+                console.log(`Using default path for ${mapIdent}:`, path);
 
-                // Create a custom executeAdventure instance that uses orange path
-                class AutoOrangeAdventure extends ExtCombinedAdventureStorm {
+                // Create a custom executeAdventure instance that uses default path
+                class AutoDefaultAdventure extends ExtCombinedAdventureStorm {
                     async getPath() {
-                        // Return orange path directly without popup
+                        // Return default path directly without popup
                         return path;
                     }
                 }
 
                 // Run adventure
                 return new Promise((resolve, reject) => {
-                    const adventure = new AutoOrangeAdventure(resolve, reject);
+                    const adventure = new AutoDefaultAdventure(resolve, reject);
                     adventure.start('default').catch(reject);
                 });
             } catch (error) {
-                console.error('Error running adventure with orange path:', error);
+                console.error('Error running adventure with default path:', error);
                 throw error;
             }
         }
 
-        // Function to open adventure configuration and start popup
-        async function openAdventureConfigPopup() {
-            try {
-                // Check if user is already on an adventure
-                const hasActive = await hasActiveAdventure();
-                if (hasActive) {
-                    await popup.confirm('You are already on an adventure. Please complete it first.', [
-                        { msg: 'OK', result: true, color: 'green' }
-                    ]);
-                    return;
-                }
-
-                // Check portal charges
-                const portalCharge = await getPortalCharge();
-                if (portalCharge === 0) {
-                    await popup.confirm('No portal charges available.', [
-                        { msg: 'OK', result: true, color: 'green' }
-                    ]);
-                    return;
-                }
-
-                // Create popup content
-                const popupContent = document.createElement('div');
-                popupContent.style.cssText = 'display: flex; flex-direction: column; gap: 15px; padding: 15px; color: #fce1ac;';
-
-                // Adventure Level Input Section
-                const adventureLevelSection = document.createElement('div');
-                adventureLevelSection.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 10px; background: rgba(58, 46, 36, 0.5); border-radius: 4px;';
-                
-                const adventureLevelLabel = document.createElement('label');
-                adventureLevelLabel.textContent = 'Adventure Level:';
-                adventureLevelLabel.style.cssText = 'min-width: 140px; font-weight: bold; font-size: 14px;';
-                
-                const adventureLevelInput = document.createElement('input');
-                adventureLevelInput.type = 'number';
-                adventureLevelInput.value = getSaveVal('adventureId', 13);
-                adventureLevelInput.min = 1;
-                adventureLevelInput.max = 13;
-                adventureLevelInput.style.cssText = 'flex: 1; padding: 8px; background: #3a2e24; border: 1px solid #ce9767; color: #fce1ac; border-radius: 4px; font-size: 14px;';
-                
-                adventureLevelSection.appendChild(adventureLevelLabel);
-                adventureLevelSection.appendChild(adventureLevelInput);
-                popupContent.appendChild(adventureLevelSection);
-
-                // Info Section
-                const infoSection = document.createElement('div');
-                infoSection.style.cssText = 'padding: 10px; background: rgba(58, 46, 36, 0.3); border-radius: 4px; font-size: 12px;';
-                infoSection.innerHTML = `
-                    <div style="margin-bottom: 5px;"><strong>Portal Charges:</strong> ${portalCharge}</div>
-                    <div><strong>Note:</strong> Adventure will start with orange path automatically.</div>
-                `;
-                popupContent.appendChild(infoSection);
-
-                // Create popup
-                const popupPromise = popup.confirm('Configure Adventure Level and Start', [
-                    { msg: 'Start Adventure', result: true, color: 'green' },
-                    { msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red' }
-                ]);
-
-                // Wait for popup to initialize, then replace content
-                await new Promise(resolve => setTimeout(resolve, 0));
-                
-                const popupBody = document.querySelector('.PopUp_Container');
-                if (popupBody) {
-                    popupBody.innerHTML = '';
-                    popupBody.appendChild(popupContent);
-                }
-
-                const answer = await popupPromise;
-
-                if (!answer) {
-                    return; // User cancelled
-                }
-
-                // Save adventure level
-                const newAdventureId = parseInt(adventureLevelInput.value) || 13;
-                if (newAdventureId < 1 || newAdventureId > 13) {
-                    await popup.confirm('Invalid adventure level. Must be between 1 and 13.', [
-                        { msg: 'OK', result: true, color: 'green' }
-                    ]);
-                    return;
-                }
-
-                setSaveVal('adventureId', newAdventureId);
-                console.log(`Adventure level saved: ${newAdventureId}`);
-
-                // Check again if user started an adventure while popup was open
-                const hasActiveNow = await hasActiveAdventure();
-                if (hasActiveNow) {
-                    await popup.confirm('An adventure was already started. Please complete it first.', [
-                        { msg: 'OK', result: true, color: 'green' }
-                    ]);
-                    return;
-                }
-
-                // Start adventure
-                setProgress(`Starting adventure ${newAdventureId}...`, false);
-                await startNewAdventure(newAdventureId);
-                
-                // Wait a bit for adventure to initialize
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                
-                // Run adventure with orange path
-                setProgress('Running adventure with orange path...', false);
-                await runAdventureWithOrangePath();
-                setProgress('Adventure started and running', true);
-            } catch (error) {
-                console.error('Error in adventure config popup:', error);
-                setProgress(`Error: ${error.message}`, true);
-            }
-        }
-
-        // Add menu button for adventure configuration
+        // Add menu button for starting adventure
         const { ScriptMenu } = window.HWHClasses;
         const scriptMenu = ScriptMenu.getInst();
         scriptMenu.addCombinedButton([
             { 
-                name: '⚙️ Adventure Config', 
-                title: 'Configure adventure level and start adventure (when not on adventure)', 
-                onClick: openAdventureConfigPopup, 
-                color: 'purple' 
+                name: '🚀 Start Adventure', 
+                title: 'Start adventure with level input (when not on adventure)', 
+                onClick: startAdventureWithLevel, 
+                color: 'green'
             }
         ]);
 
