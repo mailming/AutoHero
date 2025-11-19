@@ -26,32 +26,26 @@
     let recordingBuffer = [];
     let originalSend = null;
     let recordingButton = null; // Reference to the recording button
+    let recordingButtonText = null; // Cached reference to button text element
     let updateButtonInterval = null; // Interval for updating button
+    let lastBufferCount = 0; // Track last buffer count to avoid unnecessary DOM updates
 
     // --- STORAGE KEYS ---
     const STORAGE_RECORDINGS = 'apiRepeater_recordings';
     const STORAGE_SETTINGS = 'apiRepeater_settings';
 
     // --- API CALLS TO SKIP DURING RECORDING ---
-    // These API calls will be ignored when recording (case-insensitive check)
-    const SKIP_API_CALLS = new Set([
-        'specialOffer_check',
-        'stashClient'
+    // Use Map with lowercase keys for O(1) case-insensitive lookup
+    const SKIP_API_CALLS = new Map([
+        ['specialoffer_check', true],
+        ['stashclient', true]
     ]);
     
-    // Helper function to check if API call should be skipped (case-insensitive)
+    // Helper function to check if API call should be skipped (case-insensitive, optimized)
     function shouldSkipAPICall(apiName) {
         if (!apiName || typeof apiName !== 'string') return false;
-        // Check exact match first (most common case)
-        if (SKIP_API_CALLS.has(apiName)) return true;
-        // Check case-insensitive match
-        const lowerName = apiName.toLowerCase();
-        for (const skipName of SKIP_API_CALLS) {
-            if (skipName.toLowerCase() === lowerName) {
-                return true;
-            }
-        }
-        return false;
+        // O(1) lookup using lowercase key
+        return SKIP_API_CALLS.has(apiName.toLowerCase());
     }
 
     // --- EARLY API INTERCEPTION (before HWH loads) ---
@@ -72,11 +66,17 @@
         // Intercept send to capture API calls
         // Make it async to match HeroWarsHelper's wrapper
         XMLHttpRequest.prototype.send = async function(sourceData) {
+            // Early exit if not recording (most common case) - performance optimization
+            if (!isRecording) {
+                return await originalXHRSend.apply(this, arguments);
+            }
+            
             // Check if recording is active and this is an API call
-            if (isRecording && this._apiRepeaterUrl && typeof this._apiRepeaterUrl === 'string') {
-                const isApiCall = this._apiRepeaterUrl.includes('/api/') || 
-                                 this._apiRepeaterUrl.includes('heroes-wb.nextersglobal.com') ||
-                                 this._apiRepeaterUrl.includes('nextersglobal.com');
+            if (this._apiRepeaterUrl && typeof this._apiRepeaterUrl === 'string') {
+                // Optimized API URL check - check most common pattern first
+                const url = this._apiRepeaterUrl;
+                const isApiCall = url.includes('/api/') || 
+                                 url.includes('nextersglobal.com');
                 
                 if (isApiCall) {
                     try {
@@ -95,29 +95,33 @@
                         }
                         
                         if (tempData && typeof tempData === 'string') {
+                            // Try-catch around JSON.parse is already handled by outer try-catch
+                            // But we can add early validation for performance
+                            if (tempData.length === 0 || (!tempData.includes('"name"') && !tempData.includes('"calls"'))) {
+                                // Skip if doesn't look like API call data
+                                return await originalXHRSend.apply(this, arguments);
+                            }
                             callData = JSON.parse(tempData);
                             
                             if (callData) {
                                 if (callData.calls && Array.isArray(callData.calls)) {
                                     // Store each call in the buffer (skip filtered APIs)
-                                    callData.calls.forEach(call => {
+                                    // Use for loop instead of forEach for better performance
+                                    const calls = callData.calls;
+                                    const now = Date.now();
+                                    for (let i = 0; i < calls.length; i++) {
+                                        const call = calls[i];
                                         // Skip API calls in the skip list
-                                        if (!call || !call.name) return;
-                                        if (shouldSkipAPICall(call.name)) {
-                                            console.log(`API Repeater: ⊘ Skipped API call - ${call.name} (in skip list)`);
-                                            return;
-                                        }
+                                        if (!call || !call.name) continue;
+                                        if (shouldSkipAPICall(call.name)) continue;
                                         
-                                        const capturedCall = {
+                                        recordingBuffer.push({
                                             name: call.name,
                                             args: call.args || {},
-                                            context: call.context || { actionTs: Date.now() },
+                                            context: call.context || { actionTs: now },
                                             ident: call.ident || 'body'
-                                        };
-                                        recordingBuffer.push(capturedCall);
-                                        console.log(`API Repeater: ✓ Captured API call - ${call.name}`, capturedCall);
-                                    });
-                                    console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                                        });
+                                    }
                                 } else if (callData.name && callData.args) {
                                     // Skip API calls in the skip list - check first before processing
                                     if (!shouldSkipAPICall(callData.name)) {
@@ -129,10 +133,7 @@
                                             ident: callData.ident || 'body'
                                         };
                                         recordingBuffer.push(capturedCall);
-                                        console.log(`API Repeater: ✓ Captured single API call - ${callData.name}`, capturedCall);
-                                        console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
-                                    } else {
-                                        console.log(`API Repeater: ⊘ Skipped single API call - ${callData.name} (in skip list)`);
+                                        // Removed console.log for performance
                                     }
                                 }
                             }
@@ -182,24 +183,33 @@
             console.warn('API Repeater: API interception may not be working - originalSend is null');
         }
 
-        // Add menu button and recording button
+        // Add menu button and recording button in the same row
         const scriptMenu = HWHClasses.ScriptMenu.getInst();
-        const menuButton = scriptMenu.addButton({
-            name: 'Repeater',
-            title: 'Record and replay API calls',
-            onClick: openMainPopup,
-            color: 'purple'
-        });
+        const buttonGroup = scriptMenu.addCombinedButton([
+            {
+                name: 'Repeater',
+                title: 'Record and replay API calls',
+                onClick: openMainPopup,
+                color: 'purple'
+            },
+            {
+                name: '⏺ 0',
+                title: 'Click to start/stop recording',
+                onClick: toggleRecording,
+                color: 'red'
+            }
+        ]);
         
-        // Add recording button
-        recordingButton = scriptMenu.addButton({
-            name: '⏺ 0',
-            title: 'Click to start/stop recording',
-            onClick: toggleRecording,
-            color: 'red'
-        });
+        // Get reference to recording button (second button in combined row)
+        // buttonGroup is a div with class 'scriptMenu_btnRow', buttons are children
+        if (buttonGroup && buttonGroup.children && buttonGroup.children.length > 1) {
+            recordingButton = buttonGroup.children[1]; // Second button (index 1)
+            // Cache button text element for performance
+            recordingButtonText = recordingButton.querySelector('.scriptMenu_btnPlate');
+        }
         
-        // Start interval to update recording button
+        // Start interval to update recording button (only when needed)
+        // Use requestAnimationFrame for better performance, but fallback to interval
         updateButtonInterval = setInterval(updateRecordingButton, 500);
 
         // Auto-execute enabled recordings
@@ -227,24 +237,23 @@
                         
                         if (callData && callData.calls && Array.isArray(callData.calls)) {
                             // Store each call in the buffer (skip filtered APIs)
-                            callData.calls.forEach(call => {
+                            // Use for loop instead of forEach for better performance
+                            const calls = callData.calls;
+                            const now = Date.now();
+                            for (let i = 0; i < calls.length; i++) {
+                                const call = calls[i];
                                 // Skip API calls in the skip list
-                                if (!call || !call.name) return;
-                                if (shouldSkipAPICall(call.name)) {
-                                    console.log(`API Repeater: ⊘ Skipped API call via Send - ${call.name} (in skip list)`);
-                                    return;
-                                }
+                                if (!call || !call.name) continue;
+                                if (shouldSkipAPICall(call.name)) continue;
                                 
-                                const capturedCall = {
+                                recordingBuffer.push({
                                     name: call.name,
                                     args: call.args || {},
-                                    context: call.context || { actionTs: Date.now() },
+                                    context: call.context || { actionTs: now },
                                     ident: call.ident || 'body'
-                                };
-                                recordingBuffer.push(capturedCall);
-                                console.log(`API Repeater: ✓ Captured API call via Send - ${call.name}`, capturedCall);
-                            });
-                            console.log(`API Repeater: Buffer now has ${recordingBuffer.length} calls`);
+                                });
+                            }
+                            // Removed console.log for performance
                         }
                     } catch (e) {
                         console.error('API Repeater: Error capturing API call from Send:', e, data);
@@ -285,9 +294,19 @@
         }
     }
 
+    // Debounce storage saves to avoid excessive writes
+    let saveRecordingsTimeout = null;
     function saveRecordings() {
         const { HWHFuncs } = window;
-        HWHFuncs.setSaveVal(STORAGE_RECORDINGS, recordings);
+        // Clear existing timeout
+        if (saveRecordingsTimeout) {
+            clearTimeout(saveRecordingsTimeout);
+        }
+        // Debounce: wait 100ms before saving (batch multiple rapid updates)
+        saveRecordingsTimeout = setTimeout(() => {
+            HWHFuncs.setSaveVal(STORAGE_RECORDINGS, recordings);
+            saveRecordingsTimeout = null;
+        }, 100);
     }
 
     // --- RECORDING MANAGEMENT ---
@@ -308,28 +327,30 @@
     }
 
     function updateRecordingButton() {
-        if (!recordingButton) return;
+        // Early exit if button not available
+        if (!recordingButton || !recordingButtonText) return;
         
-        const buttonText = recordingButton.querySelector('.scriptMenu_btnPlate');
-        if (!buttonText) return;
+        const bufferCount = recordingBuffer.length;
+        
+        // Skip DOM update if count hasn't changed (performance optimization)
+        if (!isRecording && bufferCount === lastBufferCount) return;
+        lastBufferCount = bufferCount;
         
         if (isRecording) {
-            buttonText.textContent = `⏹ ${recordingBuffer.length}`;
-            recordingButton.title = `Stop recording (${recordingBuffer.length} calls captured)`;
+            recordingButtonText.textContent = `⏹ ${bufferCount}`;
+            recordingButton.title = `Stop recording (${bufferCount} calls captured)`;
         } else {
-            buttonText.textContent = `⏺ ${recordingBuffer.length}`;
-            recordingButton.title = `Start recording (${recordingBuffer.length} calls in buffer)`;
+            recordingButtonText.textContent = `⏺ ${bufferCount}`;
+            recordingButton.title = `Start recording (${bufferCount} calls in buffer)`;
         }
     }
 
     function startRecording() {
         isRecording = true;
         recordingBuffer = [];
+        lastBufferCount = 0; // Reset counter
         const { HWHFuncs } = window;
-        console.log('API Repeater: Recording started. Buffer cleared.');
-        console.log('API Repeater: Send function type:', typeof window.Send);
-        console.log('API Repeater: originalSend type:', typeof originalSend);
-        console.log('API Repeater: isRecording =', isRecording);
+        // Removed excessive console.log calls for performance
         HWHFuncs.setProgress('API Repeater: Recording started', true);
         updateRecordingButton();
     }
@@ -337,7 +358,7 @@
     function stopRecording() {
         isRecording = false;
         const { HWHFuncs } = window;
-        console.log(`API Repeater: Recording stopped. Captured ${recordingBuffer.length} API call(s)`);
+        // Removed console.log for performance
         HWHFuncs.setProgress(`API Repeater: Recording stopped - ${recordingBuffer.length} calls captured`, true);
         updateRecordingButton();
     }
