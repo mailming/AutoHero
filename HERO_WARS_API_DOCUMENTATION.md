@@ -1065,9 +1065,23 @@ Send(JSON.stringify({
 
 #### adventure_getInfo
 
-Get adventure information.
+Get adventure information including map data, nodes, paths, buffs, and player progress.
 
 **Request:**
+```javascript
+Send(JSON.stringify({
+  calls: [{
+    name: "adventure_getInfo",
+    args: {},
+    context: {
+      actionTs: Date.now()
+    },
+    ident: "group_1_body"
+  }]
+}))
+```
+
+**Alternative Request Format:**
 ```javascript
 Send(JSON.stringify({
   calls: [{
@@ -1077,6 +1091,506 @@ Send(JSON.stringify({
   }]
 }))
 ```
+
+**Note:** The `ident` field can be either `"group_1_body"` or `"adventure_getInfo"` depending on the context. The `context` field with `actionTs` is optional but recommended for proper timestamp tracking.
+
+**Response Fields:**
+
+**Adventure Metadata:**
+- `id` (string): Adventure instance ID
+- `adventureId` (string): Adventure type/level ID (e.g., "11", "13")
+- `mapIdent` (string): Map identifier (e.g., "adv_ghirwil_3pl_hell", "adv_ghirwil_3pl_hard")
+- `status` (string): Adventure status/difficulty code
+  - `"1"`: Active adventure - Hell difficulty (e.g., `adv_ghirwil_3pl_hell`)
+  - `"2"`: Active adventure - Hard difficulty (e.g., `adv_ghirwil_3pl_hard`)
+  - **Note**: Both values indicate the adventure is active/in progress, but the number corresponds to the difficulty level. The exact mapping may vary by adventure type.
+- `assetIdent` (string): Asset identifier for the map (e.g., "adventure_map_ghirvil_city")
+- `battleground` (number): Battleground ID
+
+**Users:**
+- `users` (object): Map of user IDs to user adventure data
+  - Each user object contains:
+    - `id` (string): User ID
+    - `buffs` (array): Array of active buffs for the user
+      - Each buff object:
+        - `id` (number): Buff ID
+        - `value` (number): Buff value/percentage
+    - `currentNode` (number): Current node ID where the user is located
+    - `turnsLeft` (number): Number of turns remaining
+    - `points` (number): Total points accumulated
+    - `rewardsCollected` (array|object): Rewards that have been collected
+      - **Array format**: Array of reward IDs (when no rewards collected yet, typically empty array `[]`)
+      - **Object format**: Map of reward point thresholds (as string keys) to reward data
+        - Each key is a point threshold (e.g., `"260"`, `"460"`, `"660"`) or `"boss"` for boss reward
+        - Each value contains reward details:
+          - `consumable` (object): Map of consumable IDs to quantities
+            - Example: `{"85": 1258}` means consumable ID 85 with quantity 1258
+          - `petGear` (object, optional): Map of pet gear IDs to quantities (boss reward only)
+            - Example: `{"6": 1}` means pet gear ID 6 with quantity 1
+    - `left` (boolean): Whether the user has left the adventure
+    - `bossQuestEmitted` (boolean, optional): Whether the boss quest/event has been triggered (boss defeated). Only present when `true`.
+    - `lastTeam` (array): Last team composition used
+      - Each team member object:
+        - `id` (number): Hero or pet ID
+        - `level` (number): Unit level
+        - `color` (number): Color/ascension level
+        - `star` (number): Star level
+        - `power` (number): Unit power
+        - `type` (string): "hero" or "pet"
+    - `user` (object): User profile information
+      - `id` (string): User ID
+      - `name` (string): Player name
+      - `lastLoginTime` (string): Unix timestamp of last login
+      - `serverId` (string): Server ID
+      - `level` (string): Player level
+      - `clanId` (string): Clan ID
+      - `clanRole` (string): Role in clan
+      - `commander` (boolean): Whether player is a commander
+      - `avatarId` (string): Avatar ID
+      - `isChatModerator` (boolean): Chat moderator status
+      - `frameId` (number): Frame ID
+      - `leagueId` (number): League ID
+      - `allowPm` (string): PM permission setting
+      - `clanTitle` (string): Clan name
+      - `clanIcon` (object): Clan icon configuration
+
+**Nodes:**
+- `nodes` (array): Array of adventure nodes (map locations)
+  - Each node object contains:
+    - `id` (number): Node ID
+    - `type` (string): Node type
+      - `"TYPE_START"`: Starting node
+      - `"TYPE_COMBAT"`: Combat/battle node
+      - `"TYPE_PLAYERBUFF"`: Player buff collection node
+    - `state` (string): Node state
+      - `"empty"`: Node is empty/available
+      - `"occupied"`: Node is occupied by enemy team
+    - `lastBoss` (boolean): Whether this is the final boss node
+    - `playerBuffPower` (number): Player buff power value (for buff nodes)
+    - `buffs` (array, optional): Array of buffs available on this node
+      - Each buff object:
+        - `id` (number): Buff ID
+        - `value` (number): Buff value/percentage
+        - `owner` (string|null): User ID who owns the buff (null if unclaimed)
+    - `team` (array, optional): Enemy team composition (for combat nodes)
+      - Array of team member objects with position keys ("1", "2", etc.)
+        - Each member object:
+          - `id` (number): Hero ID
+          - `star` (number): Star level
+          - `color` (number): Color/ascension level
+          - `level` (number): Unit level
+          - `power` (number): Unit power
+          - `type` (string): "hero"
+          - `state` (object): Current battle state
+            - `hp` (number): Current HP
+            - `energy` (number): Current energy
+            - `isDead` (boolean): Whether unit is dead
+            - `maxHp` (number): Maximum HP
+    - `featuredHero` (number, optional): Featured hero ID (for boss nodes)
+    - `pointsFarmed` (number): Points farmed from this node (0 if not cleared)
+
+**Paths:**
+- `paths` (array): Array of path connections between nodes
+  - Each path object:
+    - `from_id` (number): Source node ID
+    - `to_id` (number): Destination node ID
+
+**Buffs:**
+- `buffs` (array): Array of buff connections between nodes
+  - Each buff object:
+    - `from_id` (number): Source node ID
+    - `to_id` (number): Destination node ID
+    - `buffPower` (number): Buff power value (typically 1000)
+    - `buffs` (array): Array of buff effects
+      - Each buff effect:
+        - `id` (number): Buff ID
+        - `value` (number): Buff value/percentage
+
+**Global Buffs:**
+- `globalBuffs` (array): Array of global buffs active in the adventure
+  - Each global buff object:
+    - `id` (number): Buff ID
+    - `rowId` (number): Row ID
+    - `value` (number): Buff value/percentage
+- `globalBuffsReset` (number): Unix timestamp when global buffs reset
+
+**Rewards:**
+- `rewards` (object): Reward structure
+  - `boss` (object): Boss rewards
+    - `lootBox` (object): Loot box rewards (map of loot box IDs to quantities)
+  - `points` (object): Point-based rewards
+    - Each key is a point threshold (string)
+    - Each value contains:
+      - `lootBox` (object): Loot box rewards at this threshold
+
+**Log:**
+- `log` (array): Array of adventure activity log entries
+  - Each log entry:
+    - `ts` (number): Unix timestamp of the action
+    - `userId` (string): User ID who performed the action
+    - `type` (string): Action type
+      - `"join"`: User joined the adventure
+      - `"collectBuff"`: User collected a buff
+      - `"startBattle"`: User started a battle
+      - `"endBattle"`: User ended a battle
+    - `data` (object|array): Action-specific data
+      - For `collectBuff`:
+        - `path` (array): Path taken [fromNode, toNode]
+        - `node` (number): Node ID where buff was collected
+        - `buff` (number): Buff index collected
+      - For `startBattle`:
+        - `path` (array): Path taken [fromNode, toNode]
+        - `node` (number): Node ID being attacked
+      - For `endBattle`:
+        - `node` (string): Node ID where battle occurred
+        - `win` (boolean): Whether battle was won
+        - `replayId` (string): Replay ID
+        - `points` (number): Points earned from battle
+
+**Example Usage:**
+```javascript
+const response = await Send(JSON.stringify({
+  calls: [{
+    name: "adventure_getInfo",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "group_1_body"
+  }]
+}));
+
+const adventureInfo = response.results[0].result.response;
+
+// Get adventure metadata
+console.log(`Adventure ID: ${adventureInfo.id}`);
+console.log(`Map: ${adventureInfo.mapIdent}`);
+console.log(`Status: ${adventureInfo.status}`);
+
+// Get user progress
+const userId = Object.keys(adventureInfo.users)[0];
+const userData = adventureInfo.users[userId];
+console.log(`Current Node: ${userData.currentNode}`);
+console.log(`Turns Left: ${userData.turnsLeft}`);
+console.log(`Points: ${userData.points}`);
+console.log(`Active Buffs: ${userData.buffs.length}`);
+
+// Get nodes
+const nodes = adventureInfo.nodes;
+console.log(`Total Nodes: ${nodes.length}`);
+
+// Find combat nodes
+const combatNodes = nodes.filter(n => n.type === "TYPE_COMBAT");
+console.log(`Combat Nodes: ${combatNodes.length}`);
+
+// Find empty nodes (available to attack)
+const emptyNodes = nodes.filter(n => n.state === "empty" && n.type === "TYPE_COMBAT");
+console.log(`Empty Combat Nodes: ${emptyNodes.length}`);
+
+// Get paths
+const paths = adventureInfo.paths;
+console.log(`Total Paths: ${paths.length}`);
+
+// Find paths from current node
+const currentPaths = paths.filter(p => p.from_id === userData.currentNode);
+console.log(`Available paths from node ${userData.currentNode}:`, currentPaths.map(p => p.to_id));
+
+// Get buff nodes
+const buffNodes = nodes.filter(n => n.type === "TYPE_PLAYERBUFF");
+console.log(`Buff Nodes: ${buffNodes.length}`);
+
+// Get adventure log
+const log = adventureInfo.log;
+console.log(`Adventure Log Entries: ${log.length}`);
+const recentActions = log.slice(-5);
+recentActions.forEach(entry => {
+  console.log(`${new Date(entry.ts * 1000).toLocaleString()}: ${entry.type} by user ${entry.userId}`);
+});
+
+// Get rewards
+const rewards = adventureInfo.rewards;
+console.log(`Boss Rewards:`, rewards.boss);
+console.log(`Point Rewards:`, Object.keys(rewards.points));
+```
+
+**Determining if Adventure is Complete:**
+
+To check if an adventure is complete and ready to exit/collect rewards, check the following conditions:
+
+```javascript
+function isAdventureComplete(adventureInfo, userId) {
+  const userData = adventureInfo.users[userId];
+  if (!userData) return false;
+  
+  // 1. Check if user has already left
+  if (userData.left) {
+    return true; // Already exited
+  }
+  
+  // 2. Find the boss node (lastBoss: true)
+  const bossNode = adventureInfo.nodes.find(n => n.lastBoss === true);
+  if (!bossNode) {
+    return false; // No boss node found
+  }
+  
+  // 3. Check if boss node has been cleared
+  // Boss is cleared if state is "empty" and pointsFarmed > 0
+  const bossCleared = bossNode.state === "empty" && bossNode.pointsFarmed > 0;
+  
+  // 4. Check if user is at the boss node
+  const atBossNode = userData.currentNode === bossNode.id;
+  
+  // 5. Check if there are no available paths from current node
+  const paths = adventureInfo.paths;
+  const availablePaths = paths.filter(p => p.from_id === userData.currentNode);
+  const hasNoPaths = availablePaths.length === 0;
+  
+  // 6. Check if turns are exhausted (optional - some adventures may allow staying after turns run out)
+  const noTurnsLeft = userData.turnsLeft === 0;
+  
+  // 7. Check if 4 rewards are available for collection
+  const rewards = adventureInfo.rewards;
+  const pointThresholds = Object.keys(rewards.points || {}).map(Number).sort((a, b) => a - b);
+  const userPoints = userData.points;
+  
+  // Count uncollected point rewards
+  let uncollectedPointRewards = 0;
+  pointThresholds.forEach(threshold => {
+    if (userPoints >= threshold) {
+      // Check if already collected
+      const collected = Array.isArray(userData.rewardsCollected)
+        ? userData.rewardsCollected.includes(threshold.toString())
+        : (typeof userData.rewardsCollected === 'object' && threshold.toString() in userData.rewardsCollected);
+      
+      if (!collected) {
+        uncollectedPointRewards++;
+      }
+    }
+  });
+  
+  // Check boss reward availability
+  const bossRewardsAvailable = rewards.boss && Object.keys(rewards.boss.lootBox || {}).length > 0;
+  const bossRewardCollected = Array.isArray(userData.rewardsCollected)
+    ? userData.rewardsCollected.length > 0
+    : (typeof userData.rewardsCollected === 'object' && Object.keys(userData.rewardsCollected).length > 0);
+  
+  const uncollectedBossRewards = bossRewardsAvailable && !bossRewardCollected ? 1 : 0;
+  const totalUncollectedRewards = uncollectedPointRewards + uncollectedBossRewards;
+  
+  // Adventure is complete if:
+  // - Boss node is cleared AND user is at boss node, OR
+  // - Boss node is cleared AND no paths available, OR
+  // - Boss node is cleared AND no turns left
+  // AND there are 4 rewards available for collection
+  const adventureProgressComplete = bossCleared && (atBossNode || hasNoPaths || noTurnsLeft);
+  const rewardsReady = totalUncollectedRewards === 4;
+  
+  return adventureProgressComplete && rewardsReady;
+}
+
+// Usage example:
+const userId = "55167289"; // Your user ID
+const isComplete = isAdventureComplete(adventureInfo, userId);
+
+if (isComplete) {
+  console.log("Adventure is complete! Ready to exit and collect rewards.");
+  
+  // Check if rewards need to be collected
+  const userData = adventureInfo.users[userId];
+  const rewards = adventureInfo.rewards;
+  
+  // Check point-based rewards
+  const pointThresholds = Object.keys(rewards.points).map(Number).sort((a, b) => a - b);
+  const userPoints = userData.points;
+  
+  // Find uncollected point rewards
+  const uncollectedPointRewards = pointThresholds.filter(threshold => {
+    if (userPoints < threshold) return false; // Not reached yet
+    
+    // Check if already collected
+    if (Array.isArray(userData.rewardsCollected)) {
+      return !userData.rewardsCollected.includes(threshold.toString());
+    } else if (typeof userData.rewardsCollected === 'object') {
+      return !(threshold.toString() in userData.rewardsCollected);
+    }
+    return true; // No rewards collected yet
+  });
+  
+  // Check boss rewards
+  const bossRewardsAvailable = rewards.boss && Object.keys(rewards.boss.lootBox).length > 0;
+  const bossRewardCollected = Array.isArray(userData.rewardsCollected) 
+    ? userData.rewardsCollected.length > 0
+    : typeof userData.rewardsCollected === 'object' && Object.keys(userData.rewardsCollected).length > 0;
+  
+  console.log(`Uncollected point rewards at thresholds: ${uncollectedPointRewards.join(', ')}`);
+  console.log(`Boss rewards available: ${bossRewardsAvailable}`);
+  console.log(`Boss reward collected: ${bossRewardCollected}`);
+  
+  if (uncollectedPointRewards.length > 0 || (bossRewardsAvailable && !bossRewardCollected)) {
+    console.log("Rewards are available to collect!");
+  }
+} else {
+  console.log("Adventure is still in progress.");
+  
+  // Check why it's not complete
+  const userData = adventureInfo.users[userId];
+  const bossNode = adventureInfo.nodes.find(n => n.lastBoss === true);
+  
+  if (bossNode) {
+    console.log(`Boss node (${bossNode.id}) state: ${bossNode.state}, pointsFarmed: ${bossNode.pointsFarmed}`);
+    console.log(`Current node: ${userData.currentNode}, Turns left: ${userData.turnsLeft}`);
+  }
+}
+```
+
+**Key Indicators for Adventure Completion:**
+
+1. **Boss Node Cleared**: The boss node (`lastBoss: true`) must have `state: "empty"` and `pointsFarmed > 0`
+2. **User Position**: User should be at or past the boss node
+3. **No Available Paths**: No paths available from current node (indicates end of map)
+4. **Turns Exhausted**: `turnsLeft === 0` (may indicate completion, but check boss status first)
+5. **4 Rewards Available for Collection**: There must be exactly 4 rewards available for collection:
+   - Point-based rewards from `rewards.points` thresholds (typically 3 thresholds: e.g., 220, 440, 660 points)
+   - Boss reward from `rewards.boss` (1 reward)
+   - Total: 4 rewards that haven't been collected yet (checked against `rewardsCollected`)
+
+**Note**: The `status` field (`"1"` or `"2"`) indicates the adventure is active/in progress, not complete. Completion is determined by the boss node state, user position, AND having 4 rewards available for collection.
+
+**Complete State - All Rewards Redeemed and Boss Defeated:**
+
+When an adventure is fully completed with all rewards collected and the boss defeated, the response shows:
+
+**Boss Node State:**
+- Boss node (`lastBoss: true`) has:
+  - `state: "empty"` (cleared)
+  - `pointsFarmed: 20` (points earned from defeating boss)
+  - Boss team members have `isDead: true` and `hp: 0`
+
+**User Rewards Collected:**
+- `rewardsCollected` is an **object** (not an array) containing all 4 collected rewards:
+  ```json
+  {
+    "260": {
+      "consumable": {
+        "85": 1258
+      }
+    },
+    "460": {
+      "consumable": {
+        "85": 1614
+      }
+    },
+    "660": {
+      "consumable": {
+        "85": 2905
+      }
+    },
+    "boss": {
+      "consumable": {
+        "85": 4357
+      },
+      "petGear": {
+        "6": 1
+      }
+    }
+  }
+  ```
+- Each key represents a reward threshold that was collected:
+  - Point thresholds: `"260"`, `"460"`, `"660"` (values may vary by difficulty)
+  - Boss reward: `"boss"`
+- Each value contains the actual reward data received:
+  - `consumable` (object): Map of consumable item IDs to quantities
+  - `petGear` (object, optional): Map of pet gear IDs to quantities (boss reward only)
+
+**User Status Fields:**
+- `bossQuestEmitted: true` - Indicates the boss quest/event has been triggered (boss defeated)
+- `left: false` - User is still in the adventure (can be `true` if user has exited)
+- `turnsLeft: 0` - No turns remaining (typical after completing adventure)
+- `points: 240` (or higher) - Total points accumulated (must meet all reward thresholds)
+
+**Example - Checking if All Rewards Collected:**
+
+```javascript
+function hasAllRewardsCollected(adventureInfo, userId) {
+  const userData = adventureInfo.users[userId];
+  if (!userData) return false;
+  
+  // Check if rewardsCollected is an object with all 4 keys
+  if (typeof userData.rewardsCollected !== 'object' || Array.isArray(userData.rewardsCollected)) {
+    return false; // Not in object format yet
+  }
+  
+  const rewards = adventureInfo.rewards;
+  const collected = userData.rewardsCollected;
+  
+  // Count expected rewards
+  const pointThresholds = Object.keys(rewards.points || {}).sort((a, b) => parseInt(a) - parseInt(b));
+  const hasBossReward = rewards.boss && Object.keys(rewards.boss.lootBox || {}).length > 0;
+  
+  // Check all point rewards are collected
+  const allPointRewardsCollected = pointThresholds.every(threshold => threshold in collected);
+  
+  // Check boss reward is collected
+  const bossRewardCollected = !hasBossReward || ("boss" in collected);
+  
+  // Total should be 4 rewards (3 point + 1 boss, or all point rewards if no boss)
+  const expectedCount = pointThresholds.length + (hasBossReward ? 1 : 0);
+  const actualCount = Object.keys(collected).length;
+  
+  return allPointRewardsCollected && bossRewardCollected && actualCount === expectedCount;
+}
+
+// Check if boss is defeated
+function isBossDefeated(adventureInfo) {
+  const bossNode = adventureInfo.nodes.find(n => n.lastBoss === true);
+  if (!bossNode) return false;
+  
+  return bossNode.state === "empty" && bossNode.pointsFarmed > 0;
+}
+
+// Usage:
+const userId = "35979991";
+const allRewardsCollected = hasAllRewardsCollected(adventureInfo, userId);
+const bossDefeated = isBossDefeated(adventureInfo);
+const userData = adventureInfo.users[userId];
+
+console.log(`Boss defeated: ${bossDefeated}`);
+console.log(`All rewards collected: ${allRewardsCollected}`);
+console.log(`Boss quest emitted: ${userData.bossQuestEmitted}`);
+console.log(`User left adventure: ${userData.left}`);
+console.log(`Rewards collected:`, userData.rewardsCollected);
+
+if (allRewardsCollected && bossDefeated) {
+  console.log("Adventure fully completed! All rewards redeemed and boss defeated.");
+  
+  // Show reward summary
+  const collected = userData.rewardsCollected;
+  Object.entries(collected).forEach(([rewardId, rewardData]) => {
+    console.log(`Reward ${rewardId}:`);
+    if (rewardData.consumable) {
+      Object.entries(rewardData.consumable).forEach(([itemId, quantity]) => {
+        console.log(`  Consumable ${itemId}: ${quantity}`);
+      });
+    }
+    if (rewardData.petGear) {
+      Object.entries(rewardData.petGear).forEach(([gearId, quantity]) => {
+        console.log(`  Pet Gear ${gearId}: ${quantity}`);
+      });
+    }
+  });
+}
+```
+
+**Key Differences - Before vs After Completion:**
+
+| Field | Before Completion | After Completion (All Rewards Collected) |
+|-------|-------------------|------------------------------------------|
+| `rewardsCollected` | Empty array `[]` | Object with 4 keys: `{"260": {...}, "460": {...}, "660": {...}, "boss": {...}}` |
+| Boss node `state` | `"occupied"` | `"empty"` |
+| Boss node `pointsFarmed` | `0` | `20` (or higher) |
+| Boss team `isDead` | `false` | `true` |
+| Boss team `hp` | `> 0` | `0` |
+| `bossQuestEmitted` | `false` or missing | `true` |
+| `turnsLeft` | `> 0` | `0` (typically) |
+| `left` | `false` | `false` (still in) or `true` (exited) |
 
 #### adventure_turnStartBattle
 
@@ -1127,6 +1641,213 @@ Send(JSON.stringify({
   }]
 }))
 ```
+
+#### adventure_collectReward
+
+Collect a reward chest from adventure. Rewards are available based on point thresholds reached during the adventure. Each reward can only be collected once.
+
+**Request:**
+```javascript
+Send(JSON.stringify({
+  calls: [{
+    name: "adventure_collectReward",
+    args: {
+      rewardId: "220"  // Point threshold as string (e.g., "220", "440", "660")
+    },
+    context: {
+      actionTs: Date.now()
+    },
+    ident: "body"
+  }]
+}))
+```
+
+**Request Parameters:**
+- `rewardId` (string): The point threshold that unlocks this reward. Common values:
+  - `"260"`: First point-based reward threshold (Hell difficulty)
+  - `"220"`: First point-based reward threshold (Hard difficulty or other variants)
+  - `"460"`: Second point-based reward threshold (Hell difficulty)
+  - `"440"`: Second point-based reward threshold (Hard difficulty or other variants)
+  - `"660"`: Third point-based reward threshold
+  - `"boss"`: Boss reward (collected after defeating the final boss)
+  - **Note**: The exact threshold values may vary by adventure difficulty and type. Check `adventure_getInfo` response under `rewards.points` to see the actual thresholds for your current adventure.
+
+**Response Fields:**
+- `response` (object): Reward data received
+  - `consumable` (object): Map of consumable item IDs to quantities received
+    - Example: `{"85": 1258}` means consumable ID 85 with quantity 1258
+    - Example: `{"85": 1614}` means consumable ID 85 with quantity 1614
+    - Example: `{"85": 2905}` means consumable ID 85 with quantity 2905
+    - Example: `{"85": 4357}` means consumable ID 85 with quantity 4357
+  - `petGear` (object, optional): Map of pet gear IDs to quantities received (typically only in boss reward)
+    - Example: `{"6": 1}` means pet gear ID 6 with quantity 1
+- `quests` (array, optional): Array of quest progress updates triggered by collecting this reward
+  - Each quest object:
+    - `id` (number): Quest ID
+    - `state` (number): Quest state (1 = in progress, 2 = completed)
+    - `progress` (number): Current progress value
+    - `reward` (object): Quest reward data
+      - `consumable` (object, optional): Consumable rewards
+      - `clanQuestsPoints` (number, optional): Clan quest points
+      - `prestige` (number, optional): Prestige points
+    - `createTime` (number): Quest creation timestamp
+
+**Example Usage:**
+```javascript
+// Collect first point reward (260 points threshold for Hell difficulty)
+const response = await Send(JSON.stringify({
+  calls: [{
+    name: "adventure_collectReward",
+    args: {
+      rewardId: "260"  // Use actual threshold from adventure_getInfo
+    },
+    context: {
+      actionTs: Date.now()
+    },
+    ident: "body"
+  }]
+}));
+
+const result = response.results[0].result;
+const reward = result.response;
+
+// Check what consumables were received
+if (reward.consumable) {
+  for (const [itemId, quantity] of Object.entries(reward.consumable)) {
+    console.log(`Received ${quantity} of consumable ID ${itemId}`);
+  }
+}
+
+// Check pet gear (typically only in boss reward)
+if (reward.petGear) {
+  for (const [gearId, quantity] of Object.entries(reward.petGear)) {
+    console.log(`Received ${quantity} of pet gear ID ${gearId}`);
+  }
+}
+
+// Check quest progress updates
+if (result.quests && result.quests.length > 0) {
+  result.quests.forEach(quest => {
+    console.log(`Quest ${quest.id}: Progress ${quest.progress}, State ${quest.state}`);
+    if (quest.reward) {
+      console.log(`Quest reward:`, quest.reward);
+    }
+  });
+}
+```
+
+**Collecting Multiple Rewards:**
+Rewards can be collected in sequence. The `rewardId` corresponds to the point thresholds defined in `adventure_getInfo` response under `rewards.points`:
+
+```javascript
+// Get adventure info to see available rewards
+const adventureInfo = await Send(JSON.stringify({
+  calls: [{ name: "adventure_getInfo", args: {}, ident: "body" }]
+}));
+
+const rewards = adventureInfo.results[0].result.response.rewards;
+const userId = Object.keys(adventureInfo.results[0].result.response.users)[0];
+const userData = adventureInfo.results[0].result.response.users[userId];
+const collected = userData.rewardsCollected;
+
+// Collect point-based rewards (in order: 260, 460, 660 for Hell difficulty)
+const pointRewards = Object.keys(rewards.points).sort((a, b) => parseInt(a) - parseInt(b));
+for (const threshold of pointRewards) {
+  // Check if already collected
+  const isCollected = Array.isArray(collected) 
+    ? collected.includes(threshold)
+    : (typeof collected === 'object' && collected[threshold]);
+  
+  if (!isCollected) {
+    console.log(`Collecting reward for ${threshold} points...`);
+    const response = await Send(JSON.stringify({
+      calls: [{
+        name: "adventure_collectReward",
+        args: { rewardId: threshold },
+        context: { actionTs: Date.now() },
+        ident: "body"
+      }]
+    }));
+    
+    const result = response.results[0].result;
+    console.log(`Reward collected:`, result.response);
+    
+    // Small delay between collections
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+}
+
+// Collect boss reward (after defeating boss)
+// Boss reward typically includes petGear in addition to consumables
+if (rewards.boss) {
+  const bossCollected = Array.isArray(collected)
+    ? collected.includes("boss")
+    : (typeof collected === 'object' && collected["boss"]);
+  
+  if (!bossCollected) {
+    console.log(`Collecting boss reward...`);
+    const response = await Send(JSON.stringify({
+      calls: [{
+        name: "adventure_collectReward",
+        args: { rewardId: "boss" },
+        context: { actionTs: Date.now() },
+        ident: "body"
+      }]
+    }));
+    
+    const result = response.results[0].result;
+    const bossReward = result.response;
+    console.log(`Boss reward collected:`, bossReward);
+    
+    // Boss reward may include petGear
+    if (bossReward.petGear) {
+      console.log(`Pet gear received:`, bossReward.petGear);
+    }
+  }
+}
+```
+
+**Complete Reward Collection Sequence Example (Hell Difficulty):**
+```javascript
+// Collect all 4 rewards in order: 260, 460, 660, boss
+const rewardIds = ["260", "460", "660", "boss"];
+
+for (const rewardId of rewardIds) {
+  try {
+    const response = await Send(JSON.stringify({
+      calls: [{
+        name: "adventure_collectReward",
+        args: { rewardId: rewardId },
+        context: { actionTs: Date.now() },
+        ident: "body"
+      }]
+    }));
+    
+    const result = response.results[0].result;
+    const reward = result.response;
+    
+    console.log(`✓ Collected reward ${rewardId}:`);
+    if (reward.consumable) {
+      console.log(`  Consumables:`, reward.consumable);
+    }
+    if (reward.petGear) {
+      console.log(`  Pet Gear:`, reward.petGear);
+    }
+    
+    // Wait between collections
+    await new Promise(resolve => setTimeout(resolve, 500));
+  } catch (error) {
+    console.error(`Failed to collect reward ${rewardId}:`, error);
+  }
+}
+```
+
+**Error Handling:**
+- If reward has already been collected, the API may return an error
+- If `rewardId` doesn't exist or hasn't been unlocked yet, the API may return an error
+- Always check `adventure_getInfo` to verify which rewards are available and which have been collected
+
+**Note**: After collecting a reward, call `adventure_getInfo` again to refresh the `rewardsCollected` field, which will show the newly collected reward ID.
 
 #### adventureSolo_getInfo
 
@@ -2437,7 +3158,22 @@ Send({
 })
 ```
 
-**Response Fields:**
+**Response States:**
+
+The API response structure differs depending on whether Guild War is **active** or **inactive**:
+
+**When Guild War is INACTIVE:**
+The response contains only basic timing information:
+- `season` (string): Current war season identifier (e.g., "202546")
+- `day` (string): Current day (typically "0" when inactive)
+- `endTime` (number): Unix timestamp when the last war ended
+- `nextWarTime` (number): Unix timestamp when the next war starts
+- `nextLockTime` (number): Unix timestamp when the next war locks
+
+**When Guild War is ACTIVE:**
+The response includes all the fields documented below, including enemy clan information, attack attempts (`myTries`), enemy slots, etc.
+
+**Response Fields (Active State Only):**
 
 **War Information:**
 - `avgLevel` (string): Average level of clan members
@@ -2539,6 +3275,8 @@ Send({
 **Note:** Unlike Arena and Grand Arena which track attempts in the `refillable` array, Guild War attempts are tracked directly in the `clanWarGetInfo` response as `myTries`.
 
 **Example Usage:**
+
+**Checking War Status:**
 ```javascript
 const response = await Send({
   calls: [
@@ -2548,114 +3286,140 @@ const response = await Send({
 
 const guildWarInfo = response.results[0].result.response;
 
-// Check attack attempts (only exists when war is active)
-if ('myTries' in guildWarInfo) {
-  const attemptsRemaining = guildWarInfo.myTries ?? 0;
-  console.log(`Guild War attempts remaining: ${attemptsRemaining}`);
+// Check if war is active or inactive
+const isActive = 'myTries' in guildWarInfo || 'enemyClan' in guildWarInfo;
+
+if (!isActive) {
+  // War is inactive - only timing information available
+  console.log('Guild War is currently inactive');
+  console.log(`Season: ${guildWarInfo.season}`);
+  console.log(`Day: ${guildWarInfo.day}`);
+  console.log(`Last war ended: ${new Date(guildWarInfo.endTime * 1000).toLocaleString()}`);
+  console.log(`Next war starts: ${new Date(guildWarInfo.nextWarTime * 1000).toLocaleString()}`);
+  console.log(`Next war locks: ${new Date(guildWarInfo.nextLockTime * 1000).toLocaleString()}`);
 } else {
-  console.log('No active Guild War - myTries field not available');
+  // War is active - full information available
+  console.log('Guild War is active');
+  
+  // Check attack attempts (only exists when war is active)
+  if ('myTries' in guildWarInfo) {
+    const attemptsRemaining = guildWarInfo.myTries ?? 0;
+    console.log(`Guild War attempts remaining: ${attemptsRemaining}`);
+  }
+  
+  // Get war information (only available when active)
+  if ('league' in guildWarInfo) {
+    console.log(`Season: ${guildWarInfo.season}, Day: ${guildWarInfo.day}, League: ${guildWarInfo.league}`);
+    console.log(`Points: ${guildWarInfo.points} vs ${guildWarInfo.enemyPoints}`);
+  }
+  
+  // Get enemy clan information (only available when active)
+  if ('enemyClan' in guildWarInfo) {
+    const enemyClan = guildWarInfo.enemyClan;
+    console.log(`Enemy Clan: ${enemyClan.title} (Level ${enemyClan.level}, ${enemyClan.membersCount} members)`);
+    
+    // Get enemy clan members (only available when active)
+    if ('enemyClanMembers' in guildWarInfo) {
+      const enemyMembers = guildWarInfo.enemyClanMembers;
+      console.log(`Enemy has ${Object.keys(enemyMembers).length} members`);
+      
+      // Iterate through enemy clan members with detailed information
+      for (const [userId, member] of Object.entries(enemyMembers)) {
+        console.log(`\nMember: ${member.name} (ID: ${member.id})`);
+        console.log(`  Level: ${member.level}`);
+        console.log(`  Server ID: ${member.serverId}`);
+        
+        // Role information
+        let roleName = 'Member';
+        if (member.clanRole === "255") roleName = 'Leader/Owner';
+        else if (member.clanRole === "4") roleName = 'Commander';
+        else if (member.clanRole === "3") roleName = 'Officer';
+        console.log(`  Role: ${roleName} (clanRole: ${member.clanRole})`);
+        console.log(`  Is Commander: ${member.commander}`);
+        
+        // Activity information
+        const lastLogin = new Date(parseInt(member.lastLoginTime) * 1000);
+        const daysSinceLogin = Math.floor((Date.now() - lastLogin.getTime()) / (1000 * 60 * 60 * 24));
+        console.log(`  Last Login: ${lastLogin.toLocaleString()} (${daysSinceLogin} days ago)`);
+        
+        // Profile information
+        console.log(`  Avatar ID: ${member.avatarId}`);
+        console.log(`  Frame ID: ${member.frameId}`);
+        console.log(`  League ID: ${member.leagueId}`);
+        console.log(`  PM Allowed: ${member.allowPm}`);
+        console.log(`  Chat Moderator: ${member.isChatModerator}`);
+        
+        // Clan information
+        console.log(`  Clan: ${member.clanTitle} (ID: ${member.clanId})`);
+        console.log(`  Clan Icon: flagColor1=${member.clanIcon.flagColor1}, flagColor2=${member.clanIcon.flagColor2}, flagShape=${member.clanIcon.flagShape}`);
+      }
+      
+      // Find commanders and leaders
+      const commanders = Object.values(enemyMembers).filter(m => m.commander);
+      const leaders = Object.values(enemyMembers).filter(m => m.clanRole === "255");
+      const officers = Object.values(enemyMembers).filter(m => m.clanRole === "3");
+      const regularMembers = Object.values(enemyMembers).filter(m => m.clanRole === "2");
+      
+      console.log(`\nEnemy clan structure:`);
+      console.log(`  Leaders: ${leaders.length}`);
+      console.log(`  Commanders: ${commanders.length}`);
+      console.log(`  Officers: ${officers.length}`);
+      console.log(`  Regular Members: ${regularMembers.length}`);
+      
+      // Find most active members (recent login)
+      const activeMembers = Object.values(enemyMembers)
+        .filter(m => {
+          const lastLogin = parseInt(m.lastLoginTime) * 1000;
+          const daysSinceLogin = (Date.now() - lastLogin) / (1000 * 60 * 60 * 24);
+          return daysSinceLogin <= 7; // Active within last 7 days
+        })
+        .sort((a, b) => parseInt(b.lastLoginTime) - parseInt(a.lastLoginTime));
+      
+      console.log(`\nMost active members (last 7 days): ${activeMembers.length}`);
+      activeMembers.slice(0, 5).forEach(m => {
+        const lastLogin = new Date(parseInt(m.lastLoginTime) * 1000);
+        console.log(`  ${m.name} (Level ${m.level}) - Last login: ${lastLogin.toLocaleString()}`);
+      });
+      
+      // Find highest level members
+      const topLevelMembers = Object.values(enemyMembers)
+        .sort((a, b) => parseInt(b.level) - parseInt(a.level))
+        .slice(0, 5);
+      
+      console.log(`\nTop 5 highest level members:`);
+      topLevelMembers.forEach(m => {
+        console.log(`  ${m.name} - Level ${m.level}, Power: ${m.power || 'N/A'}`);
+      });
+    }
+    
+    // Get enemy defense slots (only available when active)
+    if ('enemySlots' in guildWarInfo) {
+      const enemySlots = guildWarInfo.enemySlots;
+      for (const [slotId, slotData] of Object.entries(enemySlots)) {
+        const slotNum = parseInt(slotId);
+        const battleType = slotNum <= 20 ? 'Hero' : 'Titan';
+        const team = slotData.team;
+        console.log(`Slot ${slotId} (${battleType}): ${team.length} units`);
+        
+        // Access individual team members
+        team.forEach((memberObj, index) => {
+          const position = Object.keys(memberObj)[0];
+          const member = memberObj[position];
+          console.log(`  Position ${position}: ${member.type} ID ${member.id}, Level ${member.level}, Power ${member.power}`);
+        });
+      }
+    }
+    
+    // Get clan attack attempts (only available when active)
+    if ('clanTries' in guildWarInfo) {
+      const clanTries = guildWarInfo.clanTries;
+      console.log(`Total clan attempts used: ${clanTries.clan}`);
+      if ('enemyClanTries' in guildWarInfo) {
+        console.log(`Enemy clan attempts used: ${guildWarInfo.enemyClanTries.clan}`);
+      }
+    }
+  }
 }
-
-// Get war information
-console.log(`Season: ${guildWarInfo.season}, Day: ${guildWarInfo.day}, League: ${guildWarInfo.league}`);
-console.log(`Points: ${guildWarInfo.points} vs ${guildWarInfo.enemyPoints}`);
-
-// Get enemy clan information
-const enemyClan = guildWarInfo.enemyClan;
-console.log(`Enemy Clan: ${enemyClan.title} (Level ${enemyClan.level}, ${enemyClan.membersCount} members)`);
-
-// Get enemy clan members
-const enemyMembers = guildWarInfo.enemyClanMembers;
-console.log(`Enemy has ${Object.keys(enemyMembers).length} members`);
-
-// Iterate through enemy clan members with detailed information
-for (const [userId, member] of Object.entries(enemyMembers)) {
-  console.log(`\nMember: ${member.name} (ID: ${member.id})`);
-  console.log(`  Level: ${member.level}`);
-  console.log(`  Server ID: ${member.serverId}`);
-  
-  // Role information
-  let roleName = 'Member';
-  if (member.clanRole === "255") roleName = 'Leader/Owner';
-  else if (member.clanRole === "4") roleName = 'Commander';
-  else if (member.clanRole === "3") roleName = 'Officer';
-  console.log(`  Role: ${roleName} (clanRole: ${member.clanRole})`);
-  console.log(`  Is Commander: ${member.commander}`);
-  
-  // Activity information
-  const lastLogin = new Date(parseInt(member.lastLoginTime) * 1000);
-  const daysSinceLogin = Math.floor((Date.now() - lastLogin.getTime()) / (1000 * 60 * 60 * 24));
-  console.log(`  Last Login: ${lastLogin.toLocaleString()} (${daysSinceLogin} days ago)`);
-  
-  // Profile information
-  console.log(`  Avatar ID: ${member.avatarId}`);
-  console.log(`  Frame ID: ${member.frameId}`);
-  console.log(`  League ID: ${member.leagueId}`);
-  console.log(`  PM Allowed: ${member.allowPm}`);
-  console.log(`  Chat Moderator: ${member.isChatModerator}`);
-  
-  // Clan information
-  console.log(`  Clan: ${member.clanTitle} (ID: ${member.clanId})`);
-  console.log(`  Clan Icon: flagColor1=${member.clanIcon.flagColor1}, flagColor2=${member.clanIcon.flagColor2}, flagShape=${member.clanIcon.flagShape}`);
-}
-
-// Find commanders and leaders
-const commanders = Object.values(enemyMembers).filter(m => m.commander);
-const leaders = Object.values(enemyMembers).filter(m => m.clanRole === "255");
-const officers = Object.values(enemyMembers).filter(m => m.clanRole === "3");
-const regularMembers = Object.values(enemyMembers).filter(m => m.clanRole === "2");
-
-console.log(`\nEnemy clan structure:`);
-console.log(`  Leaders: ${leaders.length}`);
-console.log(`  Commanders: ${commanders.length}`);
-console.log(`  Officers: ${officers.length}`);
-console.log(`  Regular Members: ${regularMembers.length}`);
-
-// Find most active members (recent login)
-const activeMembers = Object.values(enemyMembers)
-  .filter(m => {
-    const lastLogin = parseInt(m.lastLoginTime) * 1000;
-    const daysSinceLogin = (Date.now() - lastLogin) / (1000 * 60 * 60 * 24);
-    return daysSinceLogin <= 7; // Active within last 7 days
-  })
-  .sort((a, b) => parseInt(b.lastLoginTime) - parseInt(a.lastLoginTime));
-
-console.log(`\nMost active members (last 7 days): ${activeMembers.length}`);
-activeMembers.slice(0, 5).forEach(m => {
-  const lastLogin = new Date(parseInt(m.lastLoginTime) * 1000);
-  console.log(`  ${m.name} (Level ${m.level}) - Last login: ${lastLogin.toLocaleString()}`);
-});
-
-// Find highest level members
-const topLevelMembers = Object.values(enemyMembers)
-  .sort((a, b) => parseInt(b.level) - parseInt(a.level))
-  .slice(0, 5);
-
-console.log(`\nTop 5 highest level members:`);
-topLevelMembers.forEach(m => {
-  console.log(`  ${m.name} - Level ${m.level}, Power: ${m.power || 'N/A'}`);
-});
-
-// Get enemy defense slots
-const enemySlots = guildWarInfo.enemySlots;
-for (const [slotId, slotData] of Object.entries(enemySlots)) {
-  const slotNum = parseInt(slotId);
-  const battleType = slotNum <= 20 ? 'Hero' : 'Titan';
-  const team = slotData.team;
-  console.log(`Slot ${slotId} (${battleType}): ${team.length} units`);
-  
-  // Access individual team members
-  team.forEach((memberObj, index) => {
-    const position = Object.keys(memberObj)[0];
-    const member = memberObj[position];
-    console.log(`  Position ${position}: ${member.type} ID ${member.id}, Level ${member.level}, Power ${member.power}`);
-  });
-}
-
-// Get clan attack attempts
-const clanTries = guildWarInfo.clanTries;
-console.log(`Total clan attempts used: ${clanTries.clan}`);
-console.log(`Enemy clan attempts used: ${guildWarInfo.enemyClanTries.clan}`);
 ```
 
 #### clanWarAttack
