@@ -2941,7 +2941,7 @@ The Arena API provides functionality for regular arena battles, including findin
 
 #### arenaFindEnemies
 
-**Description:** Retrieves a list of available opponents in the arena.
+**Description:** Retrieves a list of available opponents in the arena with their complete team lineups, including heroes, pets, banners, and user information.
 
 **Request:**
 ```javascript
@@ -2955,26 +2955,136 @@ Send({
 })
 ```
 
+**Request Parameters:**
+- No parameters required (empty `args` object)
+
 **Response Structure:**
 ```javascript
 {
+  date: 1763940414.8791299,  // Server timestamp
   results: [{
     ident: "body",
     result: {
       response: [
         {
-          userId: "60332840",
-          place: "11",
-          heroes: [/* hero objects */],
-          power: "1048578",
-          banners: [/* banner configs */],
-          user: {/* user info */}
+          userId: "35918555",           // Opponent's user ID (string)
+          place: "24",                  // Opponent's rank/position (string)
+          power: "1160718",             // Total team power (string)
+          heroes: [                     // Array of hero/pet objects (6 items: 5 heroes + 1 pet)
+            {
+              id: 6,                    // Hero ID
+              level: 130,                // Hero level
+              color: 18,                 // Evolution color/rank
+              star: 6                   // Star level
+            },
+            {
+              id: 9,
+              level: 130,
+              color: 18,
+              star: 6
+            },
+            {
+              id: 56,
+              level: 130,
+              color: 18,
+              star: 6
+            },
+            {
+              id: 49,
+              level: 130,
+              color: 18,
+              star: 6
+            },
+            {
+              id: 50,
+              level: 130,
+              color: 18,
+              star: 6
+            },
+            {
+              id: 6006,                 // Pet ID (6000-6999 range)
+              level: 130,                // Pet level
+              color: 10,                 // Pet evolution
+              star: 6,                   // Pet star level
+              type: "pet"                // Indicates this is a pet
+            }
+          ],
+          banners: [                    // Array of banner configurations
+            {
+              id: 6,                     // Banner ID
+              slots: {                   // Banner slot configuration
+                "0": 66,                  // Slot 0 value
+                "1": 20,                  // Slot 1 value
+                "2": 31                   // Slot 2 value
+              }
+              // OR alternative format:
+              // slots: [9, 19, 41]       // Array format for slots
+            }
+          ],
+          user: {                       // Opponent's user information
+            id: "35918555",              // User ID
+            name: "Мир",                 // Player name
+            lastLoginTime: "1763923472", // Last login timestamp
+            serverId: "218",             // Server ID
+            level: "130",                // Player level
+            clanId: "268348",            // Clan ID
+            clanRole: "4",               // Clan role (4 = member, etc.)
+            commander: true,             // Is clan commander
+            avatarId: "992",             // Avatar ID
+            isChatModerator: false,      // Chat moderator status
+            frameId: 51,                 // Profile frame ID
+            leagueId: 3,                 // League ID
+            allowPm: "all",              // PM permission setting
+            clanTitle: "МИР",            // Clan name
+            clanIcon: {                  // Clan icon configuration
+              flagColor1: 0,             // Flag color 1
+              flagColor2: 0,             // Flag color 2
+              flagShape: 3,              // Flag shape
+              iconColor: 19,             // Icon color
+              iconShape: 44              // Icon shape
+            }
+          }
         }
+        // ... more opponents
       ]
     }
   }]
 }
 ```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | Number | Server timestamp of the response |
+| `results[].ident` | String | Request identifier ("body") |
+| `results[].result.response` | Array | Array of opponent objects |
+| `response[].userId` | String | Opponent's user ID |
+| `response[].place` | String | Opponent's current rank/position in arena |
+| `response[].power` | String | Total team power |
+| `response[].heroes` | Array | Array of 6 objects (5 heroes + 1 pet) |
+| `response[].heroes[].id` | Number | Hero/Pet ID (1-999 for heroes, 6000-6999 for pets) |
+| `response[].heroes[].level` | Number | Hero/Pet level |
+| `response[].heroes[].color` | Number | Evolution color/rank |
+| `response[].heroes[].star` | Number | Star level |
+| `response[].heroes[].type` | String | "pet" if this is a pet (optional, only on pet objects) |
+| `response[].banners` | Array | Banner configurations |
+| `response[].banners[].id` | Number | Banner ID |
+| `response[].banners[].slots` | Object/Array | Banner slot configuration (object with keys "0", "1", "2" or array) |
+| `response[].user` | Object | Opponent's user information |
+| `response[].user.id` | String | User ID |
+| `response[].user.name` | String | Player name |
+| `response[].user.level` | String | Player level |
+| `response[].user.clanId` | String | Clan ID |
+| `response[].user.clanTitle` | String | Clan name |
+| `response[].user.clanIcon` | Object | Clan icon configuration |
+
+**Usage Notes:**
+- The `heroes` array always contains 6 items: the first 5 are heroes, the last one is the pet
+- Pet objects may have a `type: "pet"` field to distinguish them from heroes
+- Banner `slots` can be either an object with string keys ("0", "1", "2") or an array
+- The `place` field indicates the opponent's current rank, useful for sorting opponents by difficulty
+- The `power` field can be used to estimate battle difficulty
 
 #### arenaAttack
 
@@ -3014,7 +3124,7 @@ Send({
 
 #### arenaCheckTargetRange
 
-**Description:** Validates if target opponents are still in valid attack range.
+**Description:** Validates if target opponents are still in valid attack range. This is useful before attacking to ensure opponents haven't moved out of range.
 
 **Request:**
 ```javascript
@@ -3022,7 +3132,7 @@ Send({
   calls: [{
     name: "arenaCheckTargetRange",
     args: {
-      ids: ["47308606", "40990396", "35449277"]
+      ids: ["35918555", "59891179", "48582751"]  // Array of user IDs as strings
     },
     context: { actionTs: Date.now() },
     ident: "body"
@@ -3030,7 +3140,40 @@ Send({
 })
 ```
 
-**Response:** Returns an object mapping user IDs to boolean values indicating if they're attackable.
+**Request Parameters:**
+- `ids` (array of strings): Array of opponent user IDs to check
+
+**Response Structure:**
+```javascript
+{
+  date: 1763940423.0623381,  // Server timestamp
+  results: [{
+    ident: "body",
+    result: {
+      response: {
+        "35918555": true,     // User ID → boolean (true = attackable, false = not in range)
+        "59891179": true,
+        "48582751": true
+      }
+    }
+  }]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | Number | Server timestamp of the response |
+| `results[].ident` | String | Request identifier ("body") |
+| `results[].result.response` | Object | Object mapping user IDs (strings) to boolean values |
+| `response[userId]` | Boolean | `true` if opponent is attackable, `false` if not in range |
+
+**Usage Notes:**
+- User IDs in the request must be strings (not numbers)
+- Returns `true` if the opponent is still in valid attack range
+- Returns `false` if the opponent has moved out of range or is no longer attackable
+- Always check this before attacking to avoid wasting attempts on invalid targets
 
 ---
 
@@ -3051,7 +3194,7 @@ The Grand Arena API provides functionality for Grand Arena battles, which use 3 
 
 #### grandFindEnemies
 
-**Description:** Finds available opponents in Grand Arena.
+**Description:** Finds available opponents in Grand Arena with their complete team lineups (3 teams per opponent).
 
 **Request:**
 ```javascript
@@ -3065,7 +3208,85 @@ Send({
 })
 ```
 
-**Response:** Returns array of opponents with their 3 teams configured.
+**Request Parameters:**
+- No parameters required (empty `args` object)
+
+**Response Structure:**
+```javascript
+{
+  date: 1763940414.8791299,  // Server timestamp
+  results: [{
+    ident: "body",
+    result: {
+      response: [
+        {
+          userId: "35918555",           // Opponent's user ID (string)
+          place: "24",                  // Opponent's rank/position (string)
+          power: "1160718",             // Total team power (string)
+          heroes: [                     // Array of 3 teams (each team has 6 items: 5 heroes + 1 pet)
+            [                            // Team 1
+              { id: 58, level: 130, color: 18, star: 6 },
+              { id: 1, level: 130, color: 18, star: 6 },
+              { id: 64, level: 130, color: 18, star: 6 },
+              { id: 13, level: 130, color: 18, star: 6 },
+              { id: 55, level: 130, color: 18, star: 6 },
+              { id: 6006, level: 130, color: 10, star: 6, type: "pet" }
+            ],
+            [                            // Team 2
+              { id: 42, level: 130, color: 18, star: 6 },
+              { id: 56, level: 130, color: 18, star: 6 },
+              { id: 9, level: 130, color: 18, star: 6 },
+              { id: 62, level: 130, color: 18, star: 6 },
+              { id: 43, level: 130, color: 18, star: 6 },
+              { id: 6005, level: 130, color: 10, star: 6, type: "pet" }
+            ],
+            [                            // Team 3
+              { id: 16, level: 130, color: 18, star: 6 },
+              { id: 31, level: 130, color: 18, star: 6 },
+              { id: 57, level: 130, color: 18, star: 6 },
+              { id: 40, level: 130, color: 18, star: 6 },
+              { id: 48, level: 130, color: 18, star: 6 },
+              { id: 6004, level: 130, color: 10, star: 6, type: "pet" }
+            ]
+          ],
+          banners: [                    // Array of 3 banner configurations (one per team)
+            { id: 1, slots: {...} },    // Banner for team 1
+            { id: 6, slots: {...} },    // Banner for team 2
+            { id: 2, slots: {...} }     // Banner for team 3
+          ],
+          user: {                       // Opponent's user information (same structure as arena)
+            id: "35918555",
+            name: "PlayerName",
+            // ... same user fields as arenaFindEnemies
+          }
+        }
+        // ... more opponents
+      ]
+    }
+  }]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | Number | Server timestamp of the response |
+| `results[].ident` | String | Request identifier ("body") |
+| `results[].result.response` | Array | Array of opponent objects |
+| `response[].userId` | String | Opponent's user ID |
+| `response[].place` | String | Opponent's current rank/position in grand arena |
+| `response[].power` | String | Total team power |
+| `response[].heroes` | Array | Array of 3 teams (each team is an array of 6 hero/pet objects) |
+| `response[].heroes[teamIndex]` | Array | Team array containing 5 heroes + 1 pet |
+| `response[].banners` | Array | Array of 3 banner configurations (one per team) |
+| `response[].user` | Object | Opponent's user information (same structure as arena) |
+
+**Usage Notes:**
+- Grand Arena uses 3 teams instead of 1
+- Each team in the `heroes` array contains 6 items: 5 heroes followed by 1 pet
+- The `banners` array contains 3 banner configurations, one for each team
+- Team structure: `heroes[0]` = Team 1, `heroes[1]` = Team 2, `heroes[2]` = Team 3
 
 #### grandAttack
 
@@ -3106,7 +3327,7 @@ Send({
 
 #### grandCheckTargetRange
 
-**Description:** Checks if specific opponents are still available for attack.
+**Description:** Checks if specific opponents are still available for attack in Grand Arena. This is useful before attacking to ensure opponents haven't moved out of range.
 
 **Request:**
 ```javascript
@@ -3114,13 +3335,48 @@ Send({
   calls: [{
     name: "grandCheckTargetRange",
     args: {
-      ids: ["48705148", "35986432", "47308606"]
+      ids: ["48705148", "35986432", "47308606"]  // Array of user IDs as strings
     },
     context: { actionTs: Date.now() },
     ident: "body"
   }]
 })
 ```
+
+**Request Parameters:**
+- `ids` (array of strings): Array of opponent user IDs to check
+
+**Response Structure:**
+```javascript
+{
+  date: 1763940423.0623381,  // Server timestamp
+  results: [{
+    ident: "body",
+    result: {
+      response: {
+        "48705148": true,     // User ID → boolean (true = attackable, false = not in range)
+        "35986432": true,
+        "47308606": true
+      }
+    }
+  }]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | Number | Server timestamp of the response |
+| `results[].ident` | String | Request identifier ("body") |
+| `results[].result.response` | Object | Object mapping user IDs (strings) to boolean values |
+| `response[userId]` | Boolean | `true` if opponent is attackable, `false` if not in range |
+
+**Usage Notes:**
+- User IDs in the request must be strings (not numbers)
+- Returns `true` if the opponent is still in valid attack range
+- Returns `false` if the opponent has moved out of range or is no longer attackable
+- Always check this before attacking to avoid wasting attempts on invalid targets
 
 ---
 

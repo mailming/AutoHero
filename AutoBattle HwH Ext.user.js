@@ -183,11 +183,15 @@
 
                     // Get detailed opponent information
                     const detailedOpponents = await this.getArenaOpponents();
-                    if (detailedOpponents && Object.keys(detailedOpponents).length > 0) {
+                    if (detailedOpponents && (detailedOpponents.array || detailedOpponents.map)) {
+                        // Store both map and array to preserve API order
+                        this.opponentsData = detailedOpponents;
+                    } else if (detailedOpponents && typeof detailedOpponents === 'object' && Object.keys(detailedOpponents).length > 0) {
+                        // Fallback: old format (just map)
                         this.opponents = detailedOpponents;
                     }
 
-                    // Find and sort opponents by difficulty
+                    // Process opponents in API order (one by one, no sorting)
                     this.findEasiestOpponents();
 
                     // Execute battles
@@ -346,24 +350,63 @@
                     const opponents = response.results[0].result.response;
                     console.log('Detailed opponents info:', opponents);
 
+                    // Return both map (for lookup) and array (for order preservation)
                     const opponentsMap = {};
+                    const opponentsArray = [];
+                    
                     if (Array.isArray(opponents)) {
+                        // Preserve the order from API response
                         opponents.forEach(opponent => {
                             opponentsMap[opponent.userId] = opponent;
+                            opponentsArray.push(opponent);
                         });
                     }
 
-                    return opponentsMap;
+                    return {
+                        map: opponentsMap,
+                        array: opponentsArray  // Preserve API order
+                    };
                 } catch (error) {
                     console.error('Error getting arena opponents:', error);
-                    return {};
+                    return { map: {}, array: [] };
                 }
             }
 
             this.findEasiestOpponents = function() {
-                if (this.opponents && typeof this.opponents === 'object') {
+                // Process opponents in the exact order they come from API
+                // Arena will try them one by one as returned by the server (no sorting)
+                if (this.opponentsData && this.opponentsData.array && Array.isArray(this.opponentsData.array)) {
                     const availableOpponents = [];
 
+                    // Process in API order (preserve original array order)
+                    this.opponentsData.array.forEach(opponentData => {
+                        availableOpponents.push({
+                            opponent: {
+                                id: opponentData.userId,
+                                power: parseInt(opponentData.power) || 0,
+                                place: parseInt(opponentData.place) || 1000,
+                                heroes: opponentData.heroes || [],
+                                banners: opponentData.banners || [],
+                                user: opponentData.user || {}
+                            },
+                            rank: parseInt(opponentData.place) || 1000,
+                            difficulty: parseInt(opponentData.power) || 0
+                        });
+                    });
+
+                    // Keep original order from API - try opponents one by one as returned
+                    // No sorting - will attempt in the order the server provides
+                    this.opponents = availableOpponents;
+                    console.log(`[OPPONENTS] Processing ${this.opponents.length} opponents in API order (one by one, no sorting)`);
+                    console.log('[OPPONENTS] Opponent order:', this.opponents.map(o => ({
+                        id: o.opponent.id,
+                        place: o.rank,
+                        power: o.difficulty
+                    })));
+                } else if (this.opponents && typeof this.opponents === 'object') {
+                    // Fallback: if we have the old format (map), convert to array
+                    // Note: Object.entries() may not preserve order, but we'll try
+                    const availableOpponents = [];
                     for (const [opponentId, opponentData] of Object.entries(this.opponents)) {
                         availableOpponents.push({
                             opponent: {
@@ -378,60 +421,141 @@
                             difficulty: parseInt(opponentData.power) || 0
                         });
                     }
-
-                    this.opponents = availableOpponents.sort((a, b) => a.difficulty - b.difficulty);
-                    console.log('Available opponents:', this.opponents);
+                    this.opponents = availableOpponents;
+                    console.log(`[OPPONENTS] Processing ${this.opponents.length} opponents (fallback mode)`);
                 } else {
-                    console.log('No opponents data to process');
+                    console.log('[OPPONENTS] No opponents data to process');
                     this.opponents = [];
                 }
             }
 
             this.executeBattles = async function() {
+                let battlesAttempted = 0;
+                let battlesSkipped = 0;
+                
                 for (let i = 0; i < this.attemptsRemaining && this.opponents.length > 0; i++) {
                     const opponent = this.opponents.shift();
-                    setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - Opponent ${opponent.opponent.id}`);
+                    const opponentId = opponent.opponent.id;
+                    
+                    console.log(`[EXECUTE] ===== Processing opponent ${opponentId} (${i + 1}/${this.attemptsRemaining}) =====`);
+                    setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - Opponent ${opponentId}`);
 
                     try {
                         if (this.arenaType === 'grand') {
-                            const canAttack = await this.checkTargetRange(opponent.opponent.id);
+                            const canAttack = await this.checkTargetRange(opponentId);
                             if (!canAttack) {
-                                console.log(`Target ${opponent.opponent.id} is not in range, skipping`);
+                                console.log(`[EXECUTE] Target ${opponentId} is not in range, skipping`);
+                                battlesSkipped++;
+                                // Put opponent back at end of queue to try later
+                                this.opponents.push(opponent);
                                 continue;
                             }
                         }
 
                         const result = await this.executeBattle(opponent);
+                        
+                        if (result.skipped) {
+                            console.log(`[EXECUTE] Battle skipped due to low win rate (${result.winRate?.toFixed(2)}%)`);
+                            battlesSkipped++;
+                            // Try next opponent if available
+                            if (this.opponents.length === 0) {
+                                console.log(`[EXECUTE] No more opponents available, ending execution`);
+                                break;
+                            }
+                            continue;
+                        }
+                        
+                        battlesAttempted++;
                         if (result.win) {
                             this.victories++;
+                            console.log(`[EXECUTE] ✓ Victory against opponent ${opponentId}`);
+                        } else {
+                            console.log(`[EXECUTE] ✗ Defeat against opponent ${opponentId}`);
                         }
                     } catch (error) {
-                        console.error('Battle error:', error);
+                        console.error(`[EXECUTE] Battle error for opponent ${opponentId}:`, error);
+                        battlesAttempted++;
                     }
                 }
 
-                this.end(`Completed ${this.victories}/${this.attemptsRemaining} victories`);
+                const summary = `Completed ${this.victories}/${battlesAttempted} victories${battlesSkipped > 0 ? `, ${battlesSkipped} skipped` : ''}`;
+                console.log(`[EXECUTE] ===== Execution Summary =====`);
+                console.log(`[EXECUTE] Victories: ${this.victories}/${battlesAttempted}`);
+                console.log(`[EXECUTE] Skipped: ${battlesSkipped}`);
+                console.log(`[EXECUTE] =============================`);
+                this.end(summary);
             }
 
             this.executeBattle = async function(opponent) {
                 try {
                     if (!opponent || !opponent.opponent || !opponent.opponent.id) {
-                        console.error('Invalid opponent data:', opponent);
+                        console.error('[DEMO] Invalid opponent data:', opponent);
                         return { win: false };
                     }
 
-                    console.log('Executing battle against opponent:', opponent.opponent.id);
+                    const opponentId = opponent.opponent.id;
+                    console.log(`[DEMO] ===== Starting demo battle simulation for opponent ${opponentId} =====`);
 
-                    const teamConfig = this.getTeamConfiguration();
-                    console.log('Using team configuration for battle:', teamConfig);
+                    // Step 1: Get team configurations
+                    console.log('[DEMO] Step 1: Getting team configurations...');
+                    const myTeamConfig = this.getTeamConfiguration();
+                    const opponentTeamConfig = this.getOpponentTeamConfig(opponent);
+                    
+                    console.log('[DEMO] My team config:', JSON.stringify(myTeamConfig, null, 2));
+                    console.log('[DEMO] Opponent team config:', JSON.stringify(opponentTeamConfig, null, 2));
 
-                    const battleResult = await this.startArenaBattle(opponent.opponent.id, teamConfig);
+                    if (!opponentTeamConfig || !opponentTeamConfig.hasValidTeam) {
+                        console.warn('[DEMO] ⚠️ Cannot get opponent team data, proceeding with attack anyway');
+                        const battleResult = await this.startArenaBattle(opponentId, myTeamConfig);
+                        await this.endArenaBattle(battleResult);
+                        return battleResult;
+                    }
+
+                    // Step 2: Simulate battles using demoBattles_startBattle
+                    console.log('[DEMO] Step 2: Running demo battle simulations (no attempts consumed)...');
+                    const simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig, 10);
+                    
+                    console.log('[DEMO] Simulation results:', {
+                        totalSimulations: simulationResult.total,
+                        wins: simulationResult.wins,
+                        losses: simulationResult.losses,
+                        winRate: simulationResult.winRate.toFixed(2) + '%',
+                        averageBattleTime: simulationResult.averageBattleTime.toFixed(2) + 's'
+                    });
+
+                    // Step 3: Check win rate threshold (70%)
+                    const WIN_RATE_THRESHOLD = 70;
+                    const shouldProceed = simulationResult.winRate > WIN_RATE_THRESHOLD;
+
+                    console.log(`[DEMO] Step 3: Win rate check (threshold: ${WIN_RATE_THRESHOLD}%)`);
+                    console.log(`[DEMO] Win rate: ${simulationResult.winRate.toFixed(2)}%`);
+                    console.log(`[DEMO] Decision: ${shouldProceed ? 'PROCEED' : 'SKIP'} (${shouldProceed ? 'Win rate above threshold' : 'Win rate below threshold'})`);
+
+                    if (!shouldProceed) {
+                        console.warn(`[DEMO] ⚠️ Win rate ${simulationResult.winRate.toFixed(2)}% is below ${WIN_RATE_THRESHOLD}%, skipping this opponent`);
+                        console.log(`[DEMO] ✓ No battle attempt consumed - using demo battles API`);
+                        console.log(`[DEMO] Looking for next opponent...`);
+                        return { win: false, skipped: true, winRate: simulationResult.winRate };
+                    }
+
+                    // Step 4: Proceed with actual battle
+                    console.log(`[DEMO] ✓ Win rate ${simulationResult.winRate.toFixed(2)}% is above threshold, proceeding with actual attack`);
+                    console.log('[DEMO] Step 4: Executing actual battle...');
+                    
+                    const battleResult = await this.startArenaBattle(opponentId, myTeamConfig);
+                    
+                    console.log('[DEMO] Actual battle result:', {
+                        win: battleResult.win,
+                        note: 'Actual battle may differ from simulation due to seed variance'
+                    });
 
                     await this.endArenaBattle(battleResult);
 
+                    console.log(`[DEMO] ===== Battle completed for opponent ${opponentId} =====`);
                     return battleResult;
                 } catch (error) {
-                    console.error('Error in executeBattle:', error);
+                    console.error('[DEMO] Error in executeBattle:', error);
+                    console.error('[DEMO] Error stack:', error.stack);
                     return { win: false };
                 }
             }
@@ -571,6 +695,367 @@
                         banners: [1]
                     };
                 }
+            }
+
+            this.getOpponentTeamConfig = function(opponent) {
+                console.log('[DEMO] Extracting opponent team configuration...');
+                
+                if (!opponent || !opponent.opponent) {
+                    console.warn('[DEMO] No opponent data available');
+                    return { hasValidTeam: false };
+                }
+
+                const opp = opponent.opponent;
+                let hasValidTeam = false;
+                let config = {};
+
+                // Helper function to extract hero/pet ID from object
+                const extractId = (item) => {
+                    if (typeof item === 'number') {
+                        return item; // Already an ID
+                    } else if (item && typeof item === 'object' && item.id) {
+                        return item.id; // Extract ID from object
+                    }
+                    return null;
+                };
+
+                // Helper function to check if item is a pet
+                const isPet = (item) => {
+                    if (typeof item === 'number') {
+                        return item >= 6000 && item < 7000; // Pet ID range
+                    } else if (item && typeof item === 'object') {
+                        return item.type === 'pet' || (item.id >= 6000 && item.id < 7000);
+                    }
+                    return false;
+                };
+
+                // Helper function to extract banner ID
+                const extractBannerId = (banner) => {
+                    if (typeof banner === 'number') {
+                        return banner;
+                    } else if (banner && typeof banner === 'object' && banner.id) {
+                        return banner.id;
+                    }
+                    return 1; // Default banner
+                };
+
+                if (this.arenaType === 'grand') {
+                    // Grand Arena: 3 teams
+                    // heroes is array of 3 teams, each team is array of 6 objects (5 heroes + 1 pet)
+                    if (opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length >= 3) {
+                        const teams = [];
+                        const pets = [];
+                        const favor = {};
+
+                        // Extract teams from heroes array
+                        for (let i = 0; i < Math.min(3, opp.heroes.length); i++) {
+                            const team = opp.heroes[i];
+                            if (team && Array.isArray(team) && team.length >= 6) {
+                                // Extract hero IDs (first 5 items)
+                                const heroIds = [];
+                                let petId = 6005; // Default pet
+                                
+                                for (let j = 0; j < team.length; j++) {
+                                    const item = team[j];
+                                    const id = extractId(item);
+                                    
+                                    if (id && !isPet(item)) {
+                                        // It's a hero
+                                        if (heroIds.length < 5) {
+                                            heroIds.push(id);
+                                        }
+                                    } else if (id && isPet(item)) {
+                                        // It's a pet
+                                        petId = id;
+                                    }
+                                }
+
+                                if (heroIds.length === 5) {
+                                    teams.push(heroIds);
+                                    pets.push(petId);
+                                    hasValidTeam = true;
+                                }
+                            }
+                        }
+
+                        // Extract banners (array of 3 banner objects)
+                        const banners = [];
+                        if (opp.banners && Array.isArray(opp.banners)) {
+                            for (let i = 0; i < Math.min(3, opp.banners.length); i++) {
+                                banners.push(extractBannerId(opp.banners[i]));
+                            }
+                        }
+                        // Fill with defaults if needed
+                        while (banners.length < 3) {
+                            banners.push(1);
+                        }
+
+                        if (hasValidTeam) {
+                            config = {
+                                hasValidTeam: true,
+                                heroes: teams,
+                                pets: pets,
+                                banners: banners.slice(0, 3),
+                                favor: favor
+                            };
+                            console.log('[DEMO] Grand Arena config extracted:', {
+                                teams: teams.length,
+                                pets: pets.length,
+                                banners: banners.length
+                            });
+                        }
+                    }
+                } else {
+                    // Regular Arena: 1 team
+                    // heroes is array of 6 objects (5 heroes + 1 pet)
+                    if (opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length >= 6) {
+                        const heroIds = [];
+                        let petId = 6005; // Default pet
+
+                        // Extract hero IDs and pet ID from objects
+                        for (let i = 0; i < opp.heroes.length; i++) {
+                            const item = opp.heroes[i];
+                            const id = extractId(item);
+                            
+                            if (id && !isPet(item)) {
+                                // It's a hero
+                                if (heroIds.length < 5) {
+                                    heroIds.push(id);
+                                }
+                            } else if (id && isPet(item)) {
+                                // It's a pet (usually the 6th item)
+                                petId = id;
+                            }
+                        }
+
+                        // Extract banner ID from banner object
+                        let bannerId = 1; // Default
+                        if (opp.banners && Array.isArray(opp.banners) && opp.banners.length > 0) {
+                            bannerId = extractBannerId(opp.banners[0]);
+                        } else if (typeof opp.banner === 'number') {
+                            bannerId = opp.banner;
+                        }
+
+                        if (heroIds.length === 5) {
+                            hasValidTeam = true;
+                            config = {
+                                hasValidTeam: true,
+                                heroes: heroIds,
+                                pet: petId,
+                                banner: bannerId,
+                                favor: {} // Favor data not available in arenaFindEnemies response
+                            };
+                            console.log('[DEMO] Regular Arena config extracted:', {
+                                heroes: heroIds,
+                                pet: petId,
+                                banner: bannerId
+                            });
+                        }
+                    }
+                }
+
+                if (!hasValidTeam) {
+                    console.warn('[DEMO] Could not extract valid opponent team configuration');
+                    console.log('[DEMO] Opponent data structure:', {
+                        hasHeroes: !!opp.heroes,
+                        heroesType: opp.heroes ? (Array.isArray(opp.heroes) ? 'array' : typeof opp.heroes) : 'none',
+                        heroesLength: opp.heroes ? (Array.isArray(opp.heroes) ? opp.heroes.length : 'N/A') : 0,
+                        firstHeroType: opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length > 0 
+                            ? (typeof opp.heroes[0]) : 'N/A',
+                        hasBanners: !!opp.banners
+                    });
+                    console.log('[DEMO] Full opponent data:', JSON.stringify(opp, null, 2));
+                } else {
+                    console.log('[DEMO] Successfully extracted opponent team configuration');
+                }
+
+                return config;
+            }
+
+            this.simulateWithDemoBattles = async function(myTeam, opponentTeam, simulationCount = 10) {
+                console.log(`[DEMO] Starting ${simulationCount} demo battle simulations...`);
+                
+                const mechanic = this.arenaType === 'grand' ? 'grand_arena' : 'arena';
+                console.log(`[DEMO] Using battle mechanic: ${mechanic}`);
+
+                const simulations = [];
+                
+                for (let i = 0; i < simulationCount; i++) {
+                    console.log(`[DEMO] Simulation ${i + 1}/${simulationCount}: Running...`);
+                    try {
+                        const result = await this.runSingleDemoBattle(myTeam, opponentTeam, mechanic, i);
+                        simulations.push(result);
+                        console.log(`[DEMO] Simulation ${i + 1} result:`, {
+                            win: result.win,
+                            battleTime: result.battleTime ? result.battleTime.toFixed(2) + 's' : 'N/A'
+                        });
+                    } catch (error) {
+                        console.error(`[DEMO] Simulation ${i + 1} failed:`, error);
+                        simulations.push({ win: false, battleTime: 0, error: error.message });
+                    }
+                }
+
+                // Calculate statistics
+                const wins = simulations.filter(s => s.win).length;
+                const losses = simulations.length - wins;
+                const winRate = (wins / simulations.length) * 100;
+                const battleTimes = simulations.map(s => s.battleTime).filter(t => t > 0);
+                const averageBattleTime = battleTimes.length > 0 
+                    ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length 
+                    : 0;
+
+                console.log('[DEMO] Simulation summary:', {
+                    total: simulations.length,
+                    wins: wins,
+                    losses: losses,
+                    winRate: winRate.toFixed(2) + '%',
+                    averageTime: averageBattleTime.toFixed(2) + 's',
+                    minTime: battleTimes.length > 0 ? Math.min(...battleTimes).toFixed(2) + 's' : 'N/A',
+                    maxTime: battleTimes.length > 0 ? Math.max(...battleTimes).toFixed(2) + 's' : 'N/A'
+                });
+
+                return {
+                    total: simulations.length,
+                    wins: wins,
+                    losses: losses,
+                    winRate: winRate,
+                    averageBattleTime: averageBattleTime,
+                    simulations: simulations
+                };
+            }
+
+            this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        console.log(`[DEMO] Preparing demo battle request (seed offset: ${seedOffset})...`);
+                        
+                        let args = {
+                            mechanic: mechanic,
+                            defenceMaxUpgrade: false,
+                            maxUpgrade: false,
+                            defenceBuffs: {},
+                            buffs: {},
+                            parentId: 0,
+                            entryId: 0
+                        };
+
+                        if (mechanic === 'grand_arena') {
+                            // Grand Arena: 3 teams - simulate first team as proxy
+                            // Note: demoBattles_startBattle only simulates one team at a time
+                            // We use the first team as a proxy for overall win probability
+                            const teamIndex = seedOffset % 3; // Rotate through teams for variety
+                            
+                            args.defenceTeam = {
+                                units: opponentTeam.heroes[teamIndex] || opponentTeam.heroes[0] || [],
+                                pet: opponentTeam.pets[teamIndex] || opponentTeam.pets[0] || 6005
+                            };
+                            args.defenceBanner = opponentTeam.banners[teamIndex] || opponentTeam.banners[0] || 1;
+                            args.defenceFavor = opponentTeam.favor || {};
+                            
+                            args.team = {
+                                units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
+                                pet: myTeam.pets[teamIndex] || myTeam.pets[0] || 6005
+                            };
+                            args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
+                            args.favor = myTeam.favor || {};
+                            
+                            console.log(`[DEMO] Grand Arena: Simulating team ${teamIndex + 1}/3`);
+                        } else {
+                            // Regular Arena: 1 team
+                            args.defenceTeam = {
+                                units: opponentTeam.heroes || [],
+                                pet: opponentTeam.pet || 6005
+                            };
+                            args.defenceBanner = opponentTeam.banner || 1;
+                            args.defenceFavor = opponentTeam.favor || {};
+                            
+                            args.team = {
+                                units: myTeam.heroes || [],
+                                pet: myTeam.pet || 6005
+                            };
+                            args.banner = myTeam.banners[0] || 1;
+                            args.favor = myTeam.favor || {};
+                        }
+
+                        const calls = [{
+                            name: "demoBattles_startBattle",
+                            args: args,
+                            context: {
+                                actionTs: Date.now()
+                            },
+                            ident: "body"
+                        }];
+
+                        console.log(`[DEMO] Calling demoBattles_startBattle API...`);
+                        const startTime = Date.now();
+                        
+                        Send(JSON.stringify({calls}))
+                            .then(response => {
+                                const endTime = Date.now();
+                                const apiTime = (endTime - startTime) / 1000;
+                                
+                                console.log(`[DEMO] API call completed in ${apiTime.toFixed(3)}s`);
+
+                                if (response.error) {
+                                    console.error('[DEMO] API error:', response.error);
+                                    reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
+                                    return;
+                                }
+
+                                if (!response.results || !response.results[0] || !response.results[0].result) {
+                                    console.error('[DEMO] Invalid API response structure');
+                                    reject(new Error('Invalid demo battle API response'));
+                                    return;
+                                }
+
+                                const battleData = response.results[0].result.response;
+                                console.log('[DEMO] Battle data received:', {
+                                    hasBattle: !!battleData,
+                                    hasSeed: !!battleData.seed,
+                                    battleType: battleData.type
+                                });
+
+                                // Calculate battle result using BattleCalc
+                                const battleType = battleData?.effects?.battleConfig ?? battleData?.type ?? mechanic;
+                                const battleConfigType = getBattleType(battleType);
+                                
+                                console.log(`[DEMO] Calculating battle result (type: ${battleConfigType})...`);
+                                
+                                BattleCalc(battleData, battleConfigType, (result) => {
+                                    if (!result || !result.result) {
+                                        console.error('[DEMO] BattleCalc returned invalid result:', result);
+                                        resolve({
+                                            win: false,
+                                            battleTime: 0,
+                                            error: 'Invalid calculation result'
+                                        });
+                                        return;
+                                    }
+
+                                    const battleTime = result.battleTime || 0;
+                                    const win = result.result.win || false;
+
+                                    console.log(`[DEMO] Battle calculation complete:`, {
+                                        win: win,
+                                        battleTime: battleTime.toFixed(2) + 's'
+                                    });
+
+                                    resolve({
+                                        win: win,
+                                        battleTime: battleTime,
+                                        result: result
+                                    });
+                                });
+                            })
+                            .catch(error => {
+                                console.error('[DEMO] Error in demo battle:', error);
+                                reject(error);
+                            });
+                    } catch (error) {
+                        console.error('[DEMO] Error preparing demo battle:', error);
+                        reject(error);
+                    }
+                });
             }
 
             this.startArenaBattle = async function(rivalId, team) {
