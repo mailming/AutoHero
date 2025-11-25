@@ -283,16 +283,69 @@
 
         const originalExecuteAdventure = window.HWHClasses.executeAdventure;
 
+        // End adventure
+        async function endAdventure() {
+            try {
+                setProgress('Ending adventure...', false);
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "adventure_end",
+                        args: {
+                            isFinished: true
+                        },
+                        context: {
+                            actionTs: Date.now()
+                        },
+                        ident: "body"
+                    }]
+                }));
+
+                if (response.error) {
+                    throw new Error(`Failed to end adventure: ${response.error.description || response.error.name}`);
+                }
+
+                console.log('Adventure ended successfully');
+                return response;
+            } catch (error) {
+                console.error('Error ending adventure:', error);
+                throw error;
+            }
+        }
+
         // Function to start adventure with level input
         async function startAdventureWithLevel() {
             try {
                 // Check if user is already on an adventure
                 const hasActive = await hasActiveAdventure();
                 if (hasActive) {
-                    await popup.confirm('You are already on an adventure. Please complete it first.', [
-                        { msg: 'OK', result: true, color: 'green' }
-                    ]);
-                    return;
+                    // Check if other players have left
+                    const adventureStatus = await checkOtherPlayersLeft();
+                    
+                    if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
+                        // Other players left, collect rewards and end adventure
+                        console.log('%cAdventure active with other 2 players left. Collecting rewards and ending adventure...', 'color: orange');
+                        setProgress('Other players left. Collecting all rewards...', false);
+                        
+                        // Collect all available rewards
+                        await collectAllRewards(adventureStatus.adventureInfo, adventureStatus.currentUserId);
+                        
+                        // Wait a bit after collecting rewards
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // End the adventure
+                        setProgress('Ending adventure...', false);
+                        await endAdventure();
+                        
+                        console.log('%cRewards collected and adventure ended', 'color: green');
+                        setProgress('Rewards collected and adventure ended', true);
+                        return;
+                    } else {
+                        // Adventure is active but other players haven't left
+                        await popup.confirm('You are already on an adventure. Please complete it first.', [
+                            { msg: 'OK', result: true, color: 'green' }
+                        ]);
+                        return;
+                    }
                 }
 
                 // Check portal charges
@@ -686,9 +739,9 @@
                 const portalCharge = await getPortalCharge();
                 const adventureStatus = await checkOtherPlayersLeft();
 
-                // If adventure is active and other 2 players have left, collect rewards (testing mode - don't end adventure)
+                // If adventure is active and other 2 players have left, collect rewards and end adventure
                 if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
-                    console.log('%cAdventure active with other 2 players left. Collecting rewards...', 'color: orange');
+                    console.log('%cAdventure active with other 2 players left. Collecting rewards and ending adventure...', 'color: orange');
                     setProgress('Other players left. Collecting all rewards...', false);
                     
                     // Collect all available rewards
@@ -697,9 +750,13 @@
                     // Wait a bit after collecting rewards
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     
-                    console.log('%cRewards collection completed (adventure not ended for testing)', 'color: green');
-                    setProgress('Rewards collected. Adventure still active for testing.', true);
-                    return; // Stop here for testing - don't end adventure or start new one
+                    // End the adventure
+                    setProgress('Ending adventure...', false);
+                    await endAdventure();
+                    
+                    console.log('%cRewards collected and adventure ended', 'color: green');
+                    setProgress('Rewards collected and adventure ended', true);
+                    return;
                 }
 
                 // Check if portal charge available and no active adventure
