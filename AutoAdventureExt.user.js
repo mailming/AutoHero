@@ -29,28 +29,27 @@
     function initializeExtension() {
         console.log('%cAuto Adventure Extension (v0.1.0) loaded', 'color: green');
 
-        // --- NUOVA FUNZIONE PER LO STILE ---
+        // Inject custom styles for popup buttons
         function injectCustomStyles() {
             const style = document.createElement('style');
             style.type = 'text/css';
             style.innerHTML = `
                 .PopUp_buttonText {
-                    white-space: normal !important; /* Allows the text to wrap to the next line */
-                    word-break: break-all !important; /* Forces long strings like paths to break */
-                    text-align: left !important; /* Aligns the wrapped text to the left for readability */
-                    line-height: 1.2 !important; /* Adds some space between wrapped lines */
+                    white-space: normal !important;
+                    word-break: break-all !important;
+                    text-align: left !important;
+                    line-height: 1.2 !important;
                 }
                 .PopUp_button {
-                    max-width: 450px; /* Prevents buttons from becoming excessively wide */
+                    max-width: 450px;
                     width: 100%;
-                    height: auto; /* Allows the button's height to adjust to the content */
+                    height: auto;
                     box-sizing: border-box;
                 }
             `;
             document.head.appendChild(style);
             console.log('%cCustom popup styles injected for text wrapping.', 'color: cyan');
         }
-        // --- FINE NUOVA FUNZIONE ---
 
         injectCustomStyles();
 
@@ -58,7 +57,16 @@
         const { Send } = window;
         addExtentionName(GM_info.script.name, GM_info.script.version, GM_info.script.author);
 
-        // This object now contains separate keys for 'adventure' and 'storm' paths.
+        // Constants
+        const COLOR_EMOJIS = {
+            blue: '🔵', orange: '🟠', green: '🟢', yellow: '🟡',
+            purple: '🟣', red: '🔴', white: '⚪', black: '⚫', brown: '🟤'
+        };
+        const ORDERED_COLORS = ['blue', 'orange', 'green', 'yellow', 'purple', 'red', 'white', 'black', 'brown'];
+        const PORTAL_SPHERE_ID = 45;
+        const REWARD_COLLECTION_DELAY = 500;
+
+        // Adventure paths configuration
         const defaultWays = {
             adventure: {
                 //Галахад, 1-я
@@ -283,19 +291,319 @@
 
         const originalExecuteAdventure = window.HWHClasses.executeAdventure;
 
+        // Cache for user ID to avoid repeated API calls
+        let cachedUserId = null;
+
+        // Helper: Get current user ID (with caching)
+        async function getCurrentUserId() {
+            if (cachedUserId) return cachedUserId;
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "userGetInfo",
+                        args: {},
+                        ident: "userGetInfo"
+                    }]
+                }));
+                cachedUserId = response.results[0].result.response.id.toString();
+                return cachedUserId;
+            } catch (error) {
+                console.error('Error getting user ID:', error);
+                return null;
+            }
+        }
+
+        // Helper: Get adventure info
+        async function getAdventureInfo() {
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "adventure_getInfo",
+                        args: {},
+                        context: { actionTs: Date.now() },
+                        ident: "group_1_body"
+                    }]
+                }));
+
+                if (!response?.results?.[0]?.result?.response) {
+                    return null;
+                }
+
+                const adventureInfo = response.results[0].result.response;
+                return (adventureInfo.id && adventureInfo.users) ? adventureInfo : null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        // Helper: Check if reward is already collected
+        function isRewardCollected(rewardsCollected, rewardId) {
+            if (Array.isArray(rewardsCollected)) {
+                return rewardsCollected.includes(rewardId);
+            }
+            return typeof rewardsCollected === 'object' && rewardId in rewardsCollected;
+        }
+
+        // Helper: Calculate total team points from all users
+        function calculateTotalTeamPoints(adventureInfo) {
+            if (!adventureInfo || !adventureInfo.users) {
+                return 0;
+            }
+            
+            let totalPoints = 0;
+            for (const [userId, userData] of Object.entries(adventureInfo.users)) {
+                const points = parseInt(userData.points) || 0;
+                totalPoints += points;
+            }
+            
+            return totalPoints;
+        }
+
+        // Helper: Check if all available rewards are collected
+        function areAllRewardsCollected(adventureInfo, userId) {
+            if (!adventureInfo || !adventureInfo.users || !adventureInfo.users[userId]) {
+                return false;
+            }
+
+            const userData = adventureInfo.users[userId];
+            const rewards = adventureInfo.rewards;
+            if (!rewards) {
+                return false;
+            }
+
+            const rewardsCollected = userData.rewardsCollected || [];
+            const totalTeamPoints = calculateTotalTeamPoints(adventureInfo);
+
+            // Check all point-based rewards
+            const pointThresholds = Object.keys(rewards.points || {});
+            for (const thresholdKey of pointThresholds) {
+                const threshold = parseInt(thresholdKey);
+                if (totalTeamPoints >= threshold) {
+                    if (!isRewardCollected(rewardsCollected, thresholdKey)) {
+                        console.log(`Reward at ${thresholdKey} points not yet collected`);
+                        return false;
+                    }
+                }
+            }
+
+            // Check boss reward
+            const bossRewardsAvailable = rewards.boss && Object.keys(rewards.boss.lootBox || {}).length > 0;
+            if (bossRewardsAvailable && !isRewardCollected(rewardsCollected, 'boss')) {
+                console.log('Boss reward not yet collected');
+                return false;
+            }
+
+            return true;
+        }
+
+        // Collect all available rewards
+        async function collectAllRewards(adventureInfo, userId) {
+            try {
+                // Refresh adventure info at start to get fresh data
+                let currentAdventureInfo = await getAdventureInfo() || adventureInfo;
+                let userData = currentAdventureInfo.users[userId];
+                
+                if (!userData) {
+                    console.log('User data not found');
+                    return;
+                }
+
+                const rewards = currentAdventureInfo.rewards;
+                if (!rewards) {
+                    console.log('No rewards available');
+                    return;
+                }
+
+                // Collect point-based rewards - use string keys directly from rewards.points
+                const pointThresholds = Object.keys(rewards.points || {})
+                    .map(key => ({ key, threshold: parseInt(key) }))
+                    .sort((a, b) => a.threshold - b.threshold);
+
+                console.log(`Available point thresholds:`, pointThresholds.map(p => p.key));
+                
+                // Calculate total team points from all users
+                let totalTeamPoints = calculateTotalTeamPoints(currentAdventureInfo);
+                console.log(`Total team points: ${totalTeamPoints}`);
+                console.log(`All users points:`, Object.entries(currentAdventureInfo.users).map(([uid, ud]) => ({ userId: uid, points: ud.points })));
+
+                for (const { key, threshold } of pointThresholds) {
+                    // Get fresh adventure info for each check
+                    currentAdventureInfo = await getAdventureInfo() || currentAdventureInfo;
+                    if (!currentAdventureInfo || !currentAdventureInfo.users[userId]) {
+                        console.error('Failed to get adventure info');
+                        break;
+                    }
+                    
+                    // Recalculate total team points with fresh data
+                    totalTeamPoints = calculateTotalTeamPoints(currentAdventureInfo);
+                    userData = currentAdventureInfo.users[userId];
+                    const rewardsCollected = userData.rewardsCollected || [];
+
+                    console.log(`Checking reward ${key}: Total team points = ${totalTeamPoints}, Threshold = ${threshold}, Already collected = ${isRewardCollected(rewardsCollected, key)}`);
+
+                    if (totalTeamPoints >= threshold) {
+                        if (!isRewardCollected(rewardsCollected, key)) {
+                            console.log(`✓ Collecting point reward at threshold ${key} (${threshold} points)...`);
+                            setProgress(`Collecting reward at ${key} points...`, false);
+                            
+                            try {
+                                const response = await Send(JSON.stringify({
+                                    calls: [{
+                                        name: "adventure_collectReward",
+                                        args: { rewardId: key },
+                                        context: { actionTs: Date.now() },
+                                        ident: "body"
+                                    }]
+                                }));
+
+                                if (response.error) {
+                                    console.error(`Error collecting reward at ${key}:`, response.error);
+                                } else {
+                                    console.log(`✓ Reward at ${key} points collected successfully`);
+                                }
+                                
+                                // Refresh adventure info after collecting to get updated state
+                                await new Promise(resolve => setTimeout(resolve, REWARD_COLLECTION_DELAY));
+                            } catch (error) {
+                                console.error(`Error collecting reward at ${key}:`, error);
+                            }
+                        } else {
+                            console.log(`Reward at ${key} points already collected`);
+                        }
+                    } else {
+                        console.log(`⚠ Not enough points for reward at ${key} (have ${totalTeamPoints} total team points, need ${threshold})`);
+                    }
+                }
+
+                // Refresh one more time before checking boss reward
+                currentAdventureInfo = await getAdventureInfo() || currentAdventureInfo;
+                if (currentAdventureInfo && currentAdventureInfo.users[userId]) {
+                    userData = currentAdventureInfo.users[userId];
+                }
+                const rewardsCollected = userData.rewardsCollected || [];
+
+                // Collect boss reward if available
+                const bossRewardsAvailable = rewards.boss && Object.keys(rewards.boss.lootBox || {}).length > 0;
+                if (bossRewardsAvailable && !isRewardCollected(rewardsCollected, 'boss')) {
+                    console.log('Collecting boss reward...');
+                    setProgress('Collecting boss reward...', false);
+                    
+                    try {
+                        const response = await Send(JSON.stringify({
+                            calls: [{
+                                name: "adventure_collectReward",
+                                args: { rewardId: "boss" },
+                                context: { actionTs: Date.now() },
+                                ident: "body"
+                            }]
+                        }));
+
+                        if (response.error) {
+                            console.error('Error collecting boss reward:', response.error);
+                        } else {
+                            console.log('✓ Boss reward collected successfully');
+                        }
+                    } catch (error) {
+                        console.error('Error collecting boss reward:', error);
+                    }
+                } else if (bossRewardsAvailable) {
+                    console.log('Boss reward already collected');
+                }
+
+                setProgress('All rewards collected', false);
+            } catch (error) {
+                console.error('Error collecting rewards:', error);
+                throw error;
+            }
+        }
+
+        // Check adventure status and other players
+        async function checkAdventureStatus() {
+            const adventureInfo = await getAdventureInfo();
+            if (!adventureInfo) {
+                return { hasActive: false, otherPlayersLeft: false, adventureInfo: null };
+            }
+
+            const currentUserId = await getCurrentUserId();
+            if (!currentUserId) {
+                return { hasActive: true, otherPlayersLeft: false, adventureInfo };
+            }
+
+            const users = adventureInfo.users;
+            let otherPlayersLeftCount = 0;
+            let totalOtherPlayers = 0;
+
+            for (const [userId, userData] of Object.entries(users)) {
+                if (userId !== currentUserId) {
+                    totalOtherPlayers++;
+                    if (userData.left === true) {
+                        otherPlayersLeftCount++;
+                    }
+                }
+            }
+
+            const otherPlayersLeft = totalOtherPlayers === 2 && otherPlayersLeftCount === 2;
+
+            return {
+                hasActive: true,
+                otherPlayersLeft,
+                adventureInfo,
+                currentUserId
+            };
+        }
+
         // End adventure
         async function endAdventure() {
             try {
+                const currentUserId = await getCurrentUserId();
+                if (!currentUserId) {
+                    throw new Error('Could not get current user ID');
+                }
+
+                // Collect all rewards with retry mechanism
+                let allRewardsCollected = false;
+                let attempts = 0;
+                const maxAttempts = 3;
+
+                while (!allRewardsCollected && attempts < maxAttempts) {
+                    attempts++;
+                    setProgress(`Collecting rewards before ending adventure (attempt ${attempts}/${maxAttempts})...`, false);
+                    
+                    let adventureInfo = await getAdventureInfo();
+                    if (!adventureInfo || !adventureInfo.users[currentUserId]) {
+                        throw new Error('Could not get adventure info');
+                    }
+
+                    // Collect all available rewards
+                    await collectAllRewards(adventureInfo, currentUserId);
+
+                    // Wait a bit for state to update
+                    await new Promise(resolve => setTimeout(resolve, 500));
+
+                    // Verify all rewards are collected
+                    adventureInfo = await getAdventureInfo();
+                    if (adventureInfo && adventureInfo.users[currentUserId]) {
+                        allRewardsCollected = areAllRewardsCollected(adventureInfo, currentUserId);
+                        
+                        if (allRewardsCollected) {
+                            console.log('✓ All rewards collected successfully');
+                        } else {
+                            console.log(`⚠ Not all rewards collected yet, retrying... (attempt ${attempts}/${maxAttempts})`);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                    }
+                }
+
+                if (!allRewardsCollected) {
+                    console.warn('⚠ Not all rewards were collected, but proceeding to end adventure');
+                }
+
                 setProgress('Ending adventure...', false);
                 const response = await Send(JSON.stringify({
                     calls: [{
                         name: "adventure_end",
-                        args: {
-                            isFinished: true
-                        },
-                        context: {
-                            actionTs: Date.now()
-                        },
+                        args: { isFinished: true },
+                        context: { actionTs: Date.now() },
                         ident: "body"
                     }]
                 }));
@@ -312,35 +620,175 @@
             }
         }
 
+        // Get portal charge amount
+        async function getPortalCharge() {
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "userGetInfo",
+                        args: {},
+                        ident: "userGetInfo"
+                    }]
+                }));
+                const userInfo = response.results[0].result.response;
+                const portalSphere = userInfo.refillable.find(n => n.id == PORTAL_SPHERE_ID);
+                return portalSphere ? portalSphere.amount : 0;
+            } catch (error) {
+                console.error('Error getting portal charge:', error);
+                return 0;
+            }
+        }
+
+        // Check if adventure can be raided
+        async function canRaidAdventure() {
+            try {
+                const calls = [
+                    { name: "userGetInfo", args: {}, ident: "userGetInfo" },
+                    { name: "adventure_raidGetInfo", args: {}, ident: "adventure_raidGetInfo" }
+                ];
+                const result = await Send(JSON.stringify({ calls }))
+                    .then(e => e.results.map(n => n.result.response));
+
+                const portalSphere = result[0].refillable.find(n => n.id == PORTAL_SPHERE_ID);
+                const adventureRaid = Object.entries(result[1].raid).filter(e => e[1]).pop();
+                const adventureId = adventureRaid ? adventureRaid[0] : 0;
+
+                if (!portalSphere?.amount || !adventureId) {
+                    return { canRaid: false, adventureId: 0, maxCount: 0 };
+                }
+
+                return {
+                    canRaid: true,
+                    adventureId: parseInt(adventureId),
+                    maxCount: portalSphere.amount
+                };
+            } catch (error) {
+                console.error('Error checking raid availability:', error);
+                return { canRaid: false, adventureId: 0, maxCount: 0 };
+            }
+        }
+
+        // Perform adventure raid
+        async function raidAdventure(adventureId, maxCount) {
+            try {
+                const resultRaid = await Send(JSON.stringify({
+                    calls: [...Array(maxCount)].map((e, i) => ({
+                        name: "adventure_raid",
+                        args: { adventureId },
+                        ident: `body_${i}`
+                    }))
+                })).then(e => e.results.map(n => n.result.response));
+
+                if (!resultRaid.length) {
+                    throw new Error('Raid failed - no results');
+                }
+
+                console.log(`Raid completed: ${resultRaid.length} times for adventure ${adventureId}`);
+                return resultRaid;
+            } catch (error) {
+                console.error('Error performing raid:', error);
+                throw error;
+            }
+        }
+
+        // Start new adventure
+        async function startNewAdventure(adventureId) {
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: "adventure_start",
+                        args: {
+                            adventureId: parseInt(adventureId),
+                            private: false,
+                            isClan: true
+                        },
+                        context: { actionTs: Date.now() },
+                        ident: "body"
+                    }]
+                }));
+
+                if (response.error) {
+                    throw new Error(`Failed to start adventure: ${response.error.description || response.error.name}`);
+                }
+
+                console.log(`Adventure ${adventureId} started successfully`);
+                return response;
+            } catch (error) {
+                console.error('Error starting adventure:', error);
+                throw error;
+            }
+        }
+
+        // Run adventure with default path
+        async function runAdventureWithDefaultPath() {
+            try {
+                const adventureInfo = await getAdventureInfo();
+                if (!adventureInfo) {
+                    throw new Error('Could not get adventure info');
+                }
+
+                const mapIdent = adventureInfo.mapIdent;
+                if (!mapIdent) {
+                    throw new Error('Could not get map identifier');
+                }
+
+                const currentAdventureWays = defaultWays.adventure[mapIdent];
+                if (!currentAdventureWays?.default?.path) {
+                    throw new Error(`No default path found for map: ${mapIdent}`);
+                }
+
+                const defaultPathStr = currentAdventureWays.default.path.trim();
+                if (!defaultPathStr) {
+                    throw new Error(`Default path is empty for map: ${mapIdent}`);
+                }
+
+                const path = defaultPathStr.split(',')
+                    .map(p => p.trim())
+                    .filter(p => p.length > 0)
+                    .map(p => parseInt(p))
+                    .filter(p => !isNaN(p));
+                
+                if (path.length < 2) {
+                    throw new Error(`Invalid default path: ${defaultPathStr}`);
+                }
+
+                console.log(`Using default path for ${mapIdent}:`, path);
+
+                class AutoDefaultAdventure extends ExtCombinedAdventureStorm {
+                    async getPath() {
+                        return path;
+                    }
+                }
+
+                return new Promise((resolve, reject) => {
+                    const adventure = new AutoDefaultAdventure(resolve, reject);
+                    adventure.start('default').catch(reject);
+                });
+            } catch (error) {
+                console.error('Error running adventure with default path:', error);
+                throw error;
+            }
+        }
+
         // Function to start adventure with level input
         async function startAdventureWithLevel() {
             try {
-                // Check if user is already on an adventure
-                const hasActive = await hasActiveAdventure();
-                if (hasActive) {
-                    // Check if other players have left
-                    const adventureStatus = await checkOtherPlayersLeft();
-                    
-                    if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
-                        // Other players left, collect rewards and end adventure
-                        console.log('%cAdventure active with other 2 players left. Collecting rewards and ending adventure...', 'color: orange');
-                        setProgress('Other players left. Collecting all rewards...', false);
-                        
-                        // Collect all available rewards
+                const adventureStatus = await checkAdventureStatus();
+                
+                if (adventureStatus.hasActive) {
+                    // Collect rewards if adventure is active
+                    if (adventureStatus.adventureInfo && adventureStatus.currentUserId) {
                         await collectAllRewards(adventureStatus.adventureInfo, adventureStatus.currentUserId);
-                        
-                        // Wait a bit after collecting rewards
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
-                        // End the adventure
-                        setProgress('Ending adventure...', false);
+                    }
+                    
+                    if (adventureStatus.otherPlayersLeft) {
+                        console.log('%cAdventure active with other 2 players left. Ending adventure...', 'color: orange');
+                        setProgress('Other players left. Ending adventure...', false);
                         await endAdventure();
-                        
-                        console.log('%cRewards collected and adventure ended', 'color: green');
-                        setProgress('Rewards collected and adventure ended', true);
+                        console.log('%cAdventure ended', 'color: green');
+                        setProgress('Adventure ended', true);
                         return;
                     } else {
-                        // Adventure is active but other players haven't left
                         await popup.confirm('You are already on an adventure. Please complete it first.', [
                             { msg: 'OK', result: true, color: 'green' }
                         ]);
@@ -367,7 +815,6 @@
                     </div>
                 `;
 
-                // Use popup's built-in input functionality
                 const answer = await popup.confirm(popupMessage, [
                     { 
                         msg: 'Start Adventure', 
@@ -380,7 +827,7 @@
                 ]);
 
                 if (!answer) {
-                    return; // User cancelled
+                    return;
                 }
 
                 // Validate and save adventure level
@@ -392,12 +839,11 @@
                     return;
                 }
 
-                // Save adventure level
                 setSaveVal('adventureId', newAdventureId);
                 console.log(`Adventure level saved: ${newAdventureId}`);
 
                 // Check again if user started an adventure while popup was open
-                const hasActiveNow = await hasActiveAdventure();
+                const hasActiveNow = (await checkAdventureStatus()).hasActive;
                 if (hasActiveNow) {
                     await popup.confirm('An adventure was already started. Please complete it first.', [
                         { msg: 'OK', result: true, color: 'green' }
@@ -408,11 +854,8 @@
                 // Start adventure and run default path
                 setProgress(`Starting adventure ${newAdventureId}...`, false);
                 await startNewAdventure(newAdventureId);
-                
-                // Wait a bit for adventure to initialize
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 
-                // Run adventure with default path
                 setProgress('Running adventure with default path...', false);
                 await runAdventureWithDefaultPath();
                 setProgress('Adventure started and running', true);
@@ -422,42 +865,97 @@
             }
         }
 
+        // Auto-execute adventure raid or start logic
+        async function autoAdventureRaidOrStart() {
+            try {
+                setProgress('Checking adventure raid availability...', false);
+                
+                // Check if can raid adventure
+                const canRaid = await canRaidAdventure();
+                if (canRaid.canRaid) {
+                    console.log(`%cCan raid adventure ${canRaid.adventureId}`, 'color: green');
+                    setProgress(`Raid available for adventure ${canRaid.adventureId}. Raiding...`, false);
+                    await raidAdventure(canRaid.adventureId, canRaid.maxCount);
+                    setProgress(`Raid completed ${canRaid.maxCount} times`, true);
+                    return;
+                }
+
+                // Check adventure status and portal charges
+                setProgress('Checking portal charges and adventure status...', false);
+                const [portalCharge, adventureStatus] = await Promise.all([
+                    getPortalCharge(),
+                    checkAdventureStatus()
+                ]);
+
+                // Collect rewards if adventure is active
+                if (adventureStatus.hasActive && adventureStatus.adventureInfo && adventureStatus.currentUserId) {
+                    await collectAllRewards(adventureStatus.adventureInfo, adventureStatus.currentUserId);
+                }
+
+                // If other players left, end adventure
+                if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
+                    console.log('%cAdventure active with other 2 players left. Ending adventure...', 'color: orange');
+                    setProgress('Other players left. Ending adventure...', false);
+                    await endAdventure();
+                    console.log('%cAdventure ended', 'color: green');
+                    setProgress('Adventure ended', true);
+                    return;
+                }
+
+                // Start new adventure if portal charges available
+                if (portalCharge > 0 && !adventureStatus.hasActive) {
+                    console.log(`%cPortal charges available (${portalCharge}) and no active adventure. Starting new adventure...`, 'color: green');
+                    const adventureId = getSaveVal('adventureId', 13);
+                    setProgress(`Starting adventure ${adventureId}...`, false);
+                    await startNewAdventure(adventureId);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    setProgress('Running adventure with default path...', false);
+                    await runAdventureWithDefaultPath();
+                    setProgress('Adventure started and running', true);
+                } else {
+                    if (portalCharge === 0) {
+                        console.log('%cNo portal charges available', 'color: yellow');
+                        setProgress('No portal charges available', true);
+                    } else if (adventureStatus.hasActive) {
+                        console.log('%cAdventure already active', 'color: yellow');
+                        setProgress('Adventure already active', true);
+                    }
+                }
+            } catch (error) {
+                console.error('Auto adventure raid/start error:', error);
+                setProgress(`Error: ${error.message}`, true);
+            }
+        }
+
+        // Extended executeAdventure class with path selection
         class ExtCombinedAdventureStorm extends originalExecuteAdventure {
             async getPath() {
                 console.log(`Current adventure type: ${this.type}, Map Identifier: ${this.mapIdent}`);
 
                 const adventureTypeKey = this.type === 'solo' ? 'storm' : 'adventure';
-                const currentAdventureWays = defaultWays[adventureTypeKey] ? defaultWays[adventureTypeKey][this.mapIdent] : undefined;
+                const currentAdventureWays = defaultWays[adventureTypeKey]?.[this.mapIdent];
                 
                 const oldVal = getSaveVal('adventurePath', '');
                 const keyPath = `adventurePath:${this.mapIdent}`;
-
                 const popupButtons = [];
-                const colorEmojis = {
-                    blue: '🔵', orange: '🟠', green: '🟢', yellow: '🟡',
-                    purple: '🟣', red: '🔴', white: '⚪', black: '⚫', brown: '🟤'
-                };
 
                 if (currentAdventureWays) {
                     // Add default path first if available
-                    if (currentAdventureWays.default && currentAdventureWays.default.path) {
+                    if (currentAdventureWays.default?.path?.trim()) {
                         const defaultPath = currentAdventureWays.default.path.trim();
-                        if (defaultPath) {
-                            popupButtons.push({
-                                msg: `⭐ ${currentAdventureWays.default.label} | ${defaultPath}`,
-                                result: defaultPath
-                            });
-                        }
+                        popupButtons.push({
+                            msg: `⭐ ${currentAdventureWays.default.label} | ${defaultPath}`,
+                            result: defaultPath
+                        });
                     }
                     
                     // Add other color paths
-                    const orderedColors = ['blue', 'orange', 'green', 'yellow', 'purple', 'red', 'white', 'black', 'brown'];
-                    orderedColors.forEach((color) => {
+                    ORDERED_COLORS.forEach((color) => {
                         const pathData = currentAdventureWays[color];
-                        if (pathData && pathData.path && pathData.path.trim()) {
-                            let buttonLabel = `${colorEmojis[color] || '⚪'} ${pathData.label} | ${pathData.path}`;
+                        if (pathData?.path?.trim()) {
                             popupButtons.push({
-                                msg: buttonLabel,
+                                msg: `${COLOR_EMOJIS[color] || '⚪'} ${pathData.label} | ${pathData.path}`,
                                 result: pathData.path
                             });
                         }
@@ -490,13 +988,11 @@
                     return false;
                 }
 
-                // If answer is a path string (from button click), show confirmation popup
+                // If answer is a predefined path, show confirmation popup
                 if (typeof answer === 'string' && answer.length > 0) {
-                    // Check if it's a predefined path (contains comma and matches pattern)
                     const isPredefinedPath = answer.includes(',') && /^[\d,\s]+$/.test(answer.replace(/\s/g, ''));
                     
                     if (isPredefinedPath) {
-                        // Show confirmation popup with the selected path
                         const confirmButtons = [
                             {
                                 msg: I18N('START_ADVENTURE'),
@@ -519,10 +1015,9 @@
                         }
                         answer = confirmedAnswer;
                     }
-                    // If it's from input field, use it directly (already processed)
                 }
 
-
+                // Parse path
                 let path = answer.split(',');
                 if (path.length < 2) path = answer.split('-');
                 if (path.length < 2) {
@@ -549,463 +1044,6 @@
 
         window.HWHClasses.executeAdventure = ExtCombinedAdventureStorm;
 
-        // Get current user ID
-        async function getCurrentUserId() {
-            try {
-                const response = await Send(JSON.stringify({
-                    calls: [{
-                        name: "userGetInfo",
-                        args: {},
-                        ident: "userGetInfo"
-                    }]
-                }));
-                const userInfo = response.results[0].result.response;
-                return userInfo.id.toString();
-            } catch (error) {
-                console.error('Error getting user ID:', error);
-                return null;
-            }
-        }
-
-        // Check if other players have left (2 other players with left=true)
-        async function checkOtherPlayersLeft() {
-            try {
-                const response = await Send(JSON.stringify({
-                    calls: [{
-                        name: "adventure_getInfo",
-                        args: {},
-                        context: {
-                            actionTs: Date.now()
-                        },
-                        ident: "group_1_body"
-                    }]
-                }));
-
-                if (!response || !response.results || !response.results[0]) {
-                    return { hasActive: false, otherPlayersLeft: false };
-                }
-
-                const result = response.results[0].result;
-                if (!result || !result.response) {
-                    return { hasActive: false, otherPlayersLeft: false };
-                }
-
-                const adventureInfo = result.response;
-                if (!adventureInfo.id || !adventureInfo.users) {
-                    return { hasActive: false, otherPlayersLeft: false };
-                }
-
-                // Get current user ID
-                const currentUserId = await getCurrentUserId();
-                if (!currentUserId) {
-                    return { hasActive: true, otherPlayersLeft: false };
-                }
-
-                // Count how many other players have left
-                const users = adventureInfo.users;
-                let otherPlayersLeftCount = 0;
-                let totalOtherPlayers = 0;
-
-                for (const [userId, userData] of Object.entries(users)) {
-                    if (userId !== currentUserId) {
-                        totalOtherPlayers++;
-                        if (userData.left === true) {
-                            otherPlayersLeftCount++;
-                        }
-                    }
-                }
-
-                // Check if exactly 2 other players have left
-                const otherPlayersLeft = totalOtherPlayers === 2 && otherPlayersLeftCount === 2;
-
-                return {
-                    hasActive: true,
-                    otherPlayersLeft: otherPlayersLeft,
-                    adventureInfo: adventureInfo,
-                    currentUserId: currentUserId
-                };
-            } catch (error) {
-                console.error('Error checking other players:', error);
-                return { hasActive: false, otherPlayersLeft: false };
-            }
-        }
-
-        // Collect all available rewards
-        async function collectAllRewards(adventureInfo, userId) {
-            try {
-                const userData = adventureInfo.users[userId];
-                if (!userData) {
-                    console.log('User data not found');
-                    return;
-                }
-
-                const rewards = adventureInfo.rewards;
-                const userPoints = userData.points;
-                const rewardsCollected = userData.rewardsCollected || [];
-
-                // Get point thresholds
-                const pointThresholds = Object.keys(rewards.points || {}).map(Number).sort((a, b) => a - b);
-
-                // Collect point-based rewards
-                for (const threshold of pointThresholds) {
-                    if (userPoints >= threshold) {
-                        // Check if already collected
-                        const isCollected = Array.isArray(rewardsCollected)
-                            ? rewardsCollected.includes(threshold.toString())
-                            : (typeof rewardsCollected === 'object' && threshold.toString() in rewardsCollected);
-
-                        if (!isCollected) {
-                            console.log(`Collecting point reward at threshold ${threshold}...`);
-                            setProgress(`Collecting reward at ${threshold} points...`, false);
-                            
-                            try {
-                                await Send(JSON.stringify({
-                                    calls: [{
-                                        name: "adventure_collectReward",
-                                        args: {
-                                            rewardId: threshold.toString()
-                                        },
-                                        context: {
-                                            actionTs: Date.now()
-                                        },
-                                        ident: "body"
-                                    }]
-                                }));
-                                console.log(`Reward at ${threshold} points collected`);
-                                // Wait a bit between collections
-                                await new Promise(resolve => setTimeout(resolve, 500));
-                            } catch (error) {
-                                console.error(`Error collecting reward at ${threshold}:`, error);
-                            }
-                        }
-                    }
-                }
-
-                // Collect boss reward if available
-                const bossRewardsAvailable = rewards.boss && Object.keys(rewards.boss.lootBox || {}).length > 0;
-                if (bossRewardsAvailable) {
-                    const bossRewardCollected = Array.isArray(rewardsCollected)
-                        ? rewardsCollected.includes('boss')
-                        : (typeof rewardsCollected === 'object' && 'boss' in rewardsCollected);
-
-                    if (!bossRewardCollected) {
-                        console.log('Collecting boss reward...');
-                        setProgress('Collecting boss reward...', false);
-                        
-                        try {
-                            await Send(JSON.stringify({
-                                calls: [{
-                                    name: "adventure_collectReward",
-                                    args: {
-                                        rewardId: "boss"
-                                    },
-                                    context: {
-                                        actionTs: Date.now()
-                                    },
-                                    ident: "body"
-                                }]
-                            }));
-                            console.log('Boss reward collected');
-                        } catch (error) {
-                            console.error('Error collecting boss reward:', error);
-                        }
-                    }
-                }
-
-                setProgress('All rewards collected', false);
-            } catch (error) {
-                console.error('Error collecting rewards:', error);
-                throw error;
-            }
-        }
-
-        // Auto-execute adventure raid or start logic
-        async function autoAdventureRaidOrStart() {
-            try {
-                setProgress('Checking adventure raid availability...', false);
-                
-                // Check if can raid adventure
-                const canRaid = await canRaidAdventure();
-                if (canRaid.canRaid) {
-                    console.log(`%cCan raid adventure ${canRaid.adventureId}`, 'color: green');
-                    setProgress(`Raid available for adventure ${canRaid.adventureId}. Raiding...`, false);
-                    await raidAdventure(canRaid.adventureId, canRaid.maxCount);
-                    setProgress(`Raid completed ${canRaid.maxCount} times`, true);
-                    return;
-                }
-
-                // Check if portal charge available and adventure status
-                setProgress('Checking portal charges and adventure status...', false);
-                const portalCharge = await getPortalCharge();
-                const adventureStatus = await checkOtherPlayersLeft();
-
-                // If adventure is active and other 2 players have left, collect rewards and end adventure
-                if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
-                    console.log('%cAdventure active with other 2 players left. Collecting rewards and ending adventure...', 'color: orange');
-                    setProgress('Other players left. Collecting all rewards...', false);
-                    
-                    // Collect all available rewards
-                    await collectAllRewards(adventureStatus.adventureInfo, adventureStatus.currentUserId);
-                    
-                    // Wait a bit after collecting rewards
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    // End the adventure
-                    setProgress('Ending adventure...', false);
-                    await endAdventure();
-                    
-                    console.log('%cRewards collected and adventure ended', 'color: green');
-                    setProgress('Rewards collected and adventure ended', true);
-                    return;
-                }
-
-                // Check if portal charge available and no active adventure
-                const hasActive = await hasActiveAdventure();
-                if (portalCharge > 0 && !hasActive) {
-                    console.log(`%cPortal charges available (${portalCharge}) and no active adventure. Starting new adventure...`, 'color: green');
-                    const adventureId = getSaveVal('adventureId', 13);
-                    setProgress(`Starting adventure ${adventureId}...`, false);
-                    await startNewAdventure(adventureId);
-                    
-                    // Wait a bit for adventure to initialize
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    // Run adventure with default path
-                    setProgress('Running adventure with default path...', false);
-                    await runAdventureWithDefaultPath();
-                    setProgress('Adventure started and running', true);
-                } else {
-                    if (portalCharge === 0) {
-                        console.log('%cNo portal charges available', 'color: yellow');
-                        setProgress('No portal charges available', true);
-                    } else if (hasActive) {
-                        console.log('%cAdventure already active', 'color: yellow');
-                        setProgress('Adventure already active', true);
-                    }
-                }
-            } catch (error) {
-                console.error('Auto adventure raid/start error:', error);
-                setProgress(`Error: ${error.message}`, true);
-            }
-        }
-
-        // Check if adventure can be raided
-        async function canRaidAdventure() {
-            try {
-                const calls = [
-                    {
-                        name: "userGetInfo",
-                        args: {},
-                        ident: "userGetInfo"
-                    },
-                    {
-                        name: "adventure_raidGetInfo",
-                        args: {},
-                        ident: "adventure_raidGetInfo"
-                    }
-                ];
-                const result = await Send(JSON.stringify({ calls }))
-                    .then(e => e.results.map(n => n.result.response));
-
-                const portalSphere = result[0].refillable.find(n => n.id == 45);
-                const adventureRaid = Object.entries(result[1].raid).filter(e => e[1]).pop();
-                const adventureId = adventureRaid ? adventureRaid[0] : 0;
-
-                if (!portalSphere || !portalSphere.amount || !adventureId) {
-                    return { canRaid: false, adventureId: 0, maxCount: 0 };
-                }
-
-                return {
-                    canRaid: true,
-                    adventureId: parseInt(adventureId),
-                    maxCount: portalSphere.amount
-                };
-            } catch (error) {
-                console.error('Error checking raid availability:', error);
-                return { canRaid: false, adventureId: 0, maxCount: 0 };
-            }
-        }
-
-        // Perform adventure raid
-        async function raidAdventure(adventureId, maxCount) {
-            try {
-                const countRaid = maxCount; // Use max available
-                
-                const resultRaid = await Send(JSON.stringify({
-                    calls: [...Array(countRaid)].map((e, i) => ({
-                        name: "adventure_raid",
-                        args: {
-                            adventureId
-                        },
-                        ident: `body_${i}`
-                    }))
-                })).then(e => e.results.map(n => n.result.response));
-
-                if (!resultRaid.length) {
-                    console.error('Raid failed:', resultRaid);
-                    throw new Error('Raid failed - no results');
-                }
-
-                console.log(`Raid completed: ${resultRaid.length} times for adventure ${adventureId}`);
-                return resultRaid;
-            } catch (error) {
-                console.error('Error performing raid:', error);
-                throw error;
-            }
-        }
-
-        // Get portal charge amount
-        async function getPortalCharge() {
-            try {
-                const response = await Send(JSON.stringify({
-                    calls: [{
-                        name: "userGetInfo",
-                        args: {},
-                        ident: "userGetInfo"
-                    }]
-                }));
-                const userInfo = response.results[0].result.response;
-                const portalSphere = userInfo.refillable.find(n => n.id == 45);
-                return portalSphere ? portalSphere.amount : 0;
-            } catch (error) {
-                console.error('Error getting portal charge:', error);
-                return 0;
-            }
-        }
-
-        // Check if adventure is active
-        async function hasActiveAdventure() {
-            try {
-                const response = await Send(JSON.stringify({
-                    calls: [{
-                        name: "adventure_getInfo",
-                        args: {},
-                        context: {
-                            actionTs: Date.now()
-                        },
-                        ident: "group_1_body"
-                    }]
-                }));
-
-                // Check if response is null or error
-                if (!response || !response.results || !response.results[0]) {
-                    return false;
-                }
-
-                const result = response.results[0].result;
-                if (!result || !result.response) {
-                    return false;
-                }
-
-                const adventureInfo = result.response;
-                // Check if adventure has valid data (id, users, etc.)
-                if (!adventureInfo.id || !adventureInfo.users) {
-                    return false;
-                }
-
-                return true;
-            } catch (error) {
-                // If error, assume no active adventure
-                console.log('adventure_getInfo returned error (no active adventure):', error);
-                return false;
-            }
-        }
-
-        // Start new adventure
-        async function startNewAdventure(adventureId) {
-            try {
-                const response = await Send(JSON.stringify({
-                    calls: [{
-                        name: "adventure_start",
-                        args: {
-                            adventureId: parseInt(adventureId),
-                            private: false,
-                            isClan: true
-                        },
-                        context: {
-                            actionTs: Date.now()
-                        },
-                        ident: "body"
-                    }]
-                }));
-
-                if (response.error) {
-                    throw new Error(`Failed to start adventure: ${response.error.description || response.error.name}`);
-                }
-
-                console.log(`Adventure ${adventureId} started successfully`);
-                return response;
-            } catch (error) {
-                console.error('Error starting adventure:', error);
-                throw error;
-            }
-        }
-
-        // Run adventure with default path
-        async function runAdventureWithDefaultPath() {
-            try {
-                // Get adventure info to get mapIdent
-                const response = await Send(JSON.stringify({
-                    calls: [{
-                        name: "adventure_getInfo",
-                        args: {},
-                        context: {
-                            actionTs: Date.now()
-                        },
-                        ident: "group_1_body"
-                    }]
-                }));
-
-                const adventureInfo = response.results[0].result.response;
-                const mapIdent = adventureInfo.mapIdent;
-
-                if (!mapIdent) {
-                    throw new Error('Could not get map identifier');
-                }
-
-                // Get default path for this map
-                const currentAdventureWays = defaultWays.adventure[mapIdent];
-                if (!currentAdventureWays || !currentAdventureWays.default || !currentAdventureWays.default.path) {
-                    throw new Error(`No default path found for map: ${mapIdent}`);
-                }
-
-                const defaultPathStr = currentAdventureWays.default.path.trim();
-                if (!defaultPathStr) {
-                    throw new Error(`Default path is empty for map: ${mapIdent}`);
-                }
-
-                // Parse path string to array (handle spaces and empty values)
-                let path = defaultPathStr.split(',')
-                    .map(p => p.trim())
-                    .filter(p => p.length > 0)
-                    .map(p => parseInt(p))
-                    .filter(p => !isNaN(p));
-                
-                if (path.length < 2) {
-                    throw new Error(`Invalid default path: ${defaultPathStr}`);
-                }
-
-                console.log(`Using default path for ${mapIdent}:`, path);
-
-                // Create a custom executeAdventure instance that uses default path
-                class AutoDefaultAdventure extends ExtCombinedAdventureStorm {
-                    async getPath() {
-                        // Return default path directly without popup
-                        return path;
-                    }
-                }
-
-                // Run adventure
-                return new Promise((resolve, reject) => {
-                    const adventure = new AutoDefaultAdventure(resolve, reject);
-                    adventure.start('default').catch(reject);
-                });
-            } catch (error) {
-                console.error('Error running adventure with default path:', error);
-                throw error;
-            }
-        }
-
         // Add menu button for starting adventure
         const { ScriptMenu } = window.HWHClasses;
         const scriptMenu = ScriptMenu.getInst();
@@ -1024,6 +1062,4 @@
         });
     }
 })();
-
-
 
