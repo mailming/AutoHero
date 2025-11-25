@@ -553,49 +553,63 @@
         }
 
         // End adventure
-        async function endAdventure() {
+        async function endAdventure(forceEnd = false) {
             try {
                 const currentUserId = await getCurrentUserId();
                 if (!currentUserId) {
                     throw new Error('Could not get current user ID');
                 }
 
-                // Collect all rewards with retry mechanism
-                let allRewardsCollected = false;
-                let attempts = 0;
-                const maxAttempts = 3;
-
-                while (!allRewardsCollected && attempts < maxAttempts) {
-                    attempts++;
-                    setProgress(`Collecting rewards before ending adventure (attempt ${attempts}/${maxAttempts})...`, false);
+                // If forceEnd is true (other players left), try to collect rewards once but don't retry
+                if (forceEnd) {
+                    console.log('Other players have left - collecting available rewards before ending...');
+                    setProgress('Collecting available rewards before ending adventure...', false);
                     
                     let adventureInfo = await getAdventureInfo();
-                    if (!adventureInfo || !adventureInfo.users[currentUserId]) {
-                        throw new Error('Could not get adventure info');
-                    }
-
-                    // Collect all available rewards
-                    await collectAllRewards(adventureInfo, currentUserId);
-
-                    // Wait a bit for state to update
-                    await new Promise(resolve => setTimeout(resolve, 500));
-
-                    // Verify all rewards are collected
-                    adventureInfo = await getAdventureInfo();
                     if (adventureInfo && adventureInfo.users[currentUserId]) {
-                        allRewardsCollected = areAllRewardsCollected(adventureInfo, currentUserId);
+                        await collectAllRewards(adventureInfo, currentUserId);
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                    
+                    console.log('Proceeding to end adventure (other players left)');
+                } else {
+                    // Collect all rewards with retry mechanism (normal case)
+                    let allRewardsCollected = false;
+                    let attempts = 0;
+                    const maxAttempts = 3;
+
+                    while (!allRewardsCollected && attempts < maxAttempts) {
+                        attempts++;
+                        setProgress(`Collecting rewards before ending adventure (attempt ${attempts}/${maxAttempts})...`, false);
                         
-                        if (allRewardsCollected) {
-                            console.log('✓ All rewards collected successfully');
-                        } else {
-                            console.log(`⚠ Not all rewards collected yet, retrying... (attempt ${attempts}/${maxAttempts})`);
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        let adventureInfo = await getAdventureInfo();
+                        if (!adventureInfo || !adventureInfo.users[currentUserId]) {
+                            throw new Error('Could not get adventure info');
+                        }
+
+                        // Collect all available rewards
+                        await collectAllRewards(adventureInfo, currentUserId);
+
+                        // Wait a bit for state to update
+                        await new Promise(resolve => setTimeout(resolve, 500));
+
+                        // Verify all rewards are collected
+                        adventureInfo = await getAdventureInfo();
+                        if (adventureInfo && adventureInfo.users[currentUserId]) {
+                            allRewardsCollected = areAllRewardsCollected(adventureInfo, currentUserId);
+                            
+                            if (allRewardsCollected) {
+                                console.log('✓ All rewards collected successfully');
+                            } else {
+                                console.log(`⚠ Not all rewards collected yet, retrying... (attempt ${attempts}/${maxAttempts})`);
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                            }
                         }
                     }
-                }
 
-                if (!allRewardsCollected) {
-                    console.warn('⚠ Not all rewards were collected, but proceeding to end adventure');
+                    if (!allRewardsCollected) {
+                        console.warn('⚠ Not all rewards were collected, but proceeding to end adventure');
+                    }
                 }
 
                 setProgress('Ending adventure...', false);
@@ -784,7 +798,7 @@
                     if (adventureStatus.otherPlayersLeft) {
                         console.log('%cAdventure active with other 2 players left. Ending adventure...', 'color: orange');
                         setProgress('Other players left. Ending adventure...', false);
-                        await endAdventure();
+                        await endAdventure(true); // Force end since other players left
                         console.log('%cAdventure ended', 'color: green');
                         setProgress('Adventure ended', true);
                         return;
@@ -896,7 +910,7 @@
                 if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
                     console.log('%cAdventure active with other 2 players left. Ending adventure...', 'color: orange');
                     setProgress('Other players left. Ending adventure...', false);
-                    await endAdventure();
+                    await endAdventure(true); // Force end since other players left
                     console.log('%cAdventure ended', 'color: green');
                     setProgress('Adventure ended', true);
                     return;
