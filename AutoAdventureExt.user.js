@@ -539,10 +539,13 @@
                     if (userData.left === true) {
                         otherPlayersLeftCount++;
                     }
+                    console.log(`User ${userId}: left=${userData.left}, points=${userData.points}`);
                 }
             }
 
+            // If there are exactly 2 other players and both have left, we should end the adventure
             const otherPlayersLeft = totalOtherPlayers === 2 && otherPlayersLeftCount === 2;
+            console.log(`Adventure status check: totalOtherPlayers=${totalOtherPlayers}, otherPlayersLeftCount=${otherPlayersLeftCount}, otherPlayersLeft=${otherPlayersLeft}`);
 
             return {
                 hasActive: true,
@@ -622,11 +625,41 @@
                     }]
                 }));
 
-                if (response.error) {
-                    throw new Error(`Failed to end adventure: ${response.error.description || response.error.name}`);
+                // Check for errors in the response structure
+                if (response.results?.[0]?.result?.error) {
+                    const error = response.results[0].result.error;
+                    throw new Error(`Failed to end adventure: ${error.description || error.name || 'Unknown error'}`);
                 }
 
-                console.log('Adventure ended successfully');
+                // Verify adventure was actually ended by checking status
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                const verifyStatus = await checkAdventureStatus();
+                if (verifyStatus.hasActive) {
+                    console.warn('⚠ Adventure still appears active after end call, retrying...');
+                    // Retry ending the adventure once
+                    const retryResponse = await Send(JSON.stringify({
+                        calls: [{
+                            name: "adventure_end",
+                            args: { isFinished: true },
+                            context: { actionTs: Date.now() },
+                            ident: "body"
+                        }]
+                    }));
+                    
+                    if (retryResponse.results?.[0]?.result?.error) {
+                        const error = retryResponse.results[0].result.error;
+                        throw new Error(`Failed to end adventure on retry: ${error.description || error.name || 'Unknown error'}`);
+                    }
+                    
+                    // Wait and verify again
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const finalStatus = await checkAdventureStatus();
+                    if (finalStatus.hasActive) {
+                        throw new Error('Adventure still active after end attempts');
+                    }
+                }
+
+                console.log('✓ Adventure ended successfully');
                 return response;
             } catch (error) {
                 console.error('Error ending adventure:', error);
@@ -910,9 +943,15 @@
                 if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
                     console.log('%cAdventure active with other 2 players left. Ending adventure...', 'color: orange');
                     setProgress('Other players left. Ending adventure...', false);
-                    await endAdventure(true); // Force end since other players left
-                    console.log('%cAdventure ended', 'color: green');
-                    setProgress('Adventure ended', true);
+                    try {
+                        await endAdventure(true); // Force end since other players left
+                        console.log('%cAdventure ended successfully', 'color: green');
+                        setProgress('Adventure ended successfully', true);
+                    } catch (endError) {
+                        console.error('%cFailed to end adventure:', 'color: red', endError);
+                        setProgress(`Failed to end adventure: ${endError.message}`, true);
+                        throw endError; // Re-throw to be caught by outer try-catch
+                    }
                     return;
                 }
 
