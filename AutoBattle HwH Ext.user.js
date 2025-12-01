@@ -1606,12 +1606,14 @@
             }
 
             this.attackDirectSlots = async function() {
-                console.log('Starting direct Guild War attacks on slots 8, 9, 1, and 2...');
+                console.log('Starting direct Guild War attacks on slots 7, 8, 9, 34, 1, and 2...');
                 
-                const slots = [8, 9, 1, 2];
+                const slots = [7, 8, 9, 34, 1, 2];
                 const slotNames = {
-                    8: 'slot 8 (Titans)',
-                    9: 'slot 9 (Titans)',
+                    7: 'slot 7 (Titans - Bridge)',
+                    8: 'slot 8 (Titans - Bridge)',
+                    9: 'slot 9 (Titans - Bridge)',
+                    34: 'slot 34 (Titans - Bridge)',
                     1: 'slot 1',
                     2: 'slot 2'
                 };
@@ -1639,9 +1641,16 @@
                         await this.refreshGuildWarAttempts();
                     } catch (error) {
                         console.error(`Error attacking ${slotNames[slotId]}:`, error);
-                        // Continue to next slot instead of stopping
-                        // Only log the error and move on
-                        Utils.log('warn', `Failed to attack ${slotNames[slotId]}: ${error.message}, continuing to next target`);
+                        
+                        // Check if this is a skip error (from simulation)
+                        if (error.message && error.message.startsWith('Skipped:')) {
+                            console.log(`[GUILD_WAR] ${slotNames[slotId]} skipped due to low win rate, continuing to next target`);
+                            Utils.log('warn', `Skipped ${slotNames[slotId]}: ${error.message}, continuing to next target`);
+                            // Don't increment victories, just continue
+                        } else {
+                            // Other errors: continue to next slot instead of stopping
+                            Utils.log('warn', `Failed to attack ${slotNames[slotId]}: ${error.message}, continuing to next target`);
+                        }
                     }
                     
                     // Add delay between attacks (except after the last one)
@@ -1668,7 +1677,7 @@
                     throw new Error(`No Guild War attempts remaining (myTries: ${this.myTries})`);
                 }
                 
-                const isTitanBattle = (slotId === 8 || slotId === 9);
+                const isTitanBattle = (slotId === 7 || slotId === 8 || slotId === 9 || slotId === 34);
                 
                 let teamConfig;
                 if (isTitanBattle) {
@@ -1676,6 +1685,35 @@
                     
                     if (!teamConfig.titans || teamConfig.titans.length < 5) {
                         throw new Error('Titan team not properly configured - need at least 5 titans');
+                    }
+                    
+                    // Run demo battle simulation for titan battles before attacking
+                    console.log(`[GUILD_WAR_TITAN] Running demo battle simulation for slot ${slotId}...`);
+                    try {
+                        const opponentTitanTeam = this.getOpponentTitanTeamFromSlot(slotId);
+                        if (opponentTitanTeam && opponentTitanTeam.titans && opponentTitanTeam.titans.length >= 5) {
+                            const simulationResult = await this.simulateGuildWarTitanBattle(teamConfig, opponentTitanTeam, CONSTANTS.SIMULATION_COUNT);
+                            
+                            console.log(`[GUILD_WAR_TITAN] Simulation results: ${simulationResult.wins}W/${simulationResult.losses}L (${simulationResult.winRate.toFixed(2)}% win rate)`);
+                            
+                            // Check win rate threshold
+                            if (simulationResult.winRate <= CONSTANTS.WIN_RATE_THRESHOLD) {
+                                console.log(`[GUILD_WAR_TITAN] ⚠️ Win rate ${simulationResult.winRate.toFixed(2)}% is below ${CONSTANTS.WIN_RATE_THRESHOLD}%, skipping slot ${slotId}`);
+                                setProgress(`${I18N('GUILD_WAR')}: Skipping slot ${slotId} (win rate ${simulationResult.winRate.toFixed(2)}%)`);
+                                throw new Error(`Skipped: Win rate ${simulationResult.winRate.toFixed(2)}% below threshold`);
+                            }
+                            
+                            console.log(`[GUILD_WAR_TITAN] ✓ Win rate ${simulationResult.winRate.toFixed(2)}% is above threshold, proceeding with attack`);
+                        } else {
+                            console.warn(`[GUILD_WAR_TITAN] ⚠️ Cannot get opponent titan team data for slot ${slotId}, proceeding with attack anyway`);
+                        }
+                    } catch (error) {
+                        if (error.message && error.message.startsWith('Skipped:')) {
+                            // Re-throw skip errors to continue to next slot
+                            throw error;
+                        }
+                        console.warn(`[GUILD_WAR_TITAN] Simulation error for slot ${slotId}:`, error);
+                        console.log(`[GUILD_WAR_TITAN] Proceeding with attack despite simulation error`);
                     }
                 } else {
                     teamConfig = this.getArenaTeamConfiguration();
@@ -1821,6 +1859,333 @@
                 return {
                     titans: [4033, 4003, 4001, 4032, 4000]
                 };
+            }
+
+            this.getOpponentTitanTeamFromSlot = function(slotId) {
+                if (!this.guildWarInfo || !this.guildWarInfo.enemySlots) {
+                    console.warn('[GUILD_WAR_TITAN] No enemy slots data available');
+                    return null;
+                }
+                
+                const slotData = this.guildWarInfo.enemySlots[slotId.toString()];
+                if (!slotData || !slotData.team || !Array.isArray(slotData.team)) {
+                    console.warn(`[GUILD_WAR_TITAN] No team data found for slot ${slotId}`);
+                    return null;
+                }
+                
+                // Extract titan IDs from team array
+                // Team structure: [{"1": {id: 4033, ...}}, {"2": {id: 4003, ...}}, ...]
+                const titanIds = [];
+                for (const memberObj of slotData.team) {
+                    if (memberObj && typeof memberObj === 'object') {
+                        // Get the first key (position) and extract the titan object
+                        const position = Object.keys(memberObj)[0];
+                        const titan = memberObj[position];
+                        if (titan && titan.id && titan.type === 'titan') {
+                            titanIds.push(titan.id);
+                        }
+                    }
+                }
+                
+                if (titanIds.length < 5) {
+                    console.warn(`[GUILD_WAR_TITAN] Only found ${titanIds.length} titans in slot ${slotId}, need 5`);
+                    return null;
+                }
+                
+                console.log(`[GUILD_WAR_TITAN] Extracted opponent titan team from slot ${slotId}:`, titanIds);
+                
+                return {
+                    titans: titanIds.slice(0, 5)
+                };
+            }
+
+            this.simulateGuildWarTitanBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
+                Utils.log('log', `[GUILD_WAR_TITAN] Starting ${simulationCount} demo battle simulations...`);
+                
+                const mechanic = 'clan_pvp_titan';
+                
+                const simulations = [];
+                let parentId = 0; // Start with 0 for first battle
+                let firstBattleId = null; // Store first battle's ID to use as parentId for subsequent battles
+                
+                for (let i = 0; i < simulationCount; i++) {
+                    try {
+                        // First battle uses parentId=0, subsequent battles use first battle's ID as parentId
+                        const result = await this.runSingleGuildWarTitanDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
+                        simulations.push(result);
+                        
+                        // For first battle: store the battle ID to use as parentId for subsequent battles
+                        if (i === 0 && result.battleId) {
+                            firstBattleId = result.battleId;
+                            parentId = firstBattleId;
+                        }
+                        // For subsequent battles: use the first battle's ID as parentId
+                        else if (i > 0 && firstBattleId) {
+                            parentId = firstBattleId;
+                        }
+                        // Fallback: try to extract parentId from endBattle response
+                        else if (result.parentId !== undefined && result.parentId !== null && result.parentId !== 0) {
+                            parentId = result.parentId;
+                        }
+                    } catch (error) {
+                        console.error(`[GUILD_WAR_TITAN] Simulation ${i + 1} failed:`, error);
+                        simulations.push({ win: false, battleTime: 0, error: error.message, parentId: parentId });
+                    }
+                }
+                
+                // Calculate statistics
+                const wins = simulations.filter(s => s.win).length;
+                const losses = simulations.length - wins;
+                const winRate = (wins / simulations.length) * 100;
+                const battleTimes = simulations.map(s => s.battleTime).filter(t => t > 0);
+                const averageBattleTime = battleTimes.length > 0 
+                    ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length 
+                    : 0;
+                
+                Utils.log('log', `[GUILD_WAR_TITAN] Simulation complete: ${wins}W/${losses}L (${winRate.toFixed(1)}% win rate)`);
+                
+                return {
+                    total: simulations.length,
+                    wins: wins,
+                    losses: losses,
+                    winRate: winRate,
+                    averageBattleTime: averageBattleTime,
+                    simulations: simulations
+                };
+            }
+
+            this.runSingleGuildWarTitanDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        // Get element spirits from user info (default to dark/water if not available)
+                        let firstSpiritElement = 'dark';
+                        let secondSpiritElement = 'water';
+                        let defenceFirstSpiritElement = 'earth';
+                        
+                        try {
+                            const userInfo = getUserInfo();
+                            // Try to get element spirits from userInfo if available
+                            // For now, use defaults
+                        } catch (e) {
+                            // Use defaults
+                        }
+                        
+                        let args = {
+                            mechanic: mechanic,
+                            defenceMaxUpgrade: true,
+                            defenceTeam: {
+                                units: opponentTeam.titans || []
+                            },
+                            defenceFavor: {},
+                            maxUpgrade: true,
+                            team: {
+                                units: myTeam.titans || []
+                            },
+                            favor: {},
+                            defenceBuffs: {},
+                            buffs: {},
+                            firstSpiritElement: firstSpiritElement,
+                            firstSpiritSkills: {},
+                            secondSpiritElement: secondSpiritElement,
+                            secondSpiritSkills: {},
+                            defenceFirstSpiritElement: defenceFirstSpiritElement,
+                            defenceFirstSpiritSkills: {},
+                            parentId: parentId,
+                            entryId: 0
+                        };
+                        
+                        // Validate required fields
+                        if (!args.team || !args.team.units || args.team.units.length === 0) {
+                            reject(new Error('Invalid team configuration: missing or empty titan units'));
+                            return;
+                        }
+                        if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
+                            reject(new Error('Invalid defence team configuration: missing or empty titan units'));
+                            return;
+                        }
+                        
+                        const calls = [{
+                            name: "demoBattles_startBattle",
+                            args: args,
+                            context: {
+                                actionTs: Utils.getActionTs()
+                            },
+                            ident: "body"
+                        }];
+                        
+                        const startTime = Date.now();
+                        
+                        Send(JSON.stringify({calls}))
+                            .then(response => {
+                                if (response.error) {
+                                    console.error('[GUILD_WAR_TITAN] API error:', response.error);
+                                    reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
+                                    return;
+                                }
+                                
+                                if (!response.results || !response.results[0] || !response.results[0].result) {
+                                    console.error('[GUILD_WAR_TITAN] Invalid API response structure');
+                                    reject(new Error('Invalid demo battle API response'));
+                                    return;
+                                }
+                                
+                                const responseData = response.results[0].result.response;
+                                const battleData = responseData?.battle || responseData;
+                                
+                                if (!battleData) {
+                                    console.error('[GUILD_WAR_TITAN] No battle data found in response');
+                                    reject(new Error('No battle data in API response'));
+                                    return;
+                                }
+                                
+                                // Calculate battle result using BattleCalc
+                                const battleType = battleData?.type ?? mechanic;
+                                const battleConfigType = getBattleType(battleType);
+                                
+                                BattleCalc(battleData, battleConfigType, (calcResult) => {
+                                    if (!Utils.isValidBattleResult(calcResult)) {
+                                        Utils.log('error', '[GUILD_WAR_TITAN] BattleCalc returned invalid result');
+                                        resolve({
+                                            win: false,
+                                            battleTime: 0,
+                                            error: 'Invalid calculation result',
+                                            parentId: parentId
+                                        });
+                                        return;
+                                    }
+                                    
+                                    const battleTime = calcResult.battleTime || 0;
+                                    const win = calcResult.result.win || false;
+                                    
+                                    // Call demoBattles_endBattle to get battleId for parentId chaining
+                                    const self = this;
+                                    self.endGuildWarTitanDemoBattle(calcResult, battleData)
+                                        .then(endBattleResult => {
+                                            const extractedParentId = endBattleResult?.parentId;
+                                            const battleId = endBattleResult?.battleId;
+                                            
+                                            // Strategy: For first battle, use its ID as parentId for subsequent battles
+                                            let nextParentId = parentId;
+                                            
+                                            if (parentId === 0 && battleId) {
+                                                // First battle: use its ID as parentId for next battle
+                                                nextParentId = battleId;
+                                            } else if (parentId !== 0) {
+                                                // Subsequent battle: keep using the first battle's ID
+                                                nextParentId = parentId;
+                                            } else if (extractedParentId && extractedParentId !== 0) {
+                                                // Fallback: use parentId from endBattle response
+                                                nextParentId = extractedParentId;
+                                            }
+                                            
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: nextParentId,
+                                                battleId: battleId
+                                            });
+                                        })
+                                        .catch(endError => {
+                                            Utils.log('warn', '[GUILD_WAR_TITAN] Failed to call endBattle:', endError);
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: parentId,
+                                                battleId: null
+                                            });
+                                        });
+                                });
+                            })
+                            .catch(error => {
+                                console.error('[GUILD_WAR_TITAN] Error in demo battle:', error);
+                                reject(error);
+                            });
+                    } catch (error) {
+                        console.error('[GUILD_WAR_TITAN] Error preparing demo battle:', error);
+                        reject(error);
+                    }
+                });
+            }
+
+            this.endGuildWarTitanDemoBattle = async function(calcResult, battleData) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        // Prepare progress data from battle calculation result
+                        const progress = calcResult.progress || [];
+                        
+                        // Ensure progress array has at least one entry
+                        if (progress.length === 0 && calcResult.result) {
+                            // Create minimal progress entry from result
+                            progress.push({
+                                v: CONSTANTS.BATTLE_VERSION,
+                                b: 0,
+                                seed: battleData?.seed || Math.floor(Math.random() * 1000000000),
+                                attackers: {
+                                    input: [],
+                                    heroes: {}
+                                },
+                                defenders: {
+                                    input: [],
+                                    heroes: {}
+                                }
+                            });
+                        }
+                        
+                        const endBattleArgs = {
+                            result: {
+                                win: calcResult.result.win || false,
+                                stars: calcResult.result.stars || 0
+                            },
+                            progress: progress
+                        };
+                        
+                        const calls = [{
+                            name: "demoBattles_endBattle",
+                            args: endBattleArgs,
+                            context: {
+                                actionTs: Utils.getActionTs()
+                            },
+                            ident: "body"
+                        }];
+                        
+                        Send(JSON.stringify({calls}))
+                            .then(response => {
+                                if (response.error) {
+                                    Utils.log('warn', '[GUILD_WAR_TITAN] EndBattle API error:', response.error);
+                                    resolve(null);
+                                    return;
+                                }
+                                
+                                if (!response.results || !response.results[0] || !response.results[0].result) {
+                                    Utils.log('warn', '[GUILD_WAR_TITAN] Invalid endBattle response structure');
+                                    resolve(null);
+                                    return;
+                                }
+                                
+                                const endBattleResponse = response.results[0].result.response;
+                                
+                                // Extract both parentId and battleId from battle object in response
+                                // Strategy: Use first battle's ID as parentId for subsequent battles
+                                const battle = endBattleResponse?.battle;
+                                const extractedParentId = battle?.parentId;
+                                const battleId = battle?.id;
+                                
+                                resolve({
+                                    parentId: extractedParentId !== undefined && extractedParentId !== null ? extractedParentId : null,
+                                    battleId: battleId !== undefined && battleId !== null ? battleId : null
+                                });
+                            })
+                            .catch(error => {
+                                Utils.log('warn', '[GUILD_WAR_TITAN] Error calling endBattle:', error);
+                                resolve(null);
+                            });
+                    } catch (error) {
+                        Utils.log('warn', '[GUILD_WAR_TITAN] Error preparing endBattle:', error);
+                        resolve(null);
+                    }
+                });
             }
 
             this.end = function(reason) {

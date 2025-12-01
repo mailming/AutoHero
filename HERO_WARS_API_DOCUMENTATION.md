@@ -3770,6 +3770,166 @@ Send({
 
 **Response:** Returns updated slot information, victory points, and clan points.
 
+#### clanWarGetDayHistory
+
+**Description:** Retrieves the complete battle history for the current Guild War day, including all attacks and defenses that occurred during the war day, along with detailed replay information.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "clanWarGetDayHistory",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response Fields:**
+
+**Top Level:**
+- `date` (number): Unix timestamp of the response
+- `results` (array): Array containing the API response
+  - `results[0].ident` (string): Request identifier ("body")
+  - `results[0].result.response` (object): Day history data
+
+**Day History Response (`response`):**
+
+**Attack Records:**
+- `attack` (array): Array of attack records that occurred during the war day
+  - Each attack record contains:
+    - `time` (number): Unix timestamp when the attack occurred
+    - `slotId` (string): Slot ID that was attacked (1-40)
+      - **Bridge slots:** Slots 7, 8, 9, and 34 are bridge slots (all titan battles)
+    - `previousStatus` (string): Status of the slot before attack (e.g., "inBattle")
+    - `attackerId` (string): User ID of the attacker
+    - `defenderId` (string): User ID of the defender
+    - `replayId` (string): Unique replay ID for this battle
+    - `win` (boolean): Whether the attacker won
+    - `fortificationPoints` (number): Fortification points earned (0, 20, 40, or 60)
+    - `slotPoints` (number): Slot points earned (typically 20)
+
+**Defense Records:**
+- `defence` (array): Array of defense records (failed attacks against your clan)
+  - Each defense record contains the same structure as attack records:
+    - `time` (number): Unix timestamp when the defense occurred
+    - `slotId` (string): Slot ID that was defended
+    - `previousStatus` (string): Status of the slot before defense
+    - `attackerId` (string): User ID of the attacker (enemy)
+    - `defenderId` (string): User ID of the defender (your clan member)
+    - `replayId` (string): Unique replay ID for this battle
+    - `win` (boolean): Whether the defender won (false means attacker lost)
+    - `fortificationPoints` (number): Fortification points (typically 0 for failed attacks)
+    - `slotPoints` (number): Slot points (typically 0-3 for failed attacks)
+
+**Average Level:**
+- `avgLevel` (string): Average level of clan members
+
+**User Information:**
+- `users` (object): Map of user IDs (as string keys) to user information
+  - Each user object contains:
+    - `id` (string): User ID
+    - `name` (string): Player name
+    - `lastLoginTime` (string): Unix timestamp of last login
+    - `serverId` (string): Server ID
+    - `level` (string): Player level
+    - `clanId` (string): Clan ID
+    - `clanRole` (string): Role in clan ("255" = leader, "4" = commander, "3" = officer, "2" = member)
+    - `commander` (boolean): Whether player is a commander
+    - `avatarId` (string): Avatar ID
+    - `isChatModerator` (boolean): Chat moderator status
+    - `frameId` (number): Frame ID
+    - `leagueId` (number): League ID
+    - `allowPm` (string): PM permission setting ("all", "friends", "none")
+    - `clanTitle` (string): Clan name
+    - `clanIcon` (object): Clan icon configuration
+      - `flagColor1` (number): First flag color
+      - `flagColor2` (number): Second flag color
+      - `flagShape` (number): Flag shape ID
+      - `iconColor` (number): Icon color ID
+      - `iconShape` (number): Icon shape ID
+
+**Battle Replays:**
+- `replays` (array): Array of detailed battle replay objects
+  - Each replay contains:
+    - `userId` (string): User ID of the attacker
+    - `typeId` (string): User ID of the defender
+    - `attackers` (object): Attacker team data
+      - Contains hero/titan objects with detailed stats (ID, XP, level, star, skills, power, skins, artifacts, etc.)
+    - `defenders` (object): Defender team data
+      - Contains hero/titan objects with detailed stats and battle state
+    - `effects` (array): Battle effects applied
+    - `reward` (array): Rewards earned
+    - `startTime` (string): Battle start timestamp
+    - `seed` (string): Battle seed for replay
+    - `type` (string): Battle type (e.g., "clan_pvp_titan" for titan battles)
+    - `id` (string): Replay ID
+    - `progress` (array): Battle progress frames
+    - `endTime` (string): Battle end timestamp
+    - `result` (object): Battle result
+      - `win` (boolean): Whether attacker won
+      - `stars` (number): Stars earned (0-3)
+      - `serverVersion` (number): Server version used
+
+**Example Usage:**
+
+```javascript
+const response = await Send({
+  calls: [{
+    name: "clanWarGetDayHistory",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+});
+
+const history = response.results[0].result.response;
+
+// Get all attacks
+const attacks = history.attack || [];
+console.log(`Total attacks: ${attacks.length}`);
+
+// Analyze attack results
+const successfulAttacks = attacks.filter(a => a.win);
+const failedAttacks = attacks.filter(a => !a.win);
+console.log(`Successful: ${successfulAttacks.length}, Failed: ${failedAttacks.length}`);
+
+// Get fortification points earned
+const totalFortPoints = attacks.reduce((sum, a) => sum + a.fortificationPoints, 0);
+console.log(`Total fortification points: ${totalFortPoints}`);
+
+// Get defenses (failed enemy attacks)
+const defenses = history.defence || [];
+console.log(`Total defenses: ${defenses.length}`);
+
+// Get user information
+const users = history.users || {};
+console.log(`Users involved: ${Object.keys(users).length}`);
+
+// Get replays
+const replays = history.replays || [];
+console.log(`Total replays: ${replays.length}`);
+
+// Find attacks by specific user
+const userId = "35891708";
+const userAttacks = attacks.filter(a => a.attackerId === userId);
+console.log(`User ${userId} made ${userAttacks.length} attacks`);
+
+// Find attacks on specific slot
+const slotId = "8";
+const slotAttacks = attacks.filter(a => a.slotId === slotId);
+console.log(`Slot ${slotId} was attacked ${slotAttacks.length} times`);
+```
+
+**Notes:**
+- This API returns the complete history for the current war day
+- Attack records are sorted by timestamp (oldest first)
+- Replay data contains full battle information including team compositions, stats, and battle progress
+- User information includes both your clan members and enemy clan members who participated in battles
+- Fortification points are awarded based on slot type: 0 for regular slots, 20/40/60 for fortification slots
+- **Bridge slots:** Slots 7, 8, 9, and 34 are bridge slots (all titan battles), which are strategic positions that connect different areas of the war map
+
 ---
 
 ## Clan Raid API (Minions Attack)
