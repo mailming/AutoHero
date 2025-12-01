@@ -28,7 +28,7 @@
     function initializeExtension() {
         console.log('AutoBattle: HWH UI is ready, initializing extension...');
 
-        const { HWHClasses, HWHFuncs, Send, cheats, Caller, lib } = window;
+        const { HWHClasses, HWHFuncs, Send, cheats } = window;
 
         // Helper function to get battle type
         function getBattleType(strBattleType) {
@@ -90,35 +90,7 @@
 
         // Helper function to access I18N (translation)
         function I18N(constant, replace) {
-            if (window.I18N && typeof window.I18N === 'function') {
-                try {
-                    return window.I18N(constant, replace);
-                } catch (error) {
-                    // If translation constant not found, fall back to constant name or English defaults
-                    console.warn(`Translation constant '${constant}' not found, using fallback`);
-                    // Map common constants to English defaults
-                    const fallbacks = {
-                        'ARENA': 'Arena',
-                        'GRAND_ARENA': 'Grand Arena',
-                        'GUILD_WAR': 'Guild War',
-                        'MINION_RAID': 'Minion Raid',
-                        'INITIALIZING': 'Initializing',
-                        'BATTLE': 'Battle',
-                        'COMPLETED': 'Completed',
-                        'BATTLES_CANCELED': 'Battles Canceled',
-                        'REMAINING_ATTEMPTS': 'Remaining Attempts',
-                        'TITAN_ARENA': 'Titan Arena'
-                    };
-                    let result = fallbacks[constant] || constant;
-                    if (replace) {
-                        for (const key in replace) {
-                            result = result.replace(`{${key}}`, replace[key]);
-                        }
-                    }
-                    return result;
-                }
-            }
-            // Fallback to cheats.translate if I18N not available
+            // Map of constants that might not exist in I18N - use fallbacks directly
             const fallbacks = {
                 'ARENA': 'Arena',
                 'GRAND_ARENA': 'Grand Arena',
@@ -131,6 +103,34 @@
                 'REMAINING_ATTEMPTS': 'Remaining Attempts',
                 'TITAN_ARENA': 'Titan Arena'
             };
+            
+            // If we have a fallback for this constant, use it directly to avoid I18N warnings
+            if (fallbacks.hasOwnProperty(constant)) {
+                let result = fallbacks[constant];
+                if (replace) {
+                    for (const key in replace) {
+                        result = result.replace(`{${key}}`, replace[key]);
+                    }
+                }
+                return result;
+            }
+            
+            // For other constants, try to use window.I18N if available
+            if (window.I18N && typeof window.I18N === 'function') {
+                try {
+                    const result = window.I18N(constant, replace);
+                    // If I18N returns the constant name unchanged (meaning it wasn't found), use fallback
+                    if (result === constant && fallbacks[constant]) {
+                        return fallbacks[constant];
+                    }
+                    return result;
+                } catch (error) {
+                    // If translation constant not found, fall back to constant name or English defaults
+                    return fallbacks[constant] || constant;
+                }
+            }
+            
+            // Final fallback
             let result = fallbacks[constant] || constant;
             if (replace) {
                 for (const key in replace) {
@@ -234,28 +234,6 @@
             // Create action timestamp (called per API request for uniqueness)
             getActionTs: function() {
                 return Date.now();
-            },
-            
-            // Extract parentId from endBattle response
-            extractParentId: function(endBattleResponse) {
-                // Try multiple possible locations for parentId
-                // Standard location: response.battle.parentId
-                if (endBattleResponse?.battle?.parentId !== undefined && endBattleResponse?.battle?.parentId !== null) {
-                    return endBattleResponse.battle.parentId;
-                }
-                
-                // Fallback: check if battle exists but parentId is missing
-                if (endBattleResponse?.battle) {
-                    console.warn('[DEMO] Battle object exists but parentId is missing:', endBattleResponse.battle);
-                }
-                
-                // Fallback: check if parentId is at top level (unlikely but possible)
-                if (endBattleResponse?.parentId !== undefined && endBattleResponse?.parentId !== null) {
-                    console.log('[DEMO] Found parentId at top level of response');
-                    return endBattleResponse.parentId;
-                }
-                
-                return null;
             },
             
             // Validate battle result
@@ -1491,12 +1469,9 @@
         function executeGuildWar(resolve, reject) {
             this.resolve = resolve;
             this.reject = reject;
-            this.attemptsRemaining = 0;
             this.victories = 0;
             this.guildWarInfo = null;
             this.teamInfo = null;
-            this.slots = [];
-            this.currentSlot = 1;
             this.myTries = null;
 
             this.start = async function() {
@@ -1547,6 +1522,38 @@
                 }
 
                 console.log('Guild War info loaded');
+            }
+
+            this.refreshGuildWarAttempts = async function() {
+                try {
+                    const calls = [{
+                        name: "clanWarGetInfo",
+                        args: {},
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: "clanWarGetInfo"
+                    }];
+
+                    const response = await Send(JSON.stringify({calls}));
+                    
+                    if (response.error) {
+                        console.warn('Failed to refresh Guild War attempts:', response.error);
+                        return false;
+                    }
+                    
+                    if (response.results && response.results[0] && response.results[0].result && response.results[0].result.response) {
+                        const guildWarInfo = response.results[0].result.response;
+                        if ('myTries' in guildWarInfo) {
+                            this.myTries = guildWarInfo.myTries;
+                            this.guildWarInfo = guildWarInfo;
+                            console.log(`Refreshed Guild War attempts: ${this.myTries}`);
+                            return true;
+                        }
+                    }
+                    return false;
+                } catch (error) {
+                    console.warn('Error refreshing Guild War attempts:', error);
+                    return false;
+                }
             }
 
             this.getTeamData = async function() {
@@ -1601,65 +1608,52 @@
             this.attackDirectSlots = async function() {
                 console.log('Starting direct Guild War attacks on slots 8, 9, 1, and 2...');
                 
-                // Attack slot 8 (Titan battle)
-                try {
-                    console.log('Attacking slot 8...');
-                    setProgress(`${I18N('GUILD_WAR')}: Attacking slot 8 (Titans)`);
-                    await this.attackSlot(8);
-                    this.victories++;
-                    console.log('Slot 8 attack completed successfully');
-                } catch (error) {
-                    console.error('Error attacking slot 8:', error);
-                    this.end(`Slot 8 attack failed: ${error.message}`);
-                    return;
+                const slots = [8, 9, 1, 2];
+                const slotNames = {
+                    8: 'slot 8 (Titans)',
+                    9: 'slot 9 (Titans)',
+                    1: 'slot 1',
+                    2: 'slot 2'
+                };
+                
+                for (let i = 0; i < slots.length; i++) {
+                    const slotId = slots[i];
+                    
+                    // Refresh attempts from API before each attack to get accurate count
+                    await this.refreshGuildWarAttempts();
+                    
+                    // Check if we have attempts remaining before each attack
+                    if (this.myTries === null || this.myTries === undefined || this.myTries <= 0) {
+                        console.log(`No attempts remaining (myTries: ${this.myTries}), stopping attacks`);
+                        break;
+                    }
+                    
+                    try {
+                        console.log(`Attacking ${slotNames[slotId]}... (${this.myTries} attempts remaining)`);
+                        setProgress(`${I18N('GUILD_WAR')}: Attacking ${slotNames[slotId]} (${this.myTries} attempts)`);
+                        await this.attackSlot(slotId);
+                        this.victories++;
+                        console.log(`${slotNames[slotId]} attack completed successfully`);
+                        
+                        // Refresh attempts after successful attack to get updated count
+                        await this.refreshGuildWarAttempts();
+                    } catch (error) {
+                        console.error(`Error attacking ${slotNames[slotId]}:`, error);
+                        // Continue to next slot instead of stopping
+                        // Only log the error and move on
+                        Utils.log('warn', `Failed to attack ${slotNames[slotId]}: ${error.message}, continuing to next target`);
+                    }
+                    
+                    // Add delay between attacks (except after the last one)
+                    if (i < slots.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+                    }
                 }
 
-                await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
-
-                // Attack slot 9 (Titan battle)
-                try {
-                    Utils.log('log', 'Attacking slot 9...');
-                    setProgress(`${I18N('GUILD_WAR')}: Attacking slot 9 (Titans)`);
-                    await this.attackSlot(9);
-                    this.victories++;
-                    Utils.log('log', 'Slot 9 attack completed successfully');
-                } catch (error) {
-                    Utils.log('error', 'Error attacking slot 9:', error);
-                    this.end(`Slot 9 attack failed: ${error.message}`);
-                    return;
-                }
-
-                await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
-
-                // Attack slot 1 (Hero battle)
-                try {
-                    Utils.log('log', 'Attacking slot 1...');
-                    setProgress(`${I18N('GUILD_WAR')}: Attacking slot 1`);
-                    await this.attackSlot(1);
-                    this.victories++;
-                    Utils.log('log', 'Slot 1 attack completed successfully');
-                } catch (error) {
-                    Utils.log('error', 'Error attacking slot 1:', error);
-                    this.end(`Slot 1 attack failed: ${error.message}`);
-                    return;
-                }
-
-                await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
-
-                // Attack slot 2 (Hero battle)
-                try {
-                    console.log('Attacking slot 2...');
-                    setProgress(`${I18N('GUILD_WAR')}: Attacking slot 2`);
-                    await this.attackSlot(2);
-                    this.victories++;
-                    console.log('Slot 2 attack completed successfully');
-                } catch (error) {
-                    console.error('Error attacking slot 2:', error);
-                    this.end(`Slot 2 attack failed: ${error.message}`);
-                    return;
-                }
-
-                this.end(`Completed ${this.victories} Guild War attacks`);
+                // Final refresh to get accurate remaining attempts
+                await this.refreshGuildWarAttempts();
+                const summary = `Completed ${this.victories} Guild War attacks${this.myTries > 0 ? ` (${this.myTries} attempts remaining)` : ''}`;
+                this.end(summary);
             }
 
             this.attackSlot = async function(slotId) {
@@ -1742,11 +1736,8 @@
 
                 console.log(`Slot ${slotId} attack completed successfully`);
                 
-                // Decrement myTries after successful attack
-                if (this.myTries !== null && this.myTries !== undefined) {
-                    this.myTries--;
-                    console.log(`Guild War attempts remaining: ${this.myTries}`);
-                }
+                // Note: myTries will be refreshed from API after attack, don't manually decrement
+                // to avoid desync with server-side value
                 
                 return result;
             }
