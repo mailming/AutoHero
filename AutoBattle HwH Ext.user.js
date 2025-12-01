@@ -1478,7 +1478,11 @@
                 setProgress(`${I18N('GUILD_WAR')}: ${I18N('INITIALIZING')}...`);
 
                 try {
-                    await this.getGuildWarInfo();
+                    const hasAttempts = await this.getGuildWarInfo();
+                    if (!hasAttempts) {
+                        // getGuildWarInfo already handled the end message, just return
+                        return;
+                    }
                     await this.getTeamData();
                     await this.attackDirectSlots();
                 } catch (error) {
@@ -1500,11 +1504,15 @@
                 const response = await Send(JSON.stringify({calls}));
                 
                 if (response.error) {
-                    throw new Error(`Guild War info API error: ${response.error.name} - ${response.error.description}`);
+                    console.log(`Guild War info API error: ${response.error.name} - ${response.error.description}`);
+                    this.end(`Guild War not available: ${response.error.description || response.error.name}`);
+                    return false;
                 }
                 
                 if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
-                    throw new Error('Invalid clanWarGetInfo response');
+                    console.log('Invalid clanWarGetInfo response');
+                    this.end('Guild War: Invalid response from server');
+                    return false;
                 }
 
                 this.guildWarInfo = response.results[0].result.response;
@@ -1515,13 +1523,18 @@
                     console.log(`Guild War attempts remaining: ${this.myTries}`);
                     
                     if (this.myTries <= 0) {
-                        throw new Error('No Guild War attempts remaining');
+                        console.log('No Guild War attempts remaining');
+                        this.end('No Guild War attempts remaining');
+                        return false;
                     }
                 } else {
-                    throw new Error('Guild War is not currently active - myTries field not available');
+                    console.log('Guild War is not currently active - myTries field not available');
+                    this.end('Guild War is not currently active');
+                    return false;
                 }
 
                 console.log('Guild War info loaded');
+                return true;
             }
 
             this.refreshGuildWarAttempts = async function() {
