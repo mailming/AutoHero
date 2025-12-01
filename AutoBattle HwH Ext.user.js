@@ -91,17 +91,53 @@
         // Helper function to access I18N (translation)
         function I18N(constant, replace) {
             if (window.I18N && typeof window.I18N === 'function') {
-                return window.I18N(constant, replace);
+                try {
+                    return window.I18N(constant, replace);
+                } catch (error) {
+                    // If translation constant not found, fall back to constant name or English defaults
+                    console.warn(`Translation constant '${constant}' not found, using fallback`);
+                    // Map common constants to English defaults
+                    const fallbacks = {
+                        'ARENA': 'Arena',
+                        'GRAND_ARENA': 'Grand Arena',
+                        'GUILD_WAR': 'Guild War',
+                        'MINION_RAID': 'Minion Raid',
+                        'INITIALIZING': 'Initializing',
+                        'BATTLE': 'Battle',
+                        'COMPLETED': 'Completed',
+                        'BATTLES_CANCELED': 'Battles Canceled',
+                        'REMAINING_ATTEMPTS': 'Remaining Attempts',
+                        'TITAN_ARENA': 'Titan Arena'
+                    };
+                    let result = fallbacks[constant] || constant;
+                    if (replace) {
+                        for (const key in replace) {
+                            result = result.replace(`{${key}}`, replace[key]);
+                        }
+                    }
+                    return result;
+                }
             }
             // Fallback to cheats.translate if I18N not available
+            const fallbacks = {
+                'ARENA': 'Arena',
+                'GRAND_ARENA': 'Grand Arena',
+                'GUILD_WAR': 'Guild War',
+                'MINION_RAID': 'Minion Raid',
+                'INITIALIZING': 'Initializing',
+                'BATTLE': 'Battle',
+                'COMPLETED': 'Completed',
+                'BATTLES_CANCELED': 'Battles Canceled',
+                'REMAINING_ATTEMPTS': 'Remaining Attempts',
+                'TITAN_ARENA': 'Titan Arena'
+            };
+            let result = fallbacks[constant] || constant;
             if (replace) {
-                let result = constant;
                 for (const key in replace) {
                     result = result.replace(`{${key}}`, replace[key]);
                 }
-                return result;
             }
-            return constant;
+            return result;
         }
 
         // Helper function to access getUserInfo
@@ -146,6 +182,88 @@
         // BattleCalc from cheats
         const BattleCalc = cheats.BattleCalc;
 
+        // ========== CONSTANTS ==========
+        const CONSTANTS = {
+            WIN_RATE_THRESHOLD: 70,
+            SIMULATION_COUNT: 10,
+            BATTLE_VERSION: 273,
+            DELAY_BETWEEN_BATTLES: 1000,
+            DELAY_BATTLE_COMPLETE: 100,
+            ARENA_ATTEMPTS_REFILLABLE_ID: 6,
+            GRAND_ARENA_ATTEMPTS_REFILLABLE_ID: 21,
+            DEFAULT_PET_ID: 6005,
+            PET_ID_RANGE_MIN: 6000,
+            PET_ID_RANGE_MAX: 7000,
+            DAYS: {
+                SUNDAY: 0,
+                MONDAY: 1,
+                SATURDAY: 6
+            }
+        };
+
+        // ========== UTILITY FUNCTIONS ==========
+        const Utils = {
+            // Cached date for day checks (updated once per execution)
+            currentDate: new Date(),
+            
+            getDayOfWeek: function() {
+                return this.currentDate.getDay();
+            },
+            
+            isTitanArenaDay: function() {
+                const day = this.getDayOfWeek();
+                return day >= CONSTANTS.DAYS.MONDAY && day <= CONSTANTS.DAYS.SATURDAY;
+            },
+            
+            isRaidBossDay: function() {
+                const day = this.getDayOfWeek();
+                return day === CONSTANTS.DAYS.SUNDAY || day === CONSTANTS.DAYS.SATURDAY;
+            },
+            
+            getDayName: function(dayOfWeek) {
+                return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+            },
+            
+            // Optimized logging - can be disabled in production
+            log: function(level, ...args) {
+                if (window.DEBUG !== false) {
+                    console[level](...args);
+                }
+            },
+            
+            // Create action timestamp (called per API request for uniqueness)
+            getActionTs: function() {
+                return Date.now();
+            },
+            
+            // Extract parentId from endBattle response
+            extractParentId: function(endBattleResponse) {
+                // Try multiple possible locations for parentId
+                // Standard location: response.battle.parentId
+                if (endBattleResponse?.battle?.parentId !== undefined && endBattleResponse?.battle?.parentId !== null) {
+                    return endBattleResponse.battle.parentId;
+                }
+                
+                // Fallback: check if battle exists but parentId is missing
+                if (endBattleResponse?.battle) {
+                    console.warn('[DEMO] Battle object exists but parentId is missing:', endBattleResponse.battle);
+                }
+                
+                // Fallback: check if parentId is at top level (unlikely but possible)
+                if (endBattleResponse?.parentId !== undefined && endBattleResponse?.parentId !== null) {
+                    console.log('[DEMO] Found parentId at top level of response');
+                    return endBattleResponse.parentId;
+                }
+                
+                return null;
+            },
+            
+            // Validate battle result
+            isValidBattleResult: function(result) {
+                return result && result.result && typeof result.result.win === 'boolean';
+            }
+        };
+
         // ========== EXECUTE ARENA CLASS ==========
         function executeArena(resolve, reject) {
             this.resolve = resolve;
@@ -159,7 +277,8 @@
 
             this.start = async function(arenaType = 'arena') {
                 this.arenaType = arenaType;
-                setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('INITIALIZING')}...`);
+                const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+                setProgress(`${arenaName}: Initializing...`);
 
                 try {
                     // Get arena status and team data
@@ -208,7 +327,7 @@
                     const calls = [{
                         name: "userGetInfo",
                         args: {},
-                        context: { actionTs: Date.now() },
+                        context: { actionTs: Utils.getActionTs() },
                         ident: "body"
                     }];
 
@@ -221,7 +340,7 @@
 
                         if (this.arenaType === 'grand') {
                             // Grand Arena attempts are stored in refillable array with id: 21
-                            const grandAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === 21) : null;
+                            const grandAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === CONSTANTS.GRAND_ARENA_ATTEMPTS_REFILLABLE_ID) : null;
                             const grandAttempts = grandAttemptsItem ? grandAttemptsItem.amount : 0;
 
                             this.arenaInfo = {
@@ -235,15 +354,15 @@
                             this.attemptsRemaining = grandAttempts > 0 ? 1 : 0; // Only do one battle per execution
 
                             if (grandAttempts <= 0) {
-                                setProgress(`${I18N('GRAND_ARENA')}: No attempts remaining (${grandAttempts})`);
+                                setProgress(`Grand Arena: No attempts remaining (${grandAttempts})`);
                                 return;
                             }
 
-                            setProgress(`${I18N('GRAND_ARENA')}: ${grandAttempts} attempts available - executing single battle`);
+                            setProgress(`Grand Arena: ${grandAttempts} attempts available - executing single battle`);
                             return;
                         } else {
                             // Arena attempts are stored in refillable array with id: 6
-                            const arenaAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === 6) : null;
+                            const arenaAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === CONSTANTS.ARENA_ATTEMPTS_REFILLABLE_ID) : null;
                             const arenaAttempts = arenaAttemptsItem ? arenaAttemptsItem.amount : 0;
 
                             this.arenaInfo = {
@@ -257,11 +376,11 @@
                             this.attemptsRemaining = arenaAttempts > 0 ? 1 : 0; // Only do one battle per execution
 
                             if (arenaAttempts <= 0) {
-                                setProgress(`${I18N('ARENA')}: No attempts remaining (${arenaAttempts})`);
+                                setProgress(`Arena: No attempts remaining (${arenaAttempts})`);
                                 return;
                             }
 
-                            setProgress(`${I18N('ARENA')}: ${arenaAttempts} attempts available - executing single battle`);
+                            setProgress(`Arena: ${arenaAttempts} attempts available - executing single battle`);
                             return;
                         }
                     }
@@ -281,7 +400,8 @@
                 };
                 this.attemptsRemaining = 1;
                 this.opponents = [];
-                setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('INITIALIZING')} - executing single battle...`);
+                const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+                setProgress(`${arenaName}: Initializing - executing single battle...`);
                 return;
             }
 
@@ -330,14 +450,14 @@
                 console.log('Getting arena opponents...');
 
                 const apiName = this.arenaType === 'grand' ? 'grandFindEnemies' : 'arenaFindEnemies';
-                const calls = [{
-                    name: apiName,
-                    args: {},
-                    context: {
-                        actionTs: Date.now()
-                    },
-                    ident: "body"
-                }];
+                    const calls = [{
+                        name: apiName,
+                        args: {},
+                        context: {
+                            actionTs: Utils.getActionTs()
+                        },
+                        ident: "body"
+                    }];
 
                 try {
                     const response = await Send(JSON.stringify({calls}));
@@ -433,12 +553,14 @@
                 let battlesAttempted = 0;
                 let battlesSkipped = 0;
                 
-                for (let i = 0; i < this.attemptsRemaining && this.opponents.length > 0; i++) {
+                // Continue trying opponents until we either win a battle, run out of attempts, or run out of opponents
+                while (battlesAttempted < this.attemptsRemaining && this.opponents.length > 0) {
                     const opponent = this.opponents.shift();
                     const opponentId = opponent.opponent.id;
                     
-                    console.log(`[EXECUTE] ===== Processing opponent ${opponentId} (${i + 1}/${this.attemptsRemaining}) =====`);
-                    setProgress(`${this.arenaType === 'grand' ? I18N('GRAND_ARENA') : I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - Opponent ${opponentId}`);
+                    console.log(`[EXECUTE] ===== Processing opponent ${opponentId} (attempt ${battlesAttempted + 1}/${this.attemptsRemaining}, ${this.opponents.length} remaining) =====`);
+                    const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+                    setProgress(`${arenaName}: Battle ${battlesAttempted + 1}/${this.attemptsRemaining} - Opponent ${opponentId}`);
 
                     try {
                         if (this.arenaType === 'grand') {
@@ -457,7 +579,7 @@
                         if (result.skipped) {
                             console.log(`[EXECUTE] Battle skipped due to low win rate (${result.winRate?.toFixed(2)}%)`);
                             battlesSkipped++;
-                            // Try next opponent if available
+                            // Continue to next opponent - don't consume an attempt
                             if (this.opponents.length === 0) {
                                 console.log(`[EXECUTE] No more opponents available, ending execution`);
                                 break;
@@ -465,10 +587,12 @@
                             continue;
                         }
                         
+                        // Battle was attempted (not skipped)
                         battlesAttempted++;
                         if (result.win) {
                             this.victories++;
                             console.log(`[EXECUTE] ✓ Victory against opponent ${opponentId}`);
+                            // After a victory, we can continue or stop - for now, continue to use all attempts
                         } else {
                             console.log(`[EXECUTE] ✗ Defeat against opponent ${opponentId}`);
                         }
@@ -511,9 +635,17 @@
                         return battleResult;
                     }
 
-                    // Step 2: Simulate battles using demoBattles_startBattle
-                    console.log('[DEMO] Step 2: Running demo battle simulations (no attempts consumed)...');
-                    const simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig, 10);
+                    // Skip simulation for Grand Arena (demo battles only support single team, not 3-team Grand Arena)
+                    if (this.arenaType === 'grand') {
+                        console.log('[DEMO] Grand Arena: Skipping simulation (demo battles do not support 3-team battles), proceeding directly to attack');
+                        const battleResult = await this.startArenaBattle(opponentId, myTeamConfig);
+                        await this.endArenaBattle(battleResult);
+                        return battleResult;
+                    }
+
+                    // Step 2: Simulate battles using demoBattles_startBattle (Regular Arena only)
+                    Utils.log('log', '[DEMO] Step 2: Running demo battle simulations (no attempts consumed)...');
+                    const simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig, CONSTANTS.SIMULATION_COUNT);
                     
                     console.log('[DEMO] Simulation results:', {
                         totalSimulations: simulationResult.total,
@@ -523,16 +655,15 @@
                         averageBattleTime: simulationResult.averageBattleTime.toFixed(2) + 's'
                     });
 
-                    // Step 3: Check win rate threshold (70%)
-                    const WIN_RATE_THRESHOLD = 70;
-                    const shouldProceed = simulationResult.winRate > WIN_RATE_THRESHOLD;
+                    // Step 3: Check win rate threshold
+                    const shouldProceed = simulationResult.winRate > CONSTANTS.WIN_RATE_THRESHOLD;
 
-                    console.log(`[DEMO] Step 3: Win rate check (threshold: ${WIN_RATE_THRESHOLD}%)`);
-                    console.log(`[DEMO] Win rate: ${simulationResult.winRate.toFixed(2)}%`);
-                    console.log(`[DEMO] Decision: ${shouldProceed ? 'PROCEED' : 'SKIP'} (${shouldProceed ? 'Win rate above threshold' : 'Win rate below threshold'})`);
+                    Utils.log('log', `[DEMO] Step 3: Win rate check (threshold: ${CONSTANTS.WIN_RATE_THRESHOLD}%)`);
+                    Utils.log('log', `[DEMO] Win rate: ${simulationResult.winRate.toFixed(2)}%`);
+                    Utils.log('log', `[DEMO] Decision: ${shouldProceed ? 'PROCEED' : 'SKIP'} (${shouldProceed ? 'Win rate above threshold' : 'Win rate below threshold'})`);
 
                     if (!shouldProceed) {
-                        console.warn(`[DEMO] ⚠️ Win rate ${simulationResult.winRate.toFixed(2)}% is below ${WIN_RATE_THRESHOLD}%, skipping this opponent`);
+                        Utils.log('warn', `[DEMO] ⚠️ Win rate ${simulationResult.winRate.toFixed(2)}% is below ${CONSTANTS.WIN_RATE_THRESHOLD}%, skipping this opponent`);
                         console.log(`[DEMO] ✓ No battle attempt consumed - using demo battles API`);
                         console.log(`[DEMO] Looking for next opponent...`);
                         return { win: false, skipped: true, winRate: simulationResult.winRate };
@@ -873,25 +1004,37 @@
             }
 
             this.simulateWithDemoBattles = async function(myTeam, opponentTeam, simulationCount = 10) {
-                console.log(`[DEMO] Starting ${simulationCount} demo battle simulations...`);
+                Utils.log('log', `[DEMO] Starting ${simulationCount} demo battle simulations...`);
                 
-                const mechanic = this.arenaType === 'grand' ? 'grand_arena' : 'arena';
-                console.log(`[DEMO] Using battle mechanic: ${mechanic}`);
+                // Note: demoBattles API only supports "arena" mechanic, even for Grand Arena
+                const mechanic = 'arena';
 
                 const simulations = [];
+                let parentId = 0; // Start with 0 for first battle
+                let firstBattleId = null; // Store first battle's ID to use as parentId for subsequent battles
                 
                 for (let i = 0; i < simulationCount; i++) {
-                    console.log(`[DEMO] Simulation ${i + 1}/${simulationCount}: Running...`);
                     try {
-                        const result = await this.runSingleDemoBattle(myTeam, opponentTeam, mechanic, i);
+                        // First battle uses parentId=0, subsequent battles use first battle's ID as parentId
+                        const result = await this.runSingleDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
                         simulations.push(result);
-                        console.log(`[DEMO] Simulation ${i + 1} result:`, {
-                            win: result.win,
-                            battleTime: result.battleTime ? result.battleTime.toFixed(2) + 's' : 'N/A'
-                        });
+                        
+                        // For first battle: store the battle ID to use as parentId for subsequent battles
+                        if (i === 0 && result.battleId) {
+                            firstBattleId = result.battleId;
+                            parentId = firstBattleId;
+                        }
+                        // For subsequent battles: use the first battle's ID as parentId
+                        else if (i > 0 && firstBattleId) {
+                            parentId = firstBattleId;
+                        }
+                        // Fallback: try to extract parentId from endBattle response
+                        else if (result.parentId !== undefined && result.parentId !== null && result.parentId !== 0) {
+                            parentId = result.parentId;
+                        }
                     } catch (error) {
                         console.error(`[DEMO] Simulation ${i + 1} failed:`, error);
-                        simulations.push({ win: false, battleTime: 0, error: error.message });
+                        simulations.push({ win: false, battleTime: 0, error: error.message, parentId: parentId });
                     }
                 }
 
@@ -904,15 +1047,7 @@
                     ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length 
                     : 0;
 
-                console.log('[DEMO] Simulation summary:', {
-                    total: simulations.length,
-                    wins: wins,
-                    losses: losses,
-                    winRate: winRate.toFixed(2) + '%',
-                    averageTime: averageBattleTime.toFixed(2) + 's',
-                    minTime: battleTimes.length > 0 ? Math.min(...battleTimes).toFixed(2) + 's' : 'N/A',
-                    maxTime: battleTimes.length > 0 ? Math.max(...battleTimes).toFixed(2) + 's' : 'N/A'
-                });
+                Utils.log('log', `[DEMO] Simulation complete: ${wins}W/${losses}L (${winRate.toFixed(1)}% win rate)`);
 
                 return {
                     total: simulations.length,
@@ -924,22 +1059,23 @@
                 };
             }
 
-            this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0) {
+            this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0) {
                 return new Promise((resolve, reject) => {
                     try {
-                        console.log(`[DEMO] Preparing demo battle request (seed offset: ${seedOffset})...`);
-                        
                         let args = {
                             mechanic: mechanic,
-                            defenceMaxUpgrade: false,
-                            maxUpgrade: false,
+                            defenceMaxUpgrade: true,  // Use max upgrade for opponent to get accurate simulation
+                            maxUpgrade: true,          // Use max upgrade for our team to get accurate simulation
                             defenceBuffs: {},
                             buffs: {},
-                            parentId: 0,
+                            parentId: parentId,
                             entryId: 0
                         };
 
-                        if (mechanic === 'grand_arena') {
+                        // Handle team configuration based on arena type
+                        // Note: demoBattles API only supports "arena" mechanic
+                        // For Grand Arena, we simulate the first team as a proxy
+                        if (this.arenaType === 'grand') {
                             // Grand Arena: 3 teams - simulate first team as proxy
                             // Note: demoBattles_startBattle only simulates one team at a time
                             // We use the first team as a proxy for overall win probability
@@ -947,55 +1083,69 @@
                             
                             args.defenceTeam = {
                                 units: opponentTeam.heroes[teamIndex] || opponentTeam.heroes[0] || [],
-                                pet: opponentTeam.pets[teamIndex] || opponentTeam.pets[0] || 6005
+                                pet: opponentTeam.pets[teamIndex] || opponentTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
                             };
                             args.defenceBanner = opponentTeam.banners[teamIndex] || opponentTeam.banners[0] || 1;
+                            args.defenceBannerStones = {};  // Required field from HAR file
                             args.defenceFavor = opponentTeam.favor || {};
                             
                             args.team = {
                                 units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
-                                pet: myTeam.pets[teamIndex] || myTeam.pets[0] || 6005
+                                pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
                             };
                             args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
+                            args.bannerStones = {};  // Required field from HAR file
                             args.favor = myTeam.favor || {};
-                            
-                            console.log(`[DEMO] Grand Arena: Simulating team ${teamIndex + 1}/3`);
                         } else {
                             // Regular Arena: 1 team
                             args.defenceTeam = {
                                 units: opponentTeam.heroes || [],
-                                pet: opponentTeam.pet || 6005
+                                pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID
                             };
                             args.defenceBanner = opponentTeam.banner || 1;
+                            args.defenceBannerStones = {};  // Required field from HAR file
                             args.defenceFavor = opponentTeam.favor || {};
                             
                             args.team = {
                                 units: myTeam.heroes || [],
-                                pet: myTeam.pet || 6005
+                                pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID
                             };
                             args.banner = myTeam.banners[0] || 1;
+                            args.bannerStones = {};  // Required field from HAR file
                             args.favor = myTeam.favor || {};
+                        }
+
+                        // Validate required fields before making API call
+                        if (!args.team || !args.team.units || args.team.units.length === 0) {
+                            reject(new Error('Invalid team configuration: missing or empty hero units'));
+                            return;
+                        }
+                        if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
+                            reject(new Error('Invalid defence team configuration: missing or empty hero units'));
+                            return;
+                        }
+                        if (!args.team.pet || typeof args.team.pet !== 'number') {
+                            reject(new Error('Invalid team pet: must be a number'));
+                            return;
+                        }
+                        if (!args.defenceTeam.pet || typeof args.defenceTeam.pet !== 'number') {
+                            reject(new Error('Invalid defence team pet: must be a number'));
+                            return;
                         }
 
                         const calls = [{
                             name: "demoBattles_startBattle",
                             args: args,
                             context: {
-                                actionTs: Date.now()
+                                actionTs: Utils.getActionTs()
                             },
                             ident: "body"
                         }];
 
-                        console.log(`[DEMO] Calling demoBattles_startBattle API...`);
                         const startTime = Date.now();
                         
                         Send(JSON.stringify({calls}))
                             .then(response => {
-                                const endTime = Date.now();
-                                const apiTime = (endTime - startTime) / 1000;
-                                
-                                console.log(`[DEMO] API call completed in ${apiTime.toFixed(3)}s`);
-
                                 if (response.error) {
                                     console.error('[DEMO] API error:', response.error);
                                     reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
@@ -1008,43 +1158,75 @@
                                     return;
                                 }
 
-                                const battleData = response.results[0].result.response;
-                                console.log('[DEMO] Battle data received:', {
-                                    hasBattle: !!battleData,
-                                    hasSeed: !!battleData.seed,
-                                    battleType: battleData.type
-                                });
+                                const responseData = response.results[0].result.response;
+                                // Battle data is nested under 'battle' property
+                                const battleData = responseData?.battle || responseData;
+
+                                if (!battleData) {
+                                    console.error('[DEMO] No battle data found in response');
+                                    reject(new Error('No battle data in API response'));
+                                    return;
+                                }
 
                                 // Calculate battle result using BattleCalc
                                 const battleType = battleData?.effects?.battleConfig ?? battleData?.type ?? mechanic;
                                 const battleConfigType = getBattleType(battleType);
                                 
-                                console.log(`[DEMO] Calculating battle result (type: ${battleConfigType})...`);
-                                
-                                BattleCalc(battleData, battleConfigType, (result) => {
-                                    if (!result || !result.result) {
-                                        console.error('[DEMO] BattleCalc returned invalid result:', result);
+                                BattleCalc(battleData, battleConfigType, (calcResult) => {
+                                    if (!Utils.isValidBattleResult(calcResult)) {
+                                        Utils.log('error', '[DEMO] BattleCalc returned invalid result');
                                         resolve({
                                             win: false,
                                             battleTime: 0,
-                                            error: 'Invalid calculation result'
+                                            error: 'Invalid calculation result',
+                                            parentId: parentId
                                         });
                                         return;
                                     }
 
-                                    const battleTime = result.battleTime || 0;
-                                    const win = result.result.win || false;
+                                    const battleTime = calcResult.battleTime || 0;
+                                    const win = calcResult.result.win || false;
 
-                                    console.log(`[DEMO] Battle calculation complete:`, {
-                                        win: win,
-                                        battleTime: battleTime.toFixed(2) + 's'
-                                    });
-
-                                    resolve({
-                                        win: win,
-                                        battleTime: battleTime,
-                                        result: result
-                                    });
+                                    // Call demoBattles_endBattle to get battleId for parentId chaining
+                                    // Strategy: Use first battle's ID as parentId for all subsequent battles
+                                    const self = this;
+                                    self.endDemoBattle(calcResult, battleData)
+                                        .then(endBattleResult => {
+                                            const extractedParentId = endBattleResult?.parentId;
+                                            const battleId = endBattleResult?.battleId;
+                                            
+                                            // Strategy: For first battle, use its ID as parentId for subsequent battles
+                                            let nextParentId = parentId;
+                                            
+                                            if (parentId === 0 && battleId) {
+                                                // First battle: use its ID as parentId for next battle
+                                                nextParentId = battleId;
+                                            } else if (parentId !== 0) {
+                                                // Subsequent battle: keep using the first battle's ID
+                                                nextParentId = parentId;
+                                            } else if (extractedParentId && extractedParentId !== 0) {
+                                                // Fallback: use parentId from endBattle response
+                                                nextParentId = extractedParentId;
+                                            }
+                                            
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: nextParentId,
+                                                battleId: battleId
+                                            });
+                                        })
+                                        .catch(endError => {
+                                            Utils.log('warn', '[DEMO] Failed to call endBattle:', endError);
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: parentId,
+                                                battleId: null
+                                            });
+                                        });
                                 });
                             })
                             .catch(error => {
@@ -1058,25 +1240,130 @@
                 });
             }
 
+            this.endDemoBattle = async function(calcResult, battleData) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        // Prepare progress data from battle calculation result
+                        const progress = calcResult.progress || [];
+                        
+                        // Ensure progress array has at least one entry
+                        if (progress.length === 0 && calcResult.result) {
+                            // Create minimal progress entry from result
+                            progress.push({
+                                v: CONSTANTS.BATTLE_VERSION,
+                                b: 0,
+                                seed: battleData?.seed || Math.floor(Math.random() * 1000000000),
+                                attackers: {
+                                    input: [],
+                                    heroes: {}
+                                },
+                                defenders: {
+                                    input: [],
+                                    heroes: {}
+                                }
+                            });
+                        }
+
+                        const endBattleArgs = {
+                            result: {
+                                win: calcResult.result.win || false,
+                                stars: calcResult.result.stars || 0
+                            },
+                            progress: progress
+                        };
+
+                        const calls = [{
+                            name: "demoBattles_endBattle",
+                            args: endBattleArgs,
+                            context: {
+                                actionTs: Utils.getActionTs()
+                            },
+                            ident: "body"
+                        }];
+
+                        Send(JSON.stringify({calls}))
+                            .then(response => {
+                                if (response.error) {
+                                    Utils.log('warn', '[DEMO] EndBattle API error:', response.error);
+                                    resolve(null); // Return null on error, will use original parentId
+                                    return;
+                                }
+
+                                if (!response.results || !response.results[0] || !response.results[0].result) {
+                                    Utils.log('warn', '[DEMO] Invalid endBattle response structure');
+                                    resolve(null);
+                                    return;
+                                }
+
+                                const endBattleResponse = response.results[0].result.response;
+                                
+                                // Extract both parentId and battleId from battle object in response
+                                // Strategy: Use first battle's ID as parentId for subsequent battles
+                                const battle = endBattleResponse?.battle;
+                                const extractedParentId = battle?.parentId;
+                                const battleId = battle?.id;
+                                
+                                resolve({
+                                    parentId: extractedParentId !== undefined && extractedParentId !== null ? extractedParentId : null,
+                                    battleId: battleId !== undefined && battleId !== null ? battleId : null
+                                });
+                            })
+                            .catch(error => {
+                                Utils.log('warn', '[DEMO] Error calling endBattle:', error);
+                                resolve(null); // Return null on error, will use original parentId
+                            });
+                    } catch (error) {
+                        Utils.log('warn', '[DEMO] Error preparing endBattle:', error);
+                        resolve(null);
+                    }
+                });
+            }
+
             this.startArenaBattle = async function(rivalId, team) {
                 const apiName = this.arenaType === 'grand' ? 'grandAttack' : 'arenaAttack';
 
+                // Ensure rivalId is a number
+                const userId = typeof rivalId === 'string' ? parseInt(rivalId, 10) : rivalId;
+
                 let args;
                 if (this.arenaType === 'grand') {
+                    // Grand Arena: heroes is array of 3 arrays, pets is array of 3 numbers
+                    if (!team.heroes || !Array.isArray(team.heroes) || team.heroes.length !== 3) {
+                        throw new Error('Grand Arena requires 3 hero teams');
+                    }
+                    if (!team.pets || !Array.isArray(team.pets) || team.pets.length !== 3) {
+                        throw new Error('Grand Arena requires 3 pets');
+                    }
+                    if (!team.banners || !Array.isArray(team.banners) || team.banners.length !== 3) {
+                        throw new Error('Grand Arena requires 3 banners');
+                    }
+                    
                     args = {
-                        userId: rivalId,
-                        heroes: team.heroes,
-                        pets: team.pets,
-                        favor: team.favor,
-                        banners: team.banners
+                        userId: userId,
+                        heroes: team.heroes,  // Array of 3 arrays: [[team1], [team2], [team3]]
+                        pets: team.pets,      // Array of 3 pet IDs
+                        favor: team.favor || {},  // Object mapping hero IDs (strings) to pet IDs
+                        banners: team.banners // Array of 3 banner IDs
                     };
                 } else {
+                    // Regular Arena: heroes is flat array of 5 numbers, pet is single number
+                    if (!team.heroes || !Array.isArray(team.heroes) || team.heroes.length !== 5) {
+                        throw new Error('Arena requires exactly 5 heroes');
+                    }
+                    if (!team.pet || typeof team.pet !== 'number') {
+                        throw new Error('Arena requires a valid pet ID');
+                    }
+                    
+                    // Ensure banners is an array (even if single banner)
+                    const banners = Array.isArray(team.banners) ? team.banners : 
+                                   team.banners ? [team.banners] : [1];
+                    
                     args = {
-                        userId: rivalId,
-                        heroes: team.heroes,
-                        pet: team.pet,
-                        favor: team.favor,
-                        banners: team.banners
+                        userId: userId,
+                        heroes: team.heroes,  // Flat array of 5 hero IDs
+                        pet: team.pet,       // Single pet ID (number)
+                        favor: team.favor || {},  // Object mapping hero IDs (strings) to pet IDs
+                        banners: banners      // Array of banner IDs (usually single element)
                     };
                 }
 
@@ -1084,13 +1371,16 @@
                     name: apiName,
                     args: args,
                     context: {
-                        actionTs: Date.now()
+                        actionTs: Utils.getActionTs()
                     },
                     ident: "body"
                 }];
 
+                console.log(`[ARENA] Calling ${apiName} with args:`, JSON.stringify(args, null, 2));
+                console.log(`[ARENA] Full API call:`, JSON.stringify({calls}, null, 2));
+
                 const response = await Send(JSON.stringify({calls}));
-                console.log('Battle API response:', response);
+                console.log('[ARENA] Battle API response:', response);
 
                 if (response.error) {
                     const errorName = response.error.name || 'Unknown';
@@ -1187,12 +1477,12 @@
                 console.log('Battle completed, popup will auto-close');
                 
                 // Optional: Add a small delay to ensure battle processing completes
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BATTLE_COMPLETE));
             }
 
             this.end = function(message) {
                 console.log('Arena execution ended:', message);
-                setProgress(`${I18N('ARENA')}: ${message}`, true);
+                setProgress(`Arena: ${message}`, true);
                 this.resolve();
             }
         }
@@ -1228,7 +1518,7 @@
                 const calls = [{
                     name: "clanWarGetInfo",
                     args: {},
-                    context: { actionTs: Date.now() },
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "clanWarGetInfo"
                 }];
 
@@ -1266,19 +1556,19 @@
                     {
                         name: "teamGetAll",
                         args: {},
-                        context: { actionTs: Date.now() },
+                        context: { actionTs: Utils.getActionTs() },
                         ident: "teamGetAll"
                     },
                     {
                         name: "teamGetFavor",
                         args: {},
-                        context: { actionTs: Date.now() },
+                        context: { actionTs: Utils.getActionTs() },
                         ident: "teamGetFavor"
                     },
                     {
                         name: "heroGetAll",
                         args: {},
-                        context: { actionTs: Date.now() },
+                        context: { actionTs: Utils.getActionTs() },
                         ident: "heroGetAll"
                     }
                 ];
@@ -1324,37 +1614,37 @@
                     return;
                 }
 
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
 
                 // Attack slot 9 (Titan battle)
                 try {
-                    console.log('Attacking slot 9...');
+                    Utils.log('log', 'Attacking slot 9...');
                     setProgress(`${I18N('GUILD_WAR')}: Attacking slot 9 (Titans)`);
                     await this.attackSlot(9);
                     this.victories++;
-                    console.log('Slot 9 attack completed successfully');
+                    Utils.log('log', 'Slot 9 attack completed successfully');
                 } catch (error) {
-                    console.error('Error attacking slot 9:', error);
+                    Utils.log('error', 'Error attacking slot 9:', error);
                     this.end(`Slot 9 attack failed: ${error.message}`);
                     return;
                 }
 
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
 
                 // Attack slot 1 (Hero battle)
                 try {
-                    console.log('Attacking slot 1...');
+                    Utils.log('log', 'Attacking slot 1...');
                     setProgress(`${I18N('GUILD_WAR')}: Attacking slot 1`);
                     await this.attackSlot(1);
                     this.victories++;
-                    console.log('Slot 1 attack completed successfully');
+                    Utils.log('log', 'Slot 1 attack completed successfully');
                 } catch (error) {
-                    console.error('Error attacking slot 1:', error);
+                    Utils.log('error', 'Error attacking slot 1:', error);
                     this.end(`Slot 1 attack failed: ${error.message}`);
                     return;
                 }
 
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
 
                 // Attack slot 2 (Hero battle)
                 try {
@@ -1419,7 +1709,7 @@
                         name: "clanWarAttack",
                         args: attackArgs,
                         context: {
-                            actionTs: Date.now()
+                            actionTs: Utils.getActionTs()
                         },
                         ident: "body"
                     }
@@ -1824,7 +2114,7 @@
                 const calls = [{
                     name: "clanRaid_getInfo",
                     args: {},
-                    context: { actionTs: Date.now() },
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "clanRaid_getInfo"
                 }];
 
@@ -1873,7 +2163,7 @@
                         this.bossAttempts--;
                         
                         if (i < maxAttacks - 1) {
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
                         }
                     } catch (error) {
                         console.error(`Error in attack ${i + 1}:`, error);
@@ -1893,7 +2183,7 @@
                         pet: pet,
                         favor: favor
                     },
-                    context: { actionTs: Date.now() },
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "body"
                 }];
 
@@ -1943,7 +2233,7 @@
                         },
                         progress: battleResult.progress
                     },
-                    context: { actionTs: Date.now() },
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "group_1_body"
                 }];
 
@@ -2040,10 +2330,7 @@
 
                 // 5. Auto Titan Arena (Monday - Saturday only, not Sunday)
                 try {
-                    const today = new Date();
-                    const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-                    
-                    if (dayOfWeek >= 1 && dayOfWeek <= 6) {
+                    if (Utils.isTitanArenaDay()) {
                         console.log('AutoBattle: Starting Titan Arena (ToE)...');
                         HWHFuncs.setProgress('AutoBattle: Titan Arena (ToE)...');
                         
@@ -2062,9 +2349,9 @@
                             }
                         }
                         results.titanArena = true;
-                        console.log('%cAutoBattle: Titan Arena (ToE) completed', 'color: lightgreen; font-weight: bold;');
+                        Utils.log('log', '%cAutoBattle: Titan Arena (ToE) completed', 'color: lightgreen; font-weight: bold;');
                     } else {
-                        console.log(`AutoBattle: Skipping Titan Arena (not Monday-Saturday, current day: ${dayOfWeek})`);
+                        Utils.log('log', `AutoBattle: Skipping Titan Arena (not Monday-Saturday, current day: ${Utils.getDayOfWeek()})`);
                         results.titanArena = false;
                     }
                 } catch (error) {
@@ -2073,10 +2360,7 @@
 
                 // 6. Auto Raid Boss (Saturday or Sunday only)
                 try {
-                    const today = new Date();
-                    const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
-                    
-                    if (dayOfWeek === 0 || dayOfWeek === 6) {
+                    if (Utils.isRaidBossDay()) {
                         console.log('AutoBattle: Starting Raid Boss...');
                         HWHFuncs.setProgress('AutoBattle: Raid Boss attacks...');
                         await new Promise((resolve, reject) => {
@@ -2084,9 +2368,9 @@
                             raidBoss.start();
                         });
                         results.raidBoss = true;
-                        console.log('%cAutoBattle: Raid Boss completed', 'color: lightgreen; font-weight: bold;');
+                        Utils.log('log', '%cAutoBattle: Raid Boss completed', 'color: lightgreen; font-weight: bold;');
                     } else {
-                        console.log(`AutoBattle: Skipping Raid Boss (not Saturday/Sunday, current day: ${dayOfWeek})`);
+                        Utils.log('log', `AutoBattle: Skipping Raid Boss (not Saturday/Sunday, current day: ${Utils.getDayOfWeek()})`);
                         results.raidBoss = false;
                     }
                 } catch (error) {
@@ -2174,10 +2458,7 @@
 
         async function runTitanArena() {
             try {
-                const today = new Date();
-                const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-                
-                if (dayOfWeek >= 1 && dayOfWeek <= 6) {
+                if (Utils.isTitanArenaDay()) {
                     HWHFuncs.setProgress('AutoBattle: Running Titan Arena (ToE)...');
                     
                     // Use HWHClasses.executeTitanArena if available, otherwise use local implementation
@@ -2196,9 +2477,9 @@
                     }
                     HWHFuncs.setProgress('AutoBattle: Titan Arena (ToE) complete!', true);
                 } else {
-                    const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+                    const dayName = Utils.getDayName(Utils.getDayOfWeek());
                     HWHFuncs.setProgress(`Titan Arena: Only available Monday-Saturday (today is ${dayName})`, true);
-                    console.log(`Titan Arena: Skipped - today is ${dayName}, only runs Monday-Saturday`);
+                    Utils.log('log', `Titan Arena: Skipped - today is ${dayName}, only runs Monday-Saturday`);
                 }
             } catch (error) {
                 console.error('Titan Arena error:', error);
@@ -2208,10 +2489,7 @@
 
         async function runRaidBoss() {
             try {
-                const today = new Date();
-                const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
-                
-                if (dayOfWeek === 0 || dayOfWeek === 6) {
+                if (Utils.isRaidBossDay()) {
                     HWHFuncs.setProgress('AutoBattle: Running Raid Boss...');
                     await new Promise((resolve, reject) => {
                         const raidBoss = new executeRaidBoss(resolve, reject);
@@ -2219,9 +2497,9 @@
                     });
                     HWHFuncs.setProgress('AutoBattle: Raid Boss complete!', true);
                 } else {
-                    const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+                    const dayName = Utils.getDayName(Utils.getDayOfWeek());
                     HWHFuncs.setProgress(`Raid Boss: Only available on Saturday or Sunday (today is ${dayName})`, true);
-                    console.log(`Raid Boss: Skipped - today is ${dayName}, only runs on Saturday/Sunday`);
+                    Utils.log('log', `Raid Boss: Skipped - today is ${dayName}, only runs on Saturday/Sunday`);
                 }
             } catch (error) {
                 console.error('Raid Boss error:', error);
