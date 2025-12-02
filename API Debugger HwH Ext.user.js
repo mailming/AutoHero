@@ -57,7 +57,8 @@
                 { name: 'arenaCheckTargetRange', args: { ids: [] }, description: 'Check if target opponents are still in valid attack range' },
                 { name: 'grandFindEnemies', args: {}, description: 'Find available opponents in Grand Arena' },
                 { name: 'grandCheckTargetRange', args: { ids: [] }, description: 'Check if Grand Arena opponents are still available' },
-                { name: 'titanArenaGetStatus', args: {}, description: 'Get titan arena status' }
+                { name: 'titanArenaGetStatus', args: {}, description: 'Get titan arena status' },
+                { name: 'demoBattles_getAll', args: {}, description: 'Get all battle simulation history' }
             ],
             'Guild War & Clan': [
                 { name: 'clanWarGetInfo', args: {}, description: 'Get Guild War information (slots, teams)' },
@@ -65,7 +66,8 @@
                 { name: 'clanGetInfo', args: {}, description: 'Get clan information' },
                 { name: 'clanRaid_getInfo', args: {}, description: 'Get complete clan raid information' },
                 { name: 'clanRaid_usersInBossBattle', args: {}, description: 'Get information about other clan members currently fighting the same boss' },
-                { name: 'crossClanWar_getInfo', args: {}, description: 'Get Cross Clan War information' }
+                { name: 'crossClanWar_getInfo', args: {}, description: 'Get Cross Clan War information' },
+                { name: 'crossClanWar_getAttackMap', args: {}, description: 'Get Cross Clan War attack map information' }
             ],
             'Dungeon & Tower': [
                 { name: 'dungeonGetInfo', args: {}, description: 'Get dungeon information' },

@@ -1061,7 +1061,7 @@ Guild War titan demo battles allow you to simulate titan battles for Guild War s
 
 ### Key Differences from Hero Battles
 
-- **Mechanic:** Use `"clan_pvp_titan"` instead of `"arena"` or `"grandArena"`
+- **Mechanic:** Use `"clan_pvp_titan"` for Guild War titan battles or `"clan_global_pvp_titan"` for Clash of Worlds titan battles (instead of `"arena"` or `"grandArena"`)
 - **No Pets/Banners:** Titans do not use pets, banners, or favor pets
 - **Element Spirits:** Titans use element spirits instead of pets
 - **Unit Type:** All units are titans (type `"titan"`), not heroes
@@ -1109,7 +1109,9 @@ Guild War titan demo battles allow you to simulate titan battles for Guild War s
 **Request Parameters (Guild War Titan Specific):**
 
 #### Args Object (`args`)
-- `mechanic`: `"clan_pvp_titan"` - **Required** - Battle mechanic type for Guild War titan battles
+- `mechanic`: `"clan_pvp_titan"` or `"clan_global_pvp_titan"` - **Required** - Battle mechanic type for titan battles
+  - `"clan_pvp_titan"` - Guild War titan battles
+  - `"clan_global_pvp_titan"` - Clash of Worlds titan battles
 - `defenceMaxUpgrade`: Boolean - Whether to apply maximum upgrades to defense team
 - `defenceTeam`: Object - Defender titan team configuration
   - `units`: Array<Number> - Array of 5 titan IDs (e.g., `[4021, 4023, 4024, 4022, 4020]`)
@@ -1271,7 +1273,7 @@ Guild War titan demo battles allow you to simulate titan battles for Guild War s
             "reward": [],
             "startTime": 1764606641,
             "seed": 1187705384,
-            "type": "clan_pvp_titan"
+            "type": "clan_pvp_titan"  // or "clan_global_pvp_titan" for Clash of Worlds battles
           }
         }
       }
@@ -1395,7 +1397,7 @@ const startBattleRequest = {
   calls: [{
     name: "demoBattles_startBattle",
     args: {
-      mechanic: "clan_pvp_titan",
+      mechanic: "clan_pvp_titan",  // Use "clan_global_pvp_titan" for Clash of Worlds battles
       defenceMaxUpgrade: true,
       defenceTeam: {
         units: [4021, 4023, 4024, 4022, 4020]  // Earth titans
@@ -1504,7 +1506,7 @@ const retryBattleRequest1 = {
   calls: [{
     name: "demoBattles_startBattle",
     args: {
-      mechanic: "clan_pvp_titan",
+      mechanic: "clan_pvp_titan",  // Use "clan_global_pvp_titan" for Clash of Worlds battles
       defenceMaxUpgrade: true,
       defenceTeam: {
         units: [4021, 4023, 4024, 4022, 4020]
@@ -1596,7 +1598,7 @@ const retryBattleRequest2 = {
 - **No Banners:** Titans do not use banners or banner stones
 - **No Favor Pets:** Titans do not use favor pets (always use empty `{}` for `favor` and `defenceFavor`)
 - **Scale Factor:** Titans typically use a scale factor of `0.8` (vs `1.0` for heroes)
-- **Battle Type:** Response `type` field will be `"clan_pvp_titan"` for Guild War titan battles
+- **Battle Type:** Response `type` field will be `"clan_pvp_titan"` for Guild War titan battles, or `"clan_global_pvp_titan"` for Clash of Worlds titan battles
 
 ### Retrying a Battle Simulation
 
@@ -1646,4 +1648,401 @@ const retryBattleRequest = {
   }]
 };
 ```
+
+---
+
+### 3. `demoBattles_getAll`
+
+Retrieves all battle simulation history for the current user. This API allows you to view past simulation battles and their results.
+
+### Request
+
+**Endpoint:** `https://heroes-wb.nextersglobal.com/api/`
+
+**Method:** `POST`
+
+**Headers:**
+- `Content-Type: application/json; charset=UTF-8`
+- `x-auth-application-id: 3`
+- `x-auth-network-ident: web`
+- `x-auth-player-id: <player_id>`
+- `x-auth-user-id: <user_id>`
+- `x-auth-token: <auth_token>`
+- `x-auth-signature: <signature>`
+- `x-auth-session-id: <session_id>`
+- `x-env-unique-session-id: <unique_session_id>`
+- `x-request-id: <request_id>`
+- `x-server-time: 0`
+- `Origin: https://www.hero-wars.com`
+- `Referer: https://www.hero-wars.com/`
+
+**Request Body:**
+```json
+{
+  "calls": [
+    {
+      "name": "demoBattles_getAll",
+      "args": {},
+      "context": {
+        "actionTs": 183153
+      },
+      "ident": "group_2_body"
+    }
+  ]
+}
+```
+
+**Request Parameters:**
+
+#### Top Level
+- `name`: `"demoBattles_getAll"` - The API method name
+- `args`: Object - Empty object `{}` (no parameters required)
+- `context.actionTs`: Number - Action timestamp
+- `ident`: String - Identifier for the request (e.g., `"group_2_body"`)
+
+### Response
+
+**Status Code:** `200 OK`
+
+**Response Body Structure:**
+```json
+{
+  "date": 1764619585.5742991,
+  "results": [
+    {
+      "ident": "group_2_body",
+      "result": {
+        "response": {
+          "items": [
+            {
+              "id": "71419928",
+              "parentId": 0,
+              "userId": "35979991",
+              "replayId": "1764052363181330914",
+              "mechanic": "arena",
+              "hash": "ZWY2ZTIzZDlmM2NiMWY0Yzk5ODQ1MjY1MGE4NmQwMTE4YWZiY2M0MA==",
+              "data": {
+                "entryId": 0,
+                "attackMax": false,
+                "defenceMax": false,
+                "attackBuffs": [],
+                "defenceBuffs": [],
+                "attackFavor": {
+                  "40": 6004,
+                  "55": 6001,
+                  "56": 6006,
+                  "58": 6005,
+                  "64": 6008
+                },
+                "win": true,
+                "attack": {
+                  "powerSum": 1089662,
+                  "units": {
+                    "40": {
+                      "id": 40,
+                      "level": 130,
+                      "star": 6,
+                      "power": 192138,
+                      "color": 18,
+                      "favorPetId": 6004,
+                      "favorPower": 10154
+                    },
+                    "64": {
+                      "id": 64,
+                      "level": 130,
+                      "star": 6,
+                      "power": 168453,
+                      "color": 18,
+                      "favorPetId": 6008,
+                      "favorPower": 11064
+                    },
+                    "6008": {
+                      "id": 6008,
+                      "level": 130,
+                      "star": 6,
+                      "power": 181943,
+                      "color": 10,
+                      "favorPetId": null,
+                      "favorPower": null,
+                      "type": "pet"
+                    }
+                  },
+                  "banner": {
+                    "id": 1,
+                    "slots": {
+                      "0": 15,
+                      "1": 43,
+                      "2": 19
+                    }
+                  }
+                },
+                "defence": {
+                  "powerSum": 835567,
+                  "units": {
+                    "16": {
+                      "id": 16,
+                      "level": 130,
+                      "star": 6,
+                      "power": 179182,
+                      "color": 18,
+                      "favorPetId": 0,
+                      "favorPower": 0
+                    },
+                    "6006": {
+                      "id": 6006,
+                      "level": 130,
+                      "star": 5,
+                      "power": 171933,
+                      "color": 10,
+                      "favorPetId": null,
+                      "favorPower": null,
+                      "type": "pet"
+                    }
+                  },
+                  "banner": {
+                    "id": 2,
+                    "slots": {
+                      "0": 70,
+                      "1": 35,
+                      "2": 13
+                    }
+                  }
+                }
+              },
+              "ctime": "1764052367"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+#### Top Level
+- `date`: Number - Server timestamp (e.g., `1764619585.5742991`)
+- `results`: Array - Array of result objects
+  - `ident`: String - Identifier matching the request (e.g., `"group_2_body"`)
+  - `result.response`: Object - The actual response data
+
+#### Response Object (`result.response`)
+- `items`: Array - Array of battle history items
+
+#### Battle History Item Structure
+Each item in the `items` array represents a completed battle simulation:
+
+- `id`: String - Battle ID (e.g., `"71401948"`)
+- `parentId`: Number - Parent battle ID
+  - `0` indicates this is the first battle in a simulation session
+  - Non-zero values indicate this is a retry battle linked to the parent battle
+- `userId`: String - User ID who ran the simulation (e.g., `"35621043"`)
+- `replayId`: String - Replay ID for viewing the battle replay (e.g., `"1764021483414708034"`)
+- `mechanic`: String - Battle mechanic type
+  - `"arena"` - Arena battles
+  - `"grand"` - Grand Arena battles
+  - `"clan_pvp_titan"` - Guild War titan battles
+  - `"clan_global_pvp_titan"` - Clash of Worlds titan battles
+  - Other game mode identifiers
+- `hash`: String - Battle hash (base64 encoded, used for verification)
+- `data`: Object - Battle configuration and result data
+  - `entryId`: Number - Entry ID (usually `0`, but can be non-zero for Guild War/Clash of Worlds battles)
+  - `attackMax`: Boolean - Whether attack team had maximum upgrades
+  - `defenceMax`: Boolean - Whether defense team had maximum upgrades
+  - `attackBuffs`: Array - Attack team buffs (usually empty `[]`)
+  - `defenceBuffs`: Array | Object - Defense team buffs
+    - Usually empty `[]` for hero battles
+    - Can be an object with buff IDs as keys for titan battles (e.g., `{"96": 72}`)
+  - `attackFavor`: Object | Array - Attack team favor pet assignments
+    - **Hero Battles**: Object with hero IDs as keys (strings) and favor pet IDs as values (e.g., `{"40": 6004, "55": 6001}`)
+    - **Titan Battles**: Empty array `[]` (titans don't use favor pets)
+  - `win`: Boolean - Whether the attacker won (`true`) or lost (`false`)
+  - `attack`: Object - Attack team summary
+    - `powerSum`: Number - Total team power
+    - `units`: Object - Unit summaries
+      - Keys are hero/titan/pet IDs as strings
+      - Values are unit objects with:
+        - `id`: Number - Hero/Titan/Pet ID
+        - `level`: Number - Level
+        - `star`: Number - Star level
+        - `power`: Number - Power
+        - `color`: Number - Color/rarity (for heroes and pets)
+        - **Hero Units:**
+          - `favorPetId`: Number | null - Favor pet ID (or `0`/`null` if none)
+          - `favorPower`: Number | null - Favor pet power
+        - **Pet Units:**
+          - `type`: String - Always `"pet"` for pet units
+          - `favorPetId`: null - Always `null` for pets
+          - `favorPower`: null - Always `null` for pets
+        - **Titan Units:**
+          - `element`: String - Element type (`"dark"`, `"water"`, `"earth"`, `"fire"`, `"light"`)
+          - `elementSpiritLevel`: Number - Element spirit level
+          - `elementSpiritStar`: Number - Element spirit star level
+          - `elementSpiritSkills`: Array - Element spirit skills
+            - Each skill object contains:
+              - `skillId`: Number - Skill ID
+              - `level`: Number - Skill level
+              - `tierScale`: Number - Tier scale value
+    - `banner`: Object | null - Banner configuration
+      - **Hero Battles**: Object with:
+        - `id`: Number - Banner ID
+        - `slots`: Object | Array - Banner stone slots
+          - Can be an object with string keys (e.g., `{"0": 15, "1": 43, "2": 19}`)
+          - Can be an empty array `[]` if no stones
+      - **Titan Battles**: `null` (titans don't use banners)
+  - `defence`: Object - Defense team summary
+    - Same structure as `attack` object
+- `ctime`: String - Creation timestamp (Unix timestamp as string, e.g., `"1764052367"`)
+
+### Titan Battle Example
+
+For titan battles (`mechanic: "clan_pvp_titan"` or `"clan_global_pvp_titan"`), the structure differs:
+
+```json
+{
+  "id": "71419928",
+  "parentId": 0,
+  "userId": "35979991",
+  "replayId": "1764052363181330914",
+  "mechanic": "clan_global_pvp_titan",
+  "hash": "MTU0NGNkYmQ1MThhOGJlMTE2YmFhMDEwNGRmYTRhYjRlOWI0NzMzYg==",
+  "data": {
+    "entryId": 40,
+    "attackMax": false,
+    "defenceMax": true,
+    "attackBuffs": [],
+    "defenceBuffs": {
+      "96": 72
+    },
+    "attackFavor": [],
+    "win": true,
+    "attack": {
+      "powerSum": 1113776,
+      "units": {
+        "4020": {
+          "id": 4020,
+          "level": 130,
+          "star": 6,
+          "power": 231824,
+          "element": "earth",
+          "elementSpiritLevel": 125,
+          "elementSpiritStar": 6,
+          "elementSpiritSkills": [
+            {
+              "skillId": 4511,
+              "level": 2,
+              "tierScale": 0.325
+            },
+            {
+              "skillId": 4514,
+              "level": 3,
+              "tierScale": 6
+            }
+          ]
+        }
+      },
+      "banner": null
+    },
+    "defence": {
+      "powerSum": 1176564,
+      "units": {
+        "4000": {
+          "id": 4000,
+          "level": 130,
+          "star": 6,
+          "power": 221975,
+          "element": "water",
+          "elementSpiritLevel": 130,
+          "elementSpiritStar": 6,
+          "elementSpiritSkills": []
+        }
+      },
+      "banner": null
+    }
+  },
+  "ctime": "1764052367"
+}
+```
+
+**Key Differences for Titan Battles:**
+- `attackFavor`: Empty array `[]` (titans don't use favor pets)
+- `defenceBuffs`: Can be an object with buff IDs as keys (e.g., `{"96": 72}`)
+- Units have `element`, `elementSpiritLevel`, `elementSpiritStar`, and `elementSpiritSkills` fields instead of `favorPetId`/`favorPower`
+- `banner`: Always `null` (titans don't use banners)
+- No `color` field for titan units
+- `entryId` can be non-zero for Guild War/Clash of Worlds battles
+
+### Usage Notes
+
+1. **Retrieving History**: Call `demoBattles_getAll` with empty args to retrieve all battle simulation history for the current user
+2. **Battle Linking**: Use `parentId` to identify which battles belong to the same simulation session
+   - Battles with `parentId: 0` are the first battle in a session
+   - Battles with the same non-zero `parentId` are retry battles from the same session
+3. **Replay Viewing**: Use `replayId` to view or replay a specific battle
+4. **Filtering**: You can filter results client-side by:
+   - `mechanic` - Battle type (arena, grand, clan_pvp_titan, clan_global_pvp_titan, etc.)
+   - `win` - Win/loss status
+   - `parentId` - Group battles by simulation session
+   - `ctime` - Sort by creation time
+5. **Team Analysis**: The `data.attack` and `data.defence` objects contain team composition and power information for analysis
+
+### Example Usage
+
+```javascript
+// Retrieve all battle simulation history
+const getAllHistoryRequest = {
+  calls: [{
+    name: "demoBattles_getAll",
+    args: {},
+    context: {
+      actionTs: Date.now()
+    },
+    ident: "body"
+  }]
+};
+
+const response = await fetch(apiEndpoint, {
+  method: 'POST',
+  body: JSON.stringify(getAllHistoryRequest),
+  headers: headers
+});
+
+const data = await response.json();
+
+// Extract battle history items
+const historyItems = data.results[0].result.response.items;
+
+// Filter by win status
+const wins = historyItems.filter(item => item.data.win === true);
+const losses = historyItems.filter(item => item.data.win === false);
+
+// Group by simulation session (parentId)
+const sessions = {};
+historyItems.forEach(item => {
+  const sessionKey = item.parentId === 0 ? item.id : item.parentId;
+  if (!sessions[sessionKey]) {
+    sessions[sessionKey] = [];
+  }
+  sessions[sessionKey].push(item);
+});
+
+// Get win rate for a specific team composition
+const teamPower = 1171245;
+const teamBattles = historyItems.filter(item => 
+  item.data.attack.powerSum === teamPower
+);
+const winRate = teamBattles.filter(item => item.data.win).length / teamBattles.length;
+
+console.log(`Win rate for team power ${teamPower}: ${(winRate * 100).toFixed(2)}%`);
+```
+
+### Response Path
+
+The battle history items are located at:
+```
+response.results[0].result.response.items
+```
+
+Each item in the array contains the complete battle information including team composition, result, and metadata.
 

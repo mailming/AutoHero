@@ -4200,6 +4200,145 @@ const nextWarTime = new Date(cowInfo.nextWarTime * 1000);
 console.log(`Next war starts: ${nextWarTime.toLocaleString()}`);
 ```
 
+#### crossClanWar_getAttackMap
+
+**Description:** Retrieves attack map information showing attack attempts for all clan members in the current Cross Clan War. This API provides detailed information about which heroes and titans have been used by each clan member.
+
+**Request:**
+```javascript
+Send({
+  calls: [{
+    name: "crossClanWar_getAttackMap",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+})
+```
+
+**Response Structure:**
+```json
+{
+  "clanTries": {
+    "35448204": {
+      "heroes": 3,
+      "titans": 2,
+      "usedHeroes": [],
+      "usedTitans": []
+    },
+    "35538758": {
+      "heroes": 3,
+      "titans": 1,
+      "usedHeroes": [],
+      "usedTitans": [4012, 4033, 4013, 4043, 4010]
+    },
+    "35621043": {
+      "heroes": 3,
+      "titans": 1,
+      "usedHeroes": [],
+      "usedTitans": [4042, 4023, 4043, 4024, 4020]
+    },
+    "35979991": {
+      "heroes": 0,
+      "titans": 0,
+      "usedHeroes": [62, 29, 58, 40, 56, 31, 55, 64, 13, 1, 46, 63, 9, 48, 16],
+      "usedTitans": [4033, 4003, 4001, 4032, 4000, 4013, 4043, 4031, 4010, 4030]
+    }
+  }
+}
+```
+
+**Response Fields:**
+
+- `clanTries` (object): Object mapping user IDs (as strings) to their attack attempt information
+  - Keys are user IDs as strings (e.g., `"35448204"`)
+  - Values are objects containing:
+    - `heroes` (number): Remaining hero battle attempts for this user
+    - `titans` (number): Remaining titan battle attempts for this user
+    - `usedHeroes` (array): Array of hero IDs that have been used in battles by this user
+      - Empty array `[]` if no heroes have been used yet
+      - Contains hero IDs (numbers) that have been deployed in battles
+    - `usedTitans` (array): Array of titan IDs that have been used in battles by this user
+      - Empty array `[]` if no titans have been used yet
+      - Contains titan IDs (numbers) that have been deployed in battles
+
+**Usage Notes:**
+
+- **User ID Format**: User IDs are returned as strings (not numbers) in the response
+- **Attack Attempts**: The `heroes` and `titans` fields show remaining attempts, not total attempts
+- **Used Units**: The `usedHeroes` and `usedTitans` arrays track which specific units have been deployed, not which slots were attacked
+- **Empty Arrays**: When a user hasn't used any heroes or titans yet, the arrays will be empty `[]`
+- **Zero Attempts**: When `heroes: 0` and `titans: 0`, the user has used all their attack attempts
+- **Clan Coordination**: Use this API to coordinate attacks and avoid duplicate unit usage across clan members
+
+**Example Usage:**
+```javascript
+const response = await Send({
+  calls: [{
+    name: "crossClanWar_getAttackMap",
+    args: {},
+    context: { actionTs: Date.now() },
+    ident: "body"
+  }]
+});
+
+const attackMap = response.results[0].result.response.clanTries;
+
+// Iterate through all clan members
+Object.keys(attackMap).forEach(userId => {
+  const memberTries = attackMap[userId];
+  console.log(`User ${userId}:`);
+  console.log(`  Hero attempts remaining: ${memberTries.heroes}`);
+  console.log(`  Titan attempts remaining: ${memberTries.titans}`);
+  console.log(`  Used heroes: ${memberTries.usedHeroes.length > 0 ? memberTries.usedHeroes.join(', ') : 'None'}`);
+  console.log(`  Used titans: ${memberTries.usedTitans.length > 0 ? memberTries.usedTitans.join(', ') : 'None'}`);
+});
+
+// Find members who still have hero attempts
+const membersWithHeroAttempts = Object.keys(attackMap).filter(userId => {
+  return attackMap[userId].heroes > 0;
+});
+console.log(`Members with hero attempts: ${membersWithHeroAttempts.length}`);
+
+// Find members who still have titan attempts
+const membersWithTitanAttempts = Object.keys(attackMap).filter(userId => {
+  return attackMap[userId].titans > 0;
+});
+console.log(`Members with titan attempts: ${membersWithTitanAttempts.length}`);
+
+// Check which heroes have been used across all members
+const allUsedHeroes = new Set();
+Object.values(attackMap).forEach(memberTries => {
+  memberTries.usedHeroes.forEach(heroId => allUsedHeroes.add(heroId));
+});
+console.log(`Total unique heroes used: ${allUsedHeroes.size}`);
+
+// Check which titans have been used across all members
+const allUsedTitans = new Set();
+Object.values(attackMap).forEach(memberTries => {
+  memberTries.usedTitans.forEach(titanId => allUsedTitans.add(titanId));
+});
+console.log(`Total unique titans used: ${allUsedTitans.size}`);
+
+// Find a member who hasn't used a specific hero
+const targetHeroId = 13;
+const availableMember = Object.keys(attackMap).find(userId => {
+  const memberTries = attackMap[userId];
+  return memberTries.heroes > 0 && !memberTries.usedHeroes.includes(targetHeroId);
+});
+if (availableMember) {
+  console.log(`Member ${availableMember} can use hero ${targetHeroId}`);
+}
+```
+
+**Notes:**
+- This API provides clan-wide coordination data for Cross Clan War attacks
+- Use this information to plan attacks and ensure optimal unit distribution across clan members
+- The `usedHeroes` and `usedTitans` arrays help track which units are still available for use
+- Combine this with `crossClanWar_getInfo` to get complete war status information
+
+---
+
 #### crossClanWar_startBattle
 
 **Description:** Initiates a battle in the Cross Clan War against a specific slot. Supports both hero battles and titan battles.
@@ -4474,7 +4613,7 @@ Each team configuration is an array where:
   clanDefence_titans: number[];        // Titans for Guild War defense
   clanRaid_nodes: number[][];         // [[team1], [team2], [team3]] - 3 teams for clan raid nodes (Minions Attack)
   clan_global_pvp: number[];          // Heroes for global clan PvP
-  clan_global_pvp_titan: number[];    // Titans for global clan PvP
+  clan_global_pvp_titan: number[];    // Titans for Clash of Worlds (global clan PvP)
   clan_pvp_hero: number[];           // Heroes for clan PvP
   clan_pvp_titan: number[];           // Titans for clan PvP
   
