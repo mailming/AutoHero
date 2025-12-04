@@ -70,6 +70,8 @@
     }
     async function executeTestDungeon() {
         const { HWHClasses, HWHFuncs } = window;
+        // Wait for all other scripts and dependencies to be fully loaded
+        await new Promise(resolve => setTimeout(resolve, 2000));
         HWHFuncs.setProgress('Executing: Dungeon', true);
         return new Promise((resolve) => { new HWHClasses.executeDungeon(resolve, resolve).start(); });
     }
@@ -690,7 +692,9 @@ async function executeGetDailyBonus() {
                  if (questHandler.doItFunc) {
                      // Quest uses a function instead of API calls
                      if (task.id === '10022') {
-                         // Special handling for dungeon quest
+                         // Special handling for dungeon quest - ensure it executes last
+                         // Wait a bit to ensure all other operations are complete
+                         await new Promise(resolve => setTimeout(resolve, 2000));
                          await executeTestDungeon();
                          invalidateQuestCache();
                          return;
@@ -757,18 +761,33 @@ async function executeGetDailyBonus() {
         const doAllChecked = doAllTasks.filter(task => executionState[task.id]);
         const questsAndUpgradeChecked = [...questTasks, ...upgradeTasks].filter(task => executionState[task.id]);
         if (doAllChecked.length === 0 && questsAndUpgradeChecked.length === 0) return;
+        
+        // Separate dungeon task from other tasks - dungeon should execute last
+        const dungeonTask = doAllChecked.find(task => task.id === 'testDungeon');
+        const otherDoAllTasks = doAllChecked.filter(task => task.id !== 'testDungeon');
+        
         let doAllTotalDelay = 0;
         let initialDoAllDelay = 10000;
-        doAllChecked.forEach((task, index) => {
+        
+        // Schedule all non-dungeon tasks first
+        otherDoAllTasks.forEach((task, index) => {
             const delay = initialDoAllDelay + (index * 3000);
             setTimeout(() => executeSingleTask(task), delay);
             doAllTotalDelay = delay;
         });
+        
         let initialQuestDelay = (doAllTotalDelay > 0 ? doAllTotalDelay : 7000) + 3000;
         questsAndUpgradeChecked.forEach((task, index) => {
             const delay = initialQuestDelay + (index * 3000);
             setTimeout(() => executeSingleTask(task), delay);
+            doAllTotalDelay = Math.max(doAllTotalDelay, delay);
         });
+        
+        // Schedule dungeon task LAST with additional delay to ensure everything else is done
+        if (dungeonTask) {
+            const dungeonDelay = doAllTotalDelay + 5000; // Extra 5 seconds after everything else
+            setTimeout(() => executeSingleTask(dungeonTask), dungeonDelay);
+        }
     }
     function createCustomOthersButton() {
         const { HWHClasses, HWHData, I18N } = window;
