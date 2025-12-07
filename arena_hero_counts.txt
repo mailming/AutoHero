@@ -1,0 +1,88 @@
+Hero Wars Arena Team Hero Counts
+============================================================
+Total teams scraped: 2570
+Total hero occurrences: 15361
+Unique heroes found: 79
+
+============================================================
+HERO OCCURRENCE COUNTS (sorted by frequency)
+============================================================
+Lyria                      :  1201
+Sebastian                  :  1110
+Axel                       :   960
+Lara_Croft                 :   788
+Aidan                      :   757
+Khorus                     :   725
+Nebula                     :   723
+Dante                      :   627
+Orion                      :   531
+Galahad                    :   421
+Martha                     :   349
+Asteroth                   :   333
+Augustus                   :   314
+Kayla                      :   287
+Keira                      :   285
+Electra                    :   280
+Cascade                    :   279
+Dorian                     :   268
+Yasmine                    :   267
+Amira                      :   260
+Thea                       :   257
+Oliver                     :   256
+Corvus                     :   251
+Albus                      :   250
+Guus                       :   230
+Heidi                      :   229
+Ishmael                    :   207
+Iris                       :   197
+Celeste                    :   195
+Fafnir                     :   193
+Helios                     :   159
+Polaris                    :   150
+Arachne                    :   141
+Krista                     :   138
+Rufus                      :   137
+Cain                       :   135
+Tristan                    :   131
+Aurora                     :   117
+Isaac                      :   116
+Morrigan                   :    97
+Julius                     :    88
+Jet                        :    77
+Folio                      :    75
+Merlin                     :    67
+Vex                        :    63
+Fenris                     :    62
+Cleaver                    :    55
+Lars                       :    50
+Jhu                        :    50
+Qing_Mao                   :    44
+Mushy_Shroom               :    40
+Karkh                      :    38
+Jorgen                     :    35
+Ninja_Turtles              :    31
+Mara                       :    26
+Phobos                     :    25
+Chabba                     :    23
+Biscuit                    :    20
+Alvanor                    :    15
+Satori                     :    14
+Mojo                       :    13
+Elmir                      :    12
+Maya                       :    11
+Judge                      :     9
+Artemis                    :     9
+Faceless                   :     8
+Ginger                     :     8
+Lian                       :     8
+Peppy                      :     6
+Astrid_Lucas               :     5
+Ziri                       :     4
+Cornelius                  :     3
+Luther                     :     3
+Andvari                    :     3
+Markus                     :     3
+Dark_Star                  :     2
+Lilith                     :     2
+Kai                        :     2
+Fox                        :     1
