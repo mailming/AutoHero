@@ -26,6 +26,36 @@
     let customOthersButton = null;
     let combinedButton = null;
     let cachedQuestData = null; // Cache for questGetAll results
+    let autoRunInProgress = false;
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function waitFor(predicate, { timeoutMs = 30000, intervalMs = 200 } = {}) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            try {
+                if (predicate()) return true;
+            } catch (e) {
+                // ignore predicate errors while waiting
+            }
+            await sleep(intervalMs);
+        }
+        return false;
+    }
+
+    async function withTimeout(promise, timeoutMs, timeoutMessage = 'Timed out') {
+        let t;
+        const timeoutPromise = new Promise((_, reject) => {
+            t = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        });
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            clearTimeout(t);
+        }
+    }
 
     // --- QUEST DATA CACHE ---
     async function getQuestData(forceRefresh = false) {
@@ -70,10 +100,34 @@
     }
     async function executeTestDungeon() {
         const { HWHClasses, HWHFuncs } = window;
-        // Wait for all other scripts and dependencies to be fully loaded
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        HWHFuncs.setProgress('Executing: Dungeon', true);
-        return new Promise((resolve) => { new HWHClasses.executeDungeon(resolve, resolve).start(); });
+
+        // Prefer the native implementation from HeroWarsHelper (it returns a Promise and has the "perfect" flow).
+        const hasNativeDungeon = await waitFor(() => typeof window.testDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
+        if (hasNativeDungeon) {
+            HWHFuncs.setProgress('Executing: Dungeon (native)', true);
+            // Dungeon can take a while; prevent the entire Auto Daily run from hanging forever if something goes wrong.
+            return await withTimeout(window.testDungeon(), 20 * 60 * 1000, 'Dungeon timed out');
+        }
+
+        // Fallback: older approach (directly instantiate executeDungeon) if native function isn't available.
+        const hasExecuteDungeon = await waitFor(() => HWHClasses && typeof HWHClasses.executeDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
+        if (!hasExecuteDungeon) {
+            throw new Error('Dungeon API not ready (missing testDungeon/executeDungeon)');
+        }
+
+        HWHFuncs.setProgress('Executing: Dungeon (fallback)', true);
+        return await withTimeout(
+            new Promise((resolve, reject) => {
+                try {
+                    const dung = new HWHClasses.executeDungeon(resolve, reject);
+                    dung.start();
+                } catch (e) {
+                    reject(e);
+                }
+            }),
+            20 * 60 * 1000,
+            'Dungeon timed out (fallback)'
+        );
     }
     async function executeOfferFarmAllReward() {
         const { Send, HWHFuncs } = window;
@@ -761,33 +815,41 @@ async function executeGetDailyBonus() {
         const doAllChecked = doAllTasks.filter(task => executionState[task.id]);
         const questsAndUpgradeChecked = [...questTasks, ...upgradeTasks].filter(task => executionState[task.id]);
         if (doAllChecked.length === 0 && questsAndUpgradeChecked.length === 0) return;
-        
-        // Separate dungeon task from other tasks - dungeon should execute last
-        const dungeonTask = doAllChecked.find(task => task.id === 'testDungeon');
-        const otherDoAllTasks = doAllChecked.filter(task => task.id !== 'testDungeon');
-        
-        let doAllTotalDelay = 0;
-        let initialDoAllDelay = 10000;
-        
-        // Schedule all non-dungeon tasks first
-        otherDoAllTasks.forEach((task, index) => {
-            const delay = initialDoAllDelay + (index * 3000);
-            setTimeout(() => executeSingleTask(task), delay);
-            doAllTotalDelay = delay;
-        });
-        
-        let initialQuestDelay = (doAllTotalDelay > 0 ? doAllTotalDelay : 7000) + 3000;
-        questsAndUpgradeChecked.forEach((task, index) => {
-            const delay = initialQuestDelay + (index * 3000);
-            setTimeout(() => executeSingleTask(task), delay);
-            doAllTotalDelay = Math.max(doAllTotalDelay, delay);
-        });
-        
-        // Schedule dungeon task LAST with additional delay to ensure everything else is done
-        if (dungeonTask) {
-            const dungeonDelay = doAllTotalDelay + 5000; // Extra 5 seconds after everything else
-            setTimeout(() => executeSingleTask(dungeonTask), dungeonDelay);
-        }
+
+        // Dungeon and dungeon-quest should run last to avoid interference with other API/UI flows.
+        const doAllNonDungeon = doAllChecked.filter(t => t.id !== 'testDungeon');
+        const doAllDungeon = doAllChecked.filter(t => t.id === 'testDungeon');
+
+        // Quest 10022 is "Guild Dungeon" in the quest list; it also triggers dungeon logic.
+        const questsNonDungeon = questsAndUpgradeChecked.filter(t => t.id !== '10022');
+        const questsDungeon = questsAndUpgradeChecked.filter(t => t.id === '10022');
+
+        const ordered = [
+            ...doAllNonDungeon,
+            ...questsNonDungeon,
+            ...doAllDungeon,
+            ...questsDungeon,
+        ];
+
+        // Run sequentially (await each). The previous setTimeout-based scheduler could overlap long tasks and stall mid-run.
+        setTimeout(async () => {
+            const { HWHFuncs } = window;
+            if (autoRunInProgress) return;
+            autoRunInProgress = true;
+            try {
+                for (const task of ordered) {
+                    await executeSingleTask(task);
+                    // Small gap to keep UI responsive and avoid bursting calls.
+                    await sleep(500);
+                }
+                HWHFuncs.setProgress('Auto Daily: All selected tasks finished!', true);
+            } catch (e) {
+                console.error('[Auto Daily] Auto-run failed:', e);
+                HWHFuncs.setProgress(`Auto Daily: Stopped (${e.message || 'error'})`, true);
+            } finally {
+                autoRunInProgress = false;
+            }
+        }, 7000);
     }
     function createCustomOthersButton() {
         const { HWHClasses, HWHData, I18N } = window;

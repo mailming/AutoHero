@@ -3504,8 +3504,6 @@ The response includes all the fields documented below, including enemy clan info
 
 **Enemy Defense Slots:**
 - `enemySlots` (object): Map of slot IDs (1-40) to slot defense information
-  - Slot IDs 1-20 are hero battles
-  - Slot IDs 21-40 are titan battles
   - Each slot contains:
     - `team` (array): Array of team members (heroes or titans)
       - Each team member is an object with position key ("1", "2", etc.)
@@ -3524,8 +3522,8 @@ The response includes all the fields documented below, including enemy clan info
 **Defense Teams (from clanWarGetDefence):**
 - `slots`: Map of slot IDs (1-40) to defending player IDs
 - `teams`: Team configurations for different players
-  - `clanDefence_heroes`: Hero defense team for Guild War (for slots 1-20)
-  - `clanDefence_titans`: Titan defense team for Guild War (for slots 21-40)
+  - `clanDefence_heroes`: Hero defense team for Guild War
+  - `clanDefence_titans`: Titan defense team for Guild War
 - `arePointsMax`: Boolean indicating if maximum points have been reached
 
 **Note:** Unlike Arena and Grand Arena which track attempts in the `refillable` array, Guild War attempts are tracked directly in the `clanWarGetInfo` response as `myTries`.
@@ -3680,7 +3678,7 @@ if (!isActive) {
 
 #### clanWarAttack
 
-**Description:** Executes an attack against a specific Guild War slot. Can be used for both hero battles (slots 1-20) and titan battles (slots 21-40).
+**Description:** Executes an attack against a specific Guild War slot. Can be used for both hero battles and titan battles.
 
 **Request (Hero Battle):**
 ```javascript
@@ -3720,8 +3718,8 @@ Send({
 ```
 
 **Request Parameters:**
-- `slotId` (number): Target slot ID to attack (1-40, 1-20 for heroes, 21-40 for titans)
-- `heroes` (array): Array of 5 unit IDs (hero IDs for slots 1-20, titan IDs for slots 21-40)
+- `slotId` (number): Target slot ID to attack
+- `heroes` (array): Array of 5 unit IDs (heroes or titans depending on battle type)
 - `pet` (number, optional): Pet ID to use in battle (hero battles only)
 - `favor` (object, optional): Favor pet assignments (empty for titan battles)
 - `banner` (number, optional): Banner ID to use in battle (hero battles only)
