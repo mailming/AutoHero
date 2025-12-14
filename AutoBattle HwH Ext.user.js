@@ -1590,6 +1590,13 @@
                         args: {},
                         context: { actionTs: Utils.getActionTs() },
                         ident: "heroGetAll"
+                    },
+                    {
+                        // Needed for Guild War titan team power comparisons
+                        name: "titanGetAll",
+                        args: {},
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: "titanGetAll"
                     }
                 ];
 
@@ -1608,14 +1615,53 @@
                 if (!response.results[2] || !response.results[2].result || !response.results[2].result.response) {
                     throw new Error('Invalid heroGetAll response - hero data not available');
                 }
+                if (!response.results[3] || !response.results[3].result || !response.results[3].result.response) {
+                    throw new Error('Invalid titanGetAll response - titan data not available');
+                }
+
+                const heroesById = response.results[2].result.response || {};
+                const titansById = response.results[3].result.response || {};
 
                 this.teamInfo = {
                     teams: response.results[0].result.response,
                     favor: response.results[1].result.response,
-                    heroes: Object.values(response.results[2].result.response)
+                    heroesById: heroesById,
+                    titansById: titansById
                 };
 
                 console.log('Team data loaded');
+            }
+
+            this.getUnitPower = function(unitId, isTitan) {
+                if (!this.teamInfo) return 0;
+                const source = isTitan ? this.teamInfo.titansById : this.teamInfo.heroesById;
+                if (!source) return 0;
+                const unit = source[unitId];
+                const p = unit && unit.power !== undefined ? Number(unit.power) : 0;
+                return Number.isFinite(p) ? p : 0;
+            }
+
+            this.getMyTeamPower = function(teamConfig, isTitanBattle) {
+                const ids = isTitanBattle ? (teamConfig?.titans || []) : (teamConfig?.heroes || []);
+                return ids.slice(0, 5).reduce((sum, id) => sum + this.getUnitPower(id, isTitanBattle), 0);
+            }
+
+            this.getOpponentSlotPower = function(slotId, isTitanBattle) {
+                if (!this.guildWarInfo || !this.guildWarInfo.enemySlots) return 0;
+                const slotData = this.guildWarInfo.enemySlots[String(slotId)];
+                if (!slotData || !Array.isArray(slotData.team)) return 0;
+
+                const expectedType = isTitanBattle ? 'titan' : 'hero';
+                let sum = 0;
+                for (const memberObj of slotData.team) {
+                    if (!memberObj || typeof memberObj !== 'object') continue;
+                    const position = Object.keys(memberObj)[0];
+                    const unit = memberObj[position];
+                    if (!unit || unit.type !== expectedType) continue;
+                    const p = unit.power !== undefined ? Number(unit.power) : 0;
+                    if (Number.isFinite(p)) sum += p;
+                }
+                return sum;
             }
 
             this.attackDirectSlots = async function() {
@@ -1699,6 +1745,22 @@
                     if (!teamConfig.titans || teamConfig.titans.length < 5) {
                         throw new Error('Titan team not properly configured - need at least 5 titans');
                     }
+
+                    // Power check BEFORE running expensive simulations / consuming attempts
+                    try {
+                        const myPower = this.getMyTeamPower(teamConfig, true);
+                        const oppPower = this.getOpponentSlotPower(slotId, true);
+                        if (myPower > 0 && oppPower > 0 && myPower < (oppPower * 0.5)) {
+                            const msg = `Skipped: Power check failed (my ${myPower} vs enemy ${oppPower})`;
+                            console.log(`[GUILD_WAR_TITAN] ⚠️ ${msg}`);
+                            setProgress(`${I18N('GUILD_WAR')}: Skipping slot ${slotId} (power too low)`);
+                            throw new Error(msg);
+                        }
+                    } catch (e) {
+                        // Re-throw explicit skip errors to continue to next slot
+                        if (e?.message && e.message.startsWith('Skipped:')) throw e;
+                        // Otherwise ignore power-check issues and proceed
+                    }
                     
                     // Run demo battle simulation for titan battles before attacking
                     console.log(`[GUILD_WAR_TITAN] Running demo battle simulation for slot ${slotId}...`);
@@ -1733,6 +1795,20 @@
                     
                     if (!teamConfig.heroes || teamConfig.heroes.length < 5) {
                         throw new Error('Arena team not properly configured - need at least 5 heroes');
+                    }
+
+                    // Power check before attacking hero slot
+                    try {
+                        const myPower = this.getMyTeamPower(teamConfig, false);
+                        const oppPower = this.getOpponentSlotPower(slotId, false);
+                        if (myPower > 0 && oppPower > 0 && myPower < (oppPower * 0.5)) {
+                            const msg = `Skipped: Power check failed (my ${myPower} vs enemy ${oppPower})`;
+                            console.log(`[GUILD_WAR] ⚠️ ${msg}`);
+                            setProgress(`${I18N('GUILD_WAR')}: Skipping slot ${slotId} (power too low)`);
+                            throw new Error(msg);
+                        }
+                    } catch (e) {
+                        if (e?.message && e.message.startsWith('Skipped:')) throw e;
                     }
                 }
 
