@@ -1317,10 +1317,9 @@
             
             const mainPopup = document.getElementById('api-repeater-popup-container');
             if (mainPopup) {
-                populateRecordingsList();
-            } else {
-                openMainPopup();
+                mainPopup.remove();
             }
+            openMainPopup();
         });
     }
 
