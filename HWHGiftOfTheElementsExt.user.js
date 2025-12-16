@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         3.8
+// @version         3.8.1
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -12,9 +12,10 @@
 // @icon            https://i.ibb.co/xtmhK7zS/icon.png
 // @match           https://www.hero-wars.com/*
 // @match           https://apps-1701433570146040.apps.fbsbx.com/*
-// @run-at          document-start
-// @downloadURL https://update.greasyfork.org/scripts/551144/HWHGiftOfTheElementsExt.user.js
-// @updateURL https://update.greasyfork.org/scripts/551144/HWHGiftOfTheElementsExt.meta.js
+// @grant           none
+// @run-at          document-end
+// @downloadURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/HWHGiftOfTheElementsExt.user.js
+// @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/HWHGiftOfTheElementsExt.user.js
 // ==/UserScript==
 
 (function () {
@@ -78,7 +79,7 @@
           '<br> Heve gold: <span style="color: green;">{haveGold} </span> <br> Gold needed: <span style="color: red;"> {goldIsNeeded} </span>',
         GOE_AUTO_GET_POWER: 'Auto Get Power',
         GOE_AUTO_GET_POWER_TITLE: 'Automatically get power when script loads',
-        GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount',
+        GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount & Collect Rewards',
         GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Amount of power to get automatically (0 = disabled)',
 	};
 
@@ -569,6 +570,144 @@
 		);
 	}
 
+	// Recursively collect all quest rewards until no more are available
+	// NO filter - collects all quests with state === 2 regardless of ID
+	async function collectAllQuestRewards() {
+		try {
+			const farmQuestIds = [];
+			let totalCollected = 0;
+			let iteration = 0;
+			const maxIterations = 50; // Safety limit to prevent infinite loops
+
+			while (iteration < maxIterations) {
+				iteration++;
+				console.log(`%c${GM_info.script.name}: Quest collection iteration ${iteration}`, 'color: blue');
+
+				// Get all quests with NO filter
+				const questGetAll = await new Caller('questGetAll').execute();
+				// Handle both array and object responses
+				const allQuests = Array.isArray(questGetAll) ? questGetAll : Object.values(questGetAll || {});
+
+				// Filter only for completed quests (state === 2) - NO other filters
+				const questsToFarm = allQuests.filter(q => q && typeof q === 'object' && q.state === 2);
+
+				if (questsToFarm.length === 0) {
+					console.log(`%c${GM_info.script.name}: No more quests to collect`, 'color: green');
+					break;
+				}
+
+				// Separate quests by ID range for efficient batch collection
+				const regularQuestIds = [];
+				const specialQuestIds = [];
+
+				for (const quest of questsToFarm) {
+					const questId = +quest.id;
+					
+					// Skip invalid quest IDs
+					if (!questId || isNaN(questId)) {
+						continue;
+					}
+					
+					// Skip already farmed quests
+					if (farmQuestIds.includes(questId)) {
+						continue;
+					}
+
+					// Regular quests (id < 1e6) - collect individually
+					if (questId < 1e6) {
+						regularQuestIds.push(questId);
+					}
+					// Special quests (id >= 2e7 && id < 2001e4) - batch collect
+					else if (questId >= 2e7 && questId < 2001e4) {
+						specialQuestIds.push(questId);
+					}
+					// Other quests - collect individually (NO filter, collect all)
+					else {
+						regularQuestIds.push(questId);
+					}
+				}
+
+				if (regularQuestIds.length === 0 && specialQuestIds.length === 0) {
+					console.log(`%c${GM_info.script.name}: All available quests already collected`, 'color: green');
+					break;
+				}
+
+				const farmCaller = new Caller();
+
+				// Add regular quests individually
+				for (const questId of regularQuestIds) {
+					farmCaller.add({
+						name: 'questFarm',
+						args: { questId },
+					});
+					farmQuestIds.push(questId);
+				}
+
+				// Add special quests in batch
+				if (specialQuestIds.length > 0) {
+					farmCaller.add({
+						name: 'quest_questsFarm',
+						args: { questIds: specialQuestIds },
+					});
+					specialQuestIds.forEach(id => farmQuestIds.push(id));
+				}
+
+				if (farmCaller.isEmpty()) {
+					break;
+				}
+
+				// Collect rewards
+				const farmResults = await farmCaller.send();
+				const collectedCount = regularQuestIds.length + specialQuestIds.length;
+				totalCollected += collectedCount;
+				console.log(`%c${GM_info.script.name}: Collected ${collectedCount} quest reward(s)`, 'color: green');
+
+				// Check for newly unlocked quests in side results
+				const sideResult = farmResults.sideResult('questFarm', true);
+				sideResult.push(...farmResults.sideResult('quest_questsFarm', true));
+
+				let hasNewQuests = false;
+				for (const side of sideResult) {
+					const quests = [...(side.newQuests ?? []), ...(side.quests ?? [])];
+					for (const quest of quests) {
+						if (quest && typeof quest === 'object' && quest.state === 2) {
+							const newQuestId = +quest.id;
+							if (newQuestId && !farmQuestIds.includes(newQuestId)) {
+								hasNewQuests = true;
+								break;
+							}
+						}
+					}
+					if (hasNewQuests) break;
+				}
+
+				// Small delay before next iteration to allow server to process
+				await new Promise(resolve => setTimeout(resolve, 200));
+
+				// If no new quests were unlocked and we collected nothing, we're done
+				if (!hasNewQuests && collectedCount === 0) {
+					break;
+				}
+			}
+
+			if (iteration >= maxIterations) {
+				console.warn(`%c${GM_info.script.name}: Quest collection reached max iterations (${maxIterations})`, 'color: orange');
+			}
+
+			if (totalCollected > 0) {
+				console.log(`%c${GM_info.script.name}: Quest collection completed. Total collected: ${totalCollected}`, 'color: green');
+			} else {
+				console.log(`%c${GM_info.script.name}: No quest rewards to collect`, 'color: gray');
+			}
+
+			return totalCollected;
+		} catch (error) {
+			console.error(`%c${GM_info.script.name}: Error collecting quest rewards:`, 'color: red', error);
+			console.error(error);
+			return 0;
+		}
+	}
+
 	// Auto-execute getPower on script load if enabled
 	// Wait for HWH UI to be fully ready before checking settings
 	let checkCount = 0;
@@ -620,6 +759,8 @@
 						if (autoGetPower && autoGetPowerAmount > 0) {
 							console.log(`%c${GM_info.script.name}: Auto-executing getPower with target: ${autoGetPowerAmount}`, 'color: green');
 							await getPower(autoGetPowerAmount);
+							console.log(`%c${GM_info.script.name}: Auto-executing quest reward collection...`, 'color: green');
+							await collectAllQuestRewards();
 							console.log(`%c${GM_info.script.name}: Auto-execution completed`, 'color: green');
 						} else {
 							console.log(`%c${GM_info.script.name}: Auto-execution skipped - enabled: ${autoGetPower}, amount: ${autoGetPowerAmount}`, 'color: orange');
