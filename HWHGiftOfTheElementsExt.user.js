@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         3.8.1
+// @version         3.9.1
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -58,25 +58,26 @@
 		GOE_NOTHING_TO_RESET: 'Nothing to reset',
 		GOE_IMPOSSIBLE_TO_RESET: 'You don\'t have any heroes with Elemental Gift below level 30',
 		GOE_RESET_GIFTS_LIGHT_MESSAGE:
-			'Specify the <span style="color:red;"> maximum </span> reset level for Gift of the Elements <br> Range: <span style="color:green;"> 1 </span> to <span style="color:green;"> 29 </span>',
+			`Specify the <span style="color:red;"> maximum </span> reset level for Gift of the Elements
+            <br> Range: <span style="color:green;"> 1 </span> to <span style="color:green;"> 29 </span>`,
 		GOE_RESULT_RESET_GIFTS: 'Gift of the Elements has been reset for <span style="color: green;"> {counter} </span> hero(es)',
 		GOE_RESET_GIFTS_EXTREME_MESSAGE:
-			'You have <span style="color:green;"> {level30} </span> hero(es) with level <span style="color:green;">30</span> Gift of the Elements<br>' +
-			'Enter how many level <span style="color:green;">30</span> Gifts of the Elements to reset <br>' +
-			'<span style="color:red;"> The reset will start with the weakest hero </span> <br> Gifts of the Elements of lower levels will be reset automatically',
+			`You have <span style="color:green;"> {level30} </span> hero(es) with level <span style="color:green;">30</span> Gift of the Elements
+            <br> Enter how many level <span style="color:green;">30</span> Gifts of the Elements to reset
+            <br> <span style="color:red;"> The reset will start with the weakest hero </span> <br> Gifts of the Elements of lower levels will be reset automatically`,
 		GOE_EXTREME_DO_NOT_HAVE_HERO_30LVL:
-			"You don't have any heroes with Gift of the Elements level 30 <br> Reset Gifts of the Elements to a lower level?",
+			'You don\'t have any heroes with Gift of the Elements level 30 <br> Reset Gifts of the Elements to a lower level?',
 		GOE_EXTREME_RESULT_RESET_GIFTS:
 			'<br> <span style="color: green;"> {counter30} </span> of them are level <span style="color:green;">30</span>',
         GOE_GET_POWER: 'Get power',
         GOE_GET_POWER_TITLE: 'Increase the overall power of heroes by the specified amount',
         GOE_GET_POWER_MESSAGE:
-			'By spending sparks of power and gold you can get а maximum <span style="color: green;"> {maxHeroPawer} </span> units of hero power <br>' +
-			'Specify <span style="color: green;">approximately</span> how much hero power you want to get',
+			`By spending sparks of power and gold you can get а maximum <span style="color: green;"> {maxHeroPawer} </span> units of hero power
+            <br> Specify how much hero power you want to get`,
         GOE_GOT_POWER: '<br> Received <span style="color: green;"> {gotPower} </span> hero power',
         GOE_NOT_ENOUGH_GOLD:
-          '<br><br><span style="color: red;">Not enough gold</span> to get all available hero power ' +
-          '<br> Heve gold: <span style="color: green;">{haveGold} </span> <br> Gold needed: <span style="color: red;"> {goldIsNeeded} </span>',
+            `<br><br><span style="color: red;">Not enough gold</span> to get all available hero power
+            <br> Heve gold: <span style="color: green;">{haveGold} </span> <br> Gold needed: <span style="color: red;"> {goldIsNeeded} </span>`,
         GOE_AUTO_GET_POWER: 'Auto Get Power',
         GOE_AUTO_GET_POWER_TITLE: 'Automatically get power when script loads',
         GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount & Collect Rewards',
@@ -110,12 +111,13 @@
         GOE_NOTHING_TO_RESET: 'Нечего сбрасывать',
 		GOE_IMPOSSIBLE_TO_RESET: 'Нет героев с даром стихий меньше 30 уровня',
         GOE_RESET_GIFTS_LIGHT_MESSAGE:
-			'Укажите <span style="color:red;"> максимальный </span> сбрасываемый уровень дара стихий <br> Диапазон от <span style="color: green;"> 1 </span> до <span style="color: green;"> 29 </span>',
+			`Укажите <span style="color:red;"> максимальный </span> сбрасываемый уровень дара стихий
+            <br> Диапазон от <span style="color: green;"> 1 </span> до <span style="color: green;"> 29 </span>`,
 		GOE_RESULT_RESET_GIFTS: 'Дар стихий сброшен у <span style="color: green;"> {counter} </span> героев(я)',
 		GOE_RESET_GIFTS_EXTREME_MESSAGE:
-			'У Вас <span style="color:green;"> {level30} </span> героя(ев) с <span style="color:green;">30</span> уровнем дара стихий<br>' +
-			'Укажите сколько даров стихий <span style="color:green;">30</span> уровня сбросить <br>' +
-			'<span style="color:red;"> Сброс начнется с самого слабого героя </span> <br> Дары стихий меньших уровней будут сброшены автоматически',
+			`У Вас <span style="color:green;"> {level30} </span> героя(ев) с <span style="color:green;">30</span> уровнем дара стихий
+            <br> Укажите сколько даров стихий <span style="color:green;">30</span> уровня сбросить
+            <br> <span style="color:red;"> Сброс начнется с самого слабого героя </span> <br> Дары стихий меньших уровней будут сброшены автоматически`,
 		GOE_EXTREME_DO_NOT_HAVE_HERO_30LVL:
 			'У Вас нет героев с 30 уровнем дара стихий <br> Сбросить дары стихий меньшего уровня?',
 		GOE_EXTREME_RESULT_RESET_GIFTS:
@@ -123,12 +125,12 @@
         GOE_GET_POWER: 'Увеличить мощь',
         GOE_GET_POWER_TITLE: 'Увеличить общую мощи героев на указанное количество',
         GOE_GET_POWER_MESSAGE:
-			'Потратив искры мощи и золото, вы можете получить максимум <span style="color: green;"> {maxHeroPawer} </span> единиц мощи героев <br>' +
-			'Укажите <span style="color: green;">приблизительно</span>, сколько мощи героев необходимо получить',
+			`Потратив искры мощи и золото, вы можете получить максимум <span style="color: green;"> {maxHeroPawer} </span> единиц мощи героев
+            <br> Укажите, сколько мощи героев необходимо получить`,
         GOE_GOT_POWER: '<br> Получили мощи героев: <span style="color: green;"> {gotPower} </span>',
         GOE_NOT_ENOUGH_GOLD:
-          '<br><br><span style="color: red;">Не достаточно золота</span>, чтобы получить всю доступную мощь героев ' +
-          '<br> Имеем золота: <span style="color: green;">{haveGold}</span> <br> Необходимо золота: <span style="color: red;"> {goldIsNeeded} </span>',
+			`<br><br><span style="color: red;">Не достаточно золота</span>, чтобы получить всю доступную мощь героев
+			<br> Имеем золота: <span style="color: green;">{haveGold}</span> <br> Необходимо золота: <span style="color: red;"> {goldIsNeeded} </span>`,
         GOE_AUTO_GET_POWER: 'Авто получение мощи',
         GOE_AUTO_GET_POWER_TITLE: 'Автоматически получать мощь при загрузке скрипта',
         GOE_AUTO_GET_POWER_AMOUNT: 'Количество мощи для авто получения',
