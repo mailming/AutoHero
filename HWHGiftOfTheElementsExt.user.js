@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         3.9.1
+// @version         3.9.2
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -758,9 +758,13 @@
 						
 						console.log(`%c${GM_info.script.name}: Auto-execution check - enabled: ${autoGetPower}, amount: ${autoGetPowerAmount}`, 'color: blue');
 						
-						if (autoGetPower && autoGetPowerAmount > 0) {
-							console.log(`%c${GM_info.script.name}: Auto-executing getPower with target: ${autoGetPowerAmount}`, 'color: green');
-							await getPower(autoGetPowerAmount);
+						if (autoGetPower) {
+							// If amount > 0, get power first
+							if (autoGetPowerAmount > 0) {
+								console.log(`%c${GM_info.script.name}: Auto-executing getPower with target: ${autoGetPowerAmount}`, 'color: green');
+								await getPower(autoGetPowerAmount);
+							}
+							// Always collect quest rewards when auto-execution is enabled
 							console.log(`%c${GM_info.script.name}: Auto-executing quest reward collection...`, 'color: green');
 							await collectAllQuestRewards();
 							console.log(`%c${GM_info.script.name}: Auto-execution completed`, 'color: green');
