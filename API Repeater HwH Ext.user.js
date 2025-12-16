@@ -65,11 +65,11 @@
         };
         
         // Intercept send to capture API calls
-        // Make it async to match HeroWarsHelper's wrapper
-        XMLHttpRequest.prototype.send = async function(sourceData) {
+        // Keep it synchronous to preserve XMLHttpRequest API contract (native send returns undefined)
+        XMLHttpRequest.prototype.send = function(sourceData) {
             // Early exit if not recording (most common case) - performance optimization
             if (!isRecording) {
-                return await originalXHRSend.apply(this, arguments);
+                return originalXHRSend.apply(this, arguments);
             }
             
             // Check if recording is active and this is an API call
@@ -100,7 +100,7 @@
                             // But we can add early validation for performance
                             if (tempData.length === 0 || (!tempData.includes('"name"') && !tempData.includes('"calls"'))) {
                                 // Skip if doesn't look like API call data
-                                return await originalXHRSend.apply(this, arguments);
+                                return originalXHRSend.apply(this, arguments);
                             }
                             callData = JSON.parse(tempData);
                             
@@ -145,8 +145,9 @@
                 }
             }
             
-            // Call original send (this will be the wrapped version if HWH has already wrapped it)
-            return await originalXHRSend.apply(this, arguments);
+            // Call original send synchronously (preserves XMLHttpRequest API contract)
+            // originalXHRSend is the native synchronous version captured before any wrappers
+            return originalXHRSend.apply(this, arguments);
         };
         
         console.log('API Repeater: Early XHR interception setup complete (document-start)');
