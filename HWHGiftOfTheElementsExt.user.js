@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         3.9.6
+// @version         3.9.8
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -28,10 +28,20 @@
 	const { addExtentionName } = HWHFuncs;
 	addExtentionName(GM_info.script.name, GM_info.script.version, GM_info.script.author);
 
-	const { buttons } = HWHData;
-
-	const { popup, confShow, setProgress, hideProgress, mailGetAll } = HWHFuncs;
+	const { popup, confShow, setProgress, hideProgress } = HWHFuncs;
 	const { i18nLangData } = HWHData;
+
+	// Constants
+	const POWER_LEVEL = [22, 22, 22, 22, 22, 66, 66, 66, 66, 66, 110, 110, 110, 110, 110, 154,
+		154, 154, 154, 154, 198, 198, 198, 198, 198, 242, 242, 242, 242, 242];
+	const MAX_TITAN_GIFT_LEVEL = 30;
+	const MIN_USER_LEVEL = 30;
+	const CONSUMABLE_ID_TITAN_GIFT = 24;
+	const QUEST_COLLECTION_MAX_ITERATIONS = 50;
+	const QUEST_COLLECTION_DELAY = 100;
+	const QUEST_COLLECTION_BATCH_SIZE = 10;
+	const AUTO_EXECUTION_TIMEOUT = 100;
+	const AUTO_EXECUTION_DELAY = 3000;
 
 	const i18nLangDataEn = {
 		GIFT_OF_ELEMENTS: 'Gift of the Elements',
@@ -39,13 +49,13 @@
 		GOE_SPEND_SPARKS_OF_POWER: 'Spend "Sparks of Power"',
 		GOE_SPEND_SPARKS_OF_POWER_TITLE: 'Spend "Sparks of Power"',
 		GOE_RESET_GIFTS: 'Reset "Gifts of the Elements"',
-        GOE_RESET_GIFTS_LIGHT: 'Reset "Gifts of the Elements" <br> <span style="color: aqua;"> level 1 - 29 </span>',
+		GOE_RESET_GIFTS_LIGHT: 'Reset "Gifts of the Elements" <br> <span style="color: aqua;"> level 1 - 29 </span>',
 		GOE_RESET_GIFTS_LIGHT_TITLE: 'Reset "Gifts of the Elements". You can\'t reset Gift of the Elements level 30.',
-        GOE_RESET_GIFTS_EXTREME: 'Reset "Gifts of the Elements" <span style="color: red;"> level 30 </span>',
+		GOE_RESET_GIFTS_EXTREME: 'Reset "Gifts of the Elements" <span style="color: red;"> level 30 </span>',
 		GOE_RESET_GIFTS_EXTREME_TITLE: 'Reset "Gifts of the Elements". There is no limit to the level of the Gift of Elements.',
 		GOE_SELECT_ACTION: 'Select an action',
 		GOE_NOTHING_TO_IMPROVE_LVL30: 'Nothing to improve. Account hasn\'t reached team level 30',
-        GOE_NOTHING_TO_IMPROVE: 'Nothing to improve. All heroes have maximum elemental gift level',
+		GOE_NOTHING_TO_IMPROVE: 'Nothing to improve. All heroes have maximum elemental gift level',
 		GOE_SPEND_SPARKS_OF_POWER_MESSAGE:
 			'Available <span style="color: green;"> {titanGift} </span> sparks of power <br> Specify how many sparks of power need to be spent',
 		GOE_INCORRECT_VALUE: 'Incorrect value',
@@ -69,21 +79,21 @@
 			'You don\'t have any heroes with Gift of the Elements level 30 <br> Reset Gifts of the Elements to a lower level?',
 		GOE_EXTREME_RESULT_RESET_GIFTS:
 			'<br> <span style="color: green;"> {counter30} </span> of them are level <span style="color:green;">30</span>',
-        GOE_GET_POWER: 'Get power',
-        GOE_GET_POWER_TITLE: 'Increase the overall power of heroes by the specified amount',
-        GOE_GET_POWER_MESSAGE:
+		GOE_GET_POWER: 'Get power',
+		GOE_GET_POWER_TITLE: 'Increase the overall power of heroes by the specified amount',
+		GOE_GET_POWER_MESSAGE:
 			`By spending sparks of power and gold you can get а maximum <span style="color: green;"> {maxHeroPawer} </span> units of hero power
             <br> Specify how much hero power you want to get`,
-        GOE_GOT_POWER: '<br> Received <span style="color: green;"> {gotPower} </span> hero power',
-        GOE_NOT_ENOUGH_GOLD:
-            `<br><br><span style="color: red;">Not enough gold</span> to get all available hero power
+		GOE_GOT_POWER: '<br> Received <span style="color: green;"> {gotPower} </span> hero power',
+		GOE_NOT_ENOUGH_GOLD:
+			`<br><br><span style="color: red;">Not enough gold</span> to get all available hero power
             <br> Heve gold: <span style="color: green;">{haveGold} </span> <br> Gold needed: <span style="color: red;"> {goldIsNeeded} </span>`,
-        GOE_AUTO_GET_POWER: 'Auto Get Power',
-        GOE_AUTO_GET_POWER_TITLE: 'Automatically get power when script loads',
-        GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount & Collect Rewards',
-        GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Amount of power to get automatically (0 = disabled)',
-        GOE_COLLECT_QUEST_REWARDS: 'Collect All Quest Rewards',
-        GOE_COLLECT_QUEST_REWARDS_TITLE: 'Manually collect all available quest rewards',
+		GOE_AUTO_GET_POWER: 'Auto Get Power',
+		GOE_AUTO_GET_POWER_TITLE: 'Automatically get power when script loads',
+		GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount & Collect Rewards',
+		GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Amount of power to get automatically (0 = disabled)',
+		GOE_COLLECT_QUEST_REWARDS: 'Collect All Quest Rewards',
+		GOE_COLLECT_QUEST_REWARDS_TITLE: 'Manually collect all available quest rewards',
 	};
 
 	i18nLangData['en'] = Object.assign(i18nLangData['en'], i18nLangDataEn);
@@ -94,13 +104,13 @@
 		GOE_SPEND_SPARKS_OF_POWER: 'Потратить "Искры мощи"',
 		GOE_SPEND_SPARKS_OF_POWER_TITLE: 'Потратить "Искры мощи"',
 		GOE_RESET_GIFTS: 'Сбросить "Дары стихий"',
-        GOE_RESET_GIFTS_LIGHT: 'Сбросить "Дары стихий" <br> <span style="color: aqua;"> 1 - 29 уровня </span>',
+		GOE_RESET_GIFTS_LIGHT: 'Сбросить "Дары стихий" <br> <span style="color: aqua;"> 1 - 29 уровня </span>',
 		GOE_RESET_GIFTS_LIGHT_TITLE: 'Сбросить "Дары стихий". Не сбрасывается 30 уровень дара стихий',
-        GOE_RESET_GIFTS_EXTREME: 'Сбросить "Дары стихий" <span style="color: red;"> 30 уровня </span>',
+		GOE_RESET_GIFTS_EXTREME: 'Сбросить "Дары стихий" <span style="color: red;"> 30 уровня </span>',
 		GOE_RESET_GIFTS_EXTREME_TITLE: 'Сбросить "Дары стихий". Нет ограничений уровня дара стихий',
 		GOE_SELECT_ACTION: 'Выберите действие',
 		GOE_NOTHING_TO_IMPROVE_LVL30: 'Нечего улучшать. Аккаунт не достиг 30 уровня команды',
-        GOE_NOTHING_TO_IMPROVE: 'Нечего улучшать. У всех героев максимальный уровень дара стихий',
+		GOE_NOTHING_TO_IMPROVE: 'Нечего улучшать. У всех героев максимальный уровень дара стихий',
 		GOE_SPEND_SPARKS_OF_POWER_MESSAGE:
 			'Доступно <span style="color: green;"> {titanGift} </span> искр мощи <br> Укажите сколько искр мощи потратить',
 		GOE_INCORRECT_VALUE: 'Некорректное значение',
@@ -110,9 +120,9 @@
 		GOE_GOLD_IS_GONE: '<br><span style="color: red;"> Закончилось золото </span>',
 		GOE_PROGRESS_OF_IMPROVEMENT_MESSAGE: 'Дар стихий улучшен до <span style="color: green;"> {titanGiftLevel} </span> уровня',
 		GOE_RESULT_OF_IMPROVEMENT: 'Дар стихий улучшен <span style="color: green;"> {counter} </span> раз(а)',
-        GOE_NOTHING_TO_RESET: 'Нечего сбрасывать',
+		GOE_NOTHING_TO_RESET: 'Нечего сбрасывать',
 		GOE_IMPOSSIBLE_TO_RESET: 'Нет героев с даром стихий меньше 30 уровня',
-        GOE_RESET_GIFTS_LIGHT_MESSAGE:
+		GOE_RESET_GIFTS_LIGHT_MESSAGE:
 			`Укажите <span style="color:red;"> максимальный </span> сбрасываемый уровень дара стихий
             <br> Диапазон от <span style="color: green;"> 1 </span> до <span style="color: green;"> 29 </span>`,
 		GOE_RESULT_RESET_GIFTS: 'Дар стихий сброшен у <span style="color: green;"> {counter} </span> героев(я)',
@@ -124,26 +134,26 @@
 			'У Вас нет героев с 30 уровнем дара стихий <br> Сбросить дары стихий меньшего уровня?',
 		GOE_EXTREME_RESULT_RESET_GIFTS:
 			'<br> <span style="color: green;"> {counter30} </span> из них <span style="color:green;">30</span> уровня',
-        GOE_GET_POWER: 'Увеличить мощь',
-        GOE_GET_POWER_TITLE: 'Увеличить общую мощи героев на указанное количество',
-        GOE_GET_POWER_MESSAGE:
+		GOE_GET_POWER: 'Увеличить мощь',
+		GOE_GET_POWER_TITLE: 'Увеличить общую мощи героев на указанное количество',
+		GOE_GET_POWER_MESSAGE:
 			`Потратив искры мощи и золото, вы можете получить максимум <span style="color: green;"> {maxHeroPawer} </span> единиц мощи героев
             <br> Укажите, сколько мощи героев необходимо получить`,
-        GOE_GOT_POWER: '<br> Получили мощи героев: <span style="color: green;"> {gotPower} </span>',
-        GOE_NOT_ENOUGH_GOLD:
+		GOE_GOT_POWER: '<br> Получили мощи героев: <span style="color: green;"> {gotPower} </span>',
+		GOE_NOT_ENOUGH_GOLD:
 			`<br><br><span style="color: red;">Не достаточно золота</span>, чтобы получить всю доступную мощь героев
 			<br> Имеем золота: <span style="color: green;">{haveGold}</span> <br> Необходимо золота: <span style="color: red;"> {goldIsNeeded} </span>`,
-        GOE_AUTO_GET_POWER: 'Авто получение мощи',
-        GOE_AUTO_GET_POWER_TITLE: 'Автоматически получать мощь при загрузке скрипта',
-        GOE_AUTO_GET_POWER_AMOUNT: 'Количество мощи для авто получения',
-        GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Количество мощи для автоматического получения (0 = отключено)',
-        GOE_COLLECT_QUEST_REWARDS: 'Собрать все награды за квесты',
-        GOE_COLLECT_QUEST_REWARDS_TITLE: 'Вручную собрать все доступные награды за квесты',
+		GOE_AUTO_GET_POWER: 'Авто получение мощи',
+		GOE_AUTO_GET_POWER_TITLE: 'Автоматически получать мощь при загрузке скрипта',
+		GOE_AUTO_GET_POWER_AMOUNT: 'Количество мощи для авто получения',
+		GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Количество мощи для автоматического получения (0 = отключено)',
+		GOE_COLLECT_QUEST_REWARDS: 'Собрать все награды за квесты',
+		GOE_COLLECT_QUEST_REWARDS_TITLE: 'Вручную собрать все доступные награды за квесты',
 	};
 
 	i18nLangData['ru'] = Object.assign(i18nLangData['ru'], i18nLangDataRu);
 
-	// Добавление настроек (чекбокс и инпут)
+	// Settings
 	const { checkboxes, inputs } = HWHData;
 	checkboxes.autoGetPower = {
 		get label() {
@@ -162,9 +172,53 @@
 		default: 0,
 	};
 
-	// Добавление кнопок в окно Разное
-	const { othersPopupButtons } = HWHData;
+	// Fix: Allow input of 0 in autoGetPowerAmount field
+	const fixInputValidation = setInterval(() => {
+		const { inputs } = HWHData;
+		if (inputs.autoGetPowerAmount?.input && HWHFuncs) {
+			clearInterval(fixInputValidation);
+			
+			const input = inputs.autoGetPowerAmount.input;
+			const inputName = 'autoGetPowerAmount';
+			let userEnteredValue = null;
+			
+			input.addEventListener('input', function () {
+				const rawValue = this.value;
+				const numValue = +rawValue;
+				if (rawValue === '' || !Number.isNaN(numValue)) {
+					userEnteredValue = rawValue === '' ? null : numValue;
+				}
+			}, true);
+			
+			input.addEventListener('input', function () {
+				setTimeout(() => {
+					const numValue = +this.value;
+					if (userEnteredValue === 0 && numValue !== 0) {
+						this.value = 0;
+						HWHFuncs.setSaveVal?.(inputName, 0);
+					} else if (userEnteredValue !== null && !Number.isNaN(userEnteredValue) && numValue !== userEnteredValue) {
+						this.value = userEnteredValue;
+						HWHFuncs.setSaveVal?.(inputName, userEnteredValue);
+					}
+				}, 0);
+			}, false);
+			
+			input.addEventListener('blur', function () {
+				const numValue = +this.value;
+				if (!Number.isNaN(numValue)) {
+					HWHFuncs.setSaveVal?.(inputName, numValue);
+					if (numValue === 0) {
+						this.value = 0;
+					}
+				}
+			});
+			
+			console.log(`%c${GM_info.script.name}: Fixed input validation to allow 0`, 'color: green');
+		}
+	}, 200);
 
+	// Menu buttons
+	const { othersPopupButtons } = HWHData;
 	othersPopupButtons.push({
 		get msg() {
 			return I18N('GIFT_OF_ELEMENTS');
@@ -190,9 +244,9 @@
 				result: async function () {
 					await spendSparksPower();
 				},
-                color: 'green',
+				color: 'green',
 			},
-            {
+			{
 				get msg() {
 					return I18N('GOE_GET_POWER');
 				},
@@ -202,7 +256,7 @@
 				result: async function () {
 					await getPower();
 				},
-                color: 'green',
+				color: 'green',
 			},
 			{
 				get msg() {
@@ -214,7 +268,7 @@
 				result: async function () {
 					await collectAllQuestRewards();
 				},
-                color: 'blue',
+				color: 'blue',
 			},
 			{
 				get msg() {
@@ -246,75 +300,106 @@
 		}
 	}
 
-    const powerLevel = [22, 22, 22, 22, 22, 66, 66, 66, 66, 66, 110, 110, 110, 110, 110, 154,
-                        154, 154, 154, 154, 198, 198, 198, 198, 198, 242, 242, 242, 242, 242 ];
-    // Получить мощь
-    async function getPower(targetPower = null) {
-		let [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+	// Helper: Validate user level and titan gift level
+	function validateUpgradeConditions(userLevel, minTitanGiftLevel, isAutoMode = false) {
+		if (userLevel < MIN_USER_LEVEL) {
+			if (!isAutoMode) {
+				confShow(`${I18N('GOE_NOTHING_TO_IMPROVE_LVL30')}`);
+			}
+			return false;
+		}
+		if (minTitanGiftLevel === MAX_TITAN_GIFT_LEVEL) {
+			if (!isAutoMode) {
+				confShow(`${I18N('GOE_NOTHING_TO_IMPROVE')}`);
+			}
+			return false;
+		}
+		return true;
+	}
+
+	// Helper: Calculate maximum possible power
+	function findMaximumPossiblePower(heroes, titanGift, titanGiftLib) {
+		const result = { maximumPowerWeCanGet: 0, needGoldToGetMaxPower: 0 };
+		let remainingTitanGift = titanGift;
+
+		for (let tGiftLvl = heroes[0].titanGiftLevel; tGiftLvl < MAX_TITAN_GIFT_LEVEL; tGiftLvl++) {
+			for (const hero of heroes) {
+				if (hero.titanGiftLevel > tGiftLvl) {
+					continue;
+				}
+				const nextLevelCost = titanGiftLib[tGiftLvl + 1].cost;
+				if (remainingTitanGift < nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT]) {
+					return result;
+				}
+				remainingTitanGift -= nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT];
+				result.maximumPowerWeCanGet += POWER_LEVEL[tGiftLvl];
+				result.needGoldToGetMaxPower += nextLevelCost.gold;
+			}
+		}
+		return result;
+	}
+
+	// Core upgrade logic (shared between getPower and spendSparksPower)
+	async function upgradeTitanGifts(options) {
+		const {
+			targetPower = null,
+			targetTitanGift = null,
+			isAutoMode = false,
+			showProgress = true,
+		} = options;
+
+		const [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
 		let heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
-        const heroSumPowerStart = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
+		const heroSumPowerStart = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
 		const titanGiftLib = lib.getData('titanGift');
-		let titanGift = inventory.consumable[24];
-		let titanGiftMax = titanGift;
+		let titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT];
+		const titanGiftMax = titanGift;
 		let gold = user.gold;
-		let userLevel = user.level;
+		const userLevel = user.level;
+		const minTitanGiftLevel = heroes[0].titanGiftLevel;
+
+		if (!validateUpgradeConditions(userLevel, minTitanGiftLevel, isAutoMode)) {
+			return;
+		}
+
+		// Determine target (power or titan gift amount)
+		let targetTitanGiftAmount = null;
+		let targetHeroPower = null;
+
+		if (targetPower !== null) {
+			targetHeroPower = targetPower;
+			const result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
+			if (targetHeroPower > result.maximumPowerWeCanGet) {
+				if (!isAutoMode) {
+					confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+				}
+				return;
+			}
+		} else if (targetTitanGift !== null) {
+			targetTitanGiftAmount = targetTitanGift;
+			if (targetTitanGiftAmount > titanGiftMax || targetTitanGiftAmount < 0) {
+				if (!isAutoMode) {
+					confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+				}
+				return;
+			}
+			titanGift = targetTitanGiftAmount;
+		}
+
 		let calls = [];
-		let minTitanGiftLevel = heroes[0].titanGiftLevel;
 		let titanGiftLevel = minTitanGiftLevel;
 		let titanGiftUpgradeCounter = 0;
 		let message = '';
+		let gotHeroPower = 0;
 
-		if (userLevel < 30) {
-			if (targetPower === null) {
-				confShow(`${I18N('GOE_NOTHING_TO_IMPROVE_LVL30')}`);
-			}
-			return;
+		if (showProgress) {
+			setProgress(I18N('GOE_IMPROVING_START'), false);
 		}
-        if (minTitanGiftLevel == 30) {
-            if (targetPower === null) {
-                confShow(`${I18N('GOE_NOTHING_TO_IMPROVE')}`);
-            }
-            return;
-        }
 
-        let result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
-        let maximumPowerWeCanGet = result.maximumPowerWeCanGet;
-        let needGoldToGetMaxPower = result.needGoldToGetMaxPower;
-        let notEnoughGold = '';
-        if (needGoldToGetMaxPower > gold) {
-            notEnoughGold = I18N('GOE_NOT_ENOUGH_GOLD', {haveGold: gold.toLocaleString(), goldIsNeeded: needGoldToGetMaxPower.toLocaleString() });
-        }
-
-        let needHeroPower;
-        if (targetPower !== null) {
-            // Auto-execution mode - use provided target power
-            needHeroPower = targetPower;
-        } else {
-            // Manual mode - show popup
-            needHeroPower = +(await popup.confirm(`${I18N('GOE_GET_POWER_MESSAGE', { maxHeroPawer: maximumPowerWeCanGet.toLocaleString() })} ${notEnoughGold}`, [
-			    { result: 0, isClose: true },
-			    { msg: `${I18N('GOE_GET_POWER')}`, isInput: true, default: maximumPowerWeCanGet, color: 'green' },
-                //{ msg: I18N('BTN_CANCEL'), result: 0, color: 'red' },
-		    ]));
-        }
-
-        if (needHeroPower == 0) {
-			return;
-		}
-		if (!needHeroPower || needHeroPower < 0 || needHeroPower > maximumPowerWeCanGet) {
-			if (targetPower !== null) {
-				// Auto-execution mode - silently return if invalid
-				return;
-			}
-			confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
-			return;
-		}
-        let gotHeroPower = 0;
-		setProgress(I18N('GOE_IMPROVING_START'), false);
 		let cycle = true;
 		while (cycle) {
 			for (const hero of heroes) {
-				if (titanGiftLevel >= 30) {
+				if (titanGiftLevel >= MAX_TITAN_GIFT_LEVEL) {
 					message += I18N('GOE_ALL_HEROES_HAVE_30LVL');
 					cycle = false;
 					break;
@@ -322,11 +407,15 @@
 				if (hero.titanGiftLevel > titanGiftLevel) {
 					break;
 				}
-				let nextLevelCost = titanGiftLib[hero.titanGiftLevel + 1].cost;
-				if (titanGift < nextLevelCost.consumable[24] || gold < nextLevelCost.gold) {
-					if (titanGiftUpgradeCounter == 0 && calls.length == 0) {
-						setProgress('', true);
-						if (targetPower === null) {
+				const nextLevelCost = titanGiftLib[hero.titanGiftLevel + 1].cost;
+				const costTitanGift = nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT];
+
+				if (titanGift < costTitanGift || gold < nextLevelCost.gold) {
+					if (titanGiftUpgradeCounter === 0 && calls.length === 0) {
+						if (showProgress) {
+							setProgress('', true);
+						}
+						if (!isAutoMode) {
 							confShow(`${I18N('GOE_NOT_ENOUGH_RESOURCES')}`);
 						}
 						return;
@@ -337,197 +426,206 @@
 					cycle = false;
 					break;
 				}
+
+				// Check if we've reached our target
+				if (targetHeroPower !== null) {
+					gotHeroPower += POWER_LEVEL[hero.titanGiftLevel];
+					if (gotHeroPower >= targetHeroPower) {
+						cycle = false;
+						break;
+					}
+				}
+
 				calls.push({ name: 'heroTitanGiftLevelUp', args: { heroId: hero.id } });
-				titanGift -= nextLevelCost.consumable[24];
+				titanGift -= costTitanGift;
 				gold -= nextLevelCost.gold;
-                gotHeroPower += powerLevel[hero.titanGiftLevel];
-                if (gotHeroPower >= needHeroPower) {
-                    cycle = false;
-                    break;
-                }
+
+				// Check if we've spent enough titan gift
+				if (targetTitanGiftAmount !== null && titanGift <= 0) {
+					cycle = false;
+					break;
+				}
 			}
-			if (calls.length >= 1) {
+
+			if (calls.length > 0) {
 				await Caller.send(calls);
 				titanGiftUpgradeCounter += calls.length;
 				heroGetAll = await new Caller('heroGetAll').execute();
 				heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
 				calls = [];
 				titanGiftLevel++;
-				setProgress(I18N('GOE_PROGRESS_OF_IMPROVEMENT_MESSAGE', { titanGiftLevel }), false);
+				if (showProgress) {
+					setProgress(I18N('GOE_PROGRESS_OF_IMPROVEMENT_MESSAGE', { titanGiftLevel }), false);
+				}
 			}
 		}
-        const heroSumPowerFinish = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
-        message += I18N('GOE_GOT_POWER', { gotPower: (heroSumPowerFinish - heroSumPowerStart).toLocaleString() });
-		//await new Promise((e) => setTimeout(e, 2000));
-		setProgress('', true);
-		if (targetPower === null) {
+
+		const heroSumPowerFinish = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
+		message += I18N('GOE_GOT_POWER', { gotPower: (heroSumPowerFinish - heroSumPowerStart).toLocaleString() });
+
+		if (showProgress) {
+			setProgress('', true);
+		}
+
+		if (!isAutoMode) {
 			confShow(`${I18N('GOE_RESULT_OF_IMPROVEMENT', { counter: titanGiftUpgradeCounter })} ${message}`);
 		}
 	}
 
-    function findMaximumPossiblePower(heroes, titanGift, titanGiftLib) {
-        let mass = {maximumPowerWeCanGet: 0, needGoldToGetMaxPower: 0};
-
-        for (let tGiftLvl = heroes[0].titanGiftLevel; tGiftLvl < 30; tGiftLvl++) {
-            for (let hero of heroes) {
-                if (hero.titanGiftLevel > tGiftLvl) {
-                    continue;
-                }
-                let nextLevelCost = titanGiftLib[tGiftLvl + 1].cost;
-                if (titanGift < nextLevelCost.consumable[24]) {
-                    return mass;
-                }
-                titanGift -= nextLevelCost.consumable[24];
-                mass.maximumPowerWeCanGet += powerLevel[tGiftLvl];
-                mass.needGoldToGetMaxPower += nextLevelCost.gold;
-            }
-        }
-        return mass;
-    }
-
-	// Потратить искры мощи
-	async function spendSparksPower() {
-		let [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
-		let heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
-        const heroSumPowerStart = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
+	// Get power (with target power amount)
+	async function getPower(targetPower = null) {
+		const [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+		const heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
 		const titanGiftLib = lib.getData('titanGift');
-		let titanGift = inventory.consumable[24];
-		let titanGiftMax = titanGift;
-		let gold = user.gold;
-		let userLevel = user.level;
-		let calls = [];
-		let minTitanGiftLevel = heroes[0].titanGiftLevel;
-		let titanGiftLevel = minTitanGiftLevel;
-		let titanGiftUpgradeCounter = 0;
-		let message = '';
+		const titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT];
+		const gold = user.gold;
+		const isAutoMode = targetPower !== null;
 
-		if (userLevel < 30) {
-			confShow(`${I18N('GOE_NOTHING_TO_IMPROVE_LVL30')}`);
-			return;
-		}
-        if (minTitanGiftLevel == 30) {
-            confShow(`${I18N('GOE_NOTHING_TO_IMPROVE')}`);
-            return;
-        }
-		titanGift = +(await popup.confirm(I18N('GOE_SPEND_SPARKS_OF_POWER_MESSAGE', { titanGift: titanGift.toLocaleString() }), [
-			{ result: 0, isClose: true },
-			{ msg: `${I18N('GOE_SPEND_SPARKS_OF_POWER')}`, isInput: true, default: titanGift.toString(), color: 'green' },
-            //{ msg: I18N('BTN_CANCEL'), result: 0, color: 'red' },
-		]));
-		if (titanGift == 0) {
-			return;
-		}
-		if (!titanGift || titanGift < 0 || titanGift > titanGiftMax) {
-			confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
-			return;
-		}
-		setProgress(I18N('GOE_IMPROVING_START'), false);
-		let cycle = true;
-		while (cycle) {
-			for (const hero of heroes) {
-				if (titanGiftLevel >= 30) {
-					message += I18N('GOE_ALL_HEROES_HAVE_30LVL');
-					cycle = false;
-					break;
-				}
-				if (hero.titanGiftLevel > titanGiftLevel) {
-					break;
-				}
-				let nextLevelCost = titanGiftLib[hero.titanGiftLevel + 1].cost;
-				if (titanGift < nextLevelCost.consumable[24] || gold < nextLevelCost.gold) {
-					if (titanGiftUpgradeCounter == 0 && calls.length == 0) {
-						setProgress('', true);
-						confShow(`${I18N('GOE_NOT_ENOUGH_RESOURCES')}`);
-						return;
-					}
-					if (gold < nextLevelCost.gold) {
-						message += I18N('GOE_GOLD_IS_GONE');
-					}
-					cycle = false;
-					break;
-				}
-				calls.push({ name: 'heroTitanGiftLevelUp', args: { heroId: hero.id } });
-				titanGift -= nextLevelCost.consumable[24];
-				gold -= nextLevelCost.gold;
+		if (isAutoMode) {
+			const result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
+			const notEnoughGold = result.needGoldToGetMaxPower > gold
+				? I18N('GOE_NOT_ENOUGH_GOLD', {
+					haveGold: gold.toLocaleString(),
+					goldIsNeeded: result.needGoldToGetMaxPower.toLocaleString()
+				})
+				: '';
+
+			if (targetPower === 0 || targetPower > result.maximumPowerWeCanGet) {
+				return;
 			}
-			if (calls.length >= 1) {
-				await Caller.send(calls);
-				titanGiftUpgradeCounter += calls.length;
-				heroGetAll = await new Caller(['heroGetAll']).execute();
-				heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
-				calls = [];
-				titanGiftLevel++;
-				setProgress(I18N('GOE_PROGRESS_OF_IMPROVEMENT_MESSAGE', { titanGiftLevel }), false);
+
+			await upgradeTitanGifts({
+				targetPower,
+				isAutoMode: true,
+				showProgress: false,
+			});
+		} else {
+			const result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
+			const notEnoughGold = result.needGoldToGetMaxPower > gold
+				? I18N('GOE_NOT_ENOUGH_GOLD', {
+					haveGold: gold.toLocaleString(),
+					goldIsNeeded: result.needGoldToGetMaxPower.toLocaleString()
+				})
+				: '';
+
+			const needHeroPower = +(await popup.confirm(
+				`${I18N('GOE_GET_POWER_MESSAGE', { maxHeroPawer: result.maximumPowerWeCanGet.toLocaleString() })} ${notEnoughGold}`,
+				[
+					{ result: 0, isClose: true },
+					{ msg: `${I18N('GOE_GET_POWER')}`, isInput: true, default: result.maximumPowerWeCanGet, color: 'green' },
+				]
+			));
+
+			if (needHeroPower === 0 || !needHeroPower || needHeroPower < 0 || needHeroPower > result.maximumPowerWeCanGet) {
+				if (needHeroPower !== 0) {
+					confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+				}
+				return;
 			}
+
+			await upgradeTitanGifts({
+				targetPower: needHeroPower,
+				isAutoMode: false,
+				showProgress: true,
+			});
 		}
-        const heroSumPowerFinish = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
-        message += I18N('GOE_GOT_POWER', { gotPower: (heroSumPowerFinish - heroSumPowerStart).toLocaleString() });
-		//await new Promise((e) => setTimeout(e, 2000));
-		setProgress('', true);
-		confShow(`${I18N('GOE_RESULT_OF_IMPROVEMENT', { counter: titanGiftUpgradeCounter })} ${message}`);
 	}
 
-	//Сбросить дары стихий
+	// Spend sparks of power
+	async function spendSparksPower() {
+		const [heroGetAll, inventory] = await new Caller(['heroGetAll', 'inventoryGet']).execute();
+		const heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
+		const titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT];
+		const titanGiftMax = titanGift;
+
+		const titanGiftAmount = +(await popup.confirm(
+			I18N('GOE_SPEND_SPARKS_OF_POWER_MESSAGE', { titanGift: titanGift.toLocaleString() }),
+			[
+				{ result: 0, isClose: true },
+				{ msg: `${I18N('GOE_SPEND_SPARKS_OF_POWER')}`, isInput: true, default: titanGift.toString(), color: 'green' },
+			]
+		));
+
+		if (titanGiftAmount === 0 || !titanGiftAmount || titanGiftAmount < 0 || titanGiftAmount > titanGiftMax) {
+			if (titanGiftAmount !== 0) {
+				confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+			}
+			return;
+		}
+
+		await upgradeTitanGifts({
+			targetTitanGift: titanGiftAmount,
+			isAutoMode: false,
+			showProgress: true,
+		});
+	}
+
+	// Reset titan gifts (level 1-29)
 	async function resetTitanGifts() {
 		const [heroGetAll, user] = await new Caller(['heroGetAll', 'userGetInfo']).execute();
 		const heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
 		const userLevel = user.level;
-		let calls = [];
 		let maxResetTitanGiftLevel = 0;
+
 		for (const hero of heroes) {
 			if (hero.titanGiftLevel > 0) {
 				maxResetTitanGiftLevel = hero.titanGiftLevel;
 				break;
 			}
 		}
-		if (userLevel < 30 || maxResetTitanGiftLevel == 0) {
+
+		if (userLevel < MIN_USER_LEVEL || maxResetTitanGiftLevel === 0) {
 			confShow(`${I18N('GOE_NOTHING_TO_RESET')}`);
 			return;
 		}
-		if (maxResetTitanGiftLevel == 30) {
+
+		if (maxResetTitanGiftLevel === MAX_TITAN_GIFT_LEVEL) {
 			confShow(`${I18N('GOE_IMPOSSIBLE_TO_RESET')}`);
 			return;
-		} else {
-			maxResetTitanGiftLevel = +(await popup.confirm(I18N('GOE_RESET_GIFTS_LIGHT_MESSAGE'), [
-				{ result: 0, isClose: true },
-				{ msg: I18N('GOE_RESET_GIFTS'), isInput: true, default: maxResetTitanGiftLevel.toString(), color: 'green' },
-                //{ msg: I18N('BTN_CANCEL'), result: 0, color: 'red' },
-			]));
 		}
-		if (maxResetTitanGiftLevel == 0) {
+
+		maxResetTitanGiftLevel = +(await popup.confirm(I18N('GOE_RESET_GIFTS_LIGHT_MESSAGE'), [
+			{ result: 0, isClose: true },
+			{ msg: I18N('GOE_RESET_GIFTS'), isInput: true, default: maxResetTitanGiftLevel.toString(), color: 'green' },
+		]));
+
+		if (maxResetTitanGiftLevel === 0 || !maxResetTitanGiftLevel || maxResetTitanGiftLevel < 0 || maxResetTitanGiftLevel > 29) {
+			if (maxResetTitanGiftLevel !== 0) {
+				confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+			}
 			return;
 		}
-		if (!maxResetTitanGiftLevel || maxResetTitanGiftLevel < 0 || maxResetTitanGiftLevel > 29) {
-			confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
-			return;
-		}
+
+		const calls = [];
 		for (const hero of heroes) {
-			if (hero.titanGiftLevel == 0) {
+			if (hero.titanGiftLevel === 0) {
 				continue;
 			}
-			if (hero.titanGiftLevel > maxResetTitanGiftLevel || hero.titanGiftLevel == 30) {
+			if (hero.titanGiftLevel > maxResetTitanGiftLevel || hero.titanGiftLevel === MAX_TITAN_GIFT_LEVEL) {
 				break;
 			}
 			calls.push({ name: 'heroTitanGiftDrop', args: { heroId: hero.id } });
 		}
-		if (calls.length == 0) {
+
+		if (calls.length === 0) {
 			confShow(`${I18N('GOE_NOTHING_TO_RESET')}`);
 			return;
 		}
+
 		await Caller.send(calls);
 		confShow(`${I18N('GOE_RESULT_RESET_GIFTS', { counter: calls.length })}`);
 	}
 
-	//Сбросить дары стихий 30 уровень
+	// Reset titan gifts level 30
 	async function resetTitanGifts30LVL() {
 		const [heroGetAll, user] = await new Caller(['heroGetAll', 'userGetInfo']).execute();
 		const heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
 		const userLevel = user.level;
-		const heroesLvl1_29 = Object.values(heroGetAll).filter((e) => e.titanGiftLevel > 0 && e.titanGiftLevel < 30);
+		const heroesLvl1_29 = Object.values(heroGetAll).filter((e) => e.titanGiftLevel > 0 && e.titanGiftLevel < MAX_TITAN_GIFT_LEVEL);
 		const heroesLvl30 = Object.values(heroGetAll)
-			.filter((e) => e.titanGiftLevel == 30)
+			.filter((e) => e.titanGiftLevel === MAX_TITAN_GIFT_LEVEL)
 			.sort((a, b) => a.power - b.power);
-		let calls = [];
+
 		let maxResetTitanGiftLevel = 0;
 		for (const hero of heroes) {
 			if (hero.titanGiftLevel > 0) {
@@ -535,15 +633,17 @@
 				break;
 			}
 		}
-		if (userLevel < 30 || maxResetTitanGiftLevel == 0) {
+
+		if (userLevel < MIN_USER_LEVEL || maxResetTitanGiftLevel === 0) {
 			confShow(`${I18N('GOE_NOTHING_TO_RESET')}`);
 			return;
 		}
-		let numberHeroesWithLevel1_29 = heroesLvl1_29.length;
-		let numberHeroesWithLevel30 = heroesLvl30.length;
+
+		const numberHeroesWithLevel30 = heroesLvl30.length;
 		let numberHeroesToReset = numberHeroesWithLevel30;
-		if (numberHeroesWithLevel30 == 0) {
-			let resultPopup = await popup.confirm(I18N('GOE_EXTREME_DO_NOT_HAVE_HERO_30LVL'), [
+
+		if (numberHeroesWithLevel30 === 0) {
+			const resultPopup = await popup.confirm(I18N('GOE_EXTREME_DO_NOT_HAVE_HERO_30LVL'), [
 				{ msg: I18N('GOE_RESET_GIFTS'), result: true, color: 'green' },
 				{ msg: I18N('BTN_CANCEL'), result: false, color: 'red' },
 				{ isClose: true, result: false },
@@ -555,31 +655,29 @@
 			numberHeroesToReset = +(await popup.confirm(I18N('GOE_RESET_GIFTS_EXTREME_MESSAGE', { level30: numberHeroesWithLevel30 }), [
 				{ result: 0, isClose: true },
 				{ msg: I18N('GOE_RESET_GIFTS'), isInput: true, default: numberHeroesToReset.toString(), color: 'green' },
-                //{ msg: I18N('BTN_CANCEL'), result: 0, color: 'red' },
 			]));
 
-            if (numberHeroesToReset == 0) {
-                return;
-            }
-			if (!numberHeroesToReset || numberHeroesToReset < 0 || numberHeroesToReset > numberHeroesWithLevel30) {
-				confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+			if (numberHeroesToReset === 0 || !numberHeroesToReset || numberHeroesToReset < 0 || numberHeroesToReset > numberHeroesWithLevel30) {
+				if (numberHeroesToReset !== 0) {
+					confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+				}
 				return;
 			}
 		}
 
-		// 1-29
+		const calls = [];
 		for (const hero of heroesLvl1_29) {
 			calls.push({ name: 'heroTitanGiftDrop', args: { heroId: hero.id } });
 		}
-		// 30
 		for (let i = 0; i < numberHeroesToReset; i++) {
 			calls.push({ name: 'heroTitanGiftDrop', args: { heroId: heroesLvl30[i].id } });
 		}
 
-		if (calls.length == 0) {
+		if (calls.length === 0) {
 			confShow(`${I18N('GOE_NOTHING_TO_RESET')}`);
 			return;
 		}
+
 		await Caller.send(calls);
 		confShow(
 			`${I18N('GOE_RESULT_RESET_GIFTS', { counter: calls.length })} ${I18N('GOE_EXTREME_RESULT_RESET_GIFTS', {
@@ -588,49 +686,33 @@
 		);
 	}
 
-	// Recursively collect all quest rewards until no more are available
-	// First calls questGetAll to get list of quests with state === 2, then collects each individually
+	// Collect all quest rewards
 	async function collectAllQuestRewards() {
 		try {
-			const farmQuestIds = [];
+			const farmQuestIds = new Set();
 			let totalCollected = 0;
 			let iteration = 0;
-			const maxIterations = 50; // Safety limit to prevent infinite loops
 
-			while (iteration < maxIterations) {
+			while (iteration < QUEST_COLLECTION_MAX_ITERATIONS) {
 				iteration++;
 				console.log(`%c${GM_info.script.name}: Quest collection iteration ${iteration}`, 'color: blue');
 
-				// Step 1: Call questGetAll to get all quests
 				const questGetAll = await new Caller('questGetAll').execute();
-				// Handle both array and object responses
 				const allQuests = Array.isArray(questGetAll) ? questGetAll : Object.values(questGetAll || {});
-
-				// Step 2: Filter for completed quests (state === 2)
-				const questsToFarm = allQuests.filter(q => q && typeof q === 'object' && q.state === 2);
+				const questsToFarm = allQuests.filter(q => q?.state === 2);
 
 				if (questsToFarm.length === 0) {
 					console.log(`%c${GM_info.script.name}: No more quests to collect`, 'color: green');
 					break;
 				}
 
-				// Step 3: Extract quest IDs and filter out already farmed ones
 				const questIdsToFarm = [];
 				for (const quest of questsToFarm) {
 					const questId = +quest.id;
-					
-					// Skip invalid quest IDs
-					if (!questId || isNaN(questId)) {
-						continue;
+					if (questId && !isNaN(questId) && !farmQuestIds.has(questId)) {
+						questIdsToFarm.push(questId);
+						farmQuestIds.add(questId);
 					}
-					
-					// Skip already farmed quests
-					if (farmQuestIds.includes(questId)) {
-						continue;
-					}
-
-					questIdsToFarm.push(questId);
-					farmQuestIds.push(questId); // Track to avoid duplicates
 				}
 
 				if (questIdsToFarm.length === 0) {
@@ -638,87 +720,72 @@
 					break;
 				}
 
-				// Step 4: Collect each quest individually using questFarm
+				// Batch quest collection for better performance
 				let successfulCount = 0;
 				let failedQuestIds = [];
-				let allSideResults = [];
+				const allSideResults = [];
 
-				for (const questId of questIdsToFarm) {
-					try {
-						// Call questFarm individually for each quest
-						const farmCaller = new Caller();
+				for (let i = 0; i < questIdsToFarm.length; i += QUEST_COLLECTION_BATCH_SIZE) {
+					const batch = questIdsToFarm.slice(i, i + QUEST_COLLECTION_BATCH_SIZE);
+					const farmCaller = new Caller();
+
+					for (const questId of batch) {
 						farmCaller.add({
 							name: 'questFarm',
 							args: { questId },
 						});
+					}
 
+					try {
 						const farmResults = await farmCaller.send();
-						
-						// Check for errors in side results
-						const sideResults = farmResults.sideResult('questFarm', true);
-						if (sideResults && sideResults.length > 0) {
-							const sideResult = sideResults[0];
-							
-							// Check if this quest call resulted in an error
-							if (sideResult && sideResult.error) {
+						const sideResults = farmResults.sideResult('questFarm', true) || [];
+
+						for (let j = 0; j < batch.length; j++) {
+							const questId = batch[j];
+							const sideResult = sideResults[j];
+
+							if (sideResult?.error) {
 								const error = sideResult.error;
 								const errorName = (typeof error === 'object' ? error.name : '') || '';
 								const errorDesc = (typeof error === 'object' ? error.description : String(error)) || '';
-								
-								// Skip quests that don't pass farm requirements
-								if (errorName === 'NotAvailable' || 
-								    errorDesc.includes('not pass farm requirements') ||
-								    errorDesc.includes('not available')) {
+
+								if (errorName === 'NotAvailable' ||
+									errorDesc.includes('not pass farm requirements') ||
+									errorDesc.includes('not available')) {
 									failedQuestIds.push(questId);
+									farmQuestIds.delete(questId);
 									console.log(`%c${GM_info.script.name}: Skipping quest ${questId} - ${errorDesc || errorName}`, 'color: orange');
-									// Remove from tracking so we don't try again
-									const index = farmQuestIds.indexOf(questId);
-									if (index > -1) {
-										farmQuestIds.splice(index, 1);
-									}
-									continue;
+								} else {
+									successfulCount++;
+									allSideResults.push(sideResult);
+								}
+							} else {
+								successfulCount++;
+								if (sideResult) {
+									allSideResults.push(sideResult);
 								}
 							}
-							
-							// No error, quest was successfully farmed
-							successfulCount++;
-							allSideResults.push(sideResult);
-						} else {
-							// No side results - assume success
-							successfulCount++;
 						}
 					} catch (error) {
-						// If send() throws an error, try to extract quest ID
-						console.error(`%c${GM_info.script.name}: Error farming quest ${questId}:`, 'color: red', error);
-						
+						console.error(`%c${GM_info.script.name}: Error farming quest batch:`, 'color: red', error);
 						const errorMessage = error.message || error.toString() || '';
-						const isNotAvailableError = errorMessage.includes('NotAvailable') || 
-						                              errorMessage.includes('not pass farm requirements') ||
-						                              errorMessage.includes('not available');
-						
-						if (isNotAvailableError) {
-							// Skip this quest and continue with others
-							failedQuestIds.push(questId);
-							console.log(`%c${GM_info.script.name}: Skipping quest ${questId} - ${errorMessage}`, 'color: orange');
-							const index = farmQuestIds.indexOf(questId);
-							if (index > -1) {
-								farmQuestIds.splice(index, 1);
-							}
-						} else {
-							// Unknown error - log but continue
-							console.error(`%c${GM_info.script.name}: Quest ${questId} failed with unknown error: ${errorMessage}`, 'color: red');
-							failedQuestIds.push(questId);
-							const index = farmQuestIds.indexOf(questId);
-							if (index > -1) {
-								farmQuestIds.splice(index, 1);
+						const isNotAvailableError = errorMessage.includes('NotAvailable') ||
+							errorMessage.includes('not pass farm requirements') ||
+							errorMessage.includes('not available');
+
+						for (const questId of batch) {
+							if (isNotAvailableError) {
+								failedQuestIds.push(questId);
+								farmQuestIds.delete(questId);
 							}
 						}
 					}
-					
-					// Small delay between individual quest calls
-					await new Promise(resolve => setTimeout(resolve, 100));
+
+					if (i + QUEST_COLLECTION_BATCH_SIZE < questIdsToFarm.length) {
+						await new Promise(resolve => setTimeout(resolve, QUEST_COLLECTION_DELAY));
+					}
 				}
-				
+
 				totalCollected += successfulCount;
 				if (successfulCount > 0) {
 					console.log(`%c${GM_info.script.name}: Collected ${successfulCount} quest reward(s)`, 'color: green');
@@ -727,16 +794,16 @@
 					console.log(`%c${GM_info.script.name}: Skipped ${failedQuestIds.length} quest(s) that don't meet farm requirements`, 'color: orange');
 				}
 
-				// Check for newly unlocked quests in side results
+				// Check for newly unlocked quests
 				let hasNewQuests = false;
 				for (const sideResult of allSideResults) {
 					if (!sideResult) continue;
-					
+
 					const quests = [...(sideResult.newQuests ?? []), ...(sideResult.quests ?? [])];
 					for (const quest of quests) {
-						if (quest && typeof quest === 'object' && quest.state === 2) {
+						if (quest?.state === 2) {
 							const newQuestId = +quest.id;
-							if (newQuestId && !farmQuestIds.includes(newQuestId)) {
+							if (newQuestId && !farmQuestIds.has(newQuestId)) {
 								hasNewQuests = true;
 								break;
 							}
@@ -745,17 +812,15 @@
 					if (hasNewQuests) break;
 				}
 
-				// Small delay before next iteration to allow server to process
-				await new Promise(resolve => setTimeout(resolve, 200));
+				await new Promise(resolve => setTimeout(resolve, QUEST_COLLECTION_DELAY * 2));
 
-				// If no new quests were unlocked and we collected nothing, we're done
 				if (!hasNewQuests && successfulCount === 0) {
 					break;
 				}
 			}
 
-			if (iteration >= maxIterations) {
-				console.warn(`%c${GM_info.script.name}: Quest collection reached max iterations (${maxIterations})`, 'color: orange');
+			if (iteration >= QUEST_COLLECTION_MAX_ITERATIONS) {
+				console.warn(`%c${GM_info.script.name}: Quest collection reached max iterations (${QUEST_COLLECTION_MAX_ITERATIONS})`, 'color: orange');
 			}
 
 			if (totalCollected > 0) {
@@ -767,66 +832,39 @@
 			return totalCollected;
 		} catch (error) {
 			console.error(`%c${GM_info.script.name}: Error collecting quest rewards:`, 'color: red', error);
-			console.error(error);
 			return 0;
 		}
 	}
 
-	// Auto-execute getPower on script load if enabled
-	// Wait for HWH UI to be fully ready before checking settings
+	// Auto-execution on script load
 	let checkCount = 0;
 	const waitForHWHReady = setInterval(() => {
 		checkCount++;
-		if (checkCount > 100) {
-			// Timeout after 20 seconds (100 * 200ms)
+		if (checkCount > AUTO_EXECUTION_TIMEOUT) {
 			clearInterval(waitForHWHReady);
-			console.log(`%c${GM_info.script.name}: Auto-execution timeout - HWH not ready after 20 seconds`, 'color: red');
+			console.log(`%c${GM_info.script.name}: Auto-execution timeout - HWH not ready after ${AUTO_EXECUTION_TIMEOUT * 0.2}s`, 'color: red');
 			return;
 		}
-		
-		if (this.HWHClasses && this.HWHClasses.ScriptMenu && HWHFuncs && lib && cheats) {
+
+		if (this.HWHClasses?.ScriptMenu && HWHFuncs && lib && cheats) {
 			const scriptMenu = this.HWHClasses.ScriptMenu.getInst();
-			if (scriptMenu && scriptMenu.mainMenu) {
+			if (scriptMenu?.mainMenu) {
 				clearInterval(waitForHWHReady);
 				console.log(`%c${GM_info.script.name}: HWH UI is ready, checking auto-execution settings...`, 'color: blue');
-				
-				// Wait a bit more to ensure settings are loaded
+
 				setTimeout(async () => {
 					try {
 						const { getSaveVal } = HWHFuncs;
-						
-						// Try to get settings, with fallback to localStorage
 						let autoGetPower = getSaveVal('autoGetPower', false);
 						let autoGetPowerAmount = getSaveVal('autoGetPowerAmount', 0);
-						
-						// Fallback: check localStorage directly
-						if (autoGetPowerAmount === 0) {
-							const lsKey = `${GM_info.script.name}:autoGetPowerAmount`;
-							const lsValue = localStorage.getItem(lsKey);
-							if (lsValue !== null) {
-								autoGetPowerAmount = parseInt(lsValue, 10) || 0;
-								console.log(`%c${GM_info.script.name}: Found autoGetPowerAmount in localStorage: ${autoGetPowerAmount}`, 'color: cyan');
-							}
-						}
-						
-						if (!autoGetPower) {
-							const lsKey = `${GM_info.script.name}:autoGetPower`;
-							const lsValue = localStorage.getItem(lsKey);
-							if (lsValue !== null) {
-								autoGetPower = lsValue === 'true';
-								console.log(`%c${GM_info.script.name}: Found autoGetPower in localStorage: ${autoGetPower}`, 'color: cyan');
-							}
-						}
-						
+
 						console.log(`%c${GM_info.script.name}: Auto-execution check - enabled: ${autoGetPower}, amount: ${autoGetPowerAmount}`, 'color: blue');
-						
+
 						if (autoGetPower) {
-							// If amount > 0, get power first
 							if (autoGetPowerAmount > 0) {
 								console.log(`%c${GM_info.script.name}: Auto-executing getPower with target: ${autoGetPowerAmount}`, 'color: green');
 								await getPower(autoGetPowerAmount);
 							}
-							// Always collect quest rewards when auto-execution is enabled
 							console.log(`%c${GM_info.script.name}: Auto-executing quest reward collection...`, 'color: green');
 							await collectAllQuestRewards();
 							console.log(`%c${GM_info.script.name}: Auto-execution completed`, 'color: green');
@@ -835,18 +873,13 @@
 						}
 					} catch (error) {
 						console.error(`%c${GM_info.script.name}: Auto-execution error:`, 'color: red', error);
-						console.error(error);
 					}
-				}, 3000);
-			} else {
-				if (checkCount % 10 === 0) {
-					console.log(`%c${GM_info.script.name}: Waiting for HWH mainMenu... (check ${checkCount})`, 'color: gray');
-				}
+				}, AUTO_EXECUTION_DELAY);
+			} else if (checkCount % 10 === 0) {
+				console.log(`%c${GM_info.script.name}: Waiting for HWH mainMenu... (check ${checkCount})`, 'color: gray');
 			}
-		} else {
-			if (checkCount % 10 === 0) {
-				console.log(`%c${GM_info.script.name}: Waiting for HWH components... (check ${checkCount})`, 'color: gray');
-			}
+		} else if (checkCount % 10 === 0) {
+			console.log(`%c${GM_info.script.name}: Waiting for HWH components... (check ${checkCount})`, 'color: gray');
 		}
 	}, 200);
 })();
