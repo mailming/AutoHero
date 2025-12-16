@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         3.9.3
+// @version         3.9.5
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -82,6 +82,8 @@
         GOE_AUTO_GET_POWER_TITLE: 'Automatically get power when script loads',
         GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount & Collect Rewards',
         GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Amount of power to get automatically (0 = disabled)',
+        GOE_COLLECT_QUEST_REWARDS: 'Collect All Quest Rewards',
+        GOE_COLLECT_QUEST_REWARDS_TITLE: 'Manually collect all available quest rewards',
 	};
 
 	i18nLangData['en'] = Object.assign(i18nLangData['en'], i18nLangDataEn);
@@ -135,6 +137,8 @@
         GOE_AUTO_GET_POWER_TITLE: 'Автоматически получать мощь при загрузке скрипта',
         GOE_AUTO_GET_POWER_AMOUNT: 'Количество мощи для авто получения',
         GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Количество мощи для автоматического получения (0 = отключено)',
+        GOE_COLLECT_QUEST_REWARDS: 'Собрать все награды за квесты',
+        GOE_COLLECT_QUEST_REWARDS_TITLE: 'Вручную собрать все доступные награды за квесты',
 	};
 
 	i18nLangData['ru'] = Object.assign(i18nLangData['ru'], i18nLangDataRu);
@@ -199,6 +203,18 @@
 					await getPower();
 				},
                 color: 'green',
+			},
+			{
+				get msg() {
+					return I18N('GOE_COLLECT_QUEST_REWARDS');
+				},
+				get title() {
+					return I18N('GOE_COLLECT_QUEST_REWARDS_TITLE');
+				},
+				result: async function () {
+					await collectAllQuestRewards();
+				},
+                color: 'blue',
 			},
 			{
 				get msg() {
@@ -661,9 +677,10 @@
 				// Collect rewards with error handling
 				let successfulCount = 0;
 				let failedQuestIds = [];
+				let farmResults = null;
 				
 				try {
-					const farmResults = await farmCaller.send();
+					farmResults = await farmCaller.send();
 					
 					// Check for response-level errors (from Send response)
 					// These would be caught by Caller.handleError, but we check sideResults for individual errors
@@ -735,19 +752,45 @@
 					
 					// Try to extract quest ID from error for logging (if it's a response-level error)
 					let failedQuestId = null;
-					if (error && typeof error === 'object') {
-						if (error.call && error.call.args && error.call.args.questId) {
-							failedQuestId = error.call.args.questId;
-						} else if (error.description) {
-							const match = error.description.match(/Quest #(\d+)/);
-							if (match) {
-								failedQuestId = parseInt(match[1], 10);
+					if (error) {
+						// Check error message for quest ID pattern
+						const errorMessage = error.message || error.toString() || '';
+						const match = errorMessage.match(/Quest #(\d+)/);
+						if (match) {
+							failedQuestId = parseInt(match[1], 10);
+						}
+						
+						// Also check error object properties
+						if (!failedQuestId && typeof error === 'object') {
+							if (error.call && error.call.args && error.call.args.questId) {
+								failedQuestId = error.call.args.questId;
+							} else if (error.description) {
+								const descMatch = error.description.match(/Quest #(\d+)/);
+								if (descMatch) {
+									failedQuestId = parseInt(descMatch[1], 10);
+								}
 							}
 						}
 					}
 					
-					if (failedQuestId) {
-						console.log(`%c${GM_info.script.name}: Quest ${failedQuestId} failed - ${error.description || error.name || 'Unknown error'}`, 'color: orange');
+					// Check if this is a "NotAvailable" error that we should skip
+					const errorMessage = error.message || error.toString() || '';
+					const isNotAvailableError = errorMessage.includes('NotAvailable') || 
+					                              errorMessage.includes('not pass farm requirements') ||
+					                              errorMessage.includes('not available');
+					
+					if (failedQuestId && isNotAvailableError) {
+						// Single quest failed with NotAvailable - skip it and continue
+						console.log(`%c${GM_info.script.name}: Skipping quest ${failedQuestId} - ${errorMessage}`, 'color: orange');
+						failedQuestIds.push(failedQuestId);
+						const index = farmQuestIds.indexOf(failedQuestId);
+						if (index > -1) {
+							farmQuestIds.splice(index, 1);
+						}
+						// Don't mark all quests as failed - just skip this one
+					} else if (failedQuestId) {
+						// Single quest failed with unknown error
+						console.log(`%c${GM_info.script.name}: Quest ${failedQuestId} failed - ${errorMessage}`, 'color: orange');
 						failedQuestIds.push(failedQuestId);
 						const index = farmQuestIds.indexOf(failedQuestId);
 						if (index > -1) {
@@ -781,23 +824,25 @@
 					console.log(`%c${GM_info.script.name}: Skipped ${failedQuestIds.length} quest(s) that don't meet farm requirements`, 'color: orange');
 				}
 
-				// Check for newly unlocked quests in side results
-				const sideResult = farmResults.sideResult('questFarm', true);
-				sideResult.push(...farmResults.sideResult('quest_questsFarm', true));
-
+				// Check for newly unlocked quests in side results (only if farmResults exists)
 				let hasNewQuests = false;
-				for (const side of sideResult) {
-					const quests = [...(side.newQuests ?? []), ...(side.quests ?? [])];
-					for (const quest of quests) {
-						if (quest && typeof quest === 'object' && quest.state === 2) {
-							const newQuestId = +quest.id;
-							if (newQuestId && !farmQuestIds.includes(newQuestId)) {
-								hasNewQuests = true;
-								break;
+				if (farmResults) {
+					const sideResult = farmResults.sideResult('questFarm', true);
+					sideResult.push(...farmResults.sideResult('quest_questsFarm', true));
+
+					for (const side of sideResult) {
+						const quests = [...(side.newQuests ?? []), ...(side.quests ?? [])];
+						for (const quest of quests) {
+							if (quest && typeof quest === 'object' && quest.state === 2) {
+								const newQuestId = +quest.id;
+								if (newQuestId && !farmQuestIds.includes(newQuestId)) {
+									hasNewQuests = true;
+									break;
+								}
 							}
 						}
+						if (hasNewQuests) break;
 					}
-					if (hasNewQuests) break;
 				}
 
 				// Small delay before next iteration to allow server to process
