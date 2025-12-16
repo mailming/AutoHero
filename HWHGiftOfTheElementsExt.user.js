@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         3.9.5
+// @version         3.9.6
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -589,7 +589,7 @@
 	}
 
 	// Recursively collect all quest rewards until no more are available
-	// NO filter - collects all quests with state === 2 regardless of ID
+	// First calls questGetAll to get list of quests with state === 2, then collects each individually
 	async function collectAllQuestRewards() {
 		try {
 			const farmQuestIds = [];
@@ -601,12 +601,12 @@
 				iteration++;
 				console.log(`%c${GM_info.script.name}: Quest collection iteration ${iteration}`, 'color: blue');
 
-				// Get all quests with NO filter
+				// Step 1: Call questGetAll to get all quests
 				const questGetAll = await new Caller('questGetAll').execute();
 				// Handle both array and object responses
 				const allQuests = Array.isArray(questGetAll) ? questGetAll : Object.values(questGetAll || {});
 
-				// Filter only for completed quests (state === 2) - NO other filters
+				// Step 2: Filter for completed quests (state === 2)
 				const questsToFarm = allQuests.filter(q => q && typeof q === 'object' && q.state === 2);
 
 				if (questsToFarm.length === 0) {
@@ -614,10 +614,8 @@
 					break;
 				}
 
-				// Separate quests by ID range for efficient batch collection
-				const regularQuestIds = [];
-				const specialQuestIds = [];
-
+				// Step 3: Extract quest IDs and filter out already farmed ones
+				const questIdsToFarm = [];
 				for (const quest of questsToFarm) {
 					const questId = +quest.id;
 					
@@ -631,189 +629,94 @@
 						continue;
 					}
 
-					// Regular quests (id < 1e6) - collect individually
-					if (questId < 1e6) {
-						regularQuestIds.push(questId);
-					}
-					// Special quests (id >= 2e7 && id < 2001e4) - batch collect
-					else if (questId >= 2e7 && questId < 2001e4) {
-						specialQuestIds.push(questId);
-					}
-					// Other quests - collect individually (NO filter, collect all)
-					else {
-						regularQuestIds.push(questId);
-					}
+					questIdsToFarm.push(questId);
+					farmQuestIds.push(questId); // Track to avoid duplicates
 				}
 
-				if (regularQuestIds.length === 0 && specialQuestIds.length === 0) {
+				if (questIdsToFarm.length === 0) {
 					console.log(`%c${GM_info.script.name}: All available quests already collected`, 'color: green');
 					break;
 				}
 
-				const farmCaller = new Caller();
-
-				// Add regular quests individually
-				for (const questId of regularQuestIds) {
-					farmCaller.add({
-						name: 'questFarm',
-						args: { questId },
-					});
-					farmQuestIds.push(questId);
-				}
-
-				// Add special quests in batch
-				if (specialQuestIds.length > 0) {
-					farmCaller.add({
-						name: 'quest_questsFarm',
-						args: { questIds: specialQuestIds },
-					});
-					specialQuestIds.forEach(id => farmQuestIds.push(id));
-				}
-
-				if (farmCaller.isEmpty()) {
-					break;
-				}
-
-				// Collect rewards with error handling
+				// Step 4: Collect each quest individually using questFarm
 				let successfulCount = 0;
 				let failedQuestIds = [];
-				let farmResults = null;
-				
-				try {
-					farmResults = await farmCaller.send();
-					
-					// Check for response-level errors (from Send response)
-					// These would be caught by Caller.handleError, but we check sideResults for individual errors
-					
-					// Check individual questFarm results using sideResults
-					const questFarmSideResults = farmResults.sideResults['questFarm'] || [];
-					for (let i = 0; i < regularQuestIds.length; i++) {
-						const questId = regularQuestIds[i];
-						const sideResult = questFarmSideResults[i];
+				let allSideResults = [];
+
+				for (const questId of questIdsToFarm) {
+					try {
+						// Call questFarm individually for each quest
+						const farmCaller = new Caller();
+						farmCaller.add({
+							name: 'questFarm',
+							args: { questId },
+						});
+
+						const farmResults = await farmCaller.send();
 						
-						// Check if this quest call resulted in an error
-						if (sideResult && sideResult.error) {
-							const error = sideResult.error;
-							const errorName = (typeof error === 'object' ? error.name : '') || '';
-							const errorDesc = (typeof error === 'object' ? error.description : String(error)) || '';
+						// Check for errors in side results
+						const sideResults = farmResults.sideResult('questFarm', true);
+						if (sideResults && sideResults.length > 0) {
+							const sideResult = sideResults[0];
 							
-							// Skip quests that don't pass farm requirements
-							if (errorName === 'NotAvailable' || 
-							    errorDesc.includes('not pass farm requirements') ||
-							    errorDesc.includes('not available')) {
-								failedQuestIds.push(questId);
-								console.log(`%c${GM_info.script.name}: Skipping quest ${questId} - ${errorDesc || errorName}`, 'color: orange');
-								// Remove from tracking so we don't try again
-								const index = farmQuestIds.indexOf(questId);
-								if (index > -1) {
-									farmQuestIds.splice(index, 1);
-								}
-							}
-						} else {
-							// No error, quest was successfully farmed
-							successfulCount++;
-						}
-					}
-					
-					// Check batch quest_questsFarm results
-					const questsFarmSideResults = farmResults.sideResults['quest_questsFarm'] || [];
-					if (questsFarmSideResults.length > 0 && specialQuestIds.length > 0) {
-						const batchResult = questsFarmSideResults[0];
-						if (batchResult && batchResult.error) {
-							const error = batchResult.error;
-							const errorName = (typeof error === 'object' ? error.name : '') || '';
-							const errorDesc = (typeof error === 'object' ? error.description : String(error)) || '';
-							
-							// If batch failed, we can't determine which specific quests failed
-							// So we'll skip all of them for this iteration
-							if (errorName === 'NotAvailable' || 
-							    errorDesc.includes('not pass farm requirements') ||
-							    errorDesc.includes('not available')) {
-								console.log(`%c${GM_info.script.name}: Batch quest collection failed - ${errorDesc || errorName}`, 'color: orange');
-								specialQuestIds.forEach(id => {
-									failedQuestIds.push(id);
-									const index = farmQuestIds.indexOf(id);
+							// Check if this quest call resulted in an error
+							if (sideResult && sideResult.error) {
+								const error = sideResult.error;
+								const errorName = (typeof error === 'object' ? error.name : '') || '';
+								const errorDesc = (typeof error === 'object' ? error.description : String(error)) || '';
+								
+								// Skip quests that don't pass farm requirements
+								if (errorName === 'NotAvailable' || 
+								    errorDesc.includes('not pass farm requirements') ||
+								    errorDesc.includes('not available')) {
+									failedQuestIds.push(questId);
+									console.log(`%c${GM_info.script.name}: Skipping quest ${questId} - ${errorDesc || errorName}`, 'color: orange');
+									// Remove from tracking so we don't try again
+									const index = farmQuestIds.indexOf(questId);
 									if (index > -1) {
 										farmQuestIds.splice(index, 1);
 									}
-								});
-							}
-						} else {
-							// Batch succeeded
-							successfulCount += specialQuestIds.length;
-						}
-					} else if (specialQuestIds.length > 0) {
-						// No side results but we had special quests - assume success
-						successfulCount += specialQuestIds.length;
-					}
-				} catch (error) {
-					// If send() throws an error (network, fatal errors, etc.), log it
-					console.error(`%c${GM_info.script.name}: Error during quest farming:`, 'color: red', error);
-					
-					// Try to extract quest ID from error for logging (if it's a response-level error)
-					let failedQuestId = null;
-					if (error) {
-						// Check error message for quest ID pattern
-						const errorMessage = error.message || error.toString() || '';
-						const match = errorMessage.match(/Quest #(\d+)/);
-						if (match) {
-							failedQuestId = parseInt(match[1], 10);
-						}
-						
-						// Also check error object properties
-						if (!failedQuestId && typeof error === 'object') {
-							if (error.call && error.call.args && error.call.args.questId) {
-								failedQuestId = error.call.args.questId;
-							} else if (error.description) {
-								const descMatch = error.description.match(/Quest #(\d+)/);
-								if (descMatch) {
-									failedQuestId = parseInt(descMatch[1], 10);
+									continue;
 								}
 							}
+							
+							// No error, quest was successfully farmed
+							successfulCount++;
+							allSideResults.push(sideResult);
+						} else {
+							// No side results - assume success
+							successfulCount++;
 						}
-					}
-					
-					// Check if this is a "NotAvailable" error that we should skip
-					const errorMessage = error.message || error.toString() || '';
-					const isNotAvailableError = errorMessage.includes('NotAvailable') || 
-					                              errorMessage.includes('not pass farm requirements') ||
-					                              errorMessage.includes('not available');
-					
-					if (failedQuestId && isNotAvailableError) {
-						// Single quest failed with NotAvailable - skip it and continue
-						console.log(`%c${GM_info.script.name}: Skipping quest ${failedQuestId} - ${errorMessage}`, 'color: orange');
-						failedQuestIds.push(failedQuestId);
-						const index = farmQuestIds.indexOf(failedQuestId);
-						if (index > -1) {
-							farmQuestIds.splice(index, 1);
-						}
-						// Don't mark all quests as failed - just skip this one
-					} else if (failedQuestId) {
-						// Single quest failed with unknown error
-						console.log(`%c${GM_info.script.name}: Quest ${failedQuestId} failed - ${errorMessage}`, 'color: orange');
-						failedQuestIds.push(failedQuestId);
-						const index = farmQuestIds.indexOf(failedQuestId);
-						if (index > -1) {
-							farmQuestIds.splice(index, 1);
-						}
-					} else {
-						// Can't determine which quest failed, mark all as failed for this iteration
-						// (This is safer than assuming some succeeded)
-						regularQuestIds.forEach(id => {
-							failedQuestIds.push(id);
-							const index = farmQuestIds.indexOf(id);
+					} catch (error) {
+						// If send() throws an error, try to extract quest ID
+						console.error(`%c${GM_info.script.name}: Error farming quest ${questId}:`, 'color: red', error);
+						
+						const errorMessage = error.message || error.toString() || '';
+						const isNotAvailableError = errorMessage.includes('NotAvailable') || 
+						                              errorMessage.includes('not pass farm requirements') ||
+						                              errorMessage.includes('not available');
+						
+						if (isNotAvailableError) {
+							// Skip this quest and continue with others
+							failedQuestIds.push(questId);
+							console.log(`%c${GM_info.script.name}: Skipping quest ${questId} - ${errorMessage}`, 'color: orange');
+							const index = farmQuestIds.indexOf(questId);
 							if (index > -1) {
 								farmQuestIds.splice(index, 1);
 							}
-						});
-						specialQuestIds.forEach(id => {
-							failedQuestIds.push(id);
-							const index = farmQuestIds.indexOf(id);
+						} else {
+							// Unknown error - log but continue
+							console.error(`%c${GM_info.script.name}: Quest ${questId} failed with unknown error: ${errorMessage}`, 'color: red');
+							failedQuestIds.push(questId);
+							const index = farmQuestIds.indexOf(questId);
 							if (index > -1) {
 								farmQuestIds.splice(index, 1);
 							}
-						});
+						}
 					}
+					
+					// Small delay between individual quest calls
+					await new Promise(resolve => setTimeout(resolve, 100));
 				}
 				
 				totalCollected += successfulCount;
@@ -824,25 +727,22 @@
 					console.log(`%c${GM_info.script.name}: Skipped ${failedQuestIds.length} quest(s) that don't meet farm requirements`, 'color: orange');
 				}
 
-				// Check for newly unlocked quests in side results (only if farmResults exists)
+				// Check for newly unlocked quests in side results
 				let hasNewQuests = false;
-				if (farmResults) {
-					const sideResult = farmResults.sideResult('questFarm', true);
-					sideResult.push(...farmResults.sideResult('quest_questsFarm', true));
-
-					for (const side of sideResult) {
-						const quests = [...(side.newQuests ?? []), ...(side.quests ?? [])];
-						for (const quest of quests) {
-							if (quest && typeof quest === 'object' && quest.state === 2) {
-								const newQuestId = +quest.id;
-								if (newQuestId && !farmQuestIds.includes(newQuestId)) {
-									hasNewQuests = true;
-									break;
-								}
+				for (const sideResult of allSideResults) {
+					if (!sideResult) continue;
+					
+					const quests = [...(sideResult.newQuests ?? []), ...(sideResult.quests ?? [])];
+					for (const quest of quests) {
+						if (quest && typeof quest === 'object' && quest.state === 2) {
+							const newQuestId = +quest.id;
+							if (newQuestId && !farmQuestIds.includes(newQuestId)) {
+								hasNewQuests = true;
+								break;
 							}
 						}
-						if (hasNewQuests) break;
 					}
+					if (hasNewQuests) break;
 				}
 
 				// Small delay before next iteration to allow server to process
