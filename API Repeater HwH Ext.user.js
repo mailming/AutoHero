@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Repeater HwH Ext
 // @namespace    HeroWarsHelper.APIRepeater
-// @version      1.0
+// @version      1.1
 // @description  Record and replay API calls with customizable metadata and auto-execution
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -280,6 +280,7 @@
         recordings = recordings.filter(rec => rec && rec.id && rec.apiCalls && Array.isArray(rec.apiCalls));
         
         // Check expiration and disable auto-run for expired recordings
+        // Also ensure repeatCount exists (default to 1 for old recordings)
         const now = Date.now();
         let hasChanges = false;
         recordings.forEach(rec => {
@@ -288,6 +289,11 @@
                     rec.autoRun = false;
                     hasChanges = true;
                 }
+            }
+            // Ensure repeatCount exists (migration for old recordings)
+            if (rec.repeatCount === undefined || rec.repeatCount === null || rec.repeatCount < 1) {
+                rec.repeatCount = 1;
+                hasChanges = true;
             }
         });
         
@@ -375,7 +381,7 @@
         updateRecordingButton();
     }
 
-    function createRecording(name, description, expirationDays, autoRun) {
+    function createRecording(name, description, expirationDays, autoRun, repeatCount) {
         // Filter out any skipped API calls as a safety measure
         const filteredCalls = recordingBuffer.filter(call => {
             if (!call || !call.name) return false;
@@ -390,6 +396,7 @@
             expirationDays: expirationDays || 0,
             expiresAt: expirationDays > 0 ? Date.now() + (expirationDays * 24 * 60 * 60 * 1000) : null,
             autoRun: autoRun || false,
+            repeatCount: repeatCount || 1,
             apiCalls: filteredCalls
         };
         
@@ -437,72 +444,98 @@
             return;
         }
 
-        HWHFuncs.setProgress(`API Repeater: Executing ${recording.name}...`, true);
+        // Get repeat count (default to 1 if not set)
+        const repeatCount = recording.repeatCount || 1;
         
-        let successCount = 0;
-        let failureCount = 0;
-        const errors = [];
+        HWHFuncs.setProgress(`API Repeater: Executing ${recording.name} (${repeatCount} time${repeatCount > 1 ? 's' : ''})...`, true);
         
-        // Execute API calls one by one to avoid duplicate ident errors
-        for (let i = 0; i < recording.apiCalls.length; i++) {
-            const call = recording.apiCalls[i];
+        let totalSuccessCount = 0;
+        let totalFailureCount = 0;
+        const allErrors = [];
+        
+        // Execute the recording repeatCount times
+        for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex++) {
+            if (repeatCount > 1) {
+                HWHFuncs.setProgress(`API Repeater: ${recording.name} - Repeat ${repeatIndex + 1}/${repeatCount}...`, true);
+            }
             
-            try {
-                // Prepare call with updated timestamp and unique ident
-                const callToExecute = {
-                    name: call.name,
-                    args: call.args,
-                    context: { actionTs: Math.floor(performance.now()) },
-                    ident: 'body' // Use 'body' for single calls (API requirement)
-                };
-
-                // Execute single API call
-                const response = await Send({ calls: [callToExecute] });
+            let successCount = 0;
+            let failureCount = 0;
+            const errors = [];
+            
+            // Execute API calls one by one to avoid duplicate ident errors
+            for (let i = 0; i < recording.apiCalls.length; i++) {
+                const call = recording.apiCalls[i];
                 
-                // Check for API errors in response
-                if (response && response.error) {
-                    const errorMsg = `API Error: ${response.error.name || 'Unknown'} - ${response.error.description || 'No description'}`;
+                try {
+                    // Prepare call with updated timestamp and unique ident
+                    const callToExecute = {
+                        name: call.name,
+                        args: call.args,
+                        context: { actionTs: Math.floor(performance.now()) },
+                        ident: 'body' // Use 'body' for single calls (API requirement)
+                    };
+
+                    // Execute single API call
+                    const response = await Send({ calls: [callToExecute] });
+                    
+                    // Check for API errors in response
+                    if (response && response.error) {
+                        const errorMsg = `API Error: ${response.error.name || 'Unknown'} - ${response.error.description || 'No description'}`;
+                        errors.push({
+                            callIndex: i + 1,
+                            callName: call.name,
+                            error: errorMsg,
+                            fullError: response.error,
+                            repeatIndex: repeatIndex + 1
+                        });
+                        failureCount++;
+                        console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed in repeat ${repeatIndex + 1}/${repeatCount}:`, errorMsg);
+                        HWHFuncs.setProgress(`API Repeater: ${recording.name} - Repeat ${repeatIndex + 1}/${repeatCount} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed: ${errorMsg}`, true);
+                    } else {
+                        successCount++;
+                        console.log(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) succeeded in repeat ${repeatIndex + 1}/${repeatCount}`);
+                    }
+                    
+                } catch (e) {
+                    // Handle execution errors (network, timeout, etc.)
+                    const errorMsg = e.message || String(e);
                     errors.push({
                         callIndex: i + 1,
                         callName: call.name,
                         error: errorMsg,
-                        fullError: response.error
+                        fullError: e,
+                        repeatIndex: repeatIndex + 1
                     });
                     failureCount++;
-                    console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed:`, errorMsg);
-                    HWHFuncs.setProgress(`API Repeater: ${recording.name} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed: ${errorMsg}`, true);
-                } else {
-                    successCount++;
-                    console.log(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) succeeded`);
+                    console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) threw error in repeat ${repeatIndex + 1}/${repeatCount}:`, e);
+                    HWHFuncs.setProgress(`API Repeater: ${recording.name} - Repeat ${repeatIndex + 1}/${repeatCount} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) error: ${errorMsg}`, true);
                 }
                 
-            } catch (e) {
-                // Handle execution errors (network, timeout, etc.)
-                const errorMsg = e.message || String(e);
-                errors.push({
-                    callIndex: i + 1,
-                    callName: call.name,
-                    error: errorMsg,
-                    fullError: e
-                });
-                failureCount++;
-                console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) threw error:`, e);
-                HWHFuncs.setProgress(`API Repeater: ${recording.name} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) error: ${errorMsg}`, true);
+                // Add delay between calls (similar to Auto Daily Extension)
+                if (i < recording.apiCalls.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+                }
             }
             
-            // Add delay between calls (similar to Auto Daily Extension)
-            if (i < recording.apiCalls.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+            totalSuccessCount += successCount;
+            totalFailureCount += failureCount;
+            allErrors.push(...errors);
+            
+            // Add delay between repeats (if more than one repeat)
+            if (repeatIndex < repeatCount - 1) {
+                await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay between repeats
             }
         }
         
         // Final summary
-        const summary = `API Repeater: ${recording.name} - Completed: ${successCount} succeeded, ${failureCount} failed out of ${recording.apiCalls.length} total`;
+        const totalCalls = recording.apiCalls.length * repeatCount;
+        const summary = `API Repeater: ${recording.name} - Completed ${repeatCount} repeat${repeatCount > 1 ? 's' : ''}: ${totalSuccessCount} succeeded, ${totalFailureCount} failed out of ${totalCalls} total calls`;
         console.log(summary);
         
-        if (errors.length > 0) {
-            console.error(`API Repeater: ${recording.name} - Errors:`, errors);
-            const errorDetails = errors.map(e => `Call ${e.callIndex} (${e.callName}): ${e.error}`).join('; ');
+        if (allErrors.length > 0) {
+            console.error(`API Repeater: ${recording.name} - Errors:`, allErrors);
+            const errorDetails = allErrors.map(e => `Repeat ${e.repeatIndex}, Call ${e.callIndex} (${e.callName}): ${e.error}`).join('; ');
             HWHFuncs.setProgress(`${summary}. Errors: ${errorDetails}`, true);
         } else {
             HWHFuncs.setProgress(`${summary}`, true);
@@ -696,6 +729,7 @@
             .api-repeater-expand-btn { cursor: pointer; color: #aaa; font-size: 0.9em; margin-left: 10px; }
             .api-repeater-expand-btn:hover { color: #fce1ac; }
             .api-repeater-calls-expanded { margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 4px; max-height: 400px; overflow-y: auto; }
+            .api-repeater-repeat-count { width: 50px; padding: 4px; background: rgba(0,0,0,0.5); border: 1px solid #ce9767; border-radius: 3px; color: #fce1ac; text-align: center; font-size: 14px; }
         `;
         
         const styleSheet = document.createElement("style");
@@ -810,6 +844,7 @@
                     </div>
                 </div>
                 <div class="api-repeater-recording-actions">
+                    <input type="number" class="api-repeater-repeat-count" min="1" value="${recording.repeatCount || 1}" data-action="update-repeat-count" data-id="${recording.id}" title="Number of times to repeat">
                     <button class="api-repeater-btn api-repeater-btn-success" title="Run" data-action="run" data-id="${recording.id}">▶️</button>
                     <label style="cursor: pointer;">
                         <input type="checkbox" ${recording.autoRun ? 'checked' : ''} data-action="toggle-autorun" data-id="${recording.id}" style="margin-right: 5px;">
@@ -960,6 +995,14 @@
                 const recordingId = e.target.dataset.id;
                 updateRecording(recordingId, { autoRun: e.target.checked });
                 populateRecordingsList();
+            } else if (e.target.dataset.action === 'update-repeat-count') {
+                const recordingId = e.target.dataset.id;
+                const repeatCount = parseInt(e.target.value) || 1;
+                if (repeatCount < 1) {
+                    e.target.value = 1;
+                    return;
+                }
+                updateRecording(recordingId, { repeatCount: repeatCount });
             }
         });
     }
@@ -1105,6 +1148,10 @@
                     <input type="number" id="recording-expiration" min="0" value="0" style="width: 100%; padding: 8px; background: rgba(0,0,0,0.5); border: 1px solid #ce9767; border-radius: 5px; color: #fce1ac;">
                 </div>
                 <div>
+                    <label style="display: block; margin-bottom: 5px;">Repeat Count:</label>
+                    <input type="number" id="recording-repeat-count" min="1" value="1" style="width: 100%; padding: 8px; background: rgba(0,0,0,0.5); border: 1px solid #ce9767; border-radius: 5px; color: #fce1ac;">
+                </div>
+                <div>
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         <input type="checkbox" id="recording-autorun">
                         <span>Auto-run on game load</span>
@@ -1141,13 +1188,19 @@
             const description = document.getElementById('recording-description').value.trim();
             const expirationDays = parseInt(document.getElementById('recording-expiration').value) || 0;
             const autoRun = document.getElementById('recording-autorun').checked;
+            const repeatCount = parseInt(document.getElementById('recording-repeat-count').value) || 1;
             
             if (!name) {
                 alert('Please enter a name for the recording');
                 return;
             }
             
-            createRecording(name, description, expirationDays, autoRun);
+            if (repeatCount < 1) {
+                alert('Repeat count must be at least 1');
+                return;
+            }
+            
+            createRecording(name, description, expirationDays, autoRun, repeatCount);
             backdrop.remove();
             
             const mainPopup = document.getElementById('api-repeater-popup-container');
@@ -1181,6 +1234,10 @@
                 <div>
                     <label style="display: block; margin-bottom: 5px;">Expiration (days, 0 = never):</label>
                     <input type="number" id="edit-recording-expiration" min="0" value="${recording.expirationDays || 0}" style="width: 100%; padding: 8px; background: rgba(0,0,0,0.5); border: 1px solid #ce9767; border-radius: 5px; color: #fce1ac;">
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 5px;">Repeat Count:</label>
+                    <input type="number" id="edit-recording-repeat-count" min="1" value="${recording.repeatCount || 1}" style="width: 100%; padding: 8px; background: rgba(0,0,0,0.5); border: 1px solid #ce9767; border-radius: 5px; color: #fce1ac;">
                 </div>
                 <div>
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
@@ -1300,9 +1357,15 @@
             const description = document.getElementById('edit-recording-description').value.trim();
             const expirationDays = parseInt(document.getElementById('edit-recording-expiration').value) || 0;
             const autoRun = document.getElementById('edit-recording-autorun').checked;
+            const repeatCount = parseInt(document.getElementById('edit-recording-repeat-count').value) || 1;
             
             if (!name) {
                 alert('Please enter a name for the recording');
+                return;
+            }
+            
+            if (repeatCount < 1) {
+                alert('Repeat count must be at least 1');
                 return;
             }
             
@@ -1311,6 +1374,7 @@
                 description,
                 expirationDays,
                 autoRun,
+                repeatCount,
                 apiCalls: reorderedApiCalls // Save reordered API calls
             });
             
