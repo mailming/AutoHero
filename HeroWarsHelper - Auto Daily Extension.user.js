@@ -148,11 +148,10 @@
         let dungeonActivity = 0;
         let startDungeonActivity = 0;
         let maxDungeonActivity = 150;
-        let limitDungeonActivity = 30180;
-        let countShowStats = 1;
         let end = false;
         // stopDung is declared at module level for external access
 
+        // Note: countTeam is declared but never populated - stats will show empty team usage
         let countTeam = [];
         let timeDungeon = {
             all: new Date().getTime(),
@@ -198,7 +197,7 @@
                 endDungeon('noDungeon', res);
                 return;
             }
-            console.log('Начинаем копать на фулл: ', new Date());
+            console.log('Starting full dungeon run: ', new Date());
             let teamGetAll = res[1].result.response;
             let teamGetFavor = res[2].result.response;
             dungeonActivity = res[3].result.response.stat.todayDungeonActivity;
@@ -262,12 +261,12 @@
             maxDungeonActivity = getInput('countTitanit');
             setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
             if (dungeonActivity >= maxDungeonActivity) {
-                endDungeon('Стоп подземка,', 'набрано титанита: ' + dungeonActivity + '/' + maxDungeonActivity);
+                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
                 return;
             }
             titansStates = dungeonInfo.states.titans;
             if (stopDung) {
-                endDungeon('Стоп подземка,', 'набрано титанита: ' + dungeonActivity + '/' + maxDungeonActivity);
+                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
                 return;
             }
             bestBattle = {};
@@ -279,7 +278,7 @@
                         if (element == 'earth' || element == 'fire') {
                             teamNum = await chooseEarthOrFire(floorChoices);
                             if (teamNum < 0) {
-                                endDungeon('Невозможно победить без потери Титана!', dungeonInfo);
+                                endDungeon('Cannot win without losing a Titan!', dungeonInfo);
                                 return;
                             }
                         }
@@ -325,7 +324,7 @@
                     selectedTeamNum = await attemptAttackEarthOrFire(teamNum, attackerType, attempt);
                 }
             }
-            console.log('Выбор команды огня или земли: ', selectedTeamNum < 0 ? 'не сделан' : floorChoices[selectedTeamNum].attackerType);
+            console.log('Choosing fire or earth team: ', selectedTeamNum < 0 ? 'not made' : floorChoices[selectedTeamNum].attackerType);
             return selectedTeamNum;
         }
 
@@ -372,7 +371,7 @@
             if (!!result && attackerType != 'hero') {
                 let recovery = (!!!bestBattle.recovery ? 10 * getRecovery(result) : bestBattle.recovery) * 100;
                 let titans = result.progress[0].attackers.heroes;
-                console.log('Проведен бой: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', titans);
+                console.log('Battle completed: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', titans);
             }
             endBattle(result);
         }
@@ -385,7 +384,7 @@
                     selectedTeamNum = await attemptAttackEarthOrFire(teamNum, attackerType, attempt);
                 }
                 if (selectedTeamNum < 0) {
-                    endDungeon('Невозможно победить без потери Титана!', attackerType);
+                    endDungeon('Cannot win without losing a Titan!', attackerType);
                     return;
                 }
             }
@@ -414,7 +413,7 @@
             await findBestBattleNeutral(teamNum, attackerType, factors, true);
             if (bestBattle.recovery < 0 || (bestBattle.recovery < 0.2 && factors[0].value < 0.5)) {
                 let recovery = 100 * bestBattle.recovery;
-                console.log('Не удалось найти удачный бой в быстром режиме: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', bestBattle.attackers);
+                console.log('Failed to find a good battle in fast mode: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', bestBattle.attackers);
                 await findBestBattleNeutral(teamNum, attackerType, factors, false);
             }
             let workTime = new Date().getTime() - start.getTime();
@@ -423,7 +422,7 @@
                 let team = getTeam(bestBattle.attackers);
                 return findAttack(teamNum, attackerType, team);
             }
-            endDungeon('Не удалось найти удачный бой!', attackerType);
+            endDungeon('Failed to find a good battle!', attackerType);
             return undefined;
         }
 
@@ -699,7 +698,7 @@
 
         async function endBattle(battleInfo) {
             if (!battleInfo || battleInfo.result.stars < 3) {
-                endDungeon('Герой или Титан мог погибнуть в бою / Errore durante l\'attacco!', battleInfo);
+                endDungeon('Hero or Titan may have died in battle / Error during attack!', battleInfo);
                 return;
             }
 
@@ -718,7 +717,6 @@
                     await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
                 }
                 const calls = [{ name: 'dungeonEndBattle', args, ident: 'body' }];
-                lastDungeonBattleData = null;
                 send(JSON.stringify({ calls }), resultEndBattle);
             } else {
                 endDungeon('dungeonEndBattle win: false\n', battleInfo);
@@ -736,7 +734,7 @@
                 dungeonActivity += battleResult.reward.dungeonActivity ?? 0;
                 checkFloor(dungeonGetInfo);
             } else {
-                endDungeon('Потеряна связь с сервером игры!', 'break');
+                endDungeon('Lost connection to game server!', 'break');
             }
         }
 
@@ -754,21 +752,23 @@
             for (let i in workTime) {
                 workTime[i] = Math.round(workTime[i] / 1000);
             }
-            countTeam.sort(function (a, b) {
-                return b.count - a.count;
-            });
+            if (countTeam.length > 0) {
+                countTeam.sort(function (a, b) {
+                    return b.count - a.count;
+                });
+                console.log('Team usage frequency: ');
+                for (let i in countTeam) {
+                    let teams = countTeam[i];
+                    console.log(teams.team + ': ', teams.count);
+                }
+            }
             console.log(titansStates);
-            console.log('Собрано титанита: ', activity);
-            console.log('Скорость сбора: ' + Math.round((3600 * activity) / workTime.all) + ' титанита/час');
-            console.log('Время раскопок: ');
+            console.log('Titanite collected: ', activity);
+            console.log('Collection speed: ' + Math.round((3600 * activity) / workTime.all) + ' titanite/hour');
+            console.log('Dungeon time: ');
             for (let i in workTime) {
                 let timeNow = workTime[i];
-                console.log(i + ': ', Math.round(timeNow / 3600) + ' ч. ' + Math.round((timeNow % 3600) / 60) + ' мин. ' + (timeNow % 60) + ' сек.');
-            }
-            console.log('Частота использования команд: ');
-            for (let i in countTeam) {
-                let teams = countTeam[i];
-                console.log(teams.team + ': ', teams.count);
+                console.log(i + ': ', Math.round(timeNow / 3600) + ' h. ' + Math.round((timeNow % 3600) / 60) + ' min. ' + (timeNow % 60) + ' sec.');
             }
         }
 
@@ -779,12 +779,12 @@
                 showStats();
                 if (info == 'break') {
                     setProgress(
-                        'Dungeon stoped: Титанит ' + dungeonActivity + '/' + maxDungeonActivity + '\r\nПотеряна связь с сервером игры!',
+                        'Dungeon stopped: Titanite ' + dungeonActivity + '/' + maxDungeonActivity + '\r\nLost connection to game server!',
                         false,
                         hideProgress
                     );
                 } else {
-                    setProgress('Dungeon completed: Титанит ' + dungeonActivity + '/' + maxDungeonActivity, false, hideProgress);
+                    setProgress('Dungeon completed: Titanite ' + dungeonActivity + '/' + maxDungeonActivity, false, hideProgress);
                 }
 
                 if (titanHealthSettings.autoRefreshPage) {
@@ -1511,14 +1511,15 @@ async function executeGetDailyBonus() {
             title: I18N(task.id + '_TITLE'),
             result: async () => {
                 if (HWHClasses.executeBrawls && HWHClasses.executeBrawls.isBrawlsAutoStart) return;
-                // This is a complex way to find the function, we'll simplify it later if needed.
-                const allExecutableTasks = [ ...doAllTasks, ...othersTasks.map(ot => {
-                    // Create a lookup for our own wrapper functions
-                    const funcMap = { GET_ENERGY: executeFarmStamina, ITEM_EXCHANGE: executeFillActive, BUY_SOULS: executeBuyHeroFragments, BUY_FOR_GOLD: executeBuyInStoreForGold, BUY_OUTLAND: executeBossOpenChestPay, CLAN_STAT: executeClanStatistic, EPIC_BRAWL: executeEpicBrawl, ARTIFACTS_UPGRADE: executeUpdateArtifacts, SKINS_UPGRADE: executeUpdateSkins, SEASON_REWARD: executeFarmBattlePass, SELL_HERO_SOULS: executeSellHeroSoulsForGold };
-                    return { id: ot.id, label: ot.label, func: funcMap[ot.id] };
-                })];
-                const taskDefinition = allExecutableTasks.find(t => t.id === task.id);
-                if (taskDefinition) await executeSingleTask(taskDefinition);
+                // Use HWHData.buttons.doOthers functionality if available, otherwise show error
+                const { HWHData, HWHFuncs } = window;
+                if (HWHData && HWHData.buttons && HWHData.buttons.doOthers && HWHData.buttons.doOthers.button) {
+                    // Trigger the original doOthers button click handler
+                    HWHData.buttons.doOthers.button.click();
+                } else {
+                    HWHFuncs.setProgress(`${task.label}: Function not available. Use main menu "Others" button.`, true);
+                    console.warn(`[Auto Daily] Others task ${task.id} (${task.label}) - handler not available`);
+                }
             }
         }));
         popupButtons.push({ result: false, isClose: true });
