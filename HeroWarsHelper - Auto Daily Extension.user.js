@@ -28,6 +28,47 @@
     let cachedQuestData = null; // Cache for questGetAll results
     let autoRunInProgress = false;
 
+    // --- DUNGEON TITAN HEALTH SETTINGS ---
+    const defaultTitanHealthSettings = {
+        minOverallHP: 0.30,
+        titan4020HP: 0.40,
+        titan4020EnergyHP: 0.20,
+        titan4010Combined: 0.67,
+        titan4000HP: 0.63,
+        titan4000Energy400HP: 0.45,
+        titan4000Energy670HP: 0.34,
+        autoRefreshPage: false
+    };
+
+    let titanHealthSettings = {};
+    let stopDung = false; // External stop mechanism for dungeon
+
+    // External stop function for dungeon
+    window.stopHWDDungeon = () => {
+        if (typeof stopDung !== 'undefined') {
+            stopDung = true;
+            console.log('HWD Dungeon stop requested externally.');
+        } else {
+            console.log('stopDung variable not found or not in scope.');
+        }
+    };
+
+    function loadTitanHealthSettings() {
+        const { HWHFuncs } = window;
+        if (HWHFuncs && HWHFuncs.getSaveVal) {
+            titanHealthSettings = HWHFuncs.getSaveVal('titanHealthSettings', defaultTitanHealthSettings);
+        } else {
+            titanHealthSettings = Object.assign({}, defaultTitanHealthSettings);
+        }
+    }
+
+    function saveTitanHealthSettings() {
+        const { HWHFuncs } = window;
+        if (HWHFuncs && HWHFuncs.setSaveVal) {
+            HWHFuncs.setSaveVal('titanHealthSettings', titanHealthSettings);
+        }
+    }
+
     function sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
@@ -98,7 +139,7 @@
         HWHFuncs.setProgress('Executing: Expeditions', true);
         return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
     }
-    // Advanced Dungeon Algorithm - Merged from HWHExtension
+    // Advanced Dungeon Algorithm - Merged from HWD Extension RED-1.0.7
     function executeDungeon(resolve, reject) {
         const { HWHFuncs, Send, BattleCalc, cheats } = window;
         const { getInput, setProgress, hideProgress, I18N, send, getTimer, countdownTimer } = HWHFuncs;
@@ -110,7 +151,7 @@
         let limitDungeonActivity = 30180;
         let countShowStats = 1;
         let end = false;
-        let stopDung = false;
+        // stopDung is declared at module level for external access
 
         let countTeam = [];
         let timeDungeon = {
@@ -185,13 +226,17 @@
         function getTitanTeam(type) {
             switch (type) {
                 case 'neutral':
+                    // Complete list for Neutral (includes 4014 Solaris)
                     return [4023, 4022, 4012, 4021, 4011, 4010, 4020, 4024, 4014];
                 case 'water':
-                    return [4000, 4001, 4002, 4003].filter((e) => !titansStates[e]?.isDead);
+                    // Filter only owned titans (!!titansStates[e]) and not dead
+                    return [4000, 4001, 4002, 4003].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
                 case 'earth':
-                    return [4020, 4022, 4021, 4023, 4024].filter((e) => !titansStates[e]?.isDead);
+                    // Filter only owned titans and not dead (includes 4024)
+                    return [4020, 4022, 4021, 4023, 4024].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
                 case 'fire':
-                    return [4010, 4011, 4012, 4013, 4014].filter((e) => !titansStates[e]?.isDead);
+                    // Filter only owned titans and not dead (includes 4014 Solaris)
+                    return [4010, 4011, 4012, 4013, 4014].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
             }
         }
 
@@ -231,7 +276,7 @@
                 for (let element in teams) {
                     let teamNum = findElement(floorChoices, element);
                     if (!!teamNum) {
-                        if (element == 'earth') {
+                        if (element == 'earth' || element == 'fire') {
                             teamNum = await chooseEarthOrFire(floorChoices);
                             if (teamNum < 0) {
                                 endDungeon('Невозможно победить без потери Титана!', dungeonInfo);
@@ -287,7 +332,12 @@
         async function attemptAttackEarthOrFire(teamNum, attackerType, attempt) {
             let start = new Date();
             let team = clone(teams[attackerType]);
-            let startIndex = team.heroes.length + attempt - 4;
+            
+            // Modifica Pyro: Supporto a 5 titani per Terra e Fuoco
+            let maxTeamSize = (attackerType === 'earth' || attackerType === 'fire') ? 5 : 4;
+            
+            let startIndex = team.heroes.length + attempt - maxTeamSize;
+            
             if (startIndex >= 0) {
                 team.heroes = team.heroes.slice(startIndex);
                 let recovery = await getBestRecovery(teamNum, attackerType, team, 25);
@@ -509,6 +559,9 @@
             let factors = [];
             for (let i in neutral) {
                 let titanId = neutral[i];
+                if (!titansStates[titanId]) {
+                    continue;
+                }
                 let titan = titansStates[titanId];
                 let factor = !!titan ? titan.hp / titan.maxHp + titan.energy / 10000.0 : 1;
                 if (factor > 0) {
@@ -560,21 +613,40 @@
         }
 
         function getFactor(id, energy, percentHP) {
-            let elemantId = id.slice(2, 3);
-            let isEarthOrFire = elemantId == '1' || elemantId == '2';
-            let energyBonus = id == '4020' && energy == 1000 ? 0.1 : energy / 20000.0;
-            let factor = percentHP + energyBonus;
-            return isEarthOrFire ? factor : factor / 10;
+            if (percentHP < 0.05) {
+                return -100;
+            }
+            const currentSettings = titanHealthSettings;
+
+            switch (id) {
+                case '4020':
+                    return percentHP * 0.7 + (energy / 1000) * 0.3;
+                case '4010':
+                    return percentHP * 0.5 + (energy / 1000) * 0.5;
+                case '4000':
+                    return percentHP * 0.8 + (energy / 1000) * 0.2;
+                default:
+                    return percentHP;
+            }
         }
 
         function checkTitan(id, energy, percentHP) {
+            const minOverallHP = titanHealthSettings.minOverallHP;
+
+            if (percentHP < minOverallHP) {
+                return false;
+            }
+
             switch (id) {
                 case '4020':
-                    return percentHP > 0.25 || (energy == 1000 && percentHP > 0.05);
+                    return percentHP > titanHealthSettings.titan4020HP || (energy == 1000 && percentHP > titanHealthSettings.titan4020EnergyHP);
                 case '4010':
-                    return percentHP + energy / 2000.0 > 0.63;
+                    return percentHP + energy / 2000.0 > titanHealthSettings.titan4010Combined;
                 case '4000':
-                    return percentHP > 0.62 || (energy < 1000 && ((percentHP > 0.45 && energy >= 400) || (percentHP > 0.3 && energy >= 670)));
+                    return percentHP > titanHealthSettings.titan4000HP || (energy < 1000 && ((percentHP > titanHealthSettings.titan4000Energy400HP && energy >= 400) || (percentHP > titanHealthSettings.titan4000Energy670HP && energy >= 670)));
+                case '4024':
+                case '4014':
+                    return true;
             }
             return true;
         }
@@ -594,6 +666,19 @@
         }
 
         function resultBattle(resultBattles, args) {
+            if (!resultBattles || !resultBattles.results || resultBattles.results.length === 0 || !resultBattles.results[0].result || resultBattles.results[0].result.error) {
+                console.error('Battle failed, results missing or contained error:', resultBattles);
+                const failedResult = {
+                    result: { stars: 0, win: false },
+                    progress: [{ attackers: { heroes: {} } }],
+                    battleData: { attackers: {} },
+                    teamNum: args.teamNum,
+                    attackerType: args.attackerType
+                };
+                args.resolve(failedResult);
+                return;
+            }
+
             let battleData = resultBattles.results[0].result.response;
             let battleType = 'get_tower';
             if (battleData.type == 'dungeon_titan') {
@@ -601,6 +686,11 @@
             }
             battleData.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
             BattleCalc(battleData, battleType, function (result) {
+                result.result = result.result || { stars: 3 };
+                if (result.result.stars < 3) {
+                    console.warn("BattleCalc returned less than 3 stars. Treating as fail.");
+                }
+                
                 result.teamNum = args.teamNum;
                 result.attackerType = args.attackerType;
                 args.resolve(result);
@@ -608,15 +698,17 @@
         }
 
         async function endBattle(battleInfo) {
+            if (!battleInfo || battleInfo.result.stars < 3) {
+                endDungeon('Герой или Титан мог погибнуть в бою / Errore durante l\'attacco!', battleInfo);
+                return;
+            }
+
             if (!!battleInfo) {
                 const args = {
                     result: battleInfo.result,
                     progress: battleInfo.progress,
                 };
-                if (battleInfo.result.stars < 3) {
-                    endDungeon('Герой или Титан мог погибнуть в бою!', battleInfo);
-                    return;
-                }
+                
                 if (countPredictionCard > 0) {
                     args.isRaid = true;
                     countPredictionCard--;
@@ -626,6 +718,7 @@
                     await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
                 }
                 const calls = [{ name: 'dungeonEndBattle', args, ident: 'body' }];
+                lastDungeonBattleData = null;
                 send(JSON.stringify({ calls }), resultEndBattle);
             } else {
                 endDungeon('dungeonEndBattle win: false\n', battleInfo);
@@ -685,11 +778,23 @@
                 console.log(reason, info);
                 showStats();
                 if (info == 'break') {
-                    setProgress('Dungeon stoped: Титанит ' + dungeonActivity + '/' + maxDungeonActivity + '\r\nПотеряна связь с сервером игры!', false, hideProgress);
+                    setProgress(
+                        'Dungeon stoped: Титанит ' + dungeonActivity + '/' + maxDungeonActivity + '\r\nПотеряна связь с сервером игры!',
+                        false,
+                        hideProgress
+                    );
                 } else {
                     setProgress('Dungeon completed: Титанит ' + dungeonActivity + '/' + maxDungeonActivity, false, hideProgress);
                 }
-                setTimeout(cheats.refreshGame, 1000);
+
+                if (titanHealthSettings.autoRefreshPage) {
+                    setTimeout(() => {
+                        location.reload();
+                    }, 1000);
+                } else {
+                    setTimeout(cheats.refreshGame, 1000);
+                }
+
                 resolve();
             }
         }
@@ -733,6 +838,216 @@
             'Dungeon timed out (fallback)'
         );
     }
+
+    // --- DUNGEON SETTINGS GUI ---
+    function createDungeonSettingsGUI() {
+        if (document.getElementById('titanSettingsGUI')) return; // Already created
+
+        const style = document.createElement('style');
+        style.textContent = `
+            #titanSettingsGUI {
+                position: fixed;
+                top: 50px;
+                right: 10px;
+                width: 280px;
+                background-color: rgba(0, 0, 0, 0.85);
+                border: 1px solid #444;
+                border-radius: 10px;
+                padding: 15px 20px;
+                color: #E0E0E0;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 14px;
+                z-index: 10000;
+                box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                transition: all 0.3s ease-in-out;
+                max-height: calc(100vh - 70px);
+                overflow-y: auto;
+            }
+            #titanSettingsGUI h3 {
+                margin-top: 0;
+                color: #FFD700;
+                text-align: center;
+                font-size: 18px;
+                border-bottom: 1px solid #555;
+                padding-bottom: 8px;
+                margin-bottom: 15px;
+            }
+            #titanSettingsGUI h4 {
+                margin-top: 5px;
+                margin-bottom: 8px;
+                color: #87CEEB;
+                font-size: 15px;
+                text-align: center;
+            }
+            #titanSettingsGUI label {
+                display: block;
+                margin-bottom: 4px;
+                color: #ADD8E6;
+                font-weight: bold;
+            }
+            #titanSettingsGUI input[type="number"] {
+                width: calc(100% - 22px);
+                padding: 9px 10px;
+                margin-bottom: 10px;
+                border: 1px solid #666;
+                border-radius: 5px;
+                background-color: #2a2a2a;
+                color: white;
+                box-sizing: border-box;
+                font-size: 14px;
+                -moz-appearance: textfield;
+            }
+            #titanSettingsGUI input[type="number"]::-webkit-outer-spin-button,
+            #titanSettingsGUI input[type="number"]::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+            #titanSettingsGUI button {
+                background-color: #32CD32;
+                color: white;
+                padding: 10px 15px;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: bold;
+                transition: background-color 0.3s ease, transform 0.1s ease;
+                margin-top: 10px;
+            }
+            #titanSettingsGUI button:hover {
+                background-color: #228B22;
+                transform: translateY(-1px);
+            }
+            #resetTitanSettings {
+                background-color: #FF6347;
+                width: fit-content;
+                margin: 10px auto;
+                display: block;
+                padding: 8px 12px;
+                font-size: 14px;
+                border-radius: 5px;
+            }
+        `;
+        document.head.appendChild(style);
+
+        const resetButton = document.createElement('button');
+        resetButton.id = 'resetTitanSettings';
+        resetButton.textContent = 'Reset to Defaults';
+        document.body.appendChild(resetButton);
+
+        const gui = document.createElement('div');
+        gui.id = 'titanSettingsGUI';
+        gui.innerHTML = `
+            <h3>Dungeon Cutoff Settings 1.0.7</h3>
+            <div>
+                <input type="checkbox" id="autoRefreshPage">
+                <label for="autoRefreshPage">Refresh(F5) after dungeon</label>
+            </div>
+            <div>
+                <label for="minOverallHP">General Thresholds (%) (>=30):</label>
+                <input type="number" id="minOverallHP" min="0" max="100" step="1">
+            </div>
+            <h4>Titan 4020 - Agnus</h4>
+            <div>
+                <label for="titan4020HP">Minimum HP (%) (>=25):</label>
+                <input type="number" id="titan4020HP" min="0" max="100" step="1">
+            </div>
+            <div>
+                <label for="titan4020EnergyHP">Minimum HP with Max Energy (%) (>=5):</label>
+                <input type="number" id="titan4020EnergyHP" min="0" max="100" step="1">
+            </div>
+            <h4>Titan 4010 - Moloch</h4>
+            <div>
+                <label for="titan4010Combined">HP + Energy combined (%) (>=63):</label>
+                <input type="number" id="titan4010Combined" min="0" max="200" step="1">
+            </div>
+            <h4>Titan 4000 - Sigurd</h4>
+            <div>
+                <label for="titan4000HP">Minimum HP (%) (>=62):</label>
+                <input type="number" id="titan4000HP" min="0" max="100" step="1">
+            </div>
+            <div>
+                <label for="titan4000Energy400HP">Minimum HP With Energy >= 400 (%) (>=45):</label>
+                <input type="number" id="titan4000Energy400HP" min="0" max="100" step="1">
+            </div>
+            <div>
+                <label for="titan4000Energy670HP">Minimum HP With Energy >= 670 (%) (>=30):</label>
+                <input type="number" id="titan4000Energy670HP" min="0" max="100" step="1">
+            </div>
+            <button id="saveTitanSettings">Save & Apply</button>
+        `;
+        document.body.appendChild(gui);
+
+        gui.style.display = 'none';
+        resetButton.style.display = 'none';
+
+        function updateGUIFields() {
+            document.getElementById('minOverallHP').value = titanHealthSettings.minOverallHP * 100;
+            document.getElementById('titan4020HP').value = titanHealthSettings.titan4020HP * 100;
+            document.getElementById('titan4020EnergyHP').value = titanHealthSettings.titan4020EnergyHP * 100;
+            document.getElementById('titan4010Combined').value = titanHealthSettings.titan4010Combined * 100;
+            document.getElementById('titan4000HP').value = titanHealthSettings.titan4000HP * 100;
+            document.getElementById('titan4000Energy400HP').value = titanHealthSettings.titan4000Energy400HP * 100;
+            document.getElementById('titan4000Energy670HP').value = titanHealthSettings.titan4000Energy670HP * 100;
+            document.getElementById('autoRefreshPage').checked = titanHealthSettings.autoRefreshPage;
+        }
+
+        updateGUIFields();
+
+        document.getElementById('saveTitanSettings').addEventListener('click', () => {
+            titanHealthSettings.minOverallHP = parseFloat(document.getElementById('minOverallHP').value) / 100;
+            titanHealthSettings.titan4020HP = parseFloat(document.getElementById('titan4020HP').value) / 100;
+            titanHealthSettings.titan4020EnergyHP = parseFloat(document.getElementById('titan4020EnergyHP').value) / 100;
+            titanHealthSettings.titan4010Combined = parseFloat(document.getElementById('titan4010Combined').value) / 100;
+            titanHealthSettings.titan4000HP = parseFloat(document.getElementById('titan4000HP').value) / 100;
+            titanHealthSettings.titan4000Energy400HP = parseFloat(document.getElementById('titan4000Energy400HP').value) / 100;
+            titanHealthSettings.titan4000Energy670HP = parseFloat(document.getElementById('titan4000Energy670HP').value) / 100;
+            titanHealthSettings.autoRefreshPage = document.getElementById('autoRefreshPage').checked;
+            saveTitanHealthSettings();
+            const { HWHFuncs } = window;
+            if (HWHFuncs) HWHFuncs.setProgress('Dungeon settings saved!', true);
+        });
+
+        resetButton.addEventListener('click', () => {
+            if (confirm('Are you sure you want to reset to default values?')) {
+                titanHealthSettings = Object.assign({}, defaultTitanHealthSettings);
+                saveTitanHealthSettings();
+                updateGUIFields();
+                const { HWHFuncs } = window;
+                if (HWHFuncs) HWHFuncs.setProgress('Settings reset to defaults!', true);
+            }
+        });
+
+        const inputs = gui.querySelectorAll('input[type="number"], input[type="checkbox"]');
+        inputs.forEach(input => {
+            input.addEventListener('change', () => {
+                const id = input.id;
+                if (titanHealthSettings.hasOwnProperty(id)) {
+                    if (input.type === 'checkbox') {
+                        titanHealthSettings[id] = input.checked;
+                    } else {
+                        titanHealthSettings[id] = parseFloat(input.value) / 100;
+                    }
+                }
+                saveTitanHealthSettings();
+            });
+        });
+
+        // Toggle GUI visibility (can be triggered from dungeon indicator if needed)
+        window.toggleDungeonSettingsGUI = () => {
+            if (gui.style.display === 'none') {
+                gui.style.display = 'flex';
+                resetButton.style.display = 'block';
+            } else {
+                gui.style.display = 'none';
+                resetButton.style.display = 'none';
+            }
+        };
+    }
+
     async function executeOfferFarmAllReward() {
         const { Send, HWHFuncs } = window;
         HWHFuncs.setProgress('Executing: Easter Eggs', true);
@@ -1479,8 +1794,16 @@ async function executeGetDailyBonus() {
         const { HWHFuncs, HWHData, HWHClasses } = window;
 
         loadAllSettings();
+        loadTitanHealthSettings(); // Load dungeon titan health settings
         console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
+        
+        // Create dungeon settings GUI
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', createDungeonSettingsGUI);
+        } else {
+            createDungeonSettingsGUI();
+        }
 
         const scriptMenuContainer = HWHData.buttons.doActions.button.parentElement;
         const actionsButton = HWHData.buttons.doActions.button;
