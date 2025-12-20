@@ -1,23 +1,23 @@
 // ==UserScript==
-// @name         API Repeater HwH Ext
-// @namespace    HeroWarsHelper.APIRepeater
-// @version      1.1.1
-// @description  Record and replay API calls with customizable metadata and auto-execution
+// @name         Action Replay HwH Ext
+// @namespace    HeroWarsHelper.ActionReplay
+// @version      1.1.3
+// @description  Record and replay actions (captured from clicks) with auto-run and repeats
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
 // @grant        none
 // @run-at       document-start
-// @downloadURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/API%20Repeater%20HwH%20Ext.user.js
-// @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/API%20Repeater%20HwH%20Ext.user.js
+// @downloadURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/Action%20Replay%20HwH%20Ext.user.js
+// @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/Action%20Replay%20HwH%20Ext.user.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
     // --- CONFIGURATION ---
-    const EXTENSION_NAME = "API Repeater Extension";
-    const EXTENSION_VERSION = "1.1.1";
+    const EXTENSION_NAME = "Action Replay";
+    const EXTENSION_VERSION = "1.1.3";
     const EXTENSION_AUTHOR = "AutoHero";
 
     // --- STATE VARIABLES ---
@@ -30,6 +30,14 @@
     let updateButtonInterval = null; // Interval for updating button
     let lastBufferCount = 0; // Track last buffer count to avoid unnecessary DOM updates
     let lastRecordingState = null; // Track last recording state to force update on state change
+    let executionQueue = Promise.resolve(); // Serialize executions (auto-run + manual run)
+    let autoRunScheduled = false; // Prevent duplicate scheduling on reloads/rehydration
+
+    function enqueueExecution(taskFn) {
+        // Ensure tasks run one-at-a-time, in order, even if a task fails.
+        executionQueue = executionQueue.then(taskFn, taskFn);
+        return executionQueue;
+    }
 
     // --- STORAGE KEYS ---
     const STORAGE_RECORDINGS = 'apiRepeater_recordings';
@@ -142,7 +150,7 @@
                             }
                         }
                     } catch (e) {
-                        console.error('API Repeater: Error capturing API call:', e, sourceData);
+                        console.error('Action Replay: Error capturing action:', e, sourceData);
                     }
                 }
             }
@@ -152,7 +160,7 @@
             return originalXHRSend.apply(this, arguments);
         };
         
-        console.log('API Repeater: Early XHR interception setup complete (document-start)');
+        console.log('Action Replay: Early XHR interception setup complete (document-start)');
     })();
 
     // --- INITIALIZATION ---
@@ -182,23 +190,23 @@
         
         // Verify interception worked
         if (originalSend) {
-            console.log('API Repeater: API interception setup complete');
+            console.log('Action Replay: Action capture setup complete');
         } else {
-            console.warn('API Repeater: API interception may not be working - originalSend is null');
+            console.warn('Action Replay: Action capture may not be working - originalSend is null');
         }
 
         // Add menu button and recording button in the same row
         const scriptMenu = HWHClasses.ScriptMenu.getInst();
         const buttonGroup = scriptMenu.addCombinedButton([
             {
-                name: 'Repeater',
-                title: 'Record and replay API calls',
+                name: 'Action Replay',
+                title: 'Record and replay actions',
                 onClick: openMainPopup,
                 color: 'purple'
             },
             {
                 name: '⏺ 0',
-                title: 'Click to start/stop recording',
+                title: 'Click to start/stop recording actions',
                 onClick: toggleRecording,
                 color: 'red'
             }
@@ -234,10 +242,10 @@
                 // Call original Send function (preserve async behavior)
                 return await originalSend.apply(this, arguments);
             };
-            console.log('API Repeater: Send function wrapped');
+            console.log('Action Replay: Send function wrapped');
         }
         
-        console.log('API Repeater: API interception setup complete (XHR already intercepted early)');
+        console.log('Action Replay: Action capture setup complete (XHR already intercepted early)');
     }
 
     // --- STORAGE SYSTEM ---
@@ -296,9 +304,9 @@
                 if (recordingBuffer.length > 0) {
                     openCreateRecordingPopup();
                 } else {
-                    // No calls captured, show message
+                    // No actions captured, show message
                     const { HWHFuncs } = window;
-                    HWHFuncs.setProgress('API Repeater: No API calls captured', true);
+                    HWHFuncs.setProgress('Action Replay: No actions captured', true);
                 }
             }, 50);
         } else {
@@ -323,7 +331,7 @@
         
         if (isRecording) {
             recordingButtonText.textContent = `⏹ ${bufferCount}`;
-            recordingButton.title = `Stop recording (${bufferCount} calls captured)`;
+            recordingButton.title = `Stop recording (${bufferCount} actions captured)`;
         } else {
             recordingButtonText.textContent = `⏺ ${bufferCount}`;
             recordingButton.title = `Start recording (${bufferCount} calls in buffer)`;
@@ -337,7 +345,7 @@
         lastRecordingState = null; // Force update
         const { HWHFuncs } = window;
         // Removed excessive console.log calls for performance
-        HWHFuncs.setProgress('API Repeater: Recording started', true);
+        HWHFuncs.setProgress('Action Replay: Recording started', true);
         updateRecordingButton();
     }
 
@@ -346,7 +354,7 @@
         lastRecordingState = null; // Force update
         const { HWHFuncs } = window;
         // Removed console.log for performance
-        HWHFuncs.setProgress(`API Repeater: Recording stopped - ${recordingBuffer.length} calls captured`, true);
+        HWHFuncs.setProgress(`Action Replay: Recording stopped - ${recordingBuffer.length} actions captured`, true);
         updateRecordingButton();
     }
 
@@ -406,17 +414,22 @@
 
     // --- EXECUTION SYSTEM ---
     async function executeRecording(recording) {
+        // Always serialize to avoid parallel execution (server risk)
+        return enqueueExecution(() => executeRecordingInternal(recording));
+    }
+
+    async function executeRecordingInternal(recording) {
         const { Send, HWHFuncs } = window;
         
         if (!recording || !recording.apiCalls || recording.apiCalls.length === 0) {
-            HWHFuncs.setProgress(`API Repeater: ${recording.name} - No API calls to execute`, true);
+            HWHFuncs.setProgress(`Action Replay: ${recording.name} - No actions to replay`, true);
             return;
         }
 
         // Get repeat count (default to 1 if not set)
         const repeatCount = recording.repeatCount || 1;
         
-        HWHFuncs.setProgress(`API Repeater: Executing ${recording.name} (${repeatCount} time${repeatCount > 1 ? 's' : ''})...`, true);
+        HWHFuncs.setProgress(`Action Replay: Replaying ${recording.name} (${repeatCount} time${repeatCount > 1 ? 's' : ''})...`, true);
         
         let totalSuccessCount = 0;
         let totalFailureCount = 0;
@@ -425,7 +438,7 @@
         // Execute the recording repeatCount times
         for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex++) {
             if (repeatCount > 1) {
-                HWHFuncs.setProgress(`API Repeater: ${recording.name} - Repeat ${repeatIndex + 1}/${repeatCount}...`, true);
+                HWHFuncs.setProgress(`Action Replay: ${recording.name} - Replay ${repeatIndex + 1}/${repeatCount}...`, true);
             }
             
             let successCount = 0;
@@ -459,11 +472,11 @@
                             repeatIndex: repeatIndex + 1
                         });
                         failureCount++;
-                        console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed in repeat ${repeatIndex + 1}/${repeatCount}:`, errorMsg);
-                        HWHFuncs.setProgress(`API Repeater: ${recording.name} - Repeat ${repeatIndex + 1}/${repeatCount} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) failed: ${errorMsg}`, true);
+                        console.error(`Action Replay: Step ${i + 1}/${recording.apiCalls.length} (${call.name}) failed in replay ${repeatIndex + 1}/${repeatCount}:`, errorMsg);
+                        HWHFuncs.setProgress(`Action Replay: ${recording.name} - Replay ${repeatIndex + 1}/${repeatCount} - Step ${i + 1}/${recording.apiCalls.length} (${call.name}) failed: ${errorMsg}`, true);
                     } else {
                         successCount++;
-                        console.log(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) succeeded in repeat ${repeatIndex + 1}/${repeatCount}`);
+                        console.log(`Action Replay: Step ${i + 1}/${recording.apiCalls.length} (${call.name}) succeeded in replay ${repeatIndex + 1}/${repeatCount}`);
                     }
                     
                 } catch (e) {
@@ -477,8 +490,8 @@
                         repeatIndex: repeatIndex + 1
                     });
                     failureCount++;
-                    console.error(`API Repeater: Call ${i + 1}/${recording.apiCalls.length} (${call.name}) threw error in repeat ${repeatIndex + 1}/${repeatCount}:`, e);
-                    HWHFuncs.setProgress(`API Repeater: ${recording.name} - Repeat ${repeatIndex + 1}/${repeatCount} - Call ${i + 1}/${recording.apiCalls.length} (${call.name}) error: ${errorMsg}`, true);
+                    console.error(`Action Replay: Step ${i + 1}/${recording.apiCalls.length} (${call.name}) threw error in replay ${repeatIndex + 1}/${repeatCount}:`, e);
+                    HWHFuncs.setProgress(`Action Replay: ${recording.name} - Replay ${repeatIndex + 1}/${repeatCount} - Step ${i + 1}/${recording.apiCalls.length} (${call.name}) error: ${errorMsg}`, true);
                 }
                 
                 // Add delay between calls (similar to Auto Daily Extension)
@@ -499,11 +512,11 @@
         
         // Final summary
         const totalCalls = recording.apiCalls.length * repeatCount;
-        const summary = `API Repeater: ${recording.name} - Completed ${repeatCount} repeat${repeatCount > 1 ? 's' : ''}: ${totalSuccessCount} succeeded, ${totalFailureCount} failed out of ${totalCalls} total calls`;
+        const summary = `Action Replay: ${recording.name} - Completed ${repeatCount} replay${repeatCount > 1 ? 's' : ''}: ${totalSuccessCount} succeeded, ${totalFailureCount} failed out of ${totalCalls} total steps`;
         console.log(summary);
         
         if (allErrors.length > 0) {
-            console.error(`API Repeater: ${recording.name} - Errors:`, allErrors);
+            console.error(`Action Replay: ${recording.name} - Errors:`, allErrors);
             const errorDetails = allErrors.map(e => `Repeat ${e.repeatIndex}, Call ${e.callIndex} (${e.callName}): ${e.error}`).join('; ');
             HWHFuncs.setProgress(`${summary}. Errors: ${errorDetails}`, true);
         } else {
@@ -520,13 +533,25 @@
         });
 
         if (enabledRecordings.length === 0) return;
+        if (autoRunScheduled) return;
+        autoRunScheduled = true;
 
-        // Execute recordings with delays (similar to Auto Daily Extension)
-        const initialDelay = 10000;
-        enabledRecordings.forEach((recording, index) => {
-            const delay = initialDelay + (index * 3000);
-            setTimeout(() => executeRecording(recording), delay);
-        });
+        // Queue auto-runs sequentially in the current recordings order (not random).
+        // Each recording may contain multiple API calls and repeats; we run the next
+        // recording only after the previous completes.
+        const initialDelayMs = 10000;
+        setTimeout(() => {
+            enabledRecordings.forEach((rec) => {
+                enqueueExecution(async () => {
+                    // Small gap between recordings to reduce bursty traffic
+                    try {
+                        await executeRecordingInternal(rec);
+                    } finally {
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
+                });
+            });
+        }, initialDelayMs);
     }
 
     // --- EXPORT/IMPORT ---
@@ -549,7 +574,7 @@
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         
-        HWHFuncs.setProgress('API Repeater: Recordings exported!', true);
+        HWHFuncs.setProgress('Action Replay: Saved actions exported!', true);
     }
 
     function importRecordings() {
@@ -614,7 +639,7 @@
                     
                     saveRecordings();
                     
-                    let message = `API Repeater: Imported ${addedCount} recording(s)`;
+                    let message = `Action Replay: Imported ${addedCount} item(s)`;
                     if (duplicateCount > 0) {
                         message += ` (${duplicateCount} assigned new IDs due to duplicates)`;
                     }
@@ -629,7 +654,7 @@
                     }
                 } catch (err) {
                     alert('Error importing file: ' + err.message);
-                    console.error('API Repeater: Import error:', err);
+                    console.error('Action Replay: Import error:', err);
                 }
             };
             reader.readAsText(file, 'UTF-8');
@@ -718,16 +743,16 @@
         
         popup.innerHTML = `
             <button class="api-repeater-close-btn">&times;</button>
-            <h2>API Repeater</h2>
+            <h2>Action Replay</h2>
             <div class="api-repeater-controls">
                 <button id="start-recording-btn" class="api-repeater-btn" style="font-size: 16px; padding: 8px 15px; background: ${isRecording ? '#ff4444' : '#4CAF50'}; border-radius: 5px;">
                     ${isRecording ? '⏹ Stop Recording' : '⏺ Start Recording'}
                 </button>
                 <span class="api-repeater-status-badge ${recordingStatusClass}">${recordingStatus}</span>
-                <span style="margin-left: auto; color: #aaa;">Captured: ${recordingBuffer.length} calls</span>
+                <span style="margin-left: auto; color: #aaa;">Captured: ${recordingBuffer.length} actions</span>
             </div>
             <div>
-                <h3 style="margin-top: 0; border-bottom: 1px solid #4a3422; padding-bottom: 5px;">Saved Recordings (${recordings.length})</h3>
+                <h3 style="margin-top: 0; border-bottom: 1px solid #4a3422; padding-bottom: 5px;">Saved Replays (${recordings.length})</h3>
                 <ul class="api-repeater-recording-list" id="recordings-list"></ul>
             </div>
             <div class="api-repeater-footer">
@@ -757,9 +782,9 @@
                 if (recordingBuffer.length > 0) {
                     openCreateRecordingPopup();
                 } else {
-                    // No calls captured, just refresh the main popup
+                    // No actions captured, just refresh the main popup
                     const { HWHFuncs } = window;
-                    HWHFuncs.setProgress('API Repeater: No API calls captured', true);
+                    HWHFuncs.setProgress('Action Replay: No actions captured', true);
                     openMainPopup();
                 }
             } else {
@@ -852,7 +877,7 @@
                 <div class="api-repeater-recording-info" style="flex-grow: 1;">
                     <div class="api-repeater-recording-name">
                         ${recording.name} ${expiredBadge} ${activeBadge}
-                        <span class="api-repeater-expand-btn" data-action="expand" data-id="${recording.id}" title="Show/hide API calls">▼</span>
+                        <span class="api-repeater-expand-btn" data-action="expand" data-id="${recording.id}" title="Show/hide actions">▼</span>
                     </div>
                     <div class="api-repeater-recording-description">${recording.description || 'No description'}</div>
                     <div class="api-repeater-recording-meta">
@@ -861,13 +886,13 @@
                         Expires: ${recording.expirationDays === 0 ? 'Never' : formatDate(recording.expiresAt)}
                     </div>
                     <div class="api-repeater-calls-expanded" id="calls-${recording.id}" style="display: none;">
-                        <div style="font-weight: bold; margin-bottom: 8px;">API Calls (drag to reorder):</div>
+                        <div style="font-weight: bold; margin-bottom: 8px;">Actions (drag to reorder):</div>
                         <ul class="api-repeater-calls-list" id="calls-list-${recording.id}"></ul>
                     </div>
                 </div>
                 <div class="api-repeater-recording-actions">
                     <input type="number" class="api-repeater-repeat-count" min="1" value="${recording.repeatCount || 1}" data-action="update-repeat-count" data-id="${recording.id}" title="Number of times to repeat">
-                    <button class="api-repeater-btn api-repeater-btn-success" title="Run" data-action="run" data-id="${recording.id}">▶️</button>
+                    <button class="api-repeater-btn api-repeater-btn-success" title="Replay" data-action="run" data-id="${recording.id}">▶️</button>
                     <label style="cursor: pointer;">
                         <input type="checkbox" ${recording.autoRun ? 'checked' : ''} data-action="toggle-autorun" data-id="${recording.id}" style="margin-right: 5px;">
                         <span style="font-size: 0.9em;">Auto</span>
@@ -987,7 +1012,7 @@
                     <span class="api-repeater-drag-handle">☰</span>
                     <span class="api-repeater-call-number">${index + 1}.</span>
                     <span class="api-repeater-call-name">${call.name}</span>
-                    <span class="api-repeater-call-delete" data-action="delete-call" data-call-index="${index}" title="Delete this API call">🗑️</span>
+                    <span class="api-repeater-call-delete" data-action="delete-call" data-call-index="${index}" title="Delete this action">🗑️</span>
                 `;
                 
                 // Drag and drop event handlers
@@ -1060,7 +1085,7 @@
         }
         
         if (recordingBuffer.length === 0) {
-            HWHFuncs.setProgress('API Repeater: No API calls captured', true);
+            HWHFuncs.setProgress('Action Replay: No actions captured', true);
             return;
         }
         
@@ -1098,7 +1123,7 @@
                     </label>
                 </div>
                 <div style="color: #aaa; font-size: 0.9em;">
-                    Captured ${recordingBuffer.length} API call(s)
+                    Captured ${recordingBuffer.length} action(s)
                 </div>
                 <div style="display: flex; justify-content: space-around; margin-top: 15px;">
                     <button id="save-recording-btn" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">Save</button>
@@ -1186,7 +1211,7 @@
                     </label>
                 </div>
                 <div>
-                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">API Calls (drag to reorder):</label>
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">Actions (drag to reorder):</label>
                     <ul class="api-repeater-calls-list" id="edit-api-calls-list"></ul>
                 </div>
                 <div style="display: flex; justify-content: space-around; margin-top: 15px;">
@@ -1227,7 +1252,7 @@
                     <span class="api-repeater-drag-handle">☰</span>
                     <span class="api-repeater-call-number">${index + 1}.</span>
                     <span class="api-repeater-call-name">${call.name}</span>
-                    <span class="api-repeater-call-delete" data-action="delete-call" data-call-index="${index}" title="Delete this API call">🗑️</span>
+                    <span class="api-repeater-call-delete" data-action="delete-call" data-call-index="${index}" title="Delete this action">🗑️</span>
                 `;
                 
                 // Drag and drop event handlers
