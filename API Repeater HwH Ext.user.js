@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Repeater HwH Ext
 // @namespace    HeroWarsHelper.APIRepeater
-// @version      1.1
+// @version      1.1.1
 // @description  Record and replay API calls with customizable metadata and auto-execution
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -17,7 +17,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "API Repeater Extension";
-    const EXTENSION_VERSION = "1.0";
+    const EXTENSION_VERSION = "1.1.1";
     const EXTENSION_AUTHOR = "AutoHero";
 
     // --- STATE VARIABLES ---
@@ -39,7 +39,9 @@
     // Use Map with lowercase keys for O(1) case-insensitive lookup
     const SKIP_API_CALLS = new Map([
         ['specialoffer_check', true],
-        ['stashclient', true]
+        ['stashclient', true],
+        ['settingsset', true]
+
     ]);
     
     // Helper function to check if API call should be skipped (case-insensitive, optimized)
@@ -227,41 +229,8 @@
         if (window.Send && !originalSend) {
             originalSend = window.Send;
             window.Send = async function(data) {
-                // Capture API call if recording is active (before calling original)
-                if (isRecording) {
-                    try {
-                        let callData = data;
-                        if (typeof data === 'string') {
-                            callData = JSON.parse(data);
-                        } else if (data && typeof data === 'object') {
-                            callData = data;
-                        }
-                        
-                        if (callData && callData.calls && Array.isArray(callData.calls)) {
-                            // Store each call in the buffer (skip filtered APIs)
-                            // Use for loop instead of forEach for better performance
-                            const calls = callData.calls;
-                            const now = Date.now();
-                            for (let i = 0; i < calls.length; i++) {
-                                const call = calls[i];
-                                // Skip API calls in the skip list
-                                if (!call || !call.name) continue;
-                                if (shouldSkipAPICall(call.name)) continue;
-                                
-                                recordingBuffer.push({
-                                    name: call.name,
-                                    args: call.args || {},
-                                    context: call.context || { actionTs: now },
-                                    ident: call.ident || 'body'
-                                });
-                            }
-                            // Removed console.log for performance
-                        }
-                    } catch (e) {
-                        console.error('API Repeater: Error capturing API call from Send:', e, data);
-                    }
-                }
-                
+                // Do not capture here: XHR is already intercepted at document-start, and
+                // capturing here can double-record calls (Send ultimately uses XHR).
                 // Call original Send function (preserve async behavior)
                 return await originalSend.apply(this, arguments);
             };
@@ -807,6 +776,59 @@
     function populateRecordingsList() {
         const list = document.getElementById('recordings-list');
         if (!list) return;
+
+        // Attach delegated listeners once (populateRecordingsList() is called frequently)
+        if (!list.dataset.apiRepeaterListenersAttached) {
+            list.dataset.apiRepeaterListenersAttached = '1';
+
+            list.addEventListener('click', (e) => {
+                const action = e.target.closest('[data-action]');
+                if (!action) return;
+
+                const actionType = action.dataset.action;
+                const recordingId = action.dataset.id;
+                const recording = recordings.find(r => r.id === recordingId);
+                if (!recording) return;
+
+                if (actionType === 'run') {
+                    executeRecording(recording);
+                } else if (actionType === 'delete') {
+                    deleteRecording(recordingId);
+                    populateRecordingsList();
+                } else if (actionType === 'edit') {
+                    openEditRecordingPopup(recording);
+                } else if (actionType === 'expand') {
+                    e.stopPropagation(); // Prevent event bubbling
+                    const expandedDiv = document.getElementById(`calls-${recordingId}`);
+                    if (expandedDiv) {
+                        const isVisible = expandedDiv.style.display !== 'none';
+                        expandedDiv.style.display = isVisible ? 'none' : 'block';
+                        action.textContent = isVisible ? '▼' : '▲';
+
+                        // Populate on expand (avoid doing work for collapsed recordings)
+                        if (!isVisible) {
+                            setupApiCallsDragDrop(recordingId, recording.apiCalls);
+                        }
+                    }
+                }
+            });
+
+            list.addEventListener('change', (e) => {
+                if (e.target.dataset.action === 'toggle-autorun') {
+                    const recordingId = e.target.dataset.id;
+                    updateRecording(recordingId, { autoRun: e.target.checked });
+                    populateRecordingsList();
+                } else if (e.target.dataset.action === 'update-repeat-count') {
+                    const recordingId = e.target.dataset.id;
+                    const repeatCount = parseInt(e.target.value) || 1;
+                    if (repeatCount < 1) {
+                        e.target.value = 1;
+                        return;
+                    }
+                    updateRecording(recordingId, { repeatCount: repeatCount });
+                }
+            });
+        }
         
         list.innerHTML = '';
         
@@ -854,31 +876,6 @@
                     <button class="api-repeater-btn api-repeater-btn-danger" title="Delete" data-action="delete" data-id="${recording.id}">🗑️</button>
                 </div>
             `;
-            
-            // Add direct click handler for expand button
-            const expandBtn = li.querySelector('.api-repeater-expand-btn');
-            if (expandBtn) {
-                expandBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    const recordingId = expandBtn.dataset.id;
-                    const expandedDiv = document.getElementById(`calls-${recordingId}`);
-                    if (expandedDiv) {
-                        const isVisible = expandedDiv.style.display !== 'none';
-                        expandedDiv.style.display = isVisible ? 'none' : 'block';
-                        expandBtn.textContent = isVisible ? '▼' : '▲';
-                        
-                        // If expanding, ensure API calls list is populated
-                        if (!isVisible) {
-                            const callsList = document.getElementById(`calls-list-${recordingId}`);
-                            if (callsList) {
-                                // Always re-setup when expanding to ensure it's populated
-                                setupApiCallsDragDrop(recordingId, recording.apiCalls);
-                            }
-                        }
-                    }
-                });
-            }
             
             // Drag and drop handlers for recording item
             li.addEventListener('dragstart', (e) => {
@@ -947,63 +944,6 @@
             });
             
             list.appendChild(li);
-            
-            // Setup drag and drop for API calls in main menu
-            setupApiCallsDragDrop(recording.id, recording.apiCalls);
-        });
-        
-        // Add event listeners for actions
-        list.addEventListener('click', (e) => {
-            const action = e.target.closest('[data-action]');
-            if (!action) return;
-            
-            const actionType = action.dataset.action;
-            const recordingId = action.dataset.id;
-            const recording = recordings.find(r => r.id === recordingId);
-            
-            if (!recording) return;
-            
-            if (actionType === 'run') {
-                executeRecording(recording);
-            } else if (actionType === 'delete') {
-                deleteRecording(recordingId);
-                populateRecordingsList();
-            } else if (actionType === 'edit') {
-                openEditRecordingPopup(recording);
-            } else if (actionType === 'expand') {
-                e.stopPropagation(); // Prevent event bubbling
-                const expandedDiv = document.getElementById(`calls-${recordingId}`);
-                if (expandedDiv) {
-                    const isVisible = expandedDiv.style.display !== 'none';
-                    expandedDiv.style.display = isVisible ? 'none' : 'block';
-                    action.textContent = isVisible ? '▼' : '▲';
-                    
-                    // If expanding, ensure API calls list is populated
-                    if (!isVisible) {
-                        const callsList = document.getElementById(`calls-list-${recordingId}`);
-                        if (callsList && callsList.children.length === 0) {
-                            // Re-setup drag and drop if list is empty
-                            setupApiCallsDragDrop(recordingId, recording.apiCalls);
-                        }
-                    }
-                }
-            }
-        });
-        
-        list.addEventListener('change', (e) => {
-            if (e.target.dataset.action === 'toggle-autorun') {
-                const recordingId = e.target.dataset.id;
-                updateRecording(recordingId, { autoRun: e.target.checked });
-                populateRecordingsList();
-            } else if (e.target.dataset.action === 'update-repeat-count') {
-                const recordingId = e.target.dataset.id;
-                const repeatCount = parseInt(e.target.value) || 1;
-                if (repeatCount < 1) {
-                    e.target.value = 1;
-                    return;
-                }
-                updateRecording(recordingId, { repeatCount: repeatCount });
-            }
         });
     }
 
@@ -1012,6 +952,29 @@
         if (!callsList) return;
         
         let reorderedApiCalls = [...apiCalls];
+
+        // Replace (not stack) the delete-click handler each time we (re)setup this list
+        callsList.onclick = (e) => {
+            if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
+                const deleteBtn = e.target.classList.contains('api-repeater-call-delete') ? e.target : e.target.closest('.api-repeater-call-delete');
+                const callIndex = parseInt(deleteBtn.dataset.callIndex);
+
+                if (!isNaN(callIndex) && callIndex >= 0 && callIndex < reorderedApiCalls.length) {
+                    // Remove the API call
+                    reorderedApiCalls.splice(callIndex, 1);
+
+                    // Update the recording
+                    const recording = recordings.find(r => r.id === recordingId);
+                    if (recording) {
+                        recording.apiCalls = reorderedApiCalls;
+                        saveRecordings();
+                    }
+
+                    // Re-render list
+                    renderCallsList();
+                }
+            }
+        };
         
         function renderCallsList() {
             callsList.innerHTML = '';
@@ -1081,29 +1044,6 @@
                 });
                 
                 callsList.appendChild(li);
-            });
-            
-            // Add click handler for delete buttons
-            callsList.addEventListener('click', (e) => {
-                if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
-                    const deleteBtn = e.target.classList.contains('api-repeater-call-delete') ? e.target : e.target.closest('.api-repeater-call-delete');
-                    const callIndex = parseInt(deleteBtn.dataset.callIndex);
-                    
-                    if (!isNaN(callIndex) && callIndex >= 0 && callIndex < reorderedApiCalls.length) {
-                        // Remove the API call
-                        reorderedApiCalls.splice(callIndex, 1);
-                        
-                        // Update the recording
-                        const recording = recordings.find(r => r.id === recordingId);
-                        if (recording) {
-                            recording.apiCalls = reorderedApiCalls;
-                            saveRecordings();
-                        }
-                        
-                        // Re-render list
-                        renderCallsList();
-                    }
-                }
             });
         }
         
@@ -1262,6 +1202,19 @@
         // Populate API calls list with drag and drop
         const apiCallsList = document.getElementById('edit-api-calls-list');
         let reorderedApiCalls = [...recording.apiCalls]; // Copy for reordering
+
+        // Replace (not stack) click handler for delete buttons in edit popup
+        apiCallsList.onclick = (e) => {
+            if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
+                const deleteBtn = e.target.classList.contains('api-repeater-call-delete') ? e.target : e.target.closest('.api-repeater-call-delete');
+                const callIndex = parseInt(deleteBtn.dataset.callIndex);
+
+                if (!isNaN(callIndex) && callIndex >= 0 && callIndex < reorderedApiCalls.length) {
+                    reorderedApiCalls.splice(callIndex, 1);
+                    renderApiCallsList();
+                }
+            }
+        };
         
         function renderApiCallsList() {
             apiCallsList.innerHTML = '';
@@ -1325,22 +1278,6 @@
                 });
                 
                 apiCallsList.appendChild(li);
-            });
-            
-            // Add click handler for delete buttons in edit popup
-            apiCallsList.addEventListener('click', (e) => {
-                if (e.target.classList.contains('api-repeater-call-delete') || e.target.closest('.api-repeater-call-delete')) {
-                    const deleteBtn = e.target.classList.contains('api-repeater-call-delete') ? e.target : e.target.closest('.api-repeater-call-delete');
-                    const callIndex = parseInt(deleteBtn.dataset.callIndex);
-                    
-                    if (!isNaN(callIndex) && callIndex >= 0 && callIndex < reorderedApiCalls.length) {
-                        // Remove the API call
-                        reorderedApiCalls.splice(callIndex, 1);
-                        
-                        // Re-render list
-                        renderApiCallsList();
-                    }
-                }
             });
         }
         
