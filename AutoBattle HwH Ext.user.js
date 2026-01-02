@@ -2949,8 +2949,54 @@
                     const pet = team[5];
 
                     // Get favor for this team
+                    // Favor structure: favorData.crossClanDefence_heroes should be an object
+                    // where keys are team indices (as strings) and values are favor objects
+                    // Example: { "0": {"13": 6008, "16": 6004}, "1": {"29": 6006}, "2": {} }
                     const crossClanDefenceFavor = favorData.crossClanDefence_heroes || {};
-                    const favor = crossClanDefenceFavor[teamIndex] || {};
+                    let favor = {};
+                    
+                    console.log(`Cross Clan War: Getting favor for teamIndex ${teamIndex}`);
+                    console.log(`Cross Clan War: crossClanDefenceFavor structure:`, crossClanDefenceFavor);
+                    console.log(`Cross Clan War: crossClanDefenceFavor type:`, typeof crossClanDefenceFavor);
+                    
+                    // Try to get favor by teamIndex (as number or string key)
+                    if (crossClanDefenceFavor && typeof crossClanDefenceFavor === 'object') {
+                        // Try numeric index first
+                        if (crossClanDefenceFavor[teamIndex] !== undefined) {
+                            const favorValue = crossClanDefenceFavor[teamIndex];
+                            console.log(`Cross Clan War: Favor value at index ${teamIndex}:`, favorValue, `(type: ${typeof favorValue})`);
+                            // Ensure it's an object, not a number or other type
+                            if (favorValue && typeof favorValue === 'object' && !Array.isArray(favorValue)) {
+                                favor = favorValue;
+                            } else {
+                                console.warn(`Cross Clan War: Favor at index ${teamIndex} is not an object (got ${typeof favorValue}: ${favorValue}), using empty object`);
+                            }
+                        } else {
+                            // Try string key
+                            const stringKey = String(teamIndex);
+                            if (crossClanDefenceFavor[stringKey] !== undefined) {
+                                const favorValue = crossClanDefenceFavor[stringKey];
+                                console.log(`Cross Clan War: Favor value at string key "${stringKey}":`, favorValue, `(type: ${typeof favorValue})`);
+                                if (favorValue && typeof favorValue === 'object' && !Array.isArray(favorValue)) {
+                                    favor = favorValue;
+                                } else {
+                                    console.warn(`Cross Clan War: Favor at string key "${stringKey}" is not an object, using empty object`);
+                                }
+                            } else {
+                                console.log(`Cross Clan War: No favor found at index ${teamIndex} or string key "${String(teamIndex)}", using empty object`);
+                            }
+                        }
+                    } else {
+                        console.warn(`Cross Clan War: crossClanDefenceFavor is not an object, using empty favor`);
+                    }
+                    
+                    // Validate favor is an object (hero IDs as string keys, pet IDs as values)
+                    if (typeof favor !== 'object' || Array.isArray(favor)) {
+                        console.warn(`Cross Clan War: Invalid favor structure after processing, using empty object. Got:`, favor, `(type: ${typeof favor})`);
+                        favor = {};
+                    }
+                    
+                    console.log(`Cross Clan War: Final favor object:`, favor);
 
                     // Get banner
                     let banner = 1;
@@ -3000,8 +3046,26 @@
                         units: teamConfig.heroes,
                         pet: teamConfig.pet
                     };
-                    args.favor = teamConfig.favor || {};
+                    
+                    // Ensure favor is always an object (hero IDs as string keys, pet IDs as values)
+                    let favor = teamConfig.favor || {};
+                    if (typeof favor !== 'object' || Array.isArray(favor)) {
+                        console.warn(`Cross Clan War: Invalid favor type (${typeof favor}), using empty object. Value:`, favor);
+                        favor = {};
+                    }
+                    args.favor = favor;
+                    
                     args.banner = teamConfig.banner || 1;
+                    
+                    // Log the request for debugging
+                    console.log(`Cross Clan War: Battle args for slot ${slotId}:`, {
+                        slotId: args.slotId,
+                        team: args.team,
+                        favor: args.favor,
+                        banner: args.banner,
+                        favorType: typeof args.favor,
+                        favorIsArray: Array.isArray(args.favor)
+                    });
                 } else {
                     args.team = {
                         units: teamConfig.titans
