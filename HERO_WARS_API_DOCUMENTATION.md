@@ -4204,14 +4204,15 @@ console.log(`Next war starts: ${nextWarTime.toLocaleString()}`);
 
 **Request:**
 ```javascript
-Send({
-  calls: [{
-    name: "crossClanWar_getAttackMap",
-    args: {},
-    context: { actionTs: Date.now() },
-    ident: "body"
-  }]
-})
+const calls = [{
+  name: "crossClanWar_getAttackMap",
+  args: {},
+  context: { actionTs: Date.now() },
+  ident: "body"
+}];
+
+const response = await Send(JSON.stringify({calls}));
+const attackMapData = response.results[0].result.response;
 ```
 
 **Response Structure:**
@@ -4242,6 +4243,81 @@ Send({
       "usedHeroes": [62, 29, 58, 40, 56, 31, 55, 64, 13, 1, 46, 63, 9, 48, 16],
       "usedTitans": [4033, 4003, 4001, 4032, 4000, 4013, 4043, 4031, 4010, 4030]
     }
+  },
+  "targets": {
+    "1": {
+      "userId": 35979991,
+      "teamIndex": 2,
+      "state": 0
+    },
+    "7": {
+      "userId": 35979991,
+      "teamIndex": 0,
+      "state": 0
+    },
+    "16": {
+      "userId": 35538758,
+      "teamIndex": 0,
+      "state": 1
+    },
+    "17": {
+      "userId": 35449277,
+      "teamIndex": 1,
+      "state": 1
+    },
+    "24": {
+      "userId": 35979991,
+      "teamIndex": 1,
+      "state": 0
+    },
+    "42": {
+      "userId": 35979991,
+      "teamIndex": 1,
+      "state": 1
+    }
+  },
+  "enemySlots": {
+    "7": {
+      "id": 7,
+      "user": {
+        "id": "274748940",
+        "name": "Natan",
+        "level": "130",
+        "serverId": "319"
+      },
+      "team": {
+        "1": {
+          "state": {
+            "hp": 449732,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 449732
+          },
+          "id": 16,
+          "star": 6,
+          "level": 130,
+          "power": 203762,
+          "type": "hero"
+        },
+        "2": {
+          "state": {
+            "hp": 639192,
+            "energy": 0,
+            "isDead": false,
+            "maxHp": 639192
+          },
+          "id": 63,
+          "star": 6,
+          "level": 130,
+          "power": 206787,
+          "type": "hero"
+        }
+      },
+      "status": "ready",
+      "attackerId": null,
+      "pointsFarmed": 0,
+      "pointsTotal": 35
+    }
   }
 }
 ```
@@ -4260,6 +4336,67 @@ Send({
       - Empty array `[]` if no titans have been used yet
       - Contains titan IDs (numbers) that have been deployed in battles
 
+- `targets` (object): Object mapping target slot IDs to attack assignments in the Cross Clan War
+  - Keys are slot IDs as strings (e.g., `"1"`, `"7"`, `"16"`, `"17"`)
+    - Lower slot IDs (typically 1-16) are usually hero battles
+    - Higher slot IDs (typically 17+) are usually titan battles
+  - Each target object contains:
+    - `userId` (number): User ID of the player assigned to attack this target
+    - `teamIndex` (number): Index of the attacking player's defense team to use (0-based)
+      - **For hero battles**: Maps to the assigned player's `crossClanDefence_heroes[teamIndex]` from `teamGetAll` API
+        - `teamIndex: 0` → `crossClanDefence_heroes[0]` (first hero team of the assigned attacker)
+        - `teamIndex: 1` → `crossClanDefence_heroes[1]` (second hero team of the assigned attacker)
+        - `teamIndex: 2` → `crossClanDefence_heroes[2]` (third hero team of the assigned attacker)
+      - **For titan battles**: Maps to the assigned player's `crossClanDefence_titans[teamIndex]` from `teamGetAll` API
+        - `teamIndex: 0` → `crossClanDefence_titans[0]` (first titan team of the assigned attacker)
+        - `teamIndex: 1` → `crossClanDefence_titans[1]` (second titan team of the assigned attacker)
+    - `state` (number): Attack status
+      - `0` = Available for attack (not yet completed)
+      - `1` = Complete (attack has been finished)
+
+- `enemySlots` (object): Detailed information about enemy defense slots
+  - Keys are slot IDs as strings (e.g., `"7"`, `"16"`, `"17"`)
+  - Each slot object contains:
+    - `id` (number): Slot ID
+    - `user` (object): Enemy player information defending this slot
+      - `id` (string): User ID
+      - `name` (string): Player name
+      - `level` (string): Player level
+      - `serverId` (string): Server ID
+      - Additional user profile fields (avatarId, clanTitle, etc.)
+    - `team` (object): Defense team configuration
+      - Keys are position numbers as strings (`"1"`, `"2"`, `"3"`, `"4"`, `"5"`, `"6"`)
+      - Each position contains:
+        - `id` (number): Hero, titan, or pet ID
+        - `type` (string): Unit type - **"hero"**, **"titan"**, or **"pet"**
+          - **Important**: Check the `type` field to determine battle type
+          - If any unit has `type: "hero"` → Use `crossClanDefence_heroes` to attack
+          - If units have `type: "titan"` → Use `crossClanDefence_titans` to attack
+        - `state` (object): Current battle state of the unit
+          - `hp` (number): Current HP
+          - `energy` (number): Current energy
+          - `isDead` (boolean): Whether unit is dead
+            - `false` = Unit is alive, good to attack
+            - `true` = Unit is dead, already defeated
+          - `maxHp` (number): Maximum HP
+        - `star` (number): Star level
+        - `color` (number): Color/ascension level
+        - `level` (number): Unit level
+        - `power` (number): Unit power
+        - Additional fields for titans: `element`, `elementSpiritLevel`, `elementSpiritStar`, `elementSpiritSkills`
+    - `banner` (object, optional): Banner configuration for hero battles
+      - `id` (number): Banner ID
+      - `slots` (object): Banner stone slots
+    - `status` (string): Slot status
+      - `"ready"` = Available for attack
+      - Other statuses may indicate slot is locked or unavailable
+    - `attackerId` (number | null): User ID of player currently attacking this slot
+      - `null` = No one is currently attacking (available)
+      - Number = User ID of the attacker (slot is being attacked)
+    - `replayId` (number | null): Replay ID if battle has been completed
+    - `pointsFarmed` (number): Points already farmed from this slot
+    - `pointsTotal` (number): Total points available from this slot
+
 **Usage Notes:**
 
 - **User ID Format**: User IDs are returned as strings (not numbers) in the response
@@ -4271,16 +4408,16 @@ Send({
 
 **Example Usage:**
 ```javascript
-const response = await Send({
-  calls: [{
-    name: "crossClanWar_getAttackMap",
-    args: {},
-    context: { actionTs: Date.now() },
-    ident: "body"
-  }]
-});
+const calls = [{
+  name: "crossClanWar_getAttackMap",
+  args: {},
+  context: { actionTs: Date.now() },
+  ident: "body"
+}];
 
-const attackMap = response.results[0].result.response.clanTries;
+const response = await Send(JSON.stringify({calls}));
+const attackMapData = response.results[0].result.response;
+const attackMap = attackMapData.clanTries;
 
 // Iterate through all clan members
 Object.keys(attackMap).forEach(userId => {
@@ -4327,13 +4464,241 @@ const availableMember = Object.keys(attackMap).find(userId => {
 if (availableMember) {
   console.log(`Member ${availableMember} can use hero ${targetHeroId}`);
 }
+
+// Access targets (object with slot IDs as keys)
+const targets = attackMapData.targets || {};
+
+// Get team configurations from teamGetAll for all clan members
+const teamGetAllCalls = [{
+  name: "teamGetAll",
+  args: {},
+  ident: "teamGetAll"
+}];
+const teamGetAllResponse = await Send(JSON.stringify({calls: teamGetAllCalls}));
+const teamData = teamGetAllResponse.results[0].result.response;
+
+// Process each target slot
+Object.entries(targets).forEach(([slotId, target]) => {
+  const { state, teamIndex, userId } = target;
+  
+  // Determine if this is a hero or titan battle based on slot ID
+  // Typically: slots 1-16 are hero battles, slots 17+ are titan battles
+  const slotNum = parseInt(slotId);
+  const isHeroBattle = slotNum <= 16;
+  
+  if (state === 0) { // Available for attack
+    console.log(`Slot ${slotId}: Assigned to User ${userId}, Team Index ${teamIndex} (${isHeroBattle ? 'Hero' : 'Titan'} battle)`);
+    
+    // Get the assigned player's team configuration
+    // Note: You would need to get each player's teamGetAll data, or use a cached version
+    // For this example, we'll show the structure:
+    if (isHeroBattle) {
+      // Hero battle - use assigned player's crossClanDefence_heroes[teamIndex]
+      console.log(`  Use User ${userId}'s crossClanDefence_heroes[${teamIndex}] for attack`);
+    } else {
+      // Titan battle - use assigned player's crossClanDefence_titans[teamIndex]
+      console.log(`  Use User ${userId}'s crossClanDefence_titans[${teamIndex}] for attack`);
+    }
+  } else if (state === 1) {
+    console.log(`Slot ${slotId}: Completed by User ${userId}`);
+  }
+});
+
+// Example: Get attack team configuration for a specific target
+// Note: This requires having each player's teamGetAll data
+function getAttackTeamForTarget(slotId, target, playerTeamData) {
+  const { teamIndex, userId, state } = target;
+  
+  if (state === 1) {
+    return { status: 'completed' };
+  }
+  
+  const slotNum = parseInt(slotId);
+  const isHeroBattle = slotNum <= 16;
+  
+  if (!playerTeamData || !playerTeamData[userId]) {
+    return { error: `Team data not available for user ${userId}` };
+  }
+  
+  const userTeamData = playerTeamData[userId];
+  
+  if (isHeroBattle) {
+    // Hero battle - get from crossClanDefence_heroes
+    if (userTeamData.crossClanDefence_heroes && userTeamData.crossClanDefence_heroes[teamIndex]) {
+      const team = userTeamData.crossClanDefence_heroes[teamIndex];
+      return {
+        type: 'hero',
+        slotId: slotId,
+        userId: userId,
+        heroes: team.slice(0, 5),
+        pet: team[5],
+        teamIndex: teamIndex
+      };
+    }
+  } else {
+    // Titan battle - get from crossClanDefence_titans
+    if (userTeamData.crossClanDefence_titans && userTeamData.crossClanDefence_titans[teamIndex]) {
+      return {
+        type: 'titan',
+        slotId: slotId,
+        userId: userId,
+        titans: userTeamData.crossClanDefence_titans[teamIndex],
+        teamIndex: teamIndex
+      };
+    }
+  }
+  
+  return { error: 'Team configuration not found' };
+}
+
+// Example: Find available targets for a specific user
+function getAvailableTargetsForUser(targets, userId) {
+  return Object.entries(targets)
+    .filter(([slotId, target]) => target.userId === userId && target.state === 0)
+    .map(([slotId, target]) => ({ slotId, ...target }));
+}
+
+// Example usage
+const myUserId = 35979991;
+const myTargets = getAvailableTargetsForUser(targets, myUserId);
+console.log(`User ${myUserId} has ${myTargets.length} available targets:`, myTargets);
+
+// Access enemySlots to get detailed enemy defense information
+const enemySlots = attackMapData.enemySlots || {};
+
+// Process each enemy slot to determine battle type and availability
+Object.entries(enemySlots).forEach(([slotId, slotData]) => {
+  const { team, status, attackerId, user } = slotData;
+  
+  // Check if slot is available for attack
+  const isAvailable = status === "ready" && attackerId === null;
+  
+  if (!isAvailable) {
+    console.log(`Slot ${slotId}: Not available (status: ${status}, attackerId: ${attackerId})`);
+    return;
+  }
+  
+  // Determine battle type by checking team unit types
+  let battleType = null;
+  let hasHeroes = false;
+  let hasTitans = false;
+  let allUnitsAlive = true;
+  
+  Object.values(team).forEach(unit => {
+    if (unit.type === "hero") {
+      hasHeroes = true;
+    } else if (unit.type === "titan") {
+      hasTitans = true;
+    }
+    
+    // Check if unit is dead
+    if (unit.state && unit.state.isDead === true) {
+      allUnitsAlive = false;
+    }
+  });
+  
+  // Determine battle type based on unit types
+  if (hasHeroes) {
+    battleType = "hero";
+  } else if (hasTitans) {
+    battleType = "titan";
+  }
+  
+  console.log(`Slot ${slotId}:`);
+  console.log(`  Enemy: ${user.name} (Level ${user.level})`);
+  console.log(`  Battle Type: ${battleType}`);
+  console.log(`  All Units Alive: ${allUnitsAlive}`);
+  console.log(`  Status: ${status}`);
+  console.log(`  Points Available: ${slotData.pointsTotal - slotData.pointsFarmed}`);
+  
+  if (battleType === "hero") {
+    console.log(`  → Use crossClanDefence_heroes to attack`);
+  } else if (battleType === "titan") {
+    console.log(`  → Use crossClanDefence_titans to attack`);
+  }
+});
+
+// Helper function: Check if a slot is good to attack
+function isSlotGoodToAttack(slotId, enemySlots) {
+  const slot = enemySlots[slotId];
+  if (!slot) return false;
+  
+  // Check if slot is ready and not being attacked
+  if (slot.status !== "ready" || slot.attackerId !== null) {
+    return false;
+  }
+  
+  // Check if all units are alive (isDead: false)
+  const team = slot.team || {};
+  const allAlive = Object.values(team).every(unit => {
+    return unit.state && unit.state.isDead === false;
+  });
+  
+  return allAlive;
+}
+
+// Helper function: Get battle type for a slot
+function getBattleTypeForSlot(slotId, enemySlots) {
+  const slot = enemySlots[slotId];
+  if (!slot || !slot.team) return null;
+  
+  const team = slot.team;
+  let hasHeroes = false;
+  let hasTitans = false;
+  
+  Object.values(team).forEach(unit => {
+    if (unit.type === "hero") {
+      hasHeroes = true;
+    } else if (unit.type === "titan") {
+      hasTitans = true;
+    }
+  });
+  
+  if (hasHeroes) return "hero";
+  if (hasTitans) return "titan";
+  return null;
+}
+
+// Example: Find available hero battle slots
+const availableHeroSlots = Object.keys(enemySlots).filter(slotId => {
+  return isSlotGoodToAttack(slotId, enemySlots) && 
+         getBattleTypeForSlot(slotId, enemySlots) === "hero";
+});
+
+console.log(`Available hero battle slots: ${availableHeroSlots.join(', ')}`);
+
+// Example: Find available titan battle slots
+const availableTitanSlots = Object.keys(enemySlots).filter(slotId => {
+  return isSlotGoodToAttack(slotId, enemySlots) && 
+         getBattleTypeForSlot(slotId, enemySlots) === "titan";
+});
+
+console.log(`Available titan battle slots: ${availableTitanSlots.join(', ')}`);
 ```
 
 **Notes:**
 - This API provides clan-wide coordination data for Cross Clan War attacks
 - Use this information to plan attacks and ensure optimal unit distribution across clan members
 - The `usedHeroes` and `usedTitans` arrays help track which units are still available for use
-- Combine this with `crossClanWar_getInfo` to get complete war status information
+- The `targets` object shows attack assignments for each target slot
+- **Target Structure**: 
+  - Keys are slot IDs (strings like `"1"`, `"7"`, `"16"`, `"17"`)
+  - Lower slot IDs (typically 1-16) are usually hero battles
+  - Higher slot IDs (typically 17+) are usually titan battles
+- **Attack Assignment**:
+  - `userId` in each target is the player assigned to attack that target (not the defender)
+  - `teamIndex` refers to which team from the assigned attacker's `crossClanDefence_heroes` or `crossClanDefence_titans` to use
+  - To get the attack team, you need the assigned player's `teamGetAll` data and use their `crossClanDefence_heroes[teamIndex]` or `crossClanDefence_titans[teamIndex]`
+- **State Values**:
+  - `state: 0` = Target is available for attack (not yet completed)
+  - `state: 1` = Target attack is complete
+- Combine this with `crossClanWar_getInfo` and `teamGetAll` (for each assigned player) to get complete war status and attack team information
+- **Enemy Slots Information**: The `enemySlots` field provides detailed information about enemy defense slots
+  - Use `enemySlots[slotId].team[position].type` to determine battle type:
+    - If `type: "hero"` → Use `crossClanDefence_heroes` to attack
+    - If `type: "titan"` → Use `crossClanDefence_titans` to attack
+  - Check `enemySlots[slotId].team[position].state.isDead` to see if units are alive (`false` = good to attack)
+  - Check `enemySlots[slotId].status === "ready"` and `enemySlots[slotId].attackerId === null` to confirm slot is available
 
 ---
 
@@ -4565,13 +4930,27 @@ The `teamGetAll` API provides comprehensive team configurations for all game mod
 
 **Request:**
 ```javascript
-Send({
-  calls: [{
-    name: "teamGetAll",
-    args: {},
-    ident: "teamGetAll"
-  }]
-})
+const calls = [{
+  name: "teamGetAll",
+  args: {},
+  ident: "teamGetAll"
+}];
+
+const response = await Send(JSON.stringify({calls}));
+const teamData = response.results[0].result.response;
+```
+
+**Alternative Request Format (with context):**
+```javascript
+const calls = [{
+  name: "teamGetAll",
+  args: {},
+  context: { actionTs: Date.now() },
+  ident: "teamGetAll"
+}];
+
+const response = await Send(JSON.stringify({calls}));
+const teamData = response.results[0].result.response;
 ```
 
 ### Response Structure
@@ -4616,8 +4995,8 @@ Each team configuration is an array where:
   clan_pvp_titan: number[];           // Titans for clan PvP
   
   // Cross-Clan Defense
-  crossClanDefence_heroes: number[][]; // [[team1], [team2], [team3]] - 3 teams
-  crossClanDefence_titans: number[][]; // [[team1], [team2]] - 2 titan teams
+  crossClanDefence_heroes: number[][]; // [[team1], [team2], [team3]] - 3 teams, each with [hero1, hero2, hero3, hero4, hero5, pet]
+  crossClanDefence_titans: number[][]; // [[team1], [team2]] - 2 titan teams, each with [titan1, titan2, titan3, titan4, titan5]
   
   // Mission Mode
   mission: number[];                   // [hero1, hero2, hero3, hero4, hero5, pet]
@@ -4661,6 +5040,87 @@ const clanRaidTeams = teamGetAll.clanRaid_nodes; // [[team1], [team2], [team3]]
 **Titan-Only Modes:**
 ```javascript
 const titanArenaTeam = teamGetAll.titan_arena; // [4033, 4003, 4043, 4032, 4030]
+```
+
+**Cross-Clan Defense Teams:**
+```javascript
+// Cross-Clan Defense Heroes: 3 teams, each with 6 elements (5 heroes + 1 pet)
+const crossClanDefenceHeroes = teamGetAll.crossClanDefence_heroes;
+// Example structure:
+// [
+//   [58, 56, 62, 9, 40, 6006],  // Team 1: [hero1, hero2, hero3, hero4, hero5, pet]
+//   [16, 48, 13, 64, 29, 6008],  // Team 2: [hero1, hero2, hero3, hero4, hero5, pet]
+//   [1, 55, 31, 43, 63, 6005]    // Team 3: [hero1, hero2, hero3, hero4, hero5, pet]
+// ]
+
+// Cross-Clan Defense Titans: 2 teams, each with 5 titans
+const crossClanDefenceTitans = teamGetAll.crossClanDefence_titans;
+// Example structure:
+// [
+//   [4030, 4031, 4043, 4042, 4023],  // Team 1: [titan1, titan2, titan3, titan4, titan5]
+//   [4000, 4001, 4003, 4032, 4033]   // Team 2: [titan1, titan2, titan3, titan4, titan5]
+// ]
+
+// Access individual teams
+const firstHeroTeam = crossClanDefenceHeroes[0]; // [58, 56, 62, 9, 40, 6006]
+const firstHeroTeamHeroes = firstHeroTeam.slice(0, 5); // [58, 56, 62, 9, 40]
+const firstHeroTeamPet = firstHeroTeam[5]; // 6006
+
+const firstTitanTeam = crossClanDefenceTitans[0]; // [4030, 4031, 4043, 4042, 4023]
+```
+
+### Complete Response Example
+
+**Request:**
+```javascript
+const calls = [{
+  name: "teamGetAll",
+  args: {},
+  ident: "teamGetAll"
+}];
+
+const response = await Send(JSON.stringify({calls}));
+const teamData = response.results[0].result.response;
+```
+
+**Response Example (partial):**
+```javascript
+{
+  // Regular Arena (single team)
+  arena: [46, 57, 40, 16, 65, 6008],
+  
+  // Grand Arena (3 teams)
+  grand: [
+    [58, 1, 64, 13, 55, 6006],
+    [42, 56, 9, 62, 43, 6005],
+    [16, 31, 57, 40, 48, 6004]
+  ],
+  
+  // Cross-Clan Defense Heroes (3 teams)
+  crossClanDefence_heroes: [
+    [58, 56, 62, 9, 40, 6006],  // Team 1: 5 heroes + 1 pet
+    [16, 48, 13, 64, 29, 6008], // Team 2: 5 heroes + 1 pet
+    [1, 55, 31, 43, 63, 6005]   // Team 3: 5 heroes + 1 pet
+  ],
+  
+  // Cross-Clan Defense Titans (2 teams)
+  crossClanDefence_titans: [
+    [4030, 4031, 4043, 4042, 4023], // Team 1: 5 titans
+    [4000, 4001, 4003, 4032, 4033]  // Team 2: 5 titans
+  ],
+  
+  // Titan Arena (single team, 5 titans only, no pet)
+  titan_arena: [4033, 4003, 4043, 4032, 4030],
+  
+  // Clan Raid Nodes (3 teams)
+  clanRaid_nodes: [
+    [46, 57, 40, 16, 65, 6008],
+    [58, 1, 64, 13, 55, 6006],
+    [42, 56, 9, 62, 43, 6005]
+  ],
+  
+  // ... other team configurations
+}
 ```
 
 ---

@@ -2696,11 +2696,398 @@
             }
         }
 
+        // ========== EXECUTE CROSS CLAN WAR CLASS ==========
+        function executeCrossClanWar(resolve, reject) {
+            this.resolve = resolve;
+            this.reject = reject;
+            this.currentUserId = null;
+            this.attackMapData = null;
+            this.teamInfo = null;
+            this.victories = 0;
+            this.attacksCompleted = 0;
+
+            this.start = async function() {
+                setProgress('Cross Clan War: Initializing...');
+                try {
+                    await this.getCurrentUserId();
+                    if (!this.currentUserId) {
+                        this.end('Could not get current user ID');
+                        return;
+                    }
+
+                    await this.getAttackMap();
+                    await this.getTeamData();
+                    await this.attackAssignedTargets();
+                } catch (error) {
+                    console.error('Cross Clan War error:', error);
+                    this.end(`Error: ${error.message}`);
+                }
+            }
+
+            this.getCurrentUserId = async function() {
+                try {
+                    const calls = [{
+                        name: "userGetInfo",
+                        args: {},
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: "body"
+                    }];
+
+                    const response = await Send(JSON.stringify({calls}));
+                    
+                    if (response.error) {
+                        throw new Error(`User info API error: ${response.error.name} - ${response.error.description}`);
+                    }
+                    
+                    if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                        throw new Error('Invalid userGetInfo response');
+                    }
+
+                    const userInfo = response.results[0].result.response;
+                    this.currentUserId = userInfo.id ? parseInt(userInfo.id, 10) : null;
+                    
+                    if (!this.currentUserId) {
+                        throw new Error('User ID not found in response');
+                    }
+
+                    console.log(`Cross Clan War: Current user ID: ${this.currentUserId}`);
+                    return this.currentUserId;
+                } catch (error) {
+                    console.error('Error getting current user ID:', error);
+                    throw error;
+                }
+            }
+
+            this.getAttackMap = async function() {
+                console.log('Getting Cross Clan War attack map...');
+                
+                const calls = [{
+                    name: "crossClanWar_getAttackMap",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`Attack map API error: ${response.error.name} - ${response.error.description}`);
+                }
+                
+                if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                    throw new Error('Invalid crossClanWar_getAttackMap response');
+                }
+
+                this.attackMapData = response.results[0].result.response;
+                console.log('Cross Clan War attack map loaded');
+            }
+
+            this.getTeamData = async function() {
+                console.log('Getting team data...');
+                
+                const calls = [
+                    {
+                        name: "teamGetAll",
+                        args: {},
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: "teamGetAll"
+                    },
+                    {
+                        name: "teamGetFavor",
+                        args: {},
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: "teamGetFavor"
+                    }
+                ];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`Team data API error: ${response.error.name} - ${response.error.description}`);
+                }
+                
+                if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                    throw new Error('Invalid teamGetAll response');
+                }
+                if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
+                    throw new Error('Invalid teamGetFavor response');
+                }
+
+                this.teamInfo = {
+                    teams: response.results[0].result.response,
+                    favor: response.results[1].result.response
+                };
+
+                console.log('Team data loaded');
+            }
+
+            this.attackAssignedTargets = async function() {
+                if (!this.attackMapData || !this.attackMapData.targets) {
+                    this.end('No targets available');
+                    return;
+                }
+
+                const targets = this.attackMapData.targets;
+                const enemySlots = this.attackMapData.enemySlots || {};
+
+                // Filter targets assigned to current user with state === 0
+                const myTargets = [];
+                Object.entries(targets).forEach(([slotId, target]) => {
+                    if (target.userId === this.currentUserId && target.state === 0) {
+                        myTargets.push({ slotId, target });
+                    }
+                });
+
+                if (myTargets.length === 0) {
+                    this.end('No targets assigned to you or all targets already completed');
+                    return;
+                }
+
+                console.log(`Cross Clan War: Found ${myTargets.length} targets assigned to you`);
+                setProgress(`Cross Clan War: Attacking ${myTargets.length} targets...`);
+
+                for (let i = 0; i < myTargets.length; i++) {
+                    const { slotId, target } = myTargets[i];
+                    const enemySlot = enemySlots[slotId];
+
+                    try {
+                        console.log(`Cross Clan War: Attacking slot ${slotId} (${i + 1}/${myTargets.length})`);
+                        setProgress(`Cross Clan War: Slot ${slotId} (${i + 1}/${myTargets.length})`);
+                        
+                        await this.attackSlot(slotId, target, enemySlot);
+                        this.attacksCompleted++;
+                        this.victories++;
+                        
+                        if (i < myTargets.length - 1) {
+                            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+                        }
+                    } catch (error) {
+                        console.error(`Error attacking slot ${slotId}:`, error);
+                        // Continue to next target on error
+                    }
+                }
+
+                this.end(`Completed ${this.victories}/${this.attacksCompleted} attacks`);
+            }
+
+            this.attackSlot = async function(slotId, target, enemySlot) {
+                // Verify slot is available
+                if (enemySlot) {
+                    if (enemySlot.status !== "ready" || enemySlot.attackerId !== null) {
+                        throw new Error(`Slot ${slotId} is not available for attack`);
+                    }
+
+                    // Check if all units are alive
+                    const team = enemySlot.team || {};
+                    const allAlive = Object.values(team).every(unit => {
+                        return unit.state && unit.state.isDead === false;
+                    });
+
+                    if (!allAlive) {
+                        throw new Error(`Slot ${slotId} has dead units`);
+                    }
+                }
+
+                // Determine battle type
+                let battleType = null;
+                if (enemySlot && enemySlot.team) {
+                    const team = enemySlot.team;
+                    for (const unit of Object.values(team)) {
+                        if (unit.type === "hero") {
+                            battleType = "hero";
+                            break;
+                        } else if (unit.type === "titan") {
+                            battleType = "titan";
+                            break;
+                        }
+                    }
+                }
+
+                // Fallback: use slot ID to guess (lower IDs are usually hero battles)
+                if (!battleType) {
+                    const slotNum = parseInt(slotId);
+                    battleType = slotNum <= 16 ? "hero" : "titan";
+                    console.warn(`Could not determine battle type from enemySlot, using slot ID heuristic: ${battleType}`);
+                }
+
+                // Get team configuration
+                const teamConfig = this.getTeamConfiguration(target.teamIndex, battleType);
+                
+                // Start battle
+                const battleData = await this.startBattle(parseInt(slotId), teamConfig, battleType);
+                
+                // Calculate battle result
+                const battleResult = await this.calculateBattleResult(battleData, battleType);
+                
+                // End battle
+                await this.endBattle(parseInt(slotId), battleResult);
+
+                console.log(`Slot ${slotId} attack completed: ${battleResult.win ? 'Victory' : 'Defeat'}`);
+            }
+
+            this.getTeamConfiguration = function(teamIndex, battleType) {
+                if (!this.teamInfo || !this.teamInfo.teams) {
+                    throw new Error('Team info not available');
+                }
+
+                const teamData = this.teamInfo.teams;
+                const favorData = this.teamInfo.favor;
+
+                if (battleType === "hero") {
+                    const crossClanDefenceHeroes = teamData.crossClanDefence_heroes || [];
+                    
+                    if (teamIndex < 0 || teamIndex >= crossClanDefenceHeroes.length) {
+                        throw new Error(`Invalid teamIndex ${teamIndex} for crossClanDefence_heroes`);
+                    }
+
+                    const team = crossClanDefenceHeroes[teamIndex];
+                    if (!team || team.length < 6) {
+                        throw new Error(`Invalid team configuration at index ${teamIndex}`);
+                    }
+
+                    const heroes = team.slice(0, 5);
+                    const pet = team[5];
+
+                    // Get favor for this team
+                    const crossClanDefenceFavor = favorData.crossClanDefence_heroes || {};
+                    const favor = crossClanDefenceFavor[teamIndex] || {};
+
+                    // Get banner
+                    let banner = 1;
+                    try {
+                        const userInfo = getUserInfo();
+                        if (userInfo && userInfo.banner) {
+                            banner = typeof userInfo.banner === 'number' ? userInfo.banner : 
+                                     Array.isArray(userInfo.banner) ? userInfo.banner[0] : 1;
+                        }
+                    } catch (e) {
+                        console.log('Could not get banner from userInfo, using default');
+                    }
+
+                    return {
+                        type: 'hero',
+                        heroes: heroes,
+                        pet: pet,
+                        favor: favor,
+                        banner: banner
+                    };
+                } else {
+                    const crossClanDefenceTitans = teamData.crossClanDefence_titans || [];
+                    
+                    if (teamIndex < 0 || teamIndex >= crossClanDefenceTitans.length) {
+                        throw new Error(`Invalid teamIndex ${teamIndex} for crossClanDefence_titans`);
+                    }
+
+                    const titans = crossClanDefenceTitans[teamIndex];
+                    if (!titans || titans.length < 5) {
+                        throw new Error(`Invalid titan team configuration at index ${teamIndex}`);
+                    }
+
+                    return {
+                        type: 'titan',
+                        titans: titans.slice(0, 5)
+                    };
+                }
+            }
+
+            this.startBattle = async function(slotId, teamConfig, battleType) {
+                let args = {
+                    slotId: slotId
+                };
+
+                if (battleType === "hero") {
+                    args.team = {
+                        units: teamConfig.heroes,
+                        pet: teamConfig.pet
+                    };
+                    args.favor = teamConfig.favor || {};
+                    args.banner = teamConfig.banner || 1;
+                } else {
+                    args.team = {
+                        units: teamConfig.titans
+                    };
+                }
+
+                const calls = [{
+                    name: "crossClanWar_startBattle",
+                    args: args,
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }];
+
+                console.log(`Cross Clan War: Starting battle for slot ${slotId} (${battleType})`);
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`Start battle failed: ${response.error.name} - ${response.error.description}`);
+                }
+                
+                if (!response.results || !response.results[0] || !response.results[0].result) {
+                    throw new Error('Invalid start battle response');
+                }
+
+                const battleData = response.results[0].result.response;
+                if (!battleData || !battleData.battle) {
+                    throw new Error('No battle data in response');
+                }
+
+                return battleData.battle;
+            }
+
+            this.calculateBattleResult = async function(battleData, battleType) {
+                return new Promise((resolve, reject) => {
+                    const battleTypeStr = battleType === "hero" ? "clan_global_pvp" : "clan_global_pvp_titan";
+                    BattleCalc(battleData, getBattleType(battleTypeStr), (result) => {
+                        if (!result || !result.result) {
+                            console.error('BattleCalc returned invalid result:', result);
+                            reject(new Error('Invalid battle calculation result'));
+                            return;
+                        }
+                        resolve({
+                            win: result.result.win,
+                            progress: result.progress,
+                            result: result.result,
+                            battleData: battleData
+                        });
+                    });
+                });
+            }
+
+            this.endBattle = async function(slotId, battleResult) {
+                const calls = [{
+                    name: "crossClanWar_endBattle",
+                    args: {
+                        slotId: slotId,
+                        result: {
+                            win: battleResult.win,
+                            stars: battleResult.result.stars || 0
+                        },
+                        progress: battleResult.progress
+                    },
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`End battle failed: ${response.error.name} - ${response.error.description}`);
+                }
+            }
+
+            this.end = function(reason) {
+                setProgress(`Cross Clan War: ${reason}`, true);
+                console.log('Cross Clan War completed:', reason);
+                this.resolve();
+            }
+        }
+
         // Store classes in HWHClasses for consistency
         HWHClasses.executeArena = executeArena;
         HWHClasses.executeGuildWar = executeGuildWar;
         HWHClasses.executeRaidNodes = executeRaidNodes;
         HWHClasses.executeRaidBoss = executeRaidBoss;
+        HWHClasses.executeCrossClanWar = executeCrossClanWar;
 
         // Auto-execute all battles on script load
         async function autoBattle() {
@@ -2714,7 +3101,8 @@
                     guildWar: false,
                     raidNodes: false,
                     raidBoss: false,
-                    titanArena: false
+                    titanArena: false,
+                    crossClanWar: false
                 };
 
                 // 1. Auto Arena
@@ -2822,6 +3210,20 @@
                     console.error('AutoBattle: Raid Boss error:', error);
                 }
 
+                // 7. Auto Cross Clan War
+                try {
+                    console.log('AutoBattle: Starting Cross Clan War...');
+                    HWHFuncs.setProgress('AutoBattle: Cross Clan War attacks...');
+                    await new Promise((resolve, reject) => {
+                        const crossClanWar = new executeCrossClanWar(resolve, reject);
+                        crossClanWar.start();
+                    });
+                    results.crossClanWar = true;
+                    Utils.log('log', '%cAutoBattle: Cross Clan War completed', 'color: lightgreen; font-weight: bold;');
+                } catch (error) {
+                    console.error('AutoBattle: Cross Clan War error:', error);
+                }
+
                 // Summary
                 const completed = Object.values(results).filter(v => v === true).length;
                 const total = Object.keys(results).length;
@@ -2831,7 +3233,8 @@
                     `Guild War: ${results.guildWar ? '✓' : '✗'}`,
                     `Raid Nodes: ${results.raidNodes ? '✓' : '✗'}`,
                     `Titan Arena: ${results.titanArena ? '✓' : '✗'}`,
-                    `Raid Boss: ${results.raidBoss ? '✓' : '✗'}`
+                    `Raid Boss: ${results.raidBoss ? '✓' : '✗'}`,
+                    `Cross Clan War: ${results.crossClanWar ? '✓' : '✗'}`
                 ].join(' | ');
 
                 console.log(`%cAutoBattle: Completed ${completed}/${total} battle types`, 'color: cyan; font-weight: bold;');
@@ -2952,15 +3355,25 @@
             }
         }
 
+        async function runCrossClanWar() {
+            try {
+                HWHFuncs.setProgress('AutoBattle: Running Cross Clan War...');
+                await new Promise((resolve, reject) => {
+                    const crossClanWar = new executeCrossClanWar(resolve, reject);
+                    crossClanWar.start();
+                });
+                HWHFuncs.setProgress('AutoBattle: Cross Clan War complete!', true);
+            } catch (error) {
+                console.error('Cross Clan War error:', error);
+                HWHFuncs.setProgress(`Cross Clan War error: ${error.message}`, true);
+            }
+        }
+
         // Auto-execute on script load
         autoBattle().catch(error => {
             console.error('AutoBattle: Failed to auto-execute:', error);
         });
 
-        // Menu integration
-        const { ScriptMenu } = HWHClasses;
-        const scriptMenu = ScriptMenu.getInst();
-        
         // Helper function to get I18N translation
         function getI18N(key) {
             if (window.I18N && typeof window.I18N === 'function') {
@@ -2973,15 +3386,103 @@
             };
             return fallbacks[key] || key;
         }
+
+        // Popup menu for manual triggers
+        async function openManualTriggersPopup() {
+            const popupContent = document.createElement('div');
+            popupContent.style.cssText = 'display: flex; flex-direction: column; height: 70vh; color: #fce1ac;';
+
+            const contentContainer = document.createElement('div');
+            contentContainer.style.cssText = 'flex-grow: 1; overflow-y: auto; padding: 10px;';
+
+            const title = document.createElement('h2');
+            title.textContent = 'Manual Battle Triggers';
+            title.style.cssText = 'text-align: center; color: #fce1ac; margin-bottom: 20px; border-bottom: 2px solid #8b6914; padding-bottom: 10px;';
+            contentContainer.appendChild(title);
+
+            const buttonGrid = document.createElement('div');
+            buttonGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; padding: 10px;';
+
+            const battleButtons = [
+                { name: 'Arena', title: 'Run Arena battles only', onClick: runArena, color: '#4A90E2', icon: '⚔️' },
+                { name: 'Grand Arena', title: 'Run Grand Arena battles only', onClick: runGrandArena, color: '#4A90E2', icon: '⚔️' },
+                { name: 'Guild War', title: 'Run Guild War attacks only', onClick: runGuildWar, color: '#9B59B6', icon: '🛡️' },
+                { name: 'Raid Nodes', title: 'Run Raid Nodes only', onClick: runRaidNodes, color: '#E67E22', icon: '⚡' },
+                { name: getI18N('TITAN_ARENA'), title: `Run ${getI18N('TITAN_ARENA')} only (Monday-Saturday)`, onClick: runTitanArena, color: '#1ABC9C', icon: '🏛️' },
+                { name: 'Raid Boss', title: 'Run Raid Boss attacks only (5 attacks)', onClick: runRaidBoss, color: '#E74C3C', icon: '👹' },
+                { name: 'Cross Clan War', title: 'Run Cross Clan War attacks only', onClick: runCrossClanWar, color: '#F39C12', icon: '⚔️' }
+            ];
+
+            battleButtons.forEach(battle => {
+                const button = document.createElement('button');
+                button.style.cssText = `
+                    padding: 15px;
+                    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+                    border: 2px solid ${battle.color};
+                    border-radius: 8px;
+                    color: #fce1ac;
+                    cursor: pointer;
+                    text-align: center;
+                    transition: all 0.3s;
+                    font-size: 14px;
+                    font-weight: bold;
+                `;
+                button.innerHTML = `
+                    <div style="font-size: 24px; margin-bottom: 5px;">${battle.icon}</div>
+                    <div>${battle.name}</div>
+                `;
+                button.title = battle.title;
+                
+                button.addEventListener('mouseenter', () => {
+                    button.style.background = `linear-gradient(135deg, ${battle.color}40 0%, ${battle.color}20 100%)`;
+                    button.style.borderColor = battle.color;
+                    button.style.transform = 'scale(1.05)';
+                });
+                button.addEventListener('mouseleave', () => {
+                    button.style.background = 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)';
+                    button.style.borderColor = battle.color;
+                    button.style.transform = 'scale(1)';
+                });
+                button.addEventListener('click', async () => {
+                    // Close popup first
+                    const popupBody = document.querySelector('.PopUp_Container');
+                    if (popupBody && popupBody.parentElement) {
+                        const closeBtn = document.querySelector('.PopUp_buttons button');
+                        if (closeBtn) closeBtn.click();
+                    }
+                    // Then execute battle
+                    await battle.onClick();
+                });
+
+                buttonGrid.appendChild(button);
+            });
+
+            contentContainer.appendChild(buttonGrid);
+            popupContent.appendChild(contentContainer);
+
+            // Use confirm with proper async handling
+            const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+            
+            // Wait a tick for popup to initialize
+            await new Promise(resolve => setTimeout(resolve, 0));
+            
+            const popupBody = document.querySelector('.PopUp_Container');
+            if (popupBody) {
+                popupBody.innerHTML = '';
+                popupBody.appendChild(popupContent);
+            }
+            
+            // Wait for popup to close before returning
+            await popupPromise;
+        }
+
+        // Menu integration
+        const { ScriptMenu } = HWHClasses;
+        const scriptMenu = ScriptMenu.getInst();
         
         scriptMenu.addCombinedButton([
-            { name: '⚔️ Auto Battle', title: 'Run all auto-battles (Arena, Grand Arena, Guild War, Raids, ToE, Boss)', onClick: autoBattle, color: 'green' },
-            { name: 'Arena', title: 'Run Arena battles only', onClick: runArena, color: 'blue' },
-            { name: 'Grand Arena', title: 'Run Grand Arena battles only', onClick: runGrandArena, color: 'blue' },
-            { name: 'Guild War', title: 'Run Guild War attacks only', onClick: runGuildWar, color: 'purple' },
-            { name: 'Raid Nodes', title: 'Run Raid Nodes only', onClick: runRaidNodes, color: 'orange' },
-            { name: getI18N('TITAN_ARENA'), title: `Run ${getI18N('TITAN_ARENA')} only (Monday-Saturday)`, onClick: runTitanArena, color: 'cyan' },
-            { name: 'Raid Boss', title: 'Run Raid Boss attacks only (5 attacks)', onClick: runRaidBoss, color: 'red' }
+            { name: '⚔️ Auto Battle', title: 'Run all auto-battles (Arena, Grand Arena, Guild War, Raids, ToE, Boss, Cross Clan War)', onClick: autoBattle, color: 'green' },
+            { name: '⚙️ Manual Triggers', title: 'Open manual battle triggers menu', onClick: openManualTriggersPopup, color: 'gray' }
         ]);
 
         console.log('AutoBattle: UI initialized and attached to HWH menu.');
