@@ -38,6 +38,45 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def correct_event_end_date(start_datetime, end_datetime):
+    """
+    Auto-correct event end dates that appear to have year errors.
+    If an event appears to be longer than 365 days, it's likely a data error
+    where the end year is wrong. Correct it to match the start year.
+    
+    Returns the corrected end_datetime.
+    """
+    duration = (end_datetime - start_datetime).days
+    
+    # If event is longer than 365 days, it's likely a data error
+    if duration > 365:
+        # Check if the end year is different from start year
+        if end_datetime.year != start_datetime.year:
+            # Correct the end year to match start year, keeping month/day/time
+            corrected_end = end_datetime.replace(year=start_datetime.year)
+            
+            # Verify the corrected duration is reasonable
+            corrected_duration = (corrected_end - start_datetime).days
+            
+            # If corrected date is before start, the correction doesn't make sense
+            # (e.g., start 12-20, end 01-05 - can't correct year in this case)
+            if corrected_end < start_datetime:
+                print(f"[WARNING] Could not auto-correct event date: "
+                      f"Start {start_datetime.strftime('%Y-%m-%d')}, "
+                      f"End {end_datetime.strftime('%Y-%m-%d')} (duration: {duration} days)")
+                return end_datetime
+            
+            # If corrected duration is reasonable (0-365 days), use the correction
+            if 0 <= corrected_duration <= 365:
+                print(f"[AUTO-CORRECT] Fixed event date error: "
+                      f"End date {end_datetime.strftime('%Y-%m-%d')} corrected to "
+                      f"{corrected_end.strftime('%Y-%m-%d')} "
+                      f"(duration was {duration} days, now {corrected_duration} days)")
+                return corrected_end
+    
+    return end_datetime
+
+
 def parse_event_line(line):
     """
     Parse a line to extract event name and date range.
@@ -51,18 +90,19 @@ def parse_event_line(line):
     line = line.strip()
     date_pattern = r'(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([AP]M)'
     
+    def parse_datetime(date_str, time_str, am_pm):
+        """Helper to parse datetime from components"""
+        full_date_str = f"{date_str} {time_str} {am_pm}"
+        return datetime.strptime(full_date_str, "%Y-%m-%d %I:%M:%S %p")
+    
     # Try new format first: EventName:Event Name: DATE - DATE
     new_format_pattern = rf'EventName:(.+?):\s*{date_pattern}\s*-\s*{date_pattern}'
     match = re.match(new_format_pattern, line)
     
     if match:
         event_name = match.group(1).strip()
-        # Parse start date (groups 2, 3, 4)
-        start_date_str = f"{match.group(2)} {match.group(3)} {match.group(4)}"
-        start_datetime = datetime.strptime(start_date_str, "%Y-%m-%d %I:%M:%S %p")
-        # Parse end date (groups 5, 6, 7)
-        end_date_str = f"{match.group(5)} {match.group(6)} {match.group(7)}"
-        end_datetime = datetime.strptime(end_date_str, "%Y-%m-%d %I:%M:%S %p")
+        start_datetime = parse_datetime(match.group(2), match.group(3), match.group(4))
+        end_datetime = parse_datetime(match.group(5), match.group(6), match.group(7))
     else:
         # Try old format: Event Name: DATE - DATE
         old_format_pattern = rf'(.+?):\s*{date_pattern}\s*-\s*{date_pattern}'
@@ -72,12 +112,8 @@ def parse_event_line(line):
             return None
     
         event_name = match.group(1).strip()
-        # Parse start date (groups 2, 3, 4)
-        start_date_str = f"{match.group(2)} {match.group(3)} {match.group(4)}"
-        start_datetime = datetime.strptime(start_date_str, "%Y-%m-%d %I:%M:%S %p")
-        # Parse end date (groups 5, 6, 7)
-        end_date_str = f"{match.group(5)} {match.group(6)} {match.group(7)}"
-        end_datetime = datetime.strptime(end_date_str, "%Y-%m-%d %I:%M:%S %p")
+        start_datetime = parse_datetime(match.group(2), match.group(3), match.group(4))
+        end_datetime = parse_datetime(match.group(5), match.group(6), match.group(7))
     
     # Clean up event name
     # Remove quotes if present
@@ -85,6 +121,9 @@ def parse_event_line(line):
         event_name = event_name[1:-1]
     # Fix double quotes
     event_name = event_name.replace('""', '"')
+    
+    # Auto-correct date errors (e.g., events that appear to be > 1 year long)
+    end_datetime = correct_event_end_date(start_datetime, end_datetime)
     
     return {
         'name': event_name,
@@ -100,7 +139,6 @@ def parse_schedule_csv_with_tasks(csv_file):
     """
     events = []
     current_event = None
-    current_task = None
     
     with open(csv_file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
@@ -128,7 +166,6 @@ def parse_schedule_csv_with_tasks(csv_file):
                     'end': event_data['end'],
                     'tasks': []
                 }
-                current_task = None
         elif current_event:
             # Check if this is a task line (starts with "Task:" or contains " - " or is just a task name)
             # Next line should be values (numbers)
@@ -164,86 +201,6 @@ def parse_schedule_csv_with_tasks(csv_file):
     return events
 
 
-def format_event_for_email(event):
-    """Format a single event for email display"""
-    lines = []
-    
-    # Event header
-    lines.append("+" + "-" * 78 + "+")
-    lines.append(f"| {event['name']:<77}|")
-    lines.append("+" + "-" * 78 + "+")
-    
-    # Date/time info
-    start_str = event['start'].strftime("%A, %B %d, %Y at %I:%M %p")
-    end_str = event['end'].strftime("%A, %B %d, %Y at %I:%M %p")
-    duration = (event['end'] - event['start']).days
-    
-    lines.append(f"| Start: {start_str:<66}|")
-    lines.append(f"| End:   {end_str:<66}|")
-    lines.append(f"| Duration: {duration} day{'s' if duration != 1 else ''}{' ' * (76 - 11 - len(str(duration)) - (4 if duration != 1 else 3))}|")
-    
-    # Tasks
-    if event['tasks']:
-        lines.append("+" + "-" * 78 + "+")
-        lines.append(f"| Tasks & Objectives:{' ' * 58}|")
-        lines.append("+" + "-" * 78 + "+")
-        
-        for task in event['tasks']:
-            task_name = task['name']
-            # Wrap long task names
-            if len(task_name) > 70:
-                # Split at word boundaries
-                words = task_name.split()
-                current_line = ""
-                for word in words:
-                    if len(current_line) + len(word) + 1 <= 70:
-                        current_line += (word + " ") if current_line else word
-                    else:
-                        if current_line:
-                            lines.append(f"| {current_line.strip():<77}|")
-                        current_line = word
-                if current_line:
-                    lines.append(f"| {current_line.strip():<77}|")
-            else:
-                lines.append(f"| * {task_name:<75}|")
-            
-            # Show values (milestones)
-            if task['values']:
-                values_str = ", ".join(task['values'])
-                if len(values_str) > 65:  # Account for "Milestones: " prefix
-                    # Wrap values
-                    values_list = values_str.split(", ")
-                    current_line = "   Milestones: "
-                    is_first_line = True
-                    for val in values_list:
-                        test_line = current_line + val
-                        if val != values_list[-1]:
-                            test_line += ", "
-                        if len(test_line) <= 77:
-                            current_line = test_line
-                        else:
-                            if current_line:
-                                # Keep leading spaces for first line, strip for continuation
-                                if is_first_line:
-                                    lines.append(f"|{current_line:<78}|")
-                                else:
-                                    lines.append(f"| {current_line.strip():<77}|")
-                                is_first_line = False
-                            current_line = "   " + val + (", " if val != values_list[-1] else "")
-                    if current_line:
-                        if is_first_line:
-                            lines.append(f"|{current_line:<78}|")
-                        else:
-                            lines.append(f"| {current_line.strip():<77}|")
-                else:
-                    lines.append(f"|   Milestones: {values_str:<63}|")
-    
-    lines.append("+" + "-" * 78 + "+")
-    lines.append("")  # Empty line between events
-    
-    return "\n".join(lines)
-
-
 def get_events_for_date(events, target_date):
     """Get all events that are active on a specific date"""
     date_start = datetime(target_date.year, target_date.month, target_date.day)
@@ -251,7 +208,16 @@ def get_events_for_date(events, target_date):
     
     active_events = []
     for event in events:
-        # Event is active if it starts before date_end and ends after date_start
+        # Event is active if it starts before date_end and ends on or after date_start
+        # Also ensure event hasn't already ended before the target date (compare dates, not datetimes)
+        event_end_date = event['end'].date()
+        event_start_date = event['start'].date()
+        
+        # Skip events that have already ended before the target date
+        if event_end_date < target_date:
+            continue
+        
+        # Event is active if it starts before date_end and ends on or after date_start
         if event['start'] < date_end and event['end'] >= date_start:
             active_events.append(event)
     
@@ -303,6 +269,37 @@ def simplify_task_name(task_name):
     if " - " in task_name:
         return task_name.split(" - ", 1)[1]  # Get part after " - "
     return task_name
+
+
+def categorize_events_by_date(events, target_date):
+    """
+    Categorize events into ending, ongoing, and starting events for a given date.
+    Returns tuple: (ending_events, ongoing_events, starting_events)
+    """
+    ending_events = []
+    ongoing_events = []
+    starting_events = []
+    
+    for event in events:
+        event_end_date = event['end'].date()
+        event_start_date = event['start'].date()
+        
+        if event_end_date == target_date:
+            # Event ends today (whether it started today or before)
+            ending_events.append(event)
+        elif event_start_date < target_date and event_end_date > target_date:
+            # Event is ongoing (started before today, ends after today)
+            ongoing_events.append(event)
+        elif event_start_date == target_date and event_end_date > target_date:
+            # Event starts today and continues
+            starting_events.append(event)
+    
+    # Sort each category by start time
+    ending_events.sort(key=lambda x: x['start'])
+    ongoing_events.sort(key=lambda x: x['start'])
+    starting_events.sort(key=lambda x: x['start'])
+    
+    return ending_events, ongoing_events, starting_events
 
 
 def generate_task_summary(ending_events, ongoing_events):
@@ -418,30 +415,10 @@ def format_day_section(date, events):
             seen_events[event_name] = event
     
     # Categorize events
-    ending_events = []
-    ongoing_events = []
-    starting_events = []
-    
     target_date = date
-    
-    for event_name, event in seen_events.items():
-        event_end_date = event['end'].date()
-        event_start_date = event['start'].date()
-        
-        if event_end_date == target_date:
-            # Event ends today (whether it started today or before)
-            ending_events.append(event)
-        elif event_start_date < target_date and event_end_date > target_date:
-            # Event is ongoing (started before today, ends after today)
-            ongoing_events.append(event)
-        elif event_start_date == target_date and event_end_date > target_date:
-            # Event starts today and continues
-            starting_events.append(event)
-    
-    # Sort each category by start time
-    ending_events.sort(key=lambda x: x['start'])
-    ongoing_events.sort(key=lambda x: x['start'])
-    starting_events.sort(key=lambda x: x['start'])
+    ending_events, ongoing_events, starting_events = categorize_events_by_date(
+        list(seen_events.values()), target_date
+    )
     
     # Generate task summary for ending + ongoing events
     task_summary = generate_task_summary(ending_events, ongoing_events)
@@ -554,7 +531,6 @@ def scrape_fresh_schedule():
     """Scrape fresh schedule data from the website"""
     try:
         # Import scraping functions
-        import sys
         import importlib.util
         
         # Load scrape_schedule_to_csv module
@@ -591,23 +567,9 @@ def should_send_email(events, target_date):
             seen_events[event_name] = event
     
     # Categorize events
-    ending_events = []
-    ongoing_events = []
-    starting_events = []
-    
-    for event_name, event in seen_events.items():
-        event_end_date = event['end'].date()
-        event_start_date = event['start'].date()
-        
-        if event_end_date == target_date:
-            # Event ends today
-            ending_events.append(event)
-        elif event_start_date < target_date and event_end_date > target_date:
-            # Event is ongoing (started before today, ends after today)
-            ongoing_events.append(event)
-        elif event_start_date == target_date and event_end_date > target_date:
-            # Event starts today and continues
-            starting_events.append(event)
+    ending_events, ongoing_events, starting_events = categorize_events_by_date(
+        list(seen_events.values()), target_date
+    )
     
     # Condition 1: More than 3 (starting + ongoing) events
     starting_ongoing_count = len(starting_events) + len(ongoing_events)
@@ -656,6 +618,16 @@ def main():
     
     print(f"[OK] Found {len(events)} total events")
     
+    # Filter out events that have already ended (e.g., events from previous years)
+    today = datetime.now().date()
+    events_before_filter = len(events)
+    events = [event for event in events if event['end'].date() >= today]
+    events_after_filter = len(events)
+    
+    if events_before_filter != events_after_filter:
+        print(f"[INFO] Filtered out {events_before_filter - events_after_filter} past events (ended before today)")
+    print(f"[OK] Processing {len(events)} active/upcoming events")
+    
     # Generate day-by-day email-friendly output (today + next 7 days)
     email_output = format_email_output_day_by_day(events, days_ahead=7)
     
@@ -665,7 +637,6 @@ def main():
         f.write(email_output)
     
     # Print summary to console
-    today = datetime.now().date()
     today_events = get_events_for_date(events, today)
     
     print(f"\n[SUCCESS] Email-formatted output saved to: {output_file}")
