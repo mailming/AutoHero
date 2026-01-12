@@ -2299,14 +2299,17 @@
                 calls: [{
                     name: "clanRaid_getInfo",
                     args: {},
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "clanRaid_getInfo"
                 }, {
                     name: "teamGetAll",
                     args: {},
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "teamGetAll"
                 }, {
                     name: "teamGetFavor",
                     args: {},
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "teamGetFavor"
                 }]
             }
@@ -2316,6 +2319,37 @@
             }
 
             async function startRaidNodes(data) {
+                // Validate response structure
+                if (data.error) {
+                    console.error('Raid Nodes: API error:', data.error);
+                    endRaidNodes('APIError', data.error);
+                    return;
+                }
+                
+                if (!data.results || !Array.isArray(data.results) || data.results.length < 3) {
+                    console.error('Raid Nodes: Invalid response structure - missing results');
+                    endRaidNodes('InvalidResponse', 'Missing or invalid results array');
+                    return;
+                }
+                
+                if (!data.results[0] || !data.results[0].result || !data.results[0].result.response) {
+                    console.error('Raid Nodes: Invalid clanRaid_getInfo response');
+                    endRaidNodes('InvalidResponse', 'Invalid clanRaid_getInfo response');
+                    return;
+                }
+                
+                if (!data.results[1] || !data.results[1].result || !data.results[1].result.response) {
+                    console.error('Raid Nodes: Invalid teamGetAll response');
+                    endRaidNodes('InvalidResponse', 'Invalid teamGetAll response');
+                    return;
+                }
+                
+                if (!data.results[2] || !data.results[2].result || !data.results[2].result.response) {
+                    console.error('Raid Nodes: Invalid teamGetFavor response');
+                    endRaidNodes('InvalidResponse', 'Invalid teamGetFavor response');
+                    return;
+                }
+                
                 const res = data.results;
                 const clanRaidInfo = res[0].result.response;
                 const teamGetAll = res[1].result.response;
@@ -2332,16 +2366,50 @@
 
                 let index = 0;
                 let isNotFullPack = false;
+                
+                // Validate teamGetAll structure
+                if (!teamGetAll || !teamGetAll.clanRaid_nodes || !Array.isArray(teamGetAll.clanRaid_nodes)) {
+                    console.error('Raid Nodes: Invalid teamGetAll structure - missing clanRaid_nodes');
+                    endRaidNodes('InvalidTeamData', 'Invalid teamGetAll structure');
+                    return;
+                }
+                
                 for (let team of teamGetAll.clanRaid_nodes) {
+                    if (!Array.isArray(team)) {
+                        console.warn('Raid Nodes: Skipping invalid team (not an array):', team);
+                        continue;
+                    }
+                    
                     if (team.length < 6) {
                         isNotFullPack = true;
                     }
+                    
+                    const heroes = team.filter(id => id < 6000);
+                    const pets = team.filter(id => id >= 6000);
+                    const pet = pets.length > 0 ? pets.pop() : null;
+                    
+                    if (heroes.length < 5) {
+                        console.warn(`Raid Nodes: Team ${index} has less than 5 heroes (${heroes.length}), skipping`);
+                        index++;
+                        continue;
+                    }
+                    
+                    if (!pet) {
+                        console.warn(`Raid Nodes: Team ${index} has no pet, using default`);
+                    }
+                    
                     raidData.teams.push({
                         data: {},
-                        heroes: team.filter(id => id < 6000),
-                        pet: team.filter(id => id >= 6000).pop(),
+                        heroes: heroes,
+                        pet: pet || CONSTANTS.DEFAULT_PET_ID,
                         battleIndex: index++
                     });
+                }
+                
+                if (raidData.teams.length === 0) {
+                    console.error('Raid Nodes: No valid teams found');
+                    endRaidNodes('NoTeams', 'No valid teams found');
+                    return;
                 }
                 raidData.favor = teamGetFavor.clanRaid_nodes;
 
@@ -2358,14 +2426,38 @@
             }
 
             function getAttackNode() {
+                if (!raidData.nodes || typeof raidData.nodes !== 'object') {
+                    return null;
+                }
+                
                 for (let nodeId in raidData.nodes) {
                     let node = raidData.nodes[nodeId];
-                    let points = 0
-                    for (let team of node.teams) {
-                        points += team.points;
+                    if (!node || typeof node !== 'object') {
+                        continue;
                     }
+                    
+                    // Validate node structure
+                    if (!node.teams || !Array.isArray(node.teams)) {
+                        continue;
+                    }
+                    
+                    if (!node.timestamps || typeof node.timestamps !== 'object') {
+                        continue;
+                    }
+                    
+                    let points = 0;
+                    for (let team of node.teams) {
+                        if (team && typeof team === 'object' && typeof team.points === 'number') {
+                            points += team.points;
+                        }
+                    }
+                    
                     let now = Date.now() / 1000;
-                    if (!points && now > node.timestamps.start && now < node.timestamps.end) {
+                    if (!points && 
+                        typeof node.timestamps.start === 'number' && 
+                        typeof node.timestamps.end === 'number' &&
+                        now > node.timestamps.start && 
+                        now < node.timestamps.end) {
                         let countTeam = node.teams.length;
                         delete raidData.nodes[nodeId];
                         return {
@@ -2406,6 +2498,7 @@
                         teams,
                         favor
                     },
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "body"
                 }];
 
@@ -2418,8 +2511,28 @@
                     return;
                 }
 
-                console.log(e);
-                let battles = e.results[0].result.response.battles;
+                // Validate response structure
+                if (!e.results || !Array.isArray(e.results) || e.results.length === 0) {
+                    console.error('Raid Nodes: Invalid resultNodeBattles response - missing results');
+                    endRaidNodes('InvalidResponse', 'Missing results in node battles response');
+                    return;
+                }
+                
+                if (!e.results[0] || !e.results[0].result || !e.results[0].result.response) {
+                    console.error('Raid Nodes: Invalid resultNodeBattles response structure');
+                    endRaidNodes('InvalidResponse', 'Invalid node battles response structure');
+                    return;
+                }
+                
+                const response = e.results[0].result.response;
+                if (!response.battles || !Array.isArray(response.battles) || response.battles.length === 0) {
+                    console.error('Raid Nodes: No battles in response');
+                    endRaidNodes('NoBattles', 'No battles found in response');
+                    return;
+                }
+
+                console.log('Raid Nodes: Processing', response.battles.length, 'battles');
+                let battles = response.battles;
                 let promises = [];
                 let battleIndex = 0;
                 for (let battle of battles) {
@@ -2429,13 +2542,29 @@
 
                 Promise.all(promises)
                     .then(results => {
+                        if (!results || results.length === 0) {
+                            console.error('Raid Nodes: No battle results calculated');
+                            endRaidNodes('NoResults', 'No battle results calculated');
+                            return;
+                        }
+                        
                         const endResults = {};
                         let isAllWin = true;
                         for (let r of results) {
+                            if (!r || !r.result) {
+                                console.warn('Raid Nodes: Invalid battle result:', r);
+                                isAllWin = false;
+                                continue;
+                            }
                             isAllWin &&= r.result.win;
                         }
                         if (!isAllWin) {
-                            cancelEndNodeBattle(results[0]);
+                            if (results[0]) {
+                                cancelEndNodeBattle(results[0]);
+                            } else {
+                                console.error('Raid Nodes: Cannot cancel battle - no results');
+                                endRaidNodes('CancelError', 'Cannot cancel battle - no results');
+                            }
                             return;
                         }
                         raidData.countExecuteBattles = results.length;
@@ -2444,12 +2573,33 @@
                             setTimeout(endNodeBattle, timeout, r);
                             timeout += 500;
                         }
+                    })
+                    .catch(error => {
+                        console.error('Raid Nodes: Error calculating battle results:', error);
+                        endRaidNodes('CalculationError', error);
                     });
             }
 
             function calcBattleResult(battleData) {
                 return new Promise(function (resolve, reject) {
-                    BattleCalc(battleData, "get_clanPvp", resolve);
+                    if (!battleData) {
+                        reject(new Error('No battle data provided'));
+                        return;
+                    }
+                    
+                    try {
+                        BattleCalc(battleData, "get_clanPvp", (result) => {
+                            if (!result || !result.result) {
+                                console.error('Raid Nodes: BattleCalc returned invalid result:', result);
+                                reject(new Error('Invalid battle calculation result'));
+                                return;
+                            }
+                            resolve(result);
+                        });
+                    } catch (error) {
+                        console.error('Raid Nodes: Error in BattleCalc:', error);
+                        reject(error);
+                    }
                 });
             }
 
@@ -2469,8 +2619,40 @@
             }
 
             function endNodeBattle(r) {
+                // Validate battle result structure
+                if (!r) {
+                    console.error('Raid Nodes: No battle result provided to endNodeBattle');
+                    return;
+                }
+                
+                if (!r.battleData || !r.battleData.result) {
+                    console.error('Raid Nodes: Invalid battle data structure:', r);
+                    return;
+                }
+                
+                if (!r.result) {
+                    console.error('Raid Nodes: Missing result in battle data');
+                    return;
+                }
+                
+                if (!r.progress || !Array.isArray(r.progress)) {
+                    console.error('Raid Nodes: Missing or invalid progress array');
+                    return;
+                }
+                
                 let nodeId = r.battleData.result.nodeId;
                 let battleIndex = r.battleData.battleIndex;
+                
+                if (!nodeId) {
+                    console.error('Raid Nodes: Missing nodeId in battle result');
+                    return;
+                }
+                
+                if (battleIndex === undefined || battleIndex === null) {
+                    console.error('Raid Nodes: Missing battleIndex in battle result');
+                    return;
+                }
+                
                 let calls = [{
                     name: "clanRaid_endNodeBattle",
                     args: {
@@ -2479,8 +2661,9 @@
                         result: r.result,
                         progress: r.progress
                     },
+                    context: { actionTs: Utils.getActionTs() },
                     ident: "body"
-                }]
+                }];
 
                 SendRequest(JSON.stringify({calls}), battleResult);
             }
@@ -2490,13 +2673,27 @@
                     endRaidNodes('missionEndError', e['error']);
                     return;
                 }
+                
+                // Validate response structure
+                if (!e.results || !Array.isArray(e.results) || e.results.length === 0) {
+                    console.error('Raid Nodes: Invalid battleResult response - missing results');
+                    endRaidNodes('InvalidResponse', 'Missing results in battle result response');
+                    return;
+                }
+                
+                if (!e.results[0] || !e.results[0].result || !e.results[0].result.response) {
+                    console.error('Raid Nodes: Invalid battleResult response structure');
+                    endRaidNodes('InvalidResponse', 'Invalid battle result response structure');
+                    return;
+                }
+                
                 let r = e.results[0].result.response;
                 if (r['error']) {
                     if (r.reason == "invalidBattle") {
                         raidData.cancelBattle++;
                         checkNodes();
                     } else {
-                        endRaidNodes('missionEndError', e['error']);
+                        endRaidNodes('missionEndError', r['error'] || e['error']);
                     }
                     return;
                 }
@@ -2851,78 +3048,133 @@
                     const enemySlot = enemySlots[slotId];
 
                     try {
-                        console.log(`Cross Clan War: Attacking slot ${slotId} (${i + 1}/${myTargets.length})`);
+                        console.log(`Cross Clan War: ===== Starting attack ${i + 1}/${myTargets.length} - Slot ${slotId} =====`);
                         setProgress(`Cross Clan War: Slot ${slotId} (${i + 1}/${myTargets.length})`);
                         
                         await this.attackSlot(slotId, target, enemySlot);
                         this.attacksCompleted++;
                         this.victories++;
+                        console.log(`Cross Clan War: ✓ Successfully completed attack ${i + 1}/${myTargets.length} - Slot ${slotId}`);
                         
                         if (i < myTargets.length - 1) {
                             await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
                         }
                     } catch (error) {
-                        console.error(`Error attacking slot ${slotId}:`, error);
-                        // Continue to next target on error
-                    }
-                }
-
-                this.end(`Completed ${this.victories}/${this.attacksCompleted} attacks`);
-            }
-
-            this.attackSlot = async function(slotId, target, enemySlot) {
-                // Verify slot is available
-                if (enemySlot) {
-                    if (enemySlot.status !== "ready" || enemySlot.attackerId !== null) {
-                        throw new Error(`Slot ${slotId} is not available for attack`);
-                    }
-
-                    // Check if all units are alive
-                    const team = enemySlot.team || {};
-                    const allAlive = Object.values(team).every(unit => {
-                        return unit.state && unit.state.isDead === false;
-                    });
-
-                    if (!allAlive) {
-                        throw new Error(`Slot ${slotId} has dead units`);
-                    }
-                }
-
-                // Determine battle type
-                let battleType = null;
-                if (enemySlot && enemySlot.team) {
-                    const team = enemySlot.team;
-                    for (const unit of Object.values(team)) {
-                        if (unit.type === "hero") {
-                            battleType = "hero";
-                            break;
-                        } else if (unit.type === "titan") {
-                            battleType = "titan";
-                            break;
+                        console.error(`Cross Clan War: ✗ Error attacking slot ${slotId} (${i + 1}/${myTargets.length}):`, error);
+                        console.error(`Cross Clan War: Error stack:`, error.stack);
+                        this.attacksCompleted++; // Count failed attempts too
+                        // Continue to next target on error - don't stop the loop
+                        if (i < myTargets.length - 1) {
+                            console.log(`Cross Clan War: Continuing to next target...`);
+                            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
                         }
                     }
                 }
 
-                // Fallback: use slot ID to guess (lower IDs are usually hero battles)
-                if (!battleType) {
-                    const slotNum = parseInt(slotId);
-                    battleType = slotNum <= 16 ? "hero" : "titan";
-                    console.warn(`Could not determine battle type from enemySlot, using slot ID heuristic: ${battleType}`);
+                console.log(`Cross Clan War: ===== All attacks completed =====`);
+                console.log(`Cross Clan War: Total attempts: ${this.attacksCompleted}, Victories: ${this.victories}`);
+                this.end(`Completed ${this.victories}/${this.attacksCompleted} attacks`);
+            }
+
+            this.attackSlot = async function(slotId, target, enemySlot) {
+                try {
+                    console.log(`Cross Clan War: [attackSlot] Starting attack on slot ${slotId}`);
+                    console.log(`Cross Clan War: [attackSlot] Target data:`, target);
+                    
+                    // Verify slot is available
+                    if (enemySlot) {
+                        if (enemySlot.status !== "ready" || enemySlot.attackerId !== null) {
+                            throw new Error(`Slot ${slotId} is not available for attack (status: ${enemySlot.status}, attackerId: ${enemySlot.attackerId})`);
+                        }
+
+                        // Check if all units are alive
+                        const team = enemySlot.team || {};
+                        const allAlive = Object.values(team).every(unit => {
+                            return unit.state && unit.state.isDead === false;
+                        });
+
+                        if (!allAlive) {
+                            throw new Error(`Slot ${slotId} has dead units`);
+                        }
+                    }
+
+                    // Determine battle type
+                    let battleType = null;
+                    if (enemySlot && enemySlot.team) {
+                        const team = enemySlot.team;
+                        for (const unit of Object.values(team)) {
+                            if (unit.type === "hero") {
+                                battleType = "hero";
+                                break;
+                            } else if (unit.type === "titan") {
+                                battleType = "titan";
+                                break;
+                            }
+                        }
+                    }
+
+                    // Fallback: use slot ID to guess (lower IDs are usually hero battles)
+                    if (!battleType) {
+                        const slotNum = parseInt(slotId);
+                        battleType = slotNum <= 16 ? "hero" : "titan";
+                        console.warn(`Cross Clan War: [attackSlot] Could not determine battle type from enemySlot, using slot ID heuristic: ${battleType}`);
+                    }
+
+                    console.log(`Cross Clan War: [attackSlot] Battle type: ${battleType}, teamIndex: ${target.teamIndex}`);
+
+                    // Get team configuration
+                    let teamConfig;
+                    try {
+                        teamConfig = this.getTeamConfiguration(target.teamIndex, battleType);
+                        console.log(`Cross Clan War: [attackSlot] Team config obtained:`, {
+                            type: teamConfig.type,
+                            heroes: teamConfig.heroes || teamConfig.titans,
+                            pet: teamConfig.pet,
+                            favorKeys: teamConfig.favor ? Object.keys(teamConfig.favor).length : 0
+                        });
+                    } catch (error) {
+                        console.error(`Cross Clan War: [attackSlot] Error getting team configuration:`, error);
+                        throw new Error(`Failed to get team configuration: ${error.message}`);
+                    }
+                    
+                    // Start battle
+                    let battleData;
+                    try {
+                        console.log(`Cross Clan War: [attackSlot] Starting battle...`);
+                        battleData = await this.startBattle(parseInt(slotId), teamConfig, battleType);
+                        console.log(`Cross Clan War: [attackSlot] Battle started successfully`);
+                    } catch (error) {
+                        console.error(`Cross Clan War: [attackSlot] Error starting battle:`, error);
+                        throw new Error(`Failed to start battle: ${error.message}`);
+                    }
+                    
+                    // Calculate battle result
+                    let battleResult;
+                    try {
+                        console.log(`Cross Clan War: [attackSlot] Calculating battle result...`);
+                        battleResult = await this.calculateBattleResult(battleData, battleType);
+                        console.log(`Cross Clan War: [attackSlot] Battle result: ${battleResult.win ? 'Victory' : 'Defeat'}`);
+                    } catch (error) {
+                        console.error(`Cross Clan War: [attackSlot] Error calculating battle result:`, error);
+                        throw new Error(`Failed to calculate battle result: ${error.message}`);
+                    }
+                    
+                    // End battle
+                    try {
+                        console.log(`Cross Clan War: [attackSlot] Ending battle...`);
+                        await this.endBattle(parseInt(slotId), battleResult);
+                        console.log(`Cross Clan War: [attackSlot] Battle ended successfully`);
+                    } catch (error) {
+                        console.error(`Cross Clan War: [attackSlot] Error ending battle:`, error);
+                        throw new Error(`Failed to end battle: ${error.message}`);
+                    }
+
+                    console.log(`Cross Clan War: [attackSlot] ✓ Slot ${slotId} attack completed: ${battleResult.win ? 'Victory' : 'Defeat'}`);
+                } catch (error) {
+                    console.error(`Cross Clan War: [attackSlot] ✗ Error in attackSlot for slot ${slotId}:`, error);
+                    console.error(`Cross Clan War: [attackSlot] Error stack:`, error.stack);
+                    throw error; // Re-throw to be caught by the calling function
                 }
-
-                // Get team configuration
-                const teamConfig = this.getTeamConfiguration(target.teamIndex, battleType);
-                
-                // Start battle
-                const battleData = await this.startBattle(parseInt(slotId), teamConfig, battleType);
-                
-                // Calculate battle result
-                const battleResult = await this.calculateBattleResult(battleData, battleType);
-                
-                // End battle
-                await this.endBattle(parseInt(slotId), battleResult);
-
-                console.log(`Slot ${slotId} attack completed: ${battleResult.win ? 'Victory' : 'Defeat'}`);
             }
 
             this.getTeamConfiguration = function(teamIndex, battleType) {
@@ -2949,45 +3201,86 @@
                     const pet = team[5];
 
                     // Get favor for this team
-                    // Favor structure: favorData.crossClanDefence_heroes should be an object
-                    // where keys are team indices (as strings) and values are favor objects
-                    // Example: { "0": {"13": 6008, "16": 6004}, "1": {"29": 6006}, "2": {} }
+                    // Favor structure: favorData.crossClanDefence_heroes is a flat object
+                    // where keys are hero IDs (as numbers or strings) and values are pet IDs
+                    // Example: {1: 6006, 9: 6007, 13: 6002, 16: 6004, ...}
                     const crossClanDefenceFavor = favorData.crossClanDefence_heroes || {};
                     let favor = {};
                     
                     console.log(`Cross Clan War: Getting favor for teamIndex ${teamIndex}`);
                     console.log(`Cross Clan War: crossClanDefenceFavor structure:`, crossClanDefenceFavor);
-                    console.log(`Cross Clan War: crossClanDefenceFavor type:`, typeof crossClanDefenceFavor);
+                    console.log(`Cross Clan War: Team heroes:`, heroes);
                     
-                    // Try to get favor by teamIndex (as number or string key)
-                    if (crossClanDefenceFavor && typeof crossClanDefenceFavor === 'object') {
-                        // Try numeric index first
-                        if (crossClanDefenceFavor[teamIndex] !== undefined) {
-                            const favorValue = crossClanDefenceFavor[teamIndex];
-                            console.log(`Cross Clan War: Favor value at index ${teamIndex}:`, favorValue, `(type: ${typeof favorValue})`);
-                            // Ensure it's an object, not a number or other type
-                            if (favorValue && typeof favorValue === 'object' && !Array.isArray(favorValue)) {
-                                favor = favorValue;
-                            } else {
-                                console.warn(`Cross Clan War: Favor at index ${teamIndex} is not an object (got ${typeof favorValue}: ${favorValue}), using empty object`);
-                            }
+                    // Build favor object by looking up each hero in the flat favor structure
+                    if (crossClanDefenceFavor && typeof crossClanDefenceFavor === 'object' && !Array.isArray(crossClanDefenceFavor)) {
+                        // Check if it's a nested structure (team index -> favor object) or flat (hero ID -> pet ID)
+                        // If the first hero ID exists as a key, it's a flat structure
+                        const firstHeroId = heroes[0];
+                        const isFlatStructure = firstHeroId !== undefined && 
+                                               (crossClanDefenceFavor[firstHeroId] !== undefined || 
+                                                crossClanDefenceFavor[String(firstHeroId)] !== undefined);
+                        
+                        if (isFlatStructure) {
+                            // Flat structure: hero ID -> pet ID
+                            heroes.forEach(heroId => {
+                                // Try both number and string key
+                                const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
+                                if (petId !== undefined && typeof petId === 'number') {
+                                    // Favor object uses hero IDs as string keys
+                                    favor[String(heroId)] = petId;
+                                }
+                            });
+                            console.log(`Cross Clan War: Built favor from flat structure:`, favor);
                         } else {
-                            // Try string key
-                            const stringKey = String(teamIndex);
-                            if (crossClanDefenceFavor[stringKey] !== undefined) {
-                                const favorValue = crossClanDefenceFavor[stringKey];
-                                console.log(`Cross Clan War: Favor value at string key "${stringKey}":`, favorValue, `(type: ${typeof favorValue})`);
+                            // Nested structure: team index -> favor object
+                            // Try numeric index first
+                            if (crossClanDefenceFavor[teamIndex] !== undefined) {
+                                const favorValue = crossClanDefenceFavor[teamIndex];
                                 if (favorValue && typeof favorValue === 'object' && !Array.isArray(favorValue)) {
                                     favor = favorValue;
+                                    console.log(`Cross Clan War: Got favor from nested structure at index ${teamIndex}:`, favor);
                                 } else {
-                                    console.warn(`Cross Clan War: Favor at string key "${stringKey}" is not an object, using empty object`);
+                                    console.warn(`Cross Clan War: Favor at index ${teamIndex} is not an object (got ${typeof favorValue}: ${favorValue}), building from flat structure`);
+                                    // Fallback: try to build from flat structure
+                                    heroes.forEach(heroId => {
+                                        const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
+                                        if (petId !== undefined && typeof petId === 'number') {
+                                            favor[String(heroId)] = petId;
+                                        }
+                                    });
                                 }
                             } else {
-                                console.log(`Cross Clan War: No favor found at index ${teamIndex} or string key "${String(teamIndex)}", using empty object`);
+                                // Try string key
+                                const stringKey = String(teamIndex);
+                                if (crossClanDefenceFavor[stringKey] !== undefined) {
+                                    const favorValue = crossClanDefenceFavor[stringKey];
+                                    if (favorValue && typeof favorValue === 'object' && !Array.isArray(favorValue)) {
+                                        favor = favorValue;
+                                        console.log(`Cross Clan War: Got favor from nested structure at string key "${stringKey}":`, favor);
+                                    } else {
+                                        console.warn(`Cross Clan War: Favor at string key "${stringKey}" is not an object, building from flat structure`);
+                                        // Fallback: try to build from flat structure
+                                        heroes.forEach(heroId => {
+                                            const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
+                                            if (petId !== undefined && typeof petId === 'number') {
+                                                favor[String(heroId)] = petId;
+                                            }
+                                        });
+                                    }
+                                } else {
+                                    console.log(`Cross Clan War: No favor found at index ${teamIndex}, building from flat structure`);
+                                    // Build from flat structure as fallback
+                                    heroes.forEach(heroId => {
+                                        const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
+                                        if (petId !== undefined && typeof petId === 'number') {
+                                            favor[String(heroId)] = petId;
+                                        }
+                                    });
+                                }
                             }
                         }
                     } else {
-                        console.warn(`Cross Clan War: crossClanDefenceFavor is not an object, using empty favor`);
+                        console.warn(`Cross Clan War: crossClanDefenceFavor is not a valid object, using empty favor`);
                     }
                     
                     // Validate favor is an object (hero IDs as string keys, pet IDs as values)
