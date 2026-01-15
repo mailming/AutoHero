@@ -3043,40 +3043,83 @@
                 console.log(`Cross Clan War: Found ${myTargets.length} targets assigned to you`);
                 setProgress(`Cross Clan War: Attacking ${myTargets.length} targets...`);
 
+                let skippedCount = 0; // Track skipped slots separately
+
+                // Process all targets - ensure loop always continues even on errors
                 for (let i = 0; i < myTargets.length; i++) {
                     const { slotId, target } = myTargets[i];
                     const enemySlot = enemySlots[slotId];
+                    let attackSuccess = false;
+                    let attackError = null;
 
                     try {
                         console.log(`Cross Clan War: ===== Starting attack ${i + 1}/${myTargets.length} - Slot ${slotId} =====`);
                         setProgress(`Cross Clan War: Slot ${slotId} (${i + 1}/${myTargets.length})`);
                         
+                        // Attempt the attack
                         await this.attackSlot(slotId, target, enemySlot);
+                        attackSuccess = true;
                         this.attacksCompleted++;
                         this.victories++;
                         console.log(`Cross Clan War: ✓ Successfully completed attack ${i + 1}/${myTargets.length} - Slot ${slotId}`);
                         
-                        if (i < myTargets.length - 1) {
-                            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
-                        }
                     } catch (error) {
-                        console.error(`Cross Clan War: ✗ Error attacking slot ${slotId} (${i + 1}/${myTargets.length}):`, error);
-                        console.error(`Cross Clan War: Error stack:`, error.stack);
-                        this.attacksCompleted++; // Count failed attempts too
-                        // Continue to next target on error - don't stop the loop
-                        if (i < myTargets.length - 1) {
-                            console.log(`Cross Clan War: Continuing to next target...`);
-                            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+                        attackError = error;
+                        attackSuccess = false;
+                        
+                        // Determine if this is a skip (dead units, not available) vs actual failure
+                        const errorMsg = error.message || String(error);
+                        const isSkip = errorMsg.includes('dead units') || 
+                                      errorMsg.includes('not available') ||
+                                      errorMsg.includes('skipping');
+                        
+                        if (isSkip) {
+                            // Don't count skips as attempts - these are intentional skips
+                            skippedCount++;
+                            console.warn(`Cross Clan War: ⚠ Skipping slot ${slotId} (${i + 1}/${myTargets.length}): ${errorMsg}`);
+                        } else {
+                            // Count actual failures as attempts
+                            this.attacksCompleted++;
+                            console.error(`Cross Clan War: ✗ Error attacking slot ${slotId} (${i + 1}/${myTargets.length}):`, error);
+                            console.error(`Cross Clan War: Error message: ${errorMsg}`);
+                            if (error.stack) {
+                                console.error(`Cross Clan War: Error stack:`, error.stack);
+                            }
+                        }
+                    }
+
+                    // Always continue to next target, regardless of success or failure
+                    if (i < myTargets.length - 1) {
+                        if (attackSuccess) {
+                            console.log(`Cross Clan War: Attack ${i + 1} completed, proceeding to next target...`);
+                        } else {
+                            console.log(`Cross Clan War: Attack ${i + 1} failed, but continuing to next target...`);
+                        }
+                        // Add delay before next attack
+                        await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+                    } else {
+                        // Last target
+                        if (attackSuccess) {
+                            console.log(`Cross Clan War: Final attack completed`);
+                        } else {
+                            console.log(`Cross Clan War: Final attack failed`);
                         }
                     }
                 }
 
                 console.log(`Cross Clan War: ===== All attacks completed =====`);
-                console.log(`Cross Clan War: Total attempts: ${this.attacksCompleted}, Victories: ${this.victories}`);
-                this.end(`Completed ${this.victories}/${this.attacksCompleted} attacks`);
+                console.log(`Cross Clan War: Total attempts: ${this.attacksCompleted}, Victories: ${this.victories}, Skipped: ${skippedCount}`);
+                let summary = `Completed ${this.victories}/${this.attacksCompleted} attacks`;
+                if (skippedCount > 0) {
+                    summary += ` (${skippedCount} skipped)`;
+                }
+                this.end(summary);
             }
 
             this.attackSlot = async function(slotId, target, enemySlot) {
+                let battleData = null;
+                let battleResult = null;
+                
                 try {
                     console.log(`Cross Clan War: [attackSlot] Starting attack on slot ${slotId}`);
                     console.log(`Cross Clan War: [attackSlot] Target data:`, target);
@@ -3087,14 +3130,22 @@
                             throw new Error(`Slot ${slotId} is not available for attack (status: ${enemySlot.status}, attackerId: ${enemySlot.attackerId})`);
                         }
 
-                        // Check if all units are alive
+                        // Check if any units are clearly dead (more lenient check)
+                        // Only skip if we can definitively see dead units
                         const team = enemySlot.team || {};
-                        const allAlive = Object.values(team).every(unit => {
-                            return unit.state && unit.state.isDead === false;
-                        });
+                        const teamValues = Object.values(team);
+                        
+                        if (teamValues.length > 0) {
+                            // Check if any unit is explicitly marked as dead
+                            const hasDeadUnits = teamValues.some(unit => {
+                                // Only consider dead if state exists and explicitly says isDead === true
+                                return unit && unit.state && unit.state.isDead === true;
+                            });
 
-                        if (!allAlive) {
-                            throw new Error(`Slot ${slotId} has dead units`);
+                            if (hasDeadUnits) {
+                                console.warn(`Cross Clan War: [attackSlot] Slot ${slotId} has dead units, skipping...`);
+                                throw new Error(`Slot ${slotId} has dead units - skipping`);
+                            }
                         }
                     }
 
@@ -3138,7 +3189,6 @@
                     }
                     
                     // Start battle
-                    let battleData;
                     try {
                         console.log(`Cross Clan War: [attackSlot] Starting battle...`);
                         battleData = await this.startBattle(parseInt(slotId), teamConfig, battleType);
@@ -3149,13 +3199,14 @@
                     }
                     
                     // Calculate battle result
-                    let battleResult;
                     try {
                         console.log(`Cross Clan War: [attackSlot] Calculating battle result...`);
                         battleResult = await this.calculateBattleResult(battleData, battleType);
                         console.log(`Cross Clan War: [attackSlot] Battle result: ${battleResult.win ? 'Victory' : 'Defeat'}`);
                     } catch (error) {
                         console.error(`Cross Clan War: [attackSlot] Error calculating battle result:`, error);
+                        // If battle was started but calculation failed, we should still try to end it
+                        // But for now, just throw the error and let the caller handle it
                         throw new Error(`Failed to calculate battle result: ${error.message}`);
                     }
                     
@@ -3166,14 +3217,18 @@
                         console.log(`Cross Clan War: [attackSlot] Battle ended successfully`);
                     } catch (error) {
                         console.error(`Cross Clan War: [attackSlot] Error ending battle:`, error);
+                        // Even if ending fails, the battle was attempted, so we consider it an error but continue
                         throw new Error(`Failed to end battle: ${error.message}`);
                     }
 
                     console.log(`Cross Clan War: [attackSlot] ✓ Slot ${slotId} attack completed: ${battleResult.win ? 'Victory' : 'Defeat'}`);
                 } catch (error) {
                     console.error(`Cross Clan War: [attackSlot] ✗ Error in attackSlot for slot ${slotId}:`, error);
-                    console.error(`Cross Clan War: [attackSlot] Error stack:`, error.stack);
-                    throw error; // Re-throw to be caught by the calling function
+                    if (error.stack) {
+                        console.error(`Cross Clan War: [attackSlot] Error stack:`, error.stack);
+                    }
+                    // Always re-throw to ensure calling function knows about the failure
+                    throw error;
                 }
             }
 
@@ -3360,9 +3415,26 @@
                         favorIsArray: Array.isArray(args.favor)
                     });
                 } else {
+                    // Titan battle
                     args.team = {
                         units: teamConfig.titans
                     };
+                    // Include favor even for titan battles (should be empty object)
+                    let favor = teamConfig.favor || {};
+                    if (typeof favor !== 'object' || Array.isArray(favor)) {
+                        console.warn(`Cross Clan War: Invalid favor type for titan battle (${typeof favor}), using empty object. Value:`, favor);
+                        favor = {};
+                    }
+                    args.favor = favor;
+                    
+                    // Log the request for debugging
+                    console.log(`Cross Clan War: Battle args for slot ${slotId} (titan):`, {
+                        slotId: args.slotId,
+                        team: args.team,
+                        favor: args.favor,
+                        favorType: typeof args.favor,
+                        favorIsArray: Array.isArray(args.favor)
+                    });
                 }
 
                 const calls = [{
