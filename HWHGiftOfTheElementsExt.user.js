@@ -28,7 +28,7 @@
 	const { addExtentionName } = HWHFuncs;
 	addExtentionName(GM_info.script.name, GM_info.script.version, GM_info.script.author);
 
-	const { popup, confShow, setProgress, hideProgress } = HWHFuncs;
+	const { popup, confShow, setProgress } = HWHFuncs;
 	const { i18nLangData } = HWHData;
 
 	// Constants
@@ -37,9 +37,6 @@
 	const MAX_TITAN_GIFT_LEVEL = 30;
 	const MIN_USER_LEVEL = 30;
 	const CONSUMABLE_ID_TITAN_GIFT = 24;
-	const QUEST_COLLECTION_MAX_ITERATIONS = 50;
-	const QUEST_COLLECTION_DELAY = 100;
-	const QUEST_ID_FILTER_THRESHOLD = 1800000000;
 	const AUTO_EXECUTION_TIMEOUT = 100;
 	const AUTO_EXECUTION_DELAY = 3000;
 
@@ -90,10 +87,8 @@
             <br> Heve gold: <span style="color: green;">{haveGold} </span> <br> Gold needed: <span style="color: red;"> {goldIsNeeded} </span>`,
 		GOE_AUTO_GET_POWER: 'Auto Get Power',
 		GOE_AUTO_GET_POWER_TITLE: 'Automatically get power when script loads',
-		GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount & Collect Rewards',
+		GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount',
 		GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Amount of power to get automatically (0 = disabled)',
-		GOE_COLLECT_QUEST_REWARDS: 'Collect All Quest Rewards',
-		GOE_COLLECT_QUEST_REWARDS_TITLE: 'Manually collect all available quest rewards',
 	};
 
 	i18nLangData['en'] = Object.assign(i18nLangData['en'], i18nLangDataEn);
@@ -147,8 +142,6 @@
 		GOE_AUTO_GET_POWER_TITLE: 'Автоматически получать мощь при загрузке скрипта',
 		GOE_AUTO_GET_POWER_AMOUNT: 'Количество мощи для авто получения',
 		GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Количество мощи для автоматического получения (0 = отключено)',
-		GOE_COLLECT_QUEST_REWARDS: 'Собрать все награды за квесты',
-		GOE_COLLECT_QUEST_REWARDS_TITLE: 'Вручную собрать все доступные награды за квесты',
 	};
 
 	i18nLangData['ru'] = Object.assign(i18nLangData['ru'], i18nLangDataRu);
@@ -257,18 +250,6 @@
 					await getPower();
 				},
 				color: 'green',
-			},
-			{
-				get msg() {
-					return I18N('GOE_COLLECT_QUEST_REWARDS');
-				},
-				get title() {
-					return I18N('GOE_COLLECT_QUEST_REWARDS_TITLE');
-				},
-				result: async function () {
-					await collectAllQuestRewards();
-				},
-				color: 'blue',
 			},
 			{
 				get msg() {
@@ -483,12 +464,6 @@
 
 		if (isAutoMode) {
 			const result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
-			const notEnoughGold = result.needGoldToGetMaxPower > gold
-				? I18N('GOE_NOT_ENOUGH_GOLD', {
-					haveGold: gold.toLocaleString(),
-					goldIsNeeded: result.needGoldToGetMaxPower.toLocaleString()
-				})
-				: '';
 
 			if (targetPower === 0 || targetPower > result.maximumPowerWeCanGet) {
 				return;
@@ -686,154 +661,6 @@
 		);
 	}
 
-	// Collect all quest rewards (only quests with ID > 1780000000)
-	async function collectAllQuestRewards() {
-		try {
-			const farmQuestIds = new Set();
-			let totalCollected = 0;
-			let iteration = 0;
-
-			// Collect only quests with ID > 1780000000
-			while (iteration < QUEST_COLLECTION_MAX_ITERATIONS) {
-				iteration++;
-				console.log(`%c${GM_info.script.name}: Quest collection iteration ${iteration}`, 'color: blue');
-
-				const questGetAll = await new Caller('questGetAll').execute();
-				const allQuests = Array.isArray(questGetAll) ? questGetAll : Object.values(questGetAll || {});
-				
-				// Filter for completed quests (state === 2) with ID > 1780000000 only
-				const questsToFarm = allQuests.filter(q => {
-					if (!q || q.state !== 2) return false;
-					const questId = +q.id;
-					return questId && !isNaN(questId) && questId > QUEST_ID_FILTER_THRESHOLD;
-				});
-
-				if (questsToFarm.length === 0) {
-					console.log(`%c${GM_info.script.name}: No more quests to collect (ID > ${QUEST_ID_FILTER_THRESHOLD})`, 'color: green');
-					break;
-				}
-
-				const questIdsToFarm = [];
-				for (const quest of questsToFarm) {
-					const questId = +quest.id;
-					if (questId && !isNaN(questId) && !farmQuestIds.has(questId)) {
-						questIdsToFarm.push(questId);
-						farmQuestIds.add(questId);
-					}
-				}
-
-				if (questIdsToFarm.length === 0) {
-					console.log(`%c${GM_info.script.name}: All available quests already collected`, 'color: green');
-					break;
-				}
-
-				// Collect each quest individually (one by one)
-				let successfulCount = 0;
-				let failedQuestIds = [];
-				const allSideResults = [];
-
-				for (const questId of questIdsToFarm) {
-					try {
-						const farmCaller = new Caller();
-						farmCaller.add({
-							name: 'questFarm',
-							args: { questId },
-						});
-
-						const farmResults = await farmCaller.send();
-						const sideResults = farmResults.sideResult('questFarm', true) || [];
-						const sideResult = sideResults[0];
-
-						if (sideResult?.error) {
-							const error = sideResult.error;
-							const errorName = (typeof error === 'object' ? error.name : '') || '';
-							const errorDesc = (typeof error === 'object' ? error.description : String(error)) || '';
-
-							if (errorName === 'NotAvailable' ||
-								errorDesc.includes('not pass farm requirements') ||
-								errorDesc.includes('not available')) {
-								failedQuestIds.push(questId);
-								farmQuestIds.delete(questId);
-								console.log(`%c${GM_info.script.name}: Skipping quest ${questId} - ${errorDesc || errorName}`, 'color: orange');
-							} else {
-								successfulCount++;
-								allSideResults.push(sideResult);
-							}
-						} else {
-							successfulCount++;
-							if (sideResult) {
-								allSideResults.push(sideResult);
-							}
-						}
-					} catch (error) {
-						console.error(`%c${GM_info.script.name}: Error farming quest ${questId}:`, 'color: red', error);
-						
-						const errorMessage = error.message || error.toString() || '';
-						const isNotAvailableError = errorMessage.includes('NotAvailable') ||
-							errorMessage.includes('not pass farm requirements') ||
-							errorMessage.includes('not available');
-
-						if (isNotAvailableError) {
-							failedQuestIds.push(questId);
-							farmQuestIds.delete(questId);
-							console.log(`%c${GM_info.script.name}: Skipping quest ${questId} - ${errorMessage}`, 'color: orange');
-						}
-					}
-
-					// Small delay between individual quest calls
-					await new Promise(resolve => setTimeout(resolve, QUEST_COLLECTION_DELAY));
-				}
-
-				totalCollected += successfulCount;
-				if (successfulCount > 0) {
-					console.log(`%c${GM_info.script.name}: Collected ${successfulCount} quest reward(s)`, 'color: green');
-				}
-				if (failedQuestIds.length > 0) {
-					console.log(`%c${GM_info.script.name}: Skipped ${failedQuestIds.length} quest(s) that don't meet farm requirements`, 'color: orange');
-				}
-
-				// Check for newly unlocked quests (only high-ID quests)
-				let hasNewQuests = false;
-				for (const sideResult of allSideResults) {
-					if (!sideResult) continue;
-
-					const quests = [...(sideResult.newQuests ?? []), ...(sideResult.quests ?? [])];
-					for (const quest of quests) {
-						if (quest?.state === 2) {
-							const newQuestId = +quest.id;
-							if (newQuestId && newQuestId > QUEST_ID_FILTER_THRESHOLD && !farmQuestIds.has(newQuestId)) {
-								hasNewQuests = true;
-								break;
-							}
-						}
-					}
-					if (hasNewQuests) break;
-				}
-
-				await new Promise(resolve => setTimeout(resolve, QUEST_COLLECTION_DELAY * 2));
-
-				if (!hasNewQuests && successfulCount === 0) {
-					break;
-				}
-			}
-
-			if (iteration >= QUEST_COLLECTION_MAX_ITERATIONS) {
-				console.warn(`%c${GM_info.script.name}: Quest collection reached max iterations (${QUEST_COLLECTION_MAX_ITERATIONS})`, 'color: orange');
-			}
-
-			if (totalCollected > 0) {
-				console.log(`%c${GM_info.script.name}: Quest collection completed. Total collected: ${totalCollected}`, 'color: green');
-			} else {
-				console.log(`%c${GM_info.script.name}: No quest rewards to collect`, 'color: gray');
-			}
-
-			return totalCollected;
-		} catch (error) {
-			console.error(`%c${GM_info.script.name}: Error collecting quest rewards:`, 'color: red', error);
-			return 0;
-		}
-	}
-
 	// Auto-execution on script load
 	let checkCount = 0;
 	const waitForHWHReady = setInterval(() => {
@@ -862,10 +689,8 @@
 							if (autoGetPowerAmount > 0) {
 								console.log(`%c${GM_info.script.name}: Auto-executing getPower with target: ${autoGetPowerAmount}`, 'color: green');
 								await getPower(autoGetPowerAmount);
+								console.log(`%c${GM_info.script.name}: Auto-execution completed`, 'color: green');
 							}
-							console.log(`%c${GM_info.script.name}: Auto-executing quest reward collection...`, 'color: green');
-							await collectAllQuestRewards();
-							console.log(`%c${GM_info.script.name}: Auto-execution completed`, 'color: green');
 						} else {
 							console.log(`%c${GM_info.script.name}: Auto-execution skipped - enabled: ${autoGetPower}, amount: ${autoGetPowerAmount}`, 'color: orange');
 						}
