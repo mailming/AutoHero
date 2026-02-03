@@ -329,7 +329,7 @@
 			showProgress = true,
 		} = options;
 
-		const [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+		let [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
 		let heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
 		const heroSumPowerStart = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
 		const titanGiftLib = lib.getData('titanGift');
