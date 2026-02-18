@@ -6250,6 +6250,61 @@ The following table provides a reference for Hero IDs used throughout the Hero W
 | 68 | Guus |
 | 69 | Cascade |
 | 70 | Electra von Grave |
+| 71 | Fluffy |
+
+---
+
+### Titan ID Reference
+
+The following table provides a reference for Titan IDs used throughout the Hero Wars API. These IDs may be referenced in reward responses, team configurations, or other API calls.
+
+#### Water Titans
+
+| ID | Titan Name |
+|----|------------|
+| 4000 | Sigurd |
+| 4001 | Nova |
+| 4002 | Mairi |
+| 4003 | Hyperion |
+| 4004 | Tidus and Gelo |
+
+#### Fire Titans
+
+| ID | Titan Name |
+|----|------------|
+| 4010 | Moloch |
+| 4011 | Vulcan |
+| 4012 | Ignis |
+| 4013 | Araji |
+| 4014 | Asherona and Pyro |
+
+#### Earth Titans
+
+| ID | Titan Name |
+|----|------------|
+| 4020 | Angus |
+| 4021 | Sylva |
+| 4022 | Avalon |
+| 4023 | Eden |
+| 4024 | Verdoc and Phyto |
+
+#### Dark Titans
+
+| ID | Titan Name |
+|----|------------|
+| 4030 | Brustar |
+| 4031 | Keros |
+| 4032 | Mort |
+| 4033 | Tenebris |
+
+#### Light Titans
+
+| ID | Titan Name |
+|----|------------|
+| 4040 | Rigel |
+| 4041 | Amon |
+| 4042 | Iyari |
+| 4043 | Solaris |
 
 ---
 

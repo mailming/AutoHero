@@ -61,37 +61,38 @@ Each titan has a `stars` object containing battle statistics for each star level
 
 ## Titan Elements and IDs
 
-### Water Element (4000-4003)
+### Water Element (4000-4004)
 - **4000** - Sigurd (Melee Tank, Front)
 - **4001** - Nova (Range DPS, Middle)
-- **4002** - Keros (Support, Back)
+- **4002** - Mairi (Support, Back)
 - **4003** - Hyperion (Ultra, Back) - Starts at 3 stars
+- **4004** - Tidus and Gelo (Summoner, Middle) - Special titan
 
 ### Fire Element (4010-4014)
 - **4010** - Moloch (Melee Tank, Front)
-- **4011** - Ignis (Range DPS, Middle)
-- **4012** - Vulcan (Support, Back)
-- **4013** - Aradgi (Ultra, Back) - Starts at 3 stars
-- **4014** - Solaris (Summoner, Middle) - Special shop titan
+- **4011** - Vulcan (Range DPS, Middle)
+- **4012** - Ignis (Support, Back)
+- **4013** - Araji (Ultra, Back) - Starts at 3 stars
+- **4014** - Asherona and Pyro (Summoner, Middle) - Special shop titan
 
 ### Earth Element (4020-4024)
 - **4020** - Angus (Melee Tank, Front)
 - **4021** - Sylva (Range DPS, Back)
-- **4022** - Eden (Support, Middle)
-- **4023** - Iyari (Ultra, Back) - Starts at 3 stars
-- **4024** - Keros (Summoner, Middle) - Special shop titan
+- **4022** - Avalon (Support, Middle)
+- **4023** - Eden (Ultra, Back) - Starts at 3 stars
+- **4024** - Verdoc and Phyto (Summoner, Middle) - Special shop titan
 
 ### Dark Element (4030-4033)
-- **4030** - Dark Titan (Melee, Front)
-- **4031** - Dark Titan (Range, Middle)
-- **4032** - Dark Titan (Support, Middle)
-- **4033** - Dark Titan (Ultra, Back) - Starts at 3 stars
+- **4030** - Brustar (Melee, Front)
+- **4031** - Keros (Range, Middle)
+- **4032** - Mort (Support, Middle)
+- **4033** - Tenebris (Ultra, Back) - Starts at 3 stars
 
 ### Light Element (4040-4043)
-- **4040** - Light Titan (Melee, Front)
-- **4041** - Light Titan (Range, Middle)
-- **4042** - Light Titan (Support, Back)
-- **4043** - Light Titan (Ultra, Back) - Starts at 3 stars
+- **4040** - Rigel (Melee, Front)
+- **4041** - Amon (Range, Middle)
+- **4042** - Iyari (Support, Back)
+- **4043** - Solaris (Ultra, Back) - Starts at 3 stars
 
 ## Titan Types
 
@@ -102,13 +103,13 @@ Front-line fighters with high HP and moderate attack. Examples: Sigurd (4000), M
 Mid-to-back line damage dealers. Examples: Nova (4001), Ignis (4011), Sylva (4021)
 
 ### Support
-Back-line titans that provide buffs/healing. Examples: Keros (4002), Vulcan (4012), Eden (4022)
+Back-line titans that provide buffs/healing. Examples: Mairi (4002), Ignis (4012), Avalon (4022)
 
 ### Ultra
-Powerful titans that start at 3 stars. Examples: Hyperion (4003), Aradgi (4013), Iyari (4023)
+Powerful titans that start at 3 stars. Examples: Hyperion (4003), Araji (4013), Eden (4023), Tenebris (4033), Solaris (4043)
 
 ### Summoner
-Special titans that can summon units. Examples: Solaris (4014), Keros (4024)
+Special titans that can summon units. Examples: Tidus and Gelo (4004), Asherona and Pyro (4014), Verdoc and Phyto (4024)
 
 ## Obtain Types
 
@@ -180,18 +181,19 @@ const sigurdStats = getTitanStats(4000, "3");
 ## Special Titans
 
 ### Summoner Titans
-- **4014 (Solaris)** - Fire element summoner, available from special shop
-- **4024 (Keros)** - Earth element summoner, available from special shop
+- **4004 (Tidus and Gelo)** - Water element summoner
+- **4014 (Asherona and Pyro)** - Fire element summoner, available from special shop
+- **4024 (Verdoc and Phyto)** - Earth element summoner, available from special shop
 
-These titans have the `"summoner"` type and special perks (24, 23).
+These titans have the `"summoner"` type and special perks.
 
 ### Ultra Titans
 Ultra titans are more powerful and start at 3 stars minimum:
 - Water: Hyperion (4003)
-- Fire: Aradgi (4013)
-- Earth: Iyari (4023)
-- Dark: Dark Ultra (4033)
-- Light: Light Ultra (4043)
+- Fire: Araji (4013)
+- Earth: Eden (4023)
+- Dark: Tenebris (4033)
+- Light: Solaris (4043)
 
 ## Notes
 

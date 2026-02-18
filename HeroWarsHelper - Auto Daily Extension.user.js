@@ -229,7 +229,7 @@
                     return [4023, 4022, 4012, 4021, 4011, 4010, 4020, 4024, 4014];
                 case 'water':
                     // Filter only owned titans (!!titansStates[e]) and not dead
-                    return [4000, 4001, 4002, 4003].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
+                    return [4000, 4001, 4002, 4003,4004].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
                 case 'earth':
                     // Filter only owned titans and not dead (includes 4024)
                     return [4020, 4022, 4021, 4023, 4024].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
@@ -427,6 +427,9 @@
         }
 
         async function findBestBattleNeutral(teamNum, attackerType, factors, mode) {
+            // Healing titans priority: best -> worst [4000, 4003, 4004, 4001, 4002]
+            const healingTitans = [4000, 4003, 4004, 4001, 4002].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
+            
             let countFactors = factors.length < 4 ? factors.length : 4;
             let aradgi = !titansStates['4013']?.isDead;
             let edem = !titansStates['4023']?.isDead;
@@ -440,21 +443,28 @@
                 if (countFactors > 1) {
                     let firstId = factors[0].id;
                     let secondId = factors[1].id;
-                    actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4001, secondId)));
-                    actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4002, secondId)));
-                    actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4003, secondId)));
+                    // Use healing titans in priority order (best first)
+                    for (let healerId of healingTitans) {
+                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, secondId)));
+                    }
                 }
                 if (aradgi) {
                     actions.push(startBattle(teamNum, attackerType, getNeutralTeam(4013)));
                     if (countFactors > 0) {
                         let firstId = factors[0].id;
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4000, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4001, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4002, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4003, 4013)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, 4013)));
+                        }
                     }
                     if (edem) {
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(4023, 4000, 4013)));
+                        // Use best healers first: 4000, then 4004
+                        if (healingTitans.includes(4000)) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(4023, 4000, 4013)));
+                        }
+                        if (healingTitans.includes(4004)) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(4023, 4004, 4013)));
+                        }
                     }
                 }
             } else {
@@ -462,41 +472,48 @@
                 for (let i = 0; i < countFactors; i++) {
                     let mainId = factors[i].id;
                     if (aradgi && i > 0) {
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4000, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4001, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4002, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4003, 4013)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, 4013)));
+                        }
                     }
                     for (let j = 0; j < dark.length; j++) {
                         let darkId = dark[j];
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4001, darkId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4002, darkId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4003, darkId)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, darkId)));
+                        }
                     }
                     for (let j = 0; j < light.length; j++) {
                         let lightId = light[j];
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4001, lightId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4002, lightId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4003, lightId)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, lightId)));
+                        }
                     }
                     let isFull = i > 0;
                     for (let j = isFull ? i + 1 : 2; j < factors.length; j++) {
                         let extraId = factors[j].id;
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4000, extraId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4001, extraId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, 4002, extraId)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, extraId)));
+                        }
                     }
                 }
                 if (aradgi) {
                     for (let i = 0; i < dark.length; i++) {
                         let darkId = dark[i];
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(darkId, 4001, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(darkId, 4002, 4013)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(darkId, healerId, 4013)));
+                        }
                     }
                     for (let i = 0; i < light.length; i++) {
                         let lightId = light[i];
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(lightId, 4001, 4013)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(lightId, 4002, 4013)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(lightId, healerId, 4013)));
+                        }
                     }
                 }
                 for (let i = 0; i < dark.length; i++) {
@@ -504,8 +521,10 @@
                     actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId)));
                     for (let j = i + 1; j < dark.length; j++) {
                         let secondId = dark[j];
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4001, secondId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4002, secondId)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, secondId)));
+                        }
                     }
                 }
                 for (let i = 0; i < light.length; i++) {
@@ -513,8 +532,10 @@
                     actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId)));
                     for (let j = i + 1; j < light.length; j++) {
                         let secondId = light[j];
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4001, secondId)));
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, 4002, secondId)));
+                        // Use healing titans in priority order (best first)
+                        for (let healerId of healingTitans) {
+                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, secondId)));
+                        }
                     }
                 }
             }
@@ -653,6 +674,10 @@
         function startBattle(teamNum, attackerType, args) {
             return new Promise(function (resolve, reject) {
                 args.teamNum = teamNum;
+                // Log which titans are being sent to battle
+                const titanIds = args.heroes || [];
+                console.log(`[Dungeon Battle] ${attackerType} - Titans: [${titanIds.join(', ')}]`);
+                
                 let startBattleCall = {
                     calls: [{ name: 'dungeonStartBattle', args, ident: 'body' }],
                 };
@@ -724,14 +749,160 @@
         }
 
         function resultEndBattle(e) {
+            // Check for top-level errors first
+            if (e && e.error) {
+                let errorName = '';
+                let errorDescription = '';
+                
+                if (typeof e.error === 'string') {
+                    errorDescription = e.error;
+                    if (e.error.includes('NotFound') || e.error.includes('not found')) {
+                        errorName = 'NotFound';
+                    }
+                } else {
+                    errorName = e.error.name || '';
+                    errorDescription = e.error.description || '';
+                }
+                
+                if (errorName === 'NotFound' || errorDescription.includes('NotFound') || errorDescription.includes('not found')) {
+                    console.warn('Battle not found at top level (may have been completed/expired), refreshing dungeon info and continuing...', e.error);
+                    let refreshCall = {
+                        calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
+                    };
+                    send(JSON.stringify(refreshCall), function(refreshResult) {
+                        if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
+                            let dungeonGetInfo = refreshResult.results[0].result.response;
+                            titansStates = dungeonGetInfo.states?.titans || titansStates;
+                            checkFloor(dungeonGetInfo);
+                        } else {
+                            endDungeon('Failed to refresh dungeon after NotFound error', refreshResult);
+                        }
+                    });
+                    return;
+                }
+                
+                endDungeon('errorRequest', e.error);
+                return;
+            }
+            
             if (!!e && !!e.results) {
-                let battleResult = e.results[0].result.response;
+                let result = e.results[0].result;
+                
+                // Check for errors in the result structure
+                if (result.error) {
+                    let errorName = '';
+                    let errorDescription = '';
+                    
+                    // Handle both object and string error formats
+                    if (typeof result.error === 'string') {
+                        errorDescription = result.error;
+                        if (result.error.includes('NotFound') || result.error.includes('not found')) {
+                            errorName = 'NotFound';
+                        }
+                    } else {
+                        errorName = result.error.name || '';
+                        errorDescription = result.error.description || '';
+                    }
+                    
+                    // Handle NotFound errors gracefully - battle may have been completed/expired
+                    if (errorName === 'NotFound' || errorDescription.includes('NotFound') || errorDescription.includes('not found')) {
+                        console.warn('Battle not found (may have been completed/expired), refreshing dungeon info and continuing...', result.error);
+                        // Refresh dungeon info and continue
+                        let refreshCall = {
+                            calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
+                        };
+                        send(JSON.stringify(refreshCall), function(refreshResult) {
+                            if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
+                                let dungeonGetInfo = refreshResult.results[0].result.response;
+                                titansStates = dungeonGetInfo.states?.titans || titansStates;
+                                checkFloor(dungeonGetInfo);
+                            } else {
+                                // If refresh fails, try to continue anyway
+                                console.warn('Failed to refresh dungeon info, continuing with current state...');
+                                // Get fresh dungeon info using the same pattern as startDungeon
+                                let callsExecuteDungeon = {
+                                    calls: [
+                                        { name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' },
+                                    ],
+                                };
+                                send(JSON.stringify(callsExecuteDungeon), function(refreshResult2) {
+                                    if (refreshResult2 && refreshResult2.results && refreshResult2.results[0] && refreshResult2.results[0].result && refreshResult2.results[0].result.response) {
+                                        let dungeonGetInfo = refreshResult2.results[0].result.response;
+                                        titansStates = dungeonGetInfo.states?.titans || titansStates;
+                                        checkFloor(dungeonGetInfo);
+                                    } else {
+                                        endDungeon('Failed to refresh dungeon after NotFound error', refreshResult2);
+                                    }
+                                });
+                            }
+                        });
+                        return;
+                    }
+                    
+                    // For other errors, stop the dungeon
+                    endDungeon('errorBattleResult', result.error);
+                    return;
+                }
+                
+                let battleResult = result.response;
+                if (!battleResult) {
+                    // If no response, try to refresh dungeon info
+                    console.warn('No battle result in response, refreshing dungeon info and continuing...');
+                    let refreshCall = {
+                        calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
+                    };
+                    send(JSON.stringify(refreshCall), function(refreshResult) {
+                        if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
+                            let dungeonGetInfo = refreshResult.results[0].result.response;
+                            titansStates = dungeonGetInfo.states?.titans || titansStates;
+                            checkFloor(dungeonGetInfo);
+                        } else {
+                            endDungeon('Failed to refresh dungeon after missing response', refreshResult);
+                        }
+                    });
+                    return;
+                }
+                
                 if ('error' in battleResult) {
+                    let errorName = '';
+                    let errorDescription = '';
+                    
+                    // Handle both object and string error formats
+                    if (typeof battleResult.error === 'string') {
+                        errorDescription = battleResult.error;
+                        if (battleResult.error.includes('NotFound') || battleResult.error.includes('not found')) {
+                            errorName = 'NotFound';
+                        }
+                    } else {
+                        errorName = battleResult.error?.name || '';
+                        errorDescription = battleResult.error?.description || '';
+                    }
+                    
+                    // Handle NotFound errors in response as well
+                    if (errorName === 'NotFound' || errorDescription.includes('NotFound') || errorDescription.includes('not found')) {
+                        console.warn('Battle not found in response (may have been completed/expired), refreshing dungeon info and continuing...', battleResult.error);
+                        // Refresh dungeon info and continue
+                        let refreshCall = {
+                            calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
+                        };
+                        send(JSON.stringify(refreshCall), function(refreshResult) {
+                            if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
+                                let dungeonGetInfo = refreshResult.results[0].result.response;
+                                titansStates = dungeonGetInfo.states?.titans || titansStates;
+                                checkFloor(dungeonGetInfo);
+                            } else {
+                                endDungeon('Failed to refresh dungeon after NotFound error', refreshResult);
+                            }
+                        });
+                        return;
+                    }
+                    
                     endDungeon('errorBattleResult', battleResult);
                     return;
                 }
+                
                 let dungeonGetInfo = battleResult.dungeon ?? battleResult;
-                dungeonActivity += battleResult.reward.dungeonActivity ?? 0;
+                dungeonActivity += battleResult.reward?.dungeonActivity ?? 0;
                 checkFloor(dungeonGetInfo);
             } else {
                 endDungeon('Lost connection to game server!', 'break');
