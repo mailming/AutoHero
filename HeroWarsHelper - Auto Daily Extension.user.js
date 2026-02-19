@@ -429,6 +429,17 @@
         async function findBestBattleNeutral(teamNum, attackerType, factors, mode) {
             // Healing titans priority: best -> worst [4000, 4003, 4004, 4001, 4002]
             const healingTitans = [4000, 4003, 4004, 4001, 4002].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
+            // Create priority map for healer comparison (lower number = higher priority)
+            const healerPriority = {};
+            healingTitans.forEach((healerId, index) => {
+                healerPriority[healerId] = index;
+            });
+            
+            // Debug: Log available healing titans
+            console.log(`[Dungeon] Available healing titans (priority order): [${healingTitans.join(', ')}]`);
+            if (!healingTitans.includes(4004)) {
+                console.warn(`[Dungeon] WARNING: 4004 (Tidus and Gelo) is not available! Status:`, titansStates[4004]);
+            }
             
             let countFactors = factors.length < 4 ? factors.length : 4;
             let aradgi = !titansStates['4013']?.isDead;
@@ -539,11 +550,70 @@
                     }
                 }
             }
-            for (let result of await Promise.all(actions)) {
+            const results = await Promise.all(actions);
+            for (let i = 0; i < results.length; i++) {
+                let result = results[i];
                 let recovery = getRecovery(result);
-                if (recovery > bestBattle.recovery) {
+                let titans = result.progress[0].attackers.heroes;
+                
+                // Get original titan IDs from battleData.attackers (keys are titan IDs)
+                const originalTitanIds = result.battleData && result.battleData.attackers ? 
+                    Object.keys(result.battleData.attackers).map(id => parseInt(id)) : [];
+                
+                // Extract healer IDs from the team
+                const currentHealerIds = originalTitanIds.filter(id => healingTitans.includes(id));
+                
+                // Check if this result is better, considering healer priority
+                // Use a larger threshold to prefer higher priority healers even when recovery is slightly better
+                const recoveryThreshold = 0.05; // Consider recovery similar if within 0.05 (5% difference)
+                const isMuchBetterRecovery = recovery > bestBattle.recovery + recoveryThreshold;
+                const isSimilarOrBetterRecovery = recovery >= bestBattle.recovery - recoveryThreshold;
+                
+                if (!bestBattle.attackers || !bestBattle.originalTitanIds) {
+                    // First result, just store it
                     bestBattle.recovery = recovery;
-                    bestBattle.attackers = result.progress[0].attackers.heroes;
+                    bestBattle.attackers = titans;
+                    bestBattle.originalTitanIds = originalTitanIds;
+                    console.log(`[Dungeon] Initial best battle - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
+                } else if (isMuchBetterRecovery) {
+                    // Much better recovery, always choose it
+                    bestBattle.recovery = recovery;
+                    bestBattle.attackers = titans;
+                    bestBattle.originalTitanIds = originalTitanIds;
+                    console.log(`[Dungeon] Better recovery found - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
+                } else if (isSimilarOrBetterRecovery) {
+                    // Recovery is similar or slightly better, prefer higher priority healers
+                    const bestHealerIds = bestBattle.originalTitanIds.filter(id => healingTitans.includes(id));
+                    
+                    if (currentHealerIds.length > 0 && bestHealerIds.length > 0) {
+                        const currentBestHealer = currentHealerIds.reduce((best, id) => 
+                            (healerPriority[id] !== undefined && (healerPriority[best] === undefined || healerPriority[id] < healerPriority[best])) ? id : best
+                        );
+                        const bestBestHealer = bestHealerIds.reduce((best, id) => 
+                            (healerPriority[id] !== undefined && (healerPriority[best] === undefined || healerPriority[id] < healerPriority[best])) ? id : best
+                        );
+                        
+                        // Prefer the battle with higher priority healer (lower priority number = higher priority)
+                        // Also prefer if recovery is better, even if healer priority is same
+                        const hasBetterHealer = healerPriority[currentBestHealer] !== undefined && 
+                            healerPriority[bestBestHealer] !== undefined &&
+                            healerPriority[currentBestHealer] < healerPriority[bestBestHealer];
+                        const hasBetterRecovery = recovery > bestBattle.recovery;
+                        
+                        if (hasBetterHealer || (recovery >= bestBattle.recovery && healerPriority[currentBestHealer] <= healerPriority[bestBestHealer])) {
+                            if (hasBetterHealer) {
+                                console.log(`[Dungeon] Preferring healer ${currentBestHealer} (priority ${healerPriority[currentBestHealer]}) over ${bestBestHealer} (priority ${healerPriority[bestBestHealer]}) - Recovery: ${recovery.toFixed(3)} vs ${bestBattle.recovery.toFixed(3)}`);
+                            }
+                            bestBattle.recovery = recovery;
+                            bestBattle.attackers = titans;
+                            bestBattle.originalTitanIds = originalTitanIds;
+                        }
+                    } else if (recovery > bestBattle.recovery) {
+                        // Better recovery and no healers to compare, choose it
+                        bestBattle.recovery = recovery;
+                        bestBattle.attackers = titans;
+                        bestBattle.originalTitanIds = originalTitanIds;
+                    }
                 }
             }
         }
@@ -675,8 +745,13 @@
             return new Promise(function (resolve, reject) {
                 args.teamNum = teamNum;
                 // Log which titans are being sent to battle
-                const titanIds = args.heroes || [];
-                console.log(`[Dungeon Battle] ${attackerType} - Titans: [${titanIds.join(', ')}]`);
+                // args is a team object with heroes array
+                const titanIds = (args && args.heroes) ? args.heroes : [];
+                if (titanIds.length > 0) {
+                    console.log(`[Dungeon Battle] ${attackerType} - Team ${teamNum} - Titans: [${titanIds.join(', ')}]`);
+                } else {
+                    console.warn(`[Dungeon Battle] ${attackerType} - Team ${teamNum} - No titans found. Args:`, JSON.stringify(args));
+                }
                 
                 let startBattleCall = {
                     calls: [{ name: 'dungeonStartBattle', args, ident: 'body' }],
