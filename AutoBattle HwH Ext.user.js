@@ -336,14 +336,14 @@
                                 canUpdateDefenders: false,
                                 battleStartTs: 0
                             };
-                            this.attemptsRemaining = grandAttempts > 0 ? 1 : 0; // Only do one battle per execution
+                            this.attemptsRemaining = grandAttempts;
 
                             if (grandAttempts <= 0) {
                                 setProgress(`Grand Arena: No attempts remaining (${grandAttempts})`);
                                 return;
                             }
 
-                            setProgress(`Grand Arena: ${grandAttempts} attempts available - executing single battle`);
+                            setProgress(`Grand Arena: ${grandAttempts} attempts available`);
                             return;
                         } else {
                             // Arena attempts are stored in refillable array with id: 6
@@ -358,14 +358,14 @@
                                 canUpdateDefenders: false,
                                 battleStartTs: 0
                             };
-                            this.attemptsRemaining = arenaAttempts > 0 ? 1 : 0; // Only do one battle per execution
+                            this.attemptsRemaining = arenaAttempts;
 
                             if (arenaAttempts <= 0) {
                                 setProgress(`Arena: No attempts remaining (${arenaAttempts})`);
                                 return;
                             }
 
-                            setProgress(`Arena: ${arenaAttempts} attempts available - executing single battle`);
+                            setProgress(`Arena: ${arenaAttempts} attempts available`);
                             return;
                         }
                     }
@@ -386,8 +386,18 @@
                 this.attemptsRemaining = 1;
                 this.opponents = [];
                 const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
-                setProgress(`${arenaName}: Initializing - executing single battle...`);
+                setProgress(`${arenaName}: Initializing...`);
                 return;
+            }
+
+            this.refreshOpponents = async function() {
+                const detailedOpponents = await this.getArenaOpponents();
+                if (detailedOpponents && (detailedOpponents.array || detailedOpponents.map)) {
+                    this.opponentsData = detailedOpponents;
+                } else if (detailedOpponents && typeof detailedOpponents === 'object' && Object.keys(detailedOpponents).length > 0) {
+                    this.opponents = detailedOpponents;
+                }
+                this.findEasiestOpponents();
             }
 
             this.getAvailableTeams = async function() {
@@ -628,10 +638,10 @@
             this.executeBattles = async function() {
                 let battlesAttempted = 0;
                 let battlesSkipped = 0;
-                const initialOpponentCount = this.opponents.length;
+                let initialOpponentCount = this.opponents.length;
                 let allySkippedInRow = 0;
                 
-                // Continue trying opponents until we either win a battle, run out of attempts, or run out of opponents
+                // Continue trying opponents until we run out of attempts or viable opponents
                 while (battlesAttempted < this.attemptsRemaining && this.opponents.length > 0) {
                     const opponent = this.opponents.shift();
                     const opponentId = opponent.opponent.id;
@@ -659,8 +669,6 @@
                             if (!canAttack) {
                                 console.log(`[EXECUTE] Target ${opponentId} is not in range, skipping`);
                                 battlesSkipped++;
-                                // Put opponent back at end of queue to try later
-                                this.opponents.push(opponent);
                                 continue;
                             }
                         }
@@ -670,7 +678,6 @@
                         if (result.skipped) {
                             console.log(`[EXECUTE] Battle skipped due to low win rate (${result.winRate?.toFixed(2)}%)`);
                             battlesSkipped++;
-                            // Continue to next opponent - don't consume an attempt
                             if (this.opponents.length === 0) {
                                 console.log(`[EXECUTE] No more opponents available, ending execution`);
                                 break;
@@ -683,13 +690,27 @@
                         if (result.win) {
                             this.victories++;
                             console.log(`[EXECUTE] ✓ Victory against opponent ${opponentId}`);
-                            // After a victory, we can continue or stop - for now, continue to use all attempts
                         } else {
                             console.log(`[EXECUTE] ✗ Defeat against opponent ${opponentId}`);
+                        }
+
+                        if (battlesAttempted < this.attemptsRemaining) {
+                            await this.refreshOpponents();
+                            initialOpponentCount = this.opponents.length;
+                            allySkippedInRow = 0;
+                            if (this.opponents.length === 0) {
+                                console.log('[EXECUTE] No opponents returned after refresh, ending execution');
+                                break;
+                            }
                         }
                     } catch (error) {
                         console.error(`[EXECUTE] Battle error for opponent ${opponentId}:`, error);
                         battlesAttempted++;
+                        if (battlesAttempted < this.attemptsRemaining) {
+                            await this.refreshOpponents();
+                            initialOpponentCount = this.opponents.length;
+                            allySkippedInRow = 0;
+                        }
                     }
                 }
 
@@ -787,14 +808,16 @@
                     return true;
                 }
 
+                const targetIdStr = String(targetId);
+
                 try {
                     const calls = [{
                         name: "grandCheckTargetRange",
                         args: {
-                            ids: [targetId]
+                            ids: [targetIdStr]
                         },
                         context: {
-                            actionTs: Date.now()
+                            actionTs: Utils.getActionTs()
                         },
                         ident: "body"
                     }];
@@ -804,7 +827,7 @@
 
                     if (response && response.results && response.results[0] && response.results[0].result) {
                         const result = response.results[0].result.response;
-                        return result[targetId] === true;
+                        return result[targetIdStr] === true || result[targetId] === true;
                     }
 
                     return false;
