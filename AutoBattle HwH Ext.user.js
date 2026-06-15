@@ -252,6 +252,9 @@
             this.arenaInfo = null;
             this.teamInfo = null;
             this.opponents = [];
+            this.myUserId = null;
+            this.myClanId = null;
+            this.allyUserIds = new Set();
 
             this.start = async function(arenaType = 'arena') {
                 this.arenaType = arenaType;
@@ -277,6 +280,7 @@
                     }
 
                     await this.getAvailableTeams();
+                    await this.loadAllyUserIds();
 
                     // Get detailed opponent information
                     const detailedOpponents = await this.getArenaOpponents();
@@ -315,6 +319,9 @@
                     if (response && response.results && response.results[0] && response.results[0].result) {
                         const userInfo = response.results[0].result.response;
                         console.log('User info:', userInfo);
+
+                        this.myUserId = userInfo.userId != null ? String(userInfo.userId) : null;
+                        this.myClanId = userInfo.clanId != null ? String(userInfo.clanId) : null;
 
                         if (this.arenaType === 'grand') {
                             // Grand Arena attempts are stored in refillable array with id: 21
@@ -527,9 +534,102 @@
                 }
             }
 
+            this.loadAllyUserIds = async function() {
+                this.allyUserIds = new Set();
+
+                if (!this.myUserId) {
+                    try {
+                        const userInfo = getUserInfo();
+                        if (userInfo?.userId != null) {
+                            this.myUserId = String(userInfo.userId);
+                        }
+                        if (userInfo?.clanId != null) {
+                            this.myClanId = String(userInfo.clanId);
+                        }
+                    } catch (e) {
+                        console.warn('[ALLIES] Could not read user info from getUserInfo():', e);
+                    }
+                }
+
+                if (this.myUserId) {
+                    this.allyUserIds.add(String(this.myUserId));
+                }
+
+                if (this.myClanId && this.myClanId !== '0') {
+                    try {
+                        const response = await Send(JSON.stringify({
+                            calls: [{
+                                name: 'clanGetInfo',
+                                args: {},
+                                context: { actionTs: Utils.getActionTs() },
+                                ident: 'clanGetInfo'
+                            }]
+                        }));
+                        const members = response?.results?.[0]?.result?.response?.clan?.members;
+                        if (members && typeof members === 'object') {
+                            for (const memberId of Object.keys(members)) {
+                                this.allyUserIds.add(String(memberId));
+                            }
+                            console.log(`[ALLIES] Loaded ${Object.keys(members).length} guild members`);
+                        }
+                    } catch (error) {
+                        console.warn('[ALLIES] Could not load guild members from clanGetInfo:', error);
+                    }
+                }
+
+                try {
+                    const response = await Send(JSON.stringify({
+                        calls: [{
+                            name: 'crossClanWar_getAttackMap',
+                            args: {},
+                            context: { actionTs: Utils.getActionTs() },
+                            ident: 'body'
+                        }]
+                    }));
+                    const clanTries = response?.results?.[0]?.result?.response?.clanTries;
+                    if (clanTries && typeof clanTries === 'object') {
+                        const teamCountBefore = this.allyUserIds.size;
+                        for (const userId of Object.keys(clanTries)) {
+                            this.allyUserIds.add(String(userId));
+                        }
+                        console.log(`[ALLIES] Loaded ${this.allyUserIds.size - teamCountBefore} cross-clan team members`);
+                    }
+                } catch (error) {
+                    console.warn('[ALLIES] Could not load cross-clan team members:', error);
+                }
+
+                console.log(`[ALLIES] Total ally user IDs to skip: ${this.allyUserIds.size}`);
+            }
+
+            this.getAllySkipReason = function(opponent) {
+                const opponentId = String(opponent?.opponent?.id || '');
+                if (!opponentId) {
+                    return null;
+                }
+
+                if (this.myUserId && opponentId === String(this.myUserId)) {
+                    return 'self';
+                }
+
+                if (this.allyUserIds.has(opponentId)) {
+                    return 'guild or team member';
+                }
+
+                const opponentClanId = opponent?.opponent?.user?.clanId;
+                if (this.myClanId && opponentClanId &&
+                    String(this.myClanId) !== '0' && String(opponentClanId) !== '0' &&
+                    String(this.myClanId) === String(opponentClanId)) {
+                    return 'same guild';
+                }
+
+                return null;
+            }
+
             this.executeBattles = async function() {
                 let battlesAttempted = 0;
                 let battlesSkipped = 0;
+                const initialOpponentCount = this.opponents.length;
+                let allySkippedInRow = 0;
                 
                 // Continue trying opponents until we either win a battle, run out of attempts, or run out of opponents
                 while (battlesAttempted < this.attemptsRemaining && this.opponents.length > 0) {
@@ -541,6 +641,19 @@
                     setProgress(`${arenaName}: Battle ${battlesAttempted + 1}/${this.attemptsRemaining} - Opponent ${opponentId}`);
 
                     try {
+                        const allySkipReason = this.getAllySkipReason(opponent);
+                        if (allySkipReason) {
+                            console.log(`[EXECUTE] Skipping opponent ${opponentId} (${allySkipReason})`);
+                            battlesSkipped++;
+                            allySkippedInRow++;
+                            if (allySkippedInRow >= initialOpponentCount && battlesAttempted === 0) {
+                                console.log('[EXECUTE] All opponents are guild/team allies, ending execution');
+                                break;
+                            }
+                            continue;
+                        }
+                        allySkippedInRow = 0;
+
                         if (this.arenaType === 'grand') {
                             const canAttack = await this.checkTargetRange(opponentId);
                             if (!canAttack) {
