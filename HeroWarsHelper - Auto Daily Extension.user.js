@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.1.1
+// @version      3.1.3
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,8 +15,12 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.1.1";
+    const EXTENSION_VERSION = "3.1.3";
     const EXTENSION_AUTHOR = "You";
+
+    /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
+    /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
+    /** Earth/fire sim count (6–25): `window.HWH_DUNGEON_EARTH_FIRE_SIM = 12` (extension dungeon only). */
 
     // --- STATE VARIABLES ---
     let executionState = {};
@@ -143,8 +147,21 @@
     function executeDungeon(resolve, reject) {
         const { HWHFuncs, Send, BattleCalc, cheats } = window;
         const { getInput, setProgress, hideProgress, I18N, send, getTimer, countdownTimer } = HWHFuncs;
-        
-        let countPredictionCard = 0;
+
+        /** Set `window.HWH_DEBUG_DUNGEON = true` for verbose dungeon logs. */
+        const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
+        /** Earth/fire recovery simulations per attempt (default 12; max 25). Set `window.HWH_DUNGEON_EARTH_FIRE_SIM`. */
+        const EARTH_FIRE_SIM_COUNT = Math.max(6, Math.min(25, Number(window.HWH_DUNGEON_EARTH_FIRE_SIM) || 12));
+
+        function syncPredictionCardsFromInventory(invRes) {
+            const raw = invRes?.result?.response?.consumable?.[81];
+            const n = Math.max(0, Math.floor(Number(raw)) || 0);
+            if (window.HWHData) {
+                window.HWHData.countPredictionCard = n;
+            }
+            return n;
+        }
+
         let dungeonActivity = 0;
         let startDungeonActivity = 0;
         let maxDungeonActivity = 150;
@@ -174,12 +191,14 @@
         let talentMsg = '';
         let talentMsgReward = '';
 
+        // Same call order as HeroWarsHelper executeDungeon (indices 0–5 must match).
         let callsExecuteDungeon = {
             calls: [
                 { name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' },
                 { name: 'teamGetAll', args: {}, ident: 'teamGetAll' },
                 { name: 'teamGetFavor', args: {}, ident: 'teamGetFavor' },
                 { name: 'clanGetInfo', args: {}, ident: 'clanGetInfo' },
+                { name: 'titanGetAll', args: {}, ident: 'titanGetAll' },
                 { name: 'inventoryGet', args: {}, ident: 'inventoryGet' },
             ],
         };
@@ -197,13 +216,20 @@
                 endDungeon('noDungeon', res);
                 return;
             }
-            console.log('Starting full dungeon run: ', new Date());
+            if (DUNGEON_VERBOSE) console.log('Starting full dungeon run: ', new Date());
             let teamGetAll = res[1].result.response;
             let teamGetFavor = res[2].result.response;
-            dungeonActivity = res[3].result.response.stat.todayDungeonActivity;
-            startDungeonActivity = res[3].result.response.stat.todayDungeonActivity;
-            countPredictionCard = res[4].result.response.consumable[81];
+            const clanStat = res[3]?.result?.response?.stat;
+            const dungeonStat = dungeonGetInfo?.stat;
+            const todayAct = clanStat?.todayDungeonActivity ?? dungeonStat?.todayDungeonActivity ?? 0;
+            dungeonActivity = todayAct;
+            startDungeonActivity = todayAct;
+            syncPredictionCardsFromInventory(res[5]);
             titansStates = dungeonGetInfo.states.titans;
+
+            const titanGetAllList = Array.isArray(res[4]?.result?.response)
+                ? res[4].result.response
+                : Object.values(res[4]?.result?.response || {}).filter((t) => t && t.id != null);
 
             teams.hero = {
                 favor: teamGetFavor.dungeon_hero,
@@ -214,28 +240,60 @@
             if (heroPet) {
                 teams.hero.pet = heroPet;
             }
-            teams.neutral = getTitanTeam('neutral');
-            teams.water = { favor: {}, heroes: getTitanTeam('water'), teamNum: 0 };
-            teams.earth = { favor: {}, heroes: getTitanTeam('earth'), teamNum: 0 };
-            teams.fire = { favor: {}, heroes: getTitanTeam('fire'), teamNum: 0 };
+
+            if (titanGetAllList.length > 0) {
+                // Roster from API (same rules as HeroWarsHelper getTitanTeam).
+                teams.neutral = titanGetAllList
+                    .filter((e) => !titansStates[e.id]?.isDead)
+                    .sort((a, b) => (b.power || 0) - (a.power || 0))
+                    .map((e) => e.id);
+                teams.water = { favor: {}, heroes: filterAliveTitanIds(getTitanTeamFromRoster(titanGetAllList, 'water')), teamNum: 0 };
+                teams.earth = { favor: {}, heroes: filterAliveTitanIds(getTitanTeamFromRoster(titanGetAllList, 'earth')), teamNum: 0 };
+                teams.fire = { favor: {}, heroes: filterAliveTitanIds(getTitanTeamFromRoster(titanGetAllList, 'fire')), teamNum: 0 };
+            } else {
+                if (DUNGEON_VERBOSE) console.warn('[Dungeon] titanGetAll empty; using legacy hardcoded titan lists');
+                teams.neutral = getLegacyTitanTeamIds('neutral');
+                teams.water = { favor: {}, heroes: getLegacyTitanTeamIds('water'), teamNum: 0 };
+                teams.earth = { favor: {}, heroes: getLegacyTitanTeamIds('earth'), teamNum: 0 };
+                teams.fire = { favor: {}, heroes: getLegacyTitanTeamIds('fire'), teamNum: 0 };
+            }
 
             checkFloor(dungeonGetInfo);
         }
 
-        function getTitanTeam(type) {
+        /** HeroWarsHelper-style element split (titan id hundreds digit: 0=water, 1=fire, 2=earth). */
+        function getTitanTeamFromRoster(titans, type) {
+            const arr = Array.isArray(titans) ? titans : [];
             switch (type) {
                 case 'neutral':
-                    // Complete list for Neutral (includes 4014 Solaris)
+                    return [...arr].sort((a, b) => (b.power || 0) - (a.power || 0)).slice(0, 5).map((e) => e.id);
+                case 'water':
+                    return arr.filter((e) => String(e.id).slice(2, 3) === '0').map((e) => e.id);
+                case 'fire':
+                    return arr.filter((e) => String(e.id).slice(2, 3) === '1').map((e) => e.id);
+                case 'earth':
+                    return arr.filter((e) => String(e.id).slice(2, 3) === '2').map((e) => e.id);
+                default:
+                    return [];
+            }
+        }
+
+        function filterAliveTitanIds(ids) {
+            return ids.filter((id) => titansStates[id] && !titansStates[id].isDead);
+        }
+
+        function getLegacyTitanTeamIds(type) {
+            switch (type) {
+                case 'neutral':
                     return [4023, 4022, 4012, 4021, 4011, 4010, 4020, 4024, 4014];
                 case 'water':
-                    // Filter only owned titans (!!titansStates[e]) and not dead
-                    return [4000, 4001, 4002, 4003,4004].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
+                    return [4000, 4001, 4002, 4003, 4004].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
                 case 'earth':
-                    // Filter only owned titans and not dead (includes 4024)
                     return [4020, 4022, 4021, 4023, 4024].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
                 case 'fire':
-                    // Filter only owned titans and not dead (includes 4014 Solaris)
                     return [4010, 4011, 4012, 4013, 4014].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
+                default:
+                    return [];
             }
         }
 
@@ -324,7 +382,7 @@
                     selectedTeamNum = await attemptAttackEarthOrFire(teamNum, attackerType, attempt);
                 }
             }
-            console.log('Choosing fire or earth team: ', selectedTeamNum < 0 ? 'not made' : floorChoices[selectedTeamNum].attackerType);
+            if (DUNGEON_VERBOSE) console.log('Choosing fire or earth team: ', selectedTeamNum < 0 ? 'not made' : floorChoices[selectedTeamNum].attackerType);
             return selectedTeamNum;
         }
 
@@ -339,7 +397,7 @@
             
             if (startIndex >= 0) {
                 team.heroes = team.heroes.slice(startIndex);
-                let recovery = await getBestRecovery(teamNum, attackerType, team, 25);
+                let recovery = await getBestRecovery(teamNum, attackerType, team, EARTH_FIRE_SIM_COUNT);
                 if (recovery > bestBattle.recovery) {
                     bestBattle.recovery = recovery;
                     bestBattle.selectedTeamNum = teamNum;
@@ -371,7 +429,7 @@
             if (!!result && attackerType != 'hero') {
                 let recovery = (!!!bestBattle.recovery ? 10 * getRecovery(result) : bestBattle.recovery) * 100;
                 let titans = result.progress[0].attackers.heroes;
-                console.log('Battle completed: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', titans);
+                if (DUNGEON_VERBOSE) console.log('Battle completed: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', titans);
             }
             endBattle(result);
         }
@@ -413,7 +471,7 @@
             await findBestBattleNeutral(teamNum, attackerType, factors, true);
             if (bestBattle.recovery < 0 || (bestBattle.recovery < 0.2 && factors[0].value < 0.5)) {
                 let recovery = 100 * bestBattle.recovery;
-                console.log('Failed to find a good battle in fast mode: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', bestBattle.attackers);
+                if (DUNGEON_VERBOSE) console.log('Failed to find a good battle in fast mode: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', bestBattle.attackers);
                 await findBestBattleNeutral(teamNum, attackerType, factors, false);
             }
             let workTime = new Date().getTime() - start.getTime();
@@ -436,7 +494,7 @@
             });
             
             // Debug: Log available healing titans
-            console.log(`[Dungeon] Available healing titans (priority order): [${healingTitans.join(', ')}]`);
+            if (DUNGEON_VERBOSE) console.log(`[Dungeon] Available healing titans (priority order): [${healingTitans.join(', ')}]`);
             if (!healingTitans.includes(4004)) {
                 console.warn(`[Dungeon] WARNING: 4004 (Tidus and Gelo) is not available! Status:`, titansStates[4004]);
             }
@@ -574,13 +632,13 @@
                     bestBattle.recovery = recovery;
                     bestBattle.attackers = titans;
                     bestBattle.originalTitanIds = originalTitanIds;
-                    console.log(`[Dungeon] Initial best battle - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
+                    if (DUNGEON_VERBOSE) console.log(`[Dungeon] Initial best battle - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
                 } else if (isMuchBetterRecovery) {
                     // Much better recovery, always choose it
                     bestBattle.recovery = recovery;
                     bestBattle.attackers = titans;
                     bestBattle.originalTitanIds = originalTitanIds;
-                    console.log(`[Dungeon] Better recovery found - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
+                    if (DUNGEON_VERBOSE) console.log(`[Dungeon] Better recovery found - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
                 } else if (isSimilarOrBetterRecovery) {
                     // Recovery is similar or slightly better, prefer higher priority healers
                     const bestHealerIds = bestBattle.originalTitanIds.filter(id => healingTitans.includes(id));
@@ -602,7 +660,7 @@
                         
                         if (hasBetterHealer || (recovery >= bestBattle.recovery && healerPriority[currentBestHealer] <= healerPriority[bestBestHealer])) {
                             if (hasBetterHealer) {
-                                console.log(`[Dungeon] Preferring healer ${currentBestHealer} (priority ${healerPriority[currentBestHealer]}) over ${bestBestHealer} (priority ${healerPriority[bestBestHealer]}) - Recovery: ${recovery.toFixed(3)} vs ${bestBattle.recovery.toFixed(3)}`);
+                                if (DUNGEON_VERBOSE) console.log(`[Dungeon] Preferring healer ${currentBestHealer} (priority ${healerPriority[currentBestHealer]}) over ${bestBestHealer} (priority ${healerPriority[bestBestHealer]}) - Recovery: ${recovery.toFixed(3)} vs ${bestBattle.recovery.toFixed(3)}`);
                             }
                             bestBattle.recovery = recovery;
                             bestBattle.attackers = titans;
@@ -748,7 +806,7 @@
                 // args is a team object with heroes array
                 const titanIds = (args && args.heroes) ? args.heroes : [];
                 if (titanIds.length > 0) {
-                    console.log(`[Dungeon Battle] ${attackerType} - Team ${teamNum} - Titans: [${titanIds.join(', ')}]`);
+                    if (DUNGEON_VERBOSE) console.log(`[Dungeon Battle] ${attackerType} - Team ${teamNum} - Titans: [${titanIds.join(', ')}]`);
                 } else {
                     console.warn(`[Dungeon Battle] ${attackerType} - Team ${teamNum} - No titans found. Args:`, JSON.stringify(args));
                 }
@@ -808,12 +866,13 @@
                     progress: battleInfo.progress,
                 };
                 
-                if (countPredictionCard > 0) {
+                // Match native HWH endBattle: only set isRaid when HWHData has cards; send hook decrements HWHData.
+                const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+                if (predictionCards > 0) {
                     args.isRaid = true;
-                    countPredictionCard--;
                 } else {
                     const timer = getTimer(battleInfo.battleTime);
-                    console.log(timer);
+                    if (DUNGEON_VERBOSE) console.log(timer);
                     await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
                 }
                 const calls = [{ name: 'dungeonEndBattle', args, ident: 'body' }];
@@ -992,6 +1051,7 @@
         }
 
         function showStats() {
+            if (!DUNGEON_VERBOSE) return;
             let activity = dungeonActivity - startDungeonActivity;
             let workTime = clone(timeDungeon);
             workTime.all = new Date().getTime() - workTime.all;
@@ -1021,7 +1081,7 @@
         function endDungeon(reason, info) {
             if (!end) {
                 end = true;
-                console.log(reason, info);
+                console.log('[Dungeon]', reason, info != null && info !== '' ? info : '');
                 showStats();
                 if (info == 'break') {
                     setProgress(
