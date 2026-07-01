@@ -22,6 +22,16 @@
     /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
     /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES = 10` (Stealther dungeon). */
 
+    // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
+    const UI_ICON = {
+        fire: '\uD83D\uDD25',
+        pending: '\u23F3',
+        save: '\uD83D\uDCBE',
+        sync: '\uD83D\uDD04',
+        unavailable: '\uD83C\uDF11',
+        done: '\u2705',
+    };
+
     // --- STATE VARIABLES ---
     let executionState = {};
     let hideButtonsState = {};
@@ -169,6 +179,7 @@
         let talentMsgReward = '';
         let titansList = [];
         let teamGetAll = null;
+        let teamGetFavor = null;
         let isAbleToHeal = false;
         let isRestart = false;
         let lastError = null;
@@ -177,8 +188,45 @@
         let stepCount = 0;
         let timeDungeon = { all: Date.now(), steps: 0 };
 
+        function getApiResult(result) {
+            return result?.results?.[0]?.result;
+        }
+
         function getResponse(result) {
-            return result?.results?.[0]?.result?.response;
+            return getApiResult(result)?.response;
+        }
+
+        function buildHeroFavor(heroIds, favorMap) {
+            const favor = {};
+            if (!favorMap || !heroIds?.length) return favor;
+            for (const id of heroIds) {
+                const petId = favorMap[id] ?? favorMap[String(id)];
+                if (petId) {
+                    favor[id] = petId;
+                }
+            }
+            return favor;
+        }
+
+        function getHeroTeamForBattle(heroStates) {
+            const heroTeam = teamGetAll?.dungeon_hero;
+            if (!Array.isArray(heroTeam)) {
+                return null;
+            }
+            const pet = heroTeam.find((v) => v > 6000) || null;
+            const heroes = heroTeam.filter((v) => {
+                if (!v || v <= 0 || v >= 6000) return false;
+                const state = heroStates?.[v] ?? heroStates?.[String(v)];
+                return !state?.isDead;
+            });
+            if (heroes.length === 0) {
+                return null;
+            }
+            return {
+                heroes,
+                pet,
+                favor: buildHeroFavor(heroes, teamGetFavor?.dungeon_hero),
+            };
         }
 
         function simulateBattle(battleData, battleType) {
@@ -373,6 +421,9 @@
 
         async function runBattleHandler(battleHandler, forceFix = false, skipPreCalc = false) {
             const initBattle = await battleHandler.init();
+            if (!initBattle) {
+                return { initBattle: null, bestBattle: null, isWin: false, timer: 0 };
+            }
             const isWin = battleHandler.isWin();
             let wins = 0;
 
@@ -396,11 +447,12 @@
             }
 
             const bestBattle = battleHandler.bestBattle();
+            const resolved = bestBattle ?? initBattle;
             return {
                 initBattle,
                 bestBattle: bestBattle !== initBattle ? bestBattle : null,
-                isWin,
-                timer: (bestBattle ?? initBattle).battleTime ?? 0,
+                isWin: !!resolved?.result?.win,
+                timer: resolved?.battleTime ?? 0,
             };
         }
 
@@ -581,9 +633,9 @@
         function debugString(option, attackerType) {
             if (!option) return 'INVALID';
             let s = `[${option.teamNum}]${attackerType}`;
-            s += option.result?.win ? ' âœ…' : ' âŒ';
+            s += option.result?.win ? ' OK' : ' FAIL';
             const damage = option.heroes.length ? (option.state / option.heroes.length) * 100 : 0;
-            s += ` âš”ï¸${damage.toFixed(0)}% ðŸ’€${getDeads(option)}`;
+            s += ` dmg:${damage.toFixed(0)}% dead:${getDeads(option)}`;
             return s;
         }
 
@@ -611,31 +663,47 @@
             });
         }
 
-        function createBattleArgs(teamNum, heroes, pet) {
+        function createBattleArgs(teamNum, heroes, pet, favor = {}) {
             return {
                 name: 'dungeonStartBattle',
                 args: {
                     heroes,
-                    favor: {},
+                    favor: favor || {},
                     teamNum,
                     ...(pet ? { pet } : {}),
                 },
             };
         }
 
-        async function startAndSimulate(teamNum, heroes, pet, attackerType) {
-            const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet)] });
-            const battleData = getResponse(raw);
+        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}) {
+            const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
+            const apiResult = getApiResult(raw);
+            if (apiResult?.error) {
+                const errMsg = typeof apiResult.error === 'string'
+                    ? apiResult.error
+                    : `${apiResult.error.name || 'Error'}: ${apiResult.error.description || ''}`;
+                console.warn(`[Dungeon] dungeonStartBattle failed (${attackerType}, team ${teamNum}):`, errMsg, apiResult.error);
+                return null;
+            }
+            const battleData = apiResult?.response;
             if (!battleData) {
+                console.warn(`[Dungeon] dungeonStartBattle empty response (${attackerType}, team ${teamNum})`, raw);
                 return null;
             }
             const isBruteForceBattle = attackerType !== 'hero';
             const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
             const handler = new DungeonBattleHandler(battleData, battleType);
             lastBattleHandler = handler;
-            const handlerResult = await runBattleHandler(handler, isBruteForceBattle, isBruteForceBattle);
+            let handlerResult;
+            try {
+                handlerResult = await runBattleHandler(handler, isBruteForceBattle, isBruteForceBattle);
+            } catch (err) {
+                console.warn(`[Dungeon] BattleCalc failed (${attackerType}, team ${teamNum}):`, err);
+                return null;
+            }
             const battle = handlerResult.bestBattle ?? handlerResult.initBattle;
-            if (!battle) {
+            if (!battle?.result) {
+                console.warn(`[Dungeon] No simulated battle result (${attackerType}, team ${teamNum})`);
                 return null;
             }
             const wrapped = {
@@ -646,6 +714,7 @@
                 teamNum,
                 heroes,
                 pet,
+                favor,
                 result: wrapped.result,
                 progress: wrapped.progress,
                 timer: getTimer(wrapped.battleTime ?? handlerResult.timer ?? 0),
@@ -859,17 +928,21 @@
 
             const heroBattleIndex = userData.findIndex((ud) => ud.attackerType === 'hero');
             if (heroBattleIndex !== -1) {
-                const heroTeam = teamGetAll?.dungeon_hero;
-                if (!Array.isArray(heroTeam)) {
-                    lastError = 'No hero team';
+                const heroBattle = getHeroTeamForBattle(dungeonGetInfo.states?.heroes);
+                if (!heroBattle) {
+                    lastError = 'No alive heroes for hero battle';
                     endDungeon(lastError);
                     return false;
                 }
-                const pet = heroTeam.find((v) => v > 6000) || null;
-                const heroes = heroTeam.filter((v) => v < 6000);
-                const option = await startAndSimulate(heroBattleIndex, heroes, pet, 'hero');
+                const option = await startAndSimulate(
+                    heroBattleIndex,
+                    heroBattle.heroes,
+                    heroBattle.pet,
+                    'hero',
+                    heroBattle.favor
+                );
                 if (!option) {
-                    lastError = 'Failed to start hero battle';
+                    lastError = 'Failed to start hero battle (check console for API/BattleCalc details)';
                     endDungeon(lastError);
                     return false;
                 }
@@ -933,7 +1006,7 @@
                 }
 
                 if (team.isHealing && option.win) {
-                    lastDebugString += debugString(option, attackerType) + ' ðŸŒŠ';
+                    lastDebugString += debugString(option, attackerType) + ' [heal]';
                     if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
                     const ok = await executeOption(option, attackerType, lastDebugString);
                     timeDungeon.steps += Date.now() - stepStart;
@@ -979,13 +1052,19 @@
 
             let finalOption = best.option;
             if (best.option.teamNum !== userData.length - 1) {
-                const restarted = await startAndSimulate(best.option.teamNum, best.option.heroes, best.option.pet, best.attackerType);
+                const restarted = await startAndSimulate(
+                    best.option.teamNum,
+                    best.option.heroes,
+                    best.option.pet,
+                    best.attackerType,
+                    best.option.favor
+                );
                 if (!restarted?.win) {
                     lastError = 'Restart failed';
                     endDungeon(lastError);
                     return false;
                 }
-                lastDebugString += debugString(restarted, best.attackerType) + ' ðŸ”';
+                lastDebugString += debugString(restarted, best.attackerType) + ' [retry]';
                 finalOption = restarted;
             }
 
@@ -1049,6 +1128,7 @@
             }
 
             teamGetAll = res.results[1]?.result?.response;
+            teamGetFavor = res.results[2]?.result?.response;
             const clanStat = res.results[3]?.result?.response?.stat;
             const dungeonStat = dungeonGetInfo?.stat;
             const todayAct = clanStat?.todayDungeonActivity ?? dungeonStat?.todayDungeonActivity ?? 0;
@@ -1619,7 +1699,7 @@ async function executeGetDailyBonus() {
                 <div class="auto-daily-popup-column"><h2>UPGRADE</h2><ul class="auto-daily-task-list" id="auto-daily-upgrade-list"></ul></div>
             </div>
             <div class="auto-daily-footer">
-                <button class="sync-button" id="sync-settings-btn" title="Save/Load Settings">ðŸ’¾</button>
+                <button class="sync-button" id="sync-settings-btn" title="Save/Load Settings">${UI_ICON.save}</button>
                 <label><input type="checkbox" id="hide-doall-btn" ${hideButtonsState.doAll ? 'checked' : ''}> Hide 'Do All'</label>
                 <label><input type="checkbox" id="hide-quests-btn" ${hideButtonsState.quests ? 'checked' : ''}> Hide 'Quests'</label>
                 <label><input type="checkbox" id="hide-actions-btn" ${hideButtonsState.actions ? 'checked' : ''}> Hide 'Actions'</label>
@@ -1639,7 +1719,9 @@ async function executeGetDailyBonus() {
                 li.className = 'auto-daily-task-item';
                 li.dataset.taskId = task.id;
                 const checkboxHTML = `<label><input type="checkbox" data-task-id="${task.id}" ${executionState[task.id] ? 'checked' : ''}><span>${task.label}</span></label>`;
-                const actionHTML = isQuest ? `<div class="auto-daily-status-icon" data-task-id="${task.id}">â³</div>` : `<button class="auto-daily-fire-btn" data-task-id="${task.id}">ðŸ”¥</button>`;
+                const actionHTML = isQuest
+                    ? `<div class="auto-daily-status-icon" data-task-id="${task.id}">${UI_ICON.pending}</div>`
+                    : `<button class="auto-daily-fire-btn" data-task-id="${task.id}">${UI_ICON.fire}</button>`;
                 li.innerHTML = checkboxHTML + actionHTML;
                 list.appendChild(li);
             });
@@ -1845,7 +1927,7 @@ async function executeGetDailyBonus() {
             const buttonList = [{
                 name: 'Auto Daily', onClick: createPopup, title: 'Open the Auto Daily control panel',
             }, {
-                name: 'ðŸ”„',
+                name: UI_ICON.sync,
                 onClick: () => { HWHFuncs.setProgress('Syncing...', true); window.cheats.refreshGame(); },
                 title: 'Run Sync', color: 'green',
             }];
@@ -1884,11 +1966,11 @@ async function executeGetDailyBonus() {
             const questData = allQuests.find(q => q.id === questId);
             const questUI = document.querySelector(`.auto-daily-status-icon[data-task-id="${task.id}"]`);
             if (!questUI) return;
-            let iconHTML = `<span title="Not available">ðŸŒ‘</span>`;
+            let iconHTML = `<span title="Not available">${UI_ICON.unavailable}</span>`;
             if (questData) {
                  // Check if quest is completed (state === 2) - following API documentation
                  if (questData.state === 2) {
-                    iconHTML = `<span title="Already done">âœ…</span>`;
+                    iconHTML = `<span title="Already done">${UI_ICON.done}</span>`;
                 } else {
                     // Try numeric key first (as that's what the API uses), then string key
                     const questHandler = questManager.dataQuests[questId] || questManager.dataQuests[task.id];
@@ -1896,11 +1978,11 @@ async function executeGetDailyBonus() {
                         // Handle quests with doItFunc (like dungeon quest 10022)
                         // These quests can be executed even if isWeCanDo returns false
                         if (questHandler.doItFunc && questData.state === 1) {
-                            iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">ðŸ”¥</button>`;
+                            iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">${UI_ICON.fire}</button>`;
                         } else if (questHandler.isWeCanDo && typeof questHandler.isWeCanDo === 'function') {
                             try {
                                 if (questHandler.isWeCanDo.call(questManager)) {
-                                    iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">ðŸ”¥</button>`;
+                                    iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">${UI_ICON.fire}</button>`;
                                 }
                             } catch (e) {
                                 // If isWeCanDo check fails, just show as not available
