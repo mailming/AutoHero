@@ -1,4 +1,4 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
 // @version      3.1.3
@@ -20,7 +20,7 @@
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
     /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
-    /** Earth/fire sim count (6–25): `window.HWH_DUNGEON_EARTH_FIRE_SIM = 12` (extension dungeon only). */
+    /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES = 10` (Stealther dungeon). */
 
     // --- STATE VARIABLES ---
     let executionState = {};
@@ -143,15 +143,14 @@
         HWHFuncs.setProgress('Executing: Expeditions', true);
         return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
     }
-    // Advanced Dungeon Algorithm - Merged from HWD Extension RED-1.0.7
+    // Dungeon Algorithm - ported from Hero Wars Stealther 1.006 (Mike Rohsoft)
     function executeDungeon(resolve, reject) {
         const { HWHFuncs, Send, BattleCalc, cheats } = window;
-        const { getInput, setProgress, hideProgress, I18N, send, getTimer, countdownTimer } = HWHFuncs;
+        const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
 
-        /** Set `window.HWH_DEBUG_DUNGEON = true` for verbose dungeon logs. */
         const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
-        /** Earth/fire recovery simulations per attempt (default 12; max 25). Set `window.HWH_DUNGEON_EARTH_FIRE_SIM`. */
-        const EARTH_FIRE_SIM_COUNT = Math.max(6, Math.min(25, Number(window.HWH_DUNGEON_EARTH_FIRE_SIM) || 12));
+        /** Battle pre-calculation count (0-25). Set window.HWH_DUNGEON_NUM_TRIES (default 10). */
+        const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
 
         function syncPredictionCardsFromInventory(invRes) {
             const raw = invRes?.result?.response?.consumable?.[81];
@@ -166,187 +165,587 @@
         let startDungeonActivity = 0;
         let maxDungeonActivity = 150;
         let end = false;
-        // stopDung is declared at module level for external access
-
-        // Note: countTeam is declared but never populated - stats will show empty team usage
-        let countTeam = [];
-        let timeDungeon = {
-            all: new Date().getTime(),
-            findAttack: 0,
-            attackNeutral: 0,
-            attackEarthOrFire: 0,
-        };
-
-        let titansStates = {};
-        let bestBattle = {};
-
-        let teams = {
-            neutral: [],
-            water: [],
-            earth: [],
-            fire: [],
-            hero: [],
-        };
-
         let talentMsg = '';
         let talentMsgReward = '';
+        let titansList = [];
+        let teamGetAll = null;
+        let isAbleToHeal = false;
+        let isRestart = false;
+        let lastError = null;
+        let lastDebugString = '';
+        let lastBattleHandler = null;
+        let stepCount = 0;
+        let timeDungeon = { all: Date.now(), steps: 0 };
 
-        // Same call order as HeroWarsHelper executeDungeon (indices 0–5 must match).
-        let callsExecuteDungeon = {
-            calls: [
-                { name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' },
-                { name: 'teamGetAll', args: {}, ident: 'teamGetAll' },
-                { name: 'teamGetFavor', args: {}, ident: 'teamGetFavor' },
-                { name: 'clanGetInfo', args: {}, ident: 'clanGetInfo' },
-                { name: 'titanGetAll', args: {}, ident: 'titanGetAll' },
-                { name: 'inventoryGet', args: {}, ident: 'inventoryGet' },
-            ],
-        };
-
-        this.start = async function (titanit) {
-            maxDungeonActivity = titanit || getInput('countTitanit');
-            send(JSON.stringify(callsExecuteDungeon), startDungeon);
-        };
-
-        function startDungeon(e) {
-            stopDung = false;
-            let res = e.results;
-            let dungeonGetInfo = res[0].result.response;
-            if (!dungeonGetInfo) {
-                endDungeon('noDungeon', res);
-                return;
-            }
-            if (DUNGEON_VERBOSE) console.log('Starting full dungeon run: ', new Date());
-            let teamGetAll = res[1].result.response;
-            let teamGetFavor = res[2].result.response;
-            const clanStat = res[3]?.result?.response?.stat;
-            const dungeonStat = dungeonGetInfo?.stat;
-            const todayAct = clanStat?.todayDungeonActivity ?? dungeonStat?.todayDungeonActivity ?? 0;
-            dungeonActivity = todayAct;
-            startDungeonActivity = todayAct;
-            syncPredictionCardsFromInventory(res[5]);
-            titansStates = dungeonGetInfo.states.titans;
-
-            const titanGetAllList = Array.isArray(res[4]?.result?.response)
-                ? res[4].result.response
-                : Object.values(res[4]?.result?.response || {}).filter((t) => t && t.id != null);
-
-            teams.hero = {
-                favor: teamGetFavor.dungeon_hero,
-                heroes: teamGetAll.dungeon_hero.filter((id) => id < 6000),
-                teamNum: 0,
-            };
-            let heroPet = teamGetAll.dungeon_hero.filter((id) => id >= 6000).pop();
-            if (heroPet) {
-                teams.hero.pet = heroPet;
-            }
-
-            if (titanGetAllList.length > 0) {
-                // Roster from API (same rules as HeroWarsHelper getTitanTeam).
-                teams.neutral = titanGetAllList
-                    .filter((e) => !titansStates[e.id]?.isDead)
-                    .sort((a, b) => (b.power || 0) - (a.power || 0))
-                    .map((e) => e.id);
-                teams.water = { favor: {}, heroes: filterAliveTitanIds(getTitanTeamFromRoster(titanGetAllList, 'water')), teamNum: 0 };
-                teams.earth = { favor: {}, heroes: filterAliveTitanIds(getTitanTeamFromRoster(titanGetAllList, 'earth')), teamNum: 0 };
-                teams.fire = { favor: {}, heroes: filterAliveTitanIds(getTitanTeamFromRoster(titanGetAllList, 'fire')), teamNum: 0 };
-            } else {
-                if (DUNGEON_VERBOSE) console.warn('[Dungeon] titanGetAll empty; using legacy hardcoded titan lists');
-                teams.neutral = getLegacyTitanTeamIds('neutral');
-                teams.water = { favor: {}, heroes: getLegacyTitanTeamIds('water'), teamNum: 0 };
-                teams.earth = { favor: {}, heroes: getLegacyTitanTeamIds('earth'), teamNum: 0 };
-                teams.fire = { favor: {}, heroes: getLegacyTitanTeamIds('fire'), teamNum: 0 };
-            }
-
-            checkFloor(dungeonGetInfo);
+        function getResponse(result) {
+            return result?.results?.[0]?.result?.response;
         }
 
-        /** HeroWarsHelper-style element split (titan id hundreds digit: 0=water, 1=fire, 2=earth). */
-        function getTitanTeamFromRoster(titans, type) {
-            const arr = Array.isArray(titans) ? titans : [];
-            switch (type) {
-                case 'neutral':
-                    return [...arr].sort((a, b) => (b.power || 0) - (a.power || 0)).slice(0, 5).map((e) => e.id);
-                case 'water':
-                    return arr.filter((e) => String(e.id).slice(2, 3) === '0').map((e) => e.id);
-                case 'fire':
-                    return arr.filter((e) => String(e.id).slice(2, 3) === '1').map((e) => e.id);
-                case 'earth':
-                    return arr.filter((e) => String(e.id).slice(2, 3) === '2').map((e) => e.id);
-                default:
-                    return [];
+        function simulateBattle(battleData, battleType) {
+            return new Promise((resolveSim, rejectSim) => {
+                const data = structuredClone(battleData);
+                if (!data.progress) {
+                    data.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
+                }
+                try {
+                    BattleCalc(data, battleType, (result) => {
+                        if (result) resolveSim(result);
+                        else rejectSim(new Error('BattleCalc returned empty result'));
+                    });
+                } catch (e) {
+                    rejectSim(e);
+                }
+            });
+        }
+
+        function extractTimers(battleResult) {
+            const logs = battleResult.battleLogs?.[0] || [];
+            const timeLimit = Math.max(...logs.map((e) => e.time), 168.8);
+            return [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))].filter((t) => t > 0);
+        }
+
+        class PvPBattleHandler {
+            constructor(battle = undefined, type = 'get_clanPvp') {
+                this._type = type;
+                this.setBattle(battle);
             }
-        }
 
-        function filterAliveTitanIds(ids) {
-            return ids.filter((id) => titansStates[id] && !titansStates[id].isDead);
-        }
-
-        function getLegacyTitanTeamIds(type) {
-            switch (type) {
-                case 'neutral':
-                    return [4023, 4022, 4012, 4021, 4011, 4010, 4020, 4024, 4014];
-                case 'water':
-                    return [4000, 4001, 4002, 4003, 4004].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
-                case 'earth':
-                    return [4020, 4022, 4021, 4023, 4024].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
-                case 'fire':
-                    return [4010, 4011, 4012, 4013, 4014].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
-                default:
-                    return [];
+            setBattle(battle) {
+                this._battle = battle ? structuredClone(battle) : undefined;
+                this._counter = 0;
+                this._timers = undefined;
+                this._initialBattle = undefined;
+                this._lastBattle = undefined;
+                this._bestBattle = undefined;
+                this._maxBattles = 0;
+                this._errors = 0;
             }
-        }
 
-        function clone(a) {
-            return JSON.parse(JSON.stringify(a));
-        }
+            async init() {
+                this._initialBattle = await this.reCalculate(0);
+                this._timers = extractTimers(this._initialBattle);
+                if (this._timers.length === 0) {
+                    this._timers = [0];
+                }
+                this._timers.sort(() => Math.random() - 0.5);
+                this._maxBattles = this._timers.length;
+                return this._initialBattle;
+            }
 
-        function findElement(floor, element) {
-            for (let i in floor) {
-                if (floor[i].attackerType === element) {
-                    return i;
+            randomTime() {
+                return this._timers[this._counter % this._timers.length];
+            }
+
+            async reCalculate(timer = this.randomTime()) {
+                const battle = structuredClone(this._battle);
+                battle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', this._counter, timer] } }];
+                const prev = this._lastBattle;
+                try {
+                    this._lastBattle = await simulateBattle(battle, this._type);
+                    this._lastBattle.timer = this._lastBattle.battleTime ?? 0;
+                } catch (e) {
+                    this._errors++;
+                    this._lastBattle = prev;
+                }
+                this._counter++;
+                return this._lastBattle;
+            }
+
+            count() {
+                return this._counter;
+            }
+
+            max() {
+                return this._maxBattles;
+            }
+
+            isWin() {
+                return !!this._initialBattle?.result?.win;
+            }
+
+            bestBattle() {
+                return this._bestBattle || this._lastBattle || this._initialBattle;
+            }
+
+            initialBattle() {
+                return this._initialBattle;
+            }
+
+            getFactor(before, after) {
+                let beforeSumFactor = 0;
+                for (const hero of Object.values(before || {})) {
+                    const state = hero.state;
+                    let factor = 1;
+                    if (state) {
+                        const hp = state.hp / hero.hp;
+                        const energy = state.energy * 0.001;
+                        factor = hp + energy * 0.05;
+                    }
+                    beforeSumFactor += factor;
+                }
+                let afterSumFactor = 0;
+                for (const [heroId, hero] of Object.entries(after || {})) {
+                    const hp = hero.hp / (before?.[heroId]?.hp || hero.hp);
+                    const energy = hero.energy * 0.001;
+                    afterSumFactor += hp + energy * 0.05;
+                }
+                return afterSumFactor - beforeSumFactor;
+            }
+
+            isBetter(bestBattle, thisBattle) {
+                if (!bestBattle || !thisBattle) {
+                    return !!thisBattle;
+                }
+                if (!thisBattle.result?.win) {
+                    return false;
+                }
+                const bestState = this.getState(bestBattle);
+                const thisState = this.getState(thisBattle);
+                if (!isFinite(thisState)) {
+                    return false;
+                }
+                if (!isFinite(bestState)) {
+                    return true;
+                }
+                return thisState > bestState;
+            }
+
+            async *bruteforce(endTime = Date.now() + 60000) {
+                if (endTime < Date.now()) {
+                    endTime = Date.now() + 60000;
+                }
+                if (!this._initialBattle) {
+                    this._initialBattle = await this.init();
+                }
+                while (Date.now() < endTime && this._counter < this._maxBattles) {
+                    if (!(this._lastBattle = await this.reCalculate())) {
+                        continue;
+                    }
+                    yield this._counter;
+                    if (!this._bestBattle) {
+                        this._bestBattle = this._lastBattle;
+                        continue;
+                    }
+                    if (!this.isBetter(this._bestBattle, this._lastBattle)) {
+                        continue;
+                    }
+                    this._bestBattle = this._lastBattle;
+                    if (!this._bestBattle.result?.win) {
+                        continue;
+                    }
+                    break;
+                }
+                return this._bestBattle;
+            }
+
+            async *calculateWinChance(times = 10) {
+                let wins = 0;
+                if (isNaN(times) || times <= 0) {
+                    return;
+                }
+                const originalSeed = this._battle?.seed;
+                for (let i = 0; i < times; i++) {
+                    if (this._battle) {
+                        this._battle.seed = Math.floor(Date.now() / 1000) + Math.random() * 1000;
+                    }
+                    const battleBuffer = await simulateBattle(structuredClone(this._battle), this._type);
+                    if (battleBuffer?.result?.win) {
+                        wins++;
+                    }
+                    yield wins;
+                }
+                if (this._battle && originalSeed !== undefined) {
+                    this._battle.seed = originalSeed;
                 }
             }
-            return undefined;
         }
 
-        async function checkFloor(dungeonInfo) {
-            if (!('floor' in dungeonInfo) || dungeonInfo.floor?.state == 2) {
-                saveProgress();
-                return;
+        class DungeonBattleHandler extends PvPBattleHandler {
+            getState(result) {
+                if (!result.result?.win) {
+                    return -1000;
+                }
+                const beforeTitans = result.battleData?.attackers || {};
+                const afterTitans = result.progress?.[0]?.attackers?.heroes || {};
+                return this.getFactor(beforeTitans, afterTitans);
             }
-            checkTalent(dungeonInfo);
-            maxDungeonActivity = getInput('countTitanit');
-            setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
-            if (dungeonActivity >= maxDungeonActivity) {
-                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
-                return;
+        }
+
+        async function runBattleHandler(battleHandler, forceFix = false, skipPreCalc = false) {
+            const initBattle = await battleHandler.init();
+            const isWin = battleHandler.isWin();
+            let wins = 0;
+
+            if (NUM_TRIES > 0 && !skipPreCalc) {
+                let count = 1;
+                for await (const liveWins of battleHandler.calculateWinChance(NUM_TRIES)) {
+                    wins = liveWins;
+                    if (DUNGEON_VERBOSE) {
+                        setProgress(`${I18N('DUNGEON')}: sim ${liveWins}/${count} ${talentMsg}`, true);
+                    }
+                    count++;
+                }
             }
-            titansStates = dungeonInfo.states.titans;
-            if (stopDung) {
-                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
-                return;
+
+            if (!forceFix && isWin) {
+                return { initBattle, bestBattle: null, isWin, timer: initBattle.battleTime ?? 0 };
             }
-            bestBattle = {};
-            let floorChoices = dungeonInfo.floor.userData;
-            if (floorChoices.length > 1) {
-                for (let element in teams) {
-                    let teamNum = findElement(floorChoices, element);
-                    if (!!teamNum) {
-                        if (element == 'earth' || element == 'fire') {
-                            teamNum = await chooseEarthOrFire(floorChoices);
-                            if (teamNum < 0) {
-                                endDungeon('Cannot win without losing a Titan!', dungeonInfo);
-                                return;
-                            }
-                        }
-                        chooseElement(floorChoices[teamNum].attackerType, teamNum);
-                        return;
+
+            for await (const _count of battleHandler.bruteforce()) {
+                if (stopDung) break;
+            }
+
+            const bestBattle = battleHandler.bestBattle();
+            return {
+                initBattle,
+                bestBattle: bestBattle !== initBattle ? bestBattle : null,
+                isWin,
+                timer: (bestBattle ?? initBattle).battleTime ?? 0,
+            };
+        }
+
+        function getTitans(titans, states = {}) {
+            const all = titans
+                .filter((x) => !states[x.id]?.isDead && !states[String(x.id)]?.isDead)
+                .sort((x, y) => (y.power || 0) - (x.power || 0));
+            const water = [];
+            const fire = [];
+            const earth = [];
+            const dark = [];
+            const light = [];
+            const unknown = [];
+            for (const titan of all) {
+                const id = titan.id;
+                if (id < 4010) water.push(titan);
+                else if (id < 4020) fire.push(titan);
+                else if (id < 4030) earth.push(titan);
+                else if (id < 4040) dark.push(titan);
+                else if (id < 4050) light.push(titan);
+                else unknown.push(titan);
+            }
+            const byPower = (a, b) => (b.power || 0) - (a.power || 0);
+            return {
+                all,
+                water: water.sort(byPower),
+                earth: earth.sort(byPower),
+                fire: fire.sort(byPower),
+                dark: dark.sort(byPower),
+                light: light.sort(byPower),
+                elemental: [...dark, ...light, ...unknown].sort(byPower),
+            };
+        }
+
+        function getTitansForPotentialHealingTeam(aliveTitans, states = {}, index = 0) {
+            const normalize = (id) => Number(id);
+            if (aliveTitans.water.length < 3) {
+                return null;
+            }
+            const result = [];
+            const used = new Set();
+            const push = (id) => {
+                const n = normalize(id);
+                if (!used.has(n) && result.length < 5) {
+                    used.add(n);
+                    result.push(n);
+                }
+            };
+            const allStates = [];
+            for (const [titanId, state] of Object.entries(states)) {
+                const id = normalize(titanId);
+                if (id < 4010 || id >= 4030 || state.isDead) continue;
+                const diff = state.hp / state.maxHp;
+                if (diff === 1) continue;
+                allStates.push({ diff, id });
+            }
+            for (const titan of aliveTitans.water.slice(0, 4)) {
+                push(titan.id);
+            }
+            if (allStates.length === 0) {
+                return null;
+            }
+            const candidates = allStates.sort((a, b) => a.diff - b.diff);
+            if (candidates[index]) {
+                push(candidates[index].id);
+            } else {
+                return null;
+            }
+            if (result.length < 5) {
+                for (const titan of aliveTitans.elemental ?? []) {
+                    if (result.length >= 5) break;
+                    push(titan.id);
+                }
+                if (result.length < 5) {
+                    const alive = [...aliveTitans.earth, ...aliveTitans.fire].sort((a, b) => (b.power || 0) - (a.power || 0));
+                    for (const titan of alive) {
+                        if (result.length >= 5) break;
+                        push(titan.id);
                     }
                 }
-            } else {
-                chooseElement(floorChoices[0].attackerType, 0);
             }
+            return result.length === 5 ? result : null;
+        }
+
+        function getNeutralTitans(aliveTitans, strongest = false) {
+            const normalize = (id) => Number(id);
+            if (strongest) {
+                return aliveTitans.all.slice(0, 5).map((t) => normalize(t.id));
+            }
+            const result = [];
+            const used = new Set();
+            const waterPower = aliveTitans.water.reduce((sum, hero) => hero.power + sum, 0);
+            if (waterPower > 500000 && aliveTitans.water.length >= 4) {
+                for (const waterTitan of aliveTitans.water) {
+                    if (result.length === 4) break;
+                    result.push(waterTitan.id);
+                    used.add(waterTitan.id);
+                }
+            }
+            const push = (id) => {
+                const n = normalize(id);
+                if (!used.has(n) && result.length < 5) {
+                    used.add(n);
+                    result.push(n);
+                }
+            };
+            const elementMap = {
+                water: { max: 4010, special: 4004 },
+                earth: { max: 4030, special: 4034 },
+                fire: { max: 4020, special: 4024 },
+                dark: { max: 4040 },
+                light: { max: 4050 },
+            };
+            for (const titan of aliveTitans.all) {
+                if (result.length >= 4) break;
+                const id = normalize(titan.id);
+                if (used.has(id)) continue;
+                if (id < elementMap.water.max) {
+                    const group = aliveTitans.water.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.water.special)) {
+                        push(elementMap.water.special);
+                        const partner = group.find((x) => x !== elementMap.water.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
+                            if (result.length < 5) push(other);
+                        }
+                    }
+                } else if (id < elementMap.earth.max) {
+                    const group = aliveTitans.earth.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.earth.special)) {
+                        push(elementMap.earth.special);
+                        const partner = group.find((x) => x !== elementMap.earth.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
+                            if (result.length < 5) push(other);
+                        }
+                    }
+                } else if (id < elementMap.fire.max) {
+                    const group = aliveTitans.fire.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.fire.special)) {
+                        push(elementMap.fire.special);
+                        const partner = group.find((x) => x !== elementMap.fire.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
+                            if (result.length < 5) push(other);
+                        }
+                    }
+                } else if (id < elementMap.dark.max) {
+                    push(id);
+                    const partner = aliveTitans.dark.map((t) => normalize(t.id)).find((x) => x !== id);
+                    if (partner) push(partner);
+                } else if (id < elementMap.light.max) {
+                    push(id);
+                    const partner = aliveTitans.light.map((t) => normalize(t.id)).find((x) => x !== id);
+                    if (partner) push(partner);
+                }
+            }
+            if (result.length < 5) {
+                for (const titan of aliveTitans.all) {
+                    if (result.length >= 5) break;
+                    push(titan.id);
+                }
+            }
+            return result;
+        }
+
+        function getDeads(option) {
+            const after = option.progress?.[0]?.attackers?.heroes || {};
+            return option.heroes.length + Number(!!option.pet) - Object.keys(after).length;
+        }
+
+        function debugString(option, attackerType) {
+            if (!option) return 'INVALID';
+            let s = `[${option.teamNum}]${attackerType}`;
+            s += option.result?.win ? ' âœ…' : ' âŒ';
+            const damage = option.heroes.length ? (option.state / option.heroes.length) * 100 : 0;
+            s += ` âš”ï¸${damage.toFixed(0)}% ðŸ’€${getDeads(option)}`;
+            return s;
+        }
+
+        function isOptionBetter(bestOption, thisOption) {
+            if (!thisOption) return false;
+            if (!bestOption) return true;
+            const bestTeam = bestOption.heroes || [];
+            const thisTeam = thisOption.heroes || [];
+            if (thisTeam.length !== bestTeam.length) {
+                return thisTeam.length > bestTeam.length;
+            }
+            const bestState = bestOption.state ?? 0;
+            const thisState = thisOption.state ?? 0;
+            const bestNorm = bestTeam.length ? bestState * bestTeam.length : 0;
+            const thisNorm = thisTeam.length ? thisState * thisTeam.length : 0;
+            return thisNorm > bestNorm;
+        }
+
+        function isHealingSuccessful(healingTeam, progress, states) {
+            const afterHeroes = progress?.[0]?.attackers?.heroes;
+            if (!afterHeroes) return false;
+            return healingTeam.filter((id) => id >= 4010).every((id) => {
+                const after = afterHeroes[id];
+                return after && after.hp > (states[id]?.hp || states[String(id)]?.hp || 0);
+            });
+        }
+
+        function createBattleArgs(teamNum, heroes, pet) {
+            return {
+                name: 'dungeonStartBattle',
+                args: {
+                    heroes,
+                    favor: {},
+                    teamNum,
+                    ...(pet ? { pet } : {}),
+                },
+            };
+        }
+
+        async function startAndSimulate(teamNum, heroes, pet, attackerType) {
+            const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet)] });
+            const battleData = getResponse(raw);
+            if (!battleData) {
+                return null;
+            }
+            const isBruteForceBattle = attackerType !== 'hero';
+            const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
+            const handler = new DungeonBattleHandler(battleData, battleType);
+            lastBattleHandler = handler;
+            const handlerResult = await runBattleHandler(handler, isBruteForceBattle, isBruteForceBattle);
+            const battle = handlerResult.bestBattle ?? handlerResult.initBattle;
+            if (!battle) {
+                return null;
+            }
+            const wrapped = {
+                ...battle,
+                battleData: battle.battleData ?? battleData,
+            };
+            return {
+                teamNum,
+                heroes,
+                pet,
+                result: wrapped.result,
+                progress: wrapped.progress,
+                timer: getTimer(wrapped.battleTime ?? handlerResult.timer ?? 0),
+                battleTime: wrapped.battleTime,
+                win: wrapped.result?.win,
+                state: handler.getState(wrapped),
+            };
+        }
+
+        async function waitForBattle(option, attackerType, debug = '') {
+            const rounds = Math.ceil(option.timer || 0);
+            for (let r = rounds; r > 0; r--) {
+                if (stopDung || end) return;
+                const msg = `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${r}s`;
+                setProgress(msg, true);
+                await sleep(1000);
+            }
+        }
+
+        async function executeOption(option, attackerType, debug = '') {
+            await waitForBattle(option, attackerType, debug);
+            if (stopDung || end) return false;
+            return endBattleOption(option);
+        }
+
+        async function endBattleOption(option) {
+            if (!option?.result?.win) {
+                endDungeon('Hero or Titan may have died in battle!', option);
+                return false;
+            }
+            const args = {
+                result: option.result,
+                progress: option.progress,
+            };
+            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+            if (predictionCards > 0) {
+                args.isRaid = true;
+            } else {
+                const timer = option.timer ?? getTimer(option.battleTime ?? 0);
+                if (DUNGEON_VERBOSE) console.log('[Dungeon] wait timer:', timer);
+                await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
+            }
+
+            let e;
+            try {
+                e = await Send({ calls: [{ name: 'dungeonEndBattle', args, ident: 'body' }] });
+            } catch (err) {
+                endDungeon('errorRequest', err);
+                return false;
+            }
+
+            if (e?.error) {
+                const desc = typeof e.error === 'string' ? e.error : (e.error.description || '');
+                if (desc.includes('NotFound') || desc.includes('not found')) {
+                    console.warn('[Dungeon] Battle not found, continuing...', e.error);
+                    return true;
+                }
+                endDungeon('errorRequest', e.error);
+                return false;
+            }
+
+            if (!e?.results) {
+                endDungeon('Lost connection to game server!', 'break');
+                return false;
+            }
+
+            const result = e.results[0].result;
+            if (result.error) {
+                const desc = typeof result.error === 'string' ? result.error : (result.error.description || '');
+                if (desc.includes('NotFound') || desc.includes('not found')) {
+                    console.warn('[Dungeon] Battle not found in result, continuing...', result.error);
+                    return true;
+                }
+                endDungeon('errorBattleResult', result.error);
+                return false;
+            }
+
+            const battleResult = result.response;
+            if (!battleResult) {
+                console.warn('[Dungeon] No battle result, continuing...');
+                return true;
+            }
+
+            if (battleResult.error) {
+                const desc = typeof battleResult.error === 'string' ? battleResult.error : (battleResult.error.description || '');
+                if (desc.includes('NotFound') || desc.includes('not found')) {
+                    return true;
+                }
+                endDungeon('errorBattleResult', battleResult);
+                return false;
+            }
+
+            if (!battleResult.dungeon && !battleResult.floor) {
+                try {
+                    await Send({ calls: [{ name: 'dungeonSaveProgress', args: {}, ident: 'body' }] });
+                } catch (_) { /* ignore */ }
+            }
+
+            dungeonActivity += battleResult.reward?.dungeonActivity ?? 0;
+            return true;
         }
 
         async function checkTalent(dungeonInfo) {
@@ -355,14 +754,14 @@
             const dungeonFloor = +dungeonInfo.floorNumber;
             const talentFloor = +talent.floorRandValue;
             let doorsAmount = 3 - talent.conditions.doorsAmount;
-
             if (dungeonFloor === talentFloor && (!doorsAmount || !talent.conditions?.farmedDoors[dungeonFloor])) {
-                const reward = await Send({
+                const rewardRes = await Send({
                     calls: [
                         { name: 'heroTalent_getReward', args: { talentType: 'tmntDungeonTalent', reroll: false }, ident: 'group_0_body' },
                         { name: 'heroTalent_farmReward', args: { talentType: 'tmntDungeonTalent' }, ident: 'group_1_body' },
                     ],
-                }).then((e) => e.results[0].result.response);
+                });
+                const reward = rewardRes.results[0].result.response;
                 const type = Object.keys(reward).pop();
                 const itemId = Object.keys(reward[type]).pop();
                 const count = reward[type][itemId];
@@ -373,776 +772,374 @@
             talentMsg = `<br>TMNT Talent: ${doorsAmount}/3 ${talentMsgReward}<br>`;
         }
 
-        async function chooseEarthOrFire(floorChoices) {
-            bestBattle.recovery = -11;
-            let selectedTeamNum = -1;
-            for (let attempt = 0; selectedTeamNum < 0 && attempt < 4; attempt++) {
-                for (let teamNum in floorChoices) {
-                    let attackerType = floorChoices[teamNum].attackerType;
-                    selectedTeamNum = await attemptAttackEarthOrFire(teamNum, attackerType, attempt);
-                }
+        async function fetchDungeonData() {
+            const result = await Send({ calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }] });
+            if (!Array.isArray(result.results)) {
+                lastError = 'Error fetching dungeonGetInfo';
+                return null;
             }
-            if (DUNGEON_VERBOSE) console.log('Choosing fire or earth team: ', selectedTeamNum < 0 ? 'not made' : floorChoices[selectedTeamNum].attackerType);
-            return selectedTeamNum;
+            const dungeonGetInfo = getResponse(result);
+            if (!dungeonGetInfo?.floor?.userData) {
+                lastError = 'No dungeon data';
+                return null;
+            }
+            return { dungeonGetInfo };
         }
 
-        async function attemptAttackEarthOrFire(teamNum, attackerType, attempt) {
-            let start = new Date();
-            let team = clone(teams[attackerType]);
-            
-            // Modifica Pyro: Supporto a 5 titani per Terra e Fuoco
-            let maxTeamSize = (attackerType === 'earth' || attackerType === 'fire') ? 5 : 4;
-            
-            let startIndex = team.heroes.length + attempt - maxTeamSize;
-            
-            if (startIndex >= 0) {
-                team.heroes = team.heroes.slice(startIndex);
-                let recovery = await getBestRecovery(teamNum, attackerType, team, EARTH_FIRE_SIM_COUNT);
-                if (recovery > bestBattle.recovery) {
-                    bestBattle.recovery = recovery;
-                    bestBattle.selectedTeamNum = teamNum;
-                    bestBattle.team = team;
-                }
+        async function handleRestart(dungeonGetInfo) {
+            if (!dungeonGetInfo.floor && !isRestart) {
+                isRestart = true;
+                await Send({ calls: [{ name: 'dungeonSaveProgress', args: {}, ident: 'body' }] });
+                return true;
             }
-            let workTime = new Date().getTime() - start.getTime();
-            timeDungeon.attackEarthOrFire += workTime;
-            if (bestBattle.recovery < -10) {
-                return -1;
+            if (isRestart) {
+                lastError = 'Error in dungeonGetInfo: missing floor';
+                return false;
             }
-            return bestBattle.selectedTeamNum;
+            isRestart = false;
+            return false;
         }
 
-        async function chooseElement(attackerType, teamNum) {
-            let result;
-            switch (attackerType) {
-                case 'hero':
-                case 'water':
-                    result = await startBattle(teamNum, attackerType, teams[attackerType]);
-                    break;
-                case 'earth':
-                case 'fire':
-                    result = await attackEarthOrFire(teamNum, attackerType);
-                    break;
-                case 'neutral':
-                    result = await attackNeutral(teamNum, attackerType);
+        async function runStep() {
+            const stepStart = Date.now();
+            await sleep(100);
+            if (!isRestart) {
+                lastDebugString = '';
             }
-            if (!!result && attackerType != 'hero') {
-                let recovery = (!!!bestBattle.recovery ? 10 * getRecovery(result) : bestBattle.recovery) * 100;
-                let titans = result.progress[0].attackers.heroes;
-                if (DUNGEON_VERBOSE) console.log('Battle completed: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', titans);
-            }
-            endBattle(result);
-        }
 
-        async function attackEarthOrFire(teamNum, attackerType) {
-            if (!!!bestBattle.recovery) {
-                bestBattle.recovery = -11;
-                let selectedTeamNum = -1;
-                for (let attempt = 0; selectedTeamNum < 0 && attempt < 4; attempt++) {
-                    selectedTeamNum = await attemptAttackEarthOrFire(teamNum, attackerType, attempt);
-                }
-                if (selectedTeamNum < 0) {
-                    endDungeon('Cannot win without losing a Titan!', attackerType);
-                    return;
-                }
-            }
-            return findAttack(teamNum, attackerType, bestBattle.team);
-        }
+            maxDungeonActivity = getInput('countTitanit') || maxDungeonActivity;
+            setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`, true);
 
-        async function findAttack(teamNum, attackerType, team) {
-            let start = new Date();
-            let recovery = -1000;
-            let result;
-            let correction = 0.01;
-            for (let needRecovery = bestBattle.recovery; recovery < needRecovery; needRecovery -= correction) {
-                result = await startBattle(teamNum, attackerType, team);
-                recovery = getRecovery(result);
+            if (dungeonActivity >= maxDungeonActivity) {
+                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
+                return false;
             }
-            bestBattle.recovery = recovery;
-            let workTime = new Date().getTime() - start.getTime();
-            timeDungeon.findAttack += workTime;
-            return result;
-        }
-
-        async function attackNeutral(teamNum, attackerType) {
-            let start = new Date();
-            let factors = calcFactor();
-            bestBattle.recovery = -0.2;
-            await findBestBattleNeutral(teamNum, attackerType, factors, true);
-            if (bestBattle.recovery < 0 || (bestBattle.recovery < 0.2 && factors[0].value < 0.5)) {
-                let recovery = 100 * bestBattle.recovery;
-                if (DUNGEON_VERBOSE) console.log('Failed to find a good battle in fast mode: ' + attackerType + ', recovery = ' + (recovery > 0 ? '+' : '') + Math.round(recovery) + '% \r\n', bestBattle.attackers);
-                await findBestBattleNeutral(teamNum, attackerType, factors, false);
-            }
-            let workTime = new Date().getTime() - start.getTime();
-            timeDungeon.attackNeutral += workTime;
-            if (!!bestBattle.attackers) {
-                let team = getTeam(bestBattle.attackers);
-                return findAttack(teamNum, attackerType, team);
-            }
-            endDungeon('Failed to find a good battle!', attackerType);
-            return undefined;
-        }
-
-        async function findBestBattleNeutral(teamNum, attackerType, factors, mode) {
-            // Healing titans priority: best -> worst [4000, 4003, 4004, 4001, 4002]
-            const healingTitans = [4000, 4003, 4004, 4001, 4002].filter((e) => !!titansStates[e] && !titansStates[e].isDead);
-            // Create priority map for healer comparison (lower number = higher priority)
-            const healerPriority = {};
-            healingTitans.forEach((healerId, index) => {
-                healerPriority[healerId] = index;
-            });
-            
-            // Debug: Log available healing titans
-            if (DUNGEON_VERBOSE) console.log(`[Dungeon] Available healing titans (priority order): [${healingTitans.join(', ')}]`);
-            if (!healingTitans.includes(4004)) {
-                console.warn(`[Dungeon] WARNING: 4004 (Tidus and Gelo) is not available! Status:`, titansStates[4004]);
-            }
-            
-            let countFactors = factors.length < 4 ? factors.length : 4;
-            let aradgi = !titansStates['4013']?.isDead;
-            let edem = !titansStates['4023']?.isDead;
-            let dark = [4032, 4033].filter((e) => !titansStates[e]?.isDead);
-            let light = [4042].filter((e) => !titansStates[e]?.isDead);
-            let actions = [];
-            if (mode) {
-                for (let i = 0; i < countFactors; i++) {
-                    actions.push(startBattle(teamNum, attackerType, getNeutralTeam(factors[i].id)));
-                }
-                if (countFactors > 1) {
-                    let firstId = factors[0].id;
-                    let secondId = factors[1].id;
-                    // Use healing titans in priority order (best first)
-                    for (let healerId of healingTitans) {
-                        actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, secondId)));
-                    }
-                }
-                if (aradgi) {
-                    actions.push(startBattle(teamNum, attackerType, getNeutralTeam(4013)));
-                    if (countFactors > 0) {
-                        let firstId = factors[0].id;
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, 4013)));
-                        }
-                    }
-                    if (edem) {
-                        // Use best healers first: 4000, then 4004
-                        if (healingTitans.includes(4000)) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(4023, 4000, 4013)));
-                        }
-                        if (healingTitans.includes(4004)) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(4023, 4004, 4013)));
-                        }
-                    }
-                }
-            } else {
-                countFactors = factors.length < 2 ? factors.length : 2;
-                for (let i = 0; i < countFactors; i++) {
-                    let mainId = factors[i].id;
-                    if (aradgi && i > 0) {
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, 4013)));
-                        }
-                    }
-                    for (let j = 0; j < dark.length; j++) {
-                        let darkId = dark[j];
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, darkId)));
-                        }
-                    }
-                    for (let j = 0; j < light.length; j++) {
-                        let lightId = light[j];
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, lightId)));
-                        }
-                    }
-                    let isFull = i > 0;
-                    for (let j = isFull ? i + 1 : 2; j < factors.length; j++) {
-                        let extraId = factors[j].id;
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(mainId, healerId, extraId)));
-                        }
-                    }
-                }
-                if (aradgi) {
-                    for (let i = 0; i < dark.length; i++) {
-                        let darkId = dark[i];
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(darkId, healerId, 4013)));
-                        }
-                    }
-                    for (let i = 0; i < light.length; i++) {
-                        let lightId = light[i];
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(lightId, healerId, 4013)));
-                        }
-                    }
-                }
-                for (let i = 0; i < dark.length; i++) {
-                    let firstId = dark[i];
-                    actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId)));
-                    for (let j = i + 1; j < dark.length; j++) {
-                        let secondId = dark[j];
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, secondId)));
-                        }
-                    }
-                }
-                for (let i = 0; i < light.length; i++) {
-                    let firstId = light[i];
-                    actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId)));
-                    for (let j = i + 1; j < light.length; j++) {
-                        let secondId = light[j];
-                        // Use healing titans in priority order (best first)
-                        for (let healerId of healingTitans) {
-                            actions.push(startBattle(teamNum, attackerType, getNeutralTeam(firstId, healerId, secondId)));
-                        }
-                    }
-                }
-            }
-            const results = await Promise.all(actions);
-            for (let i = 0; i < results.length; i++) {
-                let result = results[i];
-                let recovery = getRecovery(result);
-                let titans = result.progress[0].attackers.heroes;
-                
-                // Get original titan IDs from battleData.attackers (keys are titan IDs)
-                const originalTitanIds = result.battleData && result.battleData.attackers ? 
-                    Object.keys(result.battleData.attackers).map(id => parseInt(id)) : [];
-                
-                // Extract healer IDs from the team
-                const currentHealerIds = originalTitanIds.filter(id => healingTitans.includes(id));
-                
-                // Check if this result is better, considering healer priority
-                // Use a larger threshold to prefer higher priority healers even when recovery is slightly better
-                const recoveryThreshold = 0.05; // Consider recovery similar if within 0.05 (5% difference)
-                const isMuchBetterRecovery = recovery > bestBattle.recovery + recoveryThreshold;
-                const isSimilarOrBetterRecovery = recovery >= bestBattle.recovery - recoveryThreshold;
-                
-                if (!bestBattle.attackers || !bestBattle.originalTitanIds) {
-                    // First result, just store it
-                    bestBattle.recovery = recovery;
-                    bestBattle.attackers = titans;
-                    bestBattle.originalTitanIds = originalTitanIds;
-                    if (DUNGEON_VERBOSE) console.log(`[Dungeon] Initial best battle - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
-                } else if (isMuchBetterRecovery) {
-                    // Much better recovery, always choose it
-                    bestBattle.recovery = recovery;
-                    bestBattle.attackers = titans;
-                    bestBattle.originalTitanIds = originalTitanIds;
-                    if (DUNGEON_VERBOSE) console.log(`[Dungeon] Better recovery found - Recovery: ${recovery.toFixed(3)}, Healers: [${currentHealerIds.join(', ')}]`);
-                } else if (isSimilarOrBetterRecovery) {
-                    // Recovery is similar or slightly better, prefer higher priority healers
-                    const bestHealerIds = bestBattle.originalTitanIds.filter(id => healingTitans.includes(id));
-                    
-                    if (currentHealerIds.length > 0 && bestHealerIds.length > 0) {
-                        const currentBestHealer = currentHealerIds.reduce((best, id) => 
-                            (healerPriority[id] !== undefined && (healerPriority[best] === undefined || healerPriority[id] < healerPriority[best])) ? id : best
-                        );
-                        const bestBestHealer = bestHealerIds.reduce((best, id) => 
-                            (healerPriority[id] !== undefined && (healerPriority[best] === undefined || healerPriority[id] < healerPriority[best])) ? id : best
-                        );
-                        
-                        // Prefer the battle with higher priority healer (lower priority number = higher priority)
-                        // Also prefer if recovery is better, even if healer priority is same
-                        const hasBetterHealer = healerPriority[currentBestHealer] !== undefined && 
-                            healerPriority[bestBestHealer] !== undefined &&
-                            healerPriority[currentBestHealer] < healerPriority[bestBestHealer];
-                        const hasBetterRecovery = recovery > bestBattle.recovery;
-                        
-                        if (hasBetterHealer || (recovery >= bestBattle.recovery && healerPriority[currentBestHealer] <= healerPriority[bestBestHealer])) {
-                            if (hasBetterHealer) {
-                                if (DUNGEON_VERBOSE) console.log(`[Dungeon] Preferring healer ${currentBestHealer} (priority ${healerPriority[currentBestHealer]}) over ${bestBestHealer} (priority ${healerPriority[bestBestHealer]}) - Recovery: ${recovery.toFixed(3)} vs ${bestBattle.recovery.toFixed(3)}`);
-                            }
-                            bestBattle.recovery = recovery;
-                            bestBattle.attackers = titans;
-                            bestBattle.originalTitanIds = originalTitanIds;
-                        }
-                    } else if (recovery > bestBattle.recovery) {
-                        // Better recovery and no healers to compare, choose it
-                        bestBattle.recovery = recovery;
-                        bestBattle.attackers = titans;
-                        bestBattle.originalTitanIds = originalTitanIds;
-                    }
-                }
-            }
-        }
-
-        function getNeutralTeam(id, swapId, addId) {
-            let neutralTeam = clone(teams.water);
-            let neutral = neutralTeam.heroes;
-            if (neutral.length == 4) {
-                if (!!swapId) {
-                    for (let i in neutral) {
-                        if (neutral[i] == swapId) {
-                            neutral[i] = addId;
-                        }
-                    }
-                }
-            } else if (!!addId) {
-                neutral.push(addId);
-            }
-            neutral.push(id);
-            return neutralTeam;
-        }
-
-        function getTeam(titans) {
-            return {
-                favor: {},
-                heroes: Object.keys(titans).map((id) => parseInt(id)),
-                teamNum: 0,
-            };
-        }
-
-        function calcFactor() {
-            let neutral = teams.neutral;
-            let factors = [];
-            for (let i in neutral) {
-                let titanId = neutral[i];
-                if (!titansStates[titanId]) {
-                    continue;
-                }
-                let titan = titansStates[titanId];
-                let factor = !!titan ? titan.hp / titan.maxHp + titan.energy / 10000.0 : 1;
-                if (factor > 0) {
-                    factors.push({ id: titanId, value: factor });
-                }
-            }
-            factors.sort(function (a, b) {
-                return a.value - b.value;
-            });
-            return factors;
-        }
-
-        async function getBestRecovery(teamNum, attackerType, team, countBattle) {
-            let bestRecovery = -1000;
-            let actions = [];
-            for (let i = 0; i < countBattle; i++) {
-                actions.push(startBattle(teamNum, attackerType, team));
-            }
-            for (let result of await Promise.all(actions)) {
-                let recovery = getRecovery(result);
-                if (recovery > bestRecovery) {
-                    bestRecovery = recovery;
-                }
-            }
-            return bestRecovery;
-        }
-
-        function getRecovery(result) {
-            if (result.result.stars < 3) {
-                return -100;
-            }
-            let beforeSumFactor = 0;
-            let afterSumFactor = 0;
-            let beforeTitans = result.battleData.attackers;
-            let afterTitans = result.progress[0].attackers.heroes;
-            for (let i in afterTitans) {
-                let titan = afterTitans[i];
-                let percentHP = titan.hp / beforeTitans[i].hp;
-                let energy = titan.energy;
-                let factor = checkTitan(i, energy, percentHP) ? getFactor(i, energy, percentHP) : -100;
-                afterSumFactor += factor;
-            }
-            for (let i in beforeTitans) {
-                let titan = beforeTitans[i];
-                let state = titan.state;
-                beforeSumFactor += !!state ? getFactor(i, state.energy, state.hp / titan.hp) : 1;
-            }
-            return afterSumFactor - beforeSumFactor;
-        }
-
-        function getFactor(id, energy, percentHP) {
-            if (percentHP < 0.05) {
-                return -100;
-            }
-            const currentSettings = titanHealthSettings;
-
-            switch (id) {
-                case '4020':
-                    return percentHP * 0.7 + (energy / 1000) * 0.3;
-                case '4010':
-                    return percentHP * 0.5 + (energy / 1000) * 0.5;
-                case '4000':
-                    return percentHP * 0.8 + (energy / 1000) * 0.2;
-                default:
-                    return percentHP;
-            }
-        }
-
-        function checkTitan(id, energy, percentHP) {
-            const minOverallHP = titanHealthSettings.minOverallHP;
-
-            if (percentHP < minOverallHP) {
+            if (stopDung) {
+                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
                 return false;
             }
 
-            switch (id) {
-                case '4020':
-                    return percentHP > titanHealthSettings.titan4020HP || (energy == 1000 && percentHP > titanHealthSettings.titan4020EnergyHP);
-                case '4010':
-                    return percentHP + energy / 2000.0 > titanHealthSettings.titan4010Combined;
-                case '4000':
-                    return percentHP > titanHealthSettings.titan4000HP || (energy < 1000 && ((percentHP > titanHealthSettings.titan4000Energy400HP && energy >= 400) || (percentHP > titanHealthSettings.titan4000Energy670HP && energy >= 670)));
-                case '4024':
-                case '4014':
-                    return true;
+            const data = await fetchDungeonData();
+            if (!data || titansList.length === 0) {
+                return false;
             }
-            return true;
-        }
 
-        function startBattle(teamNum, attackerType, args) {
-            return new Promise(function (resolve, reject) {
-                args.teamNum = teamNum;
-                // Log which titans are being sent to battle
-                // args is a team object with heroes array
-                const titanIds = (args && args.heroes) ? args.heroes : [];
-                if (titanIds.length > 0) {
-                    if (DUNGEON_VERBOSE) console.log(`[Dungeon Battle] ${attackerType} - Team ${teamNum} - Titans: [${titanIds.join(', ')}]`);
-                } else {
-                    console.warn(`[Dungeon Battle] ${attackerType} - Team ${teamNum} - No titans found. Args:`, JSON.stringify(args));
+            const { dungeonGetInfo } = data;
+
+            if (!('floor' in dungeonGetInfo) || dungeonGetInfo.floor?.state === 2) {
+                await Send({ calls: [{ name: 'dungeonSaveProgress', args: {}, ident: 'body' }] });
+                endDungeon('Dungeon completed,', 'floor saved');
+                return false;
+            }
+
+            const didRestart = await handleRestart(dungeonGetInfo);
+            if (didRestart) {
+                return true;
+            }
+            if (lastError) {
+                return false;
+            }
+
+            await checkTalent(dungeonGetInfo);
+
+            if (!dungeonGetInfo.elements) {
+                lastError = 'Error in dungeonGetInfo: missing primeElement';
+                endDungeon(lastError);
+                return false;
+            }
+            if (!dungeonGetInfo.states) {
+                lastError = 'Error in dungeonGetInfo: missing states';
+                endDungeon(lastError);
+                return false;
+            }
+
+            const states = dungeonGetInfo.states.titans;
+            const aliveTitans = getTitans(titansList, states);
+            const userData = dungeonGetInfo.floor.userData;
+
+            const heroBattleIndex = userData.findIndex((ud) => ud.attackerType === 'hero');
+            if (heroBattleIndex !== -1) {
+                const heroTeam = teamGetAll?.dungeon_hero;
+                if (!Array.isArray(heroTeam)) {
+                    lastError = 'No hero team';
+                    endDungeon(lastError);
+                    return false;
                 }
-                
-                let startBattleCall = {
-                    calls: [{ name: 'dungeonStartBattle', args, ident: 'body' }],
-                };
-                send(JSON.stringify(startBattleCall), resultBattle, {
-                    resolve,
-                    teamNum,
-                    attackerType,
-                });
-            });
-        }
-
-        function resultBattle(resultBattles, args) {
-            if (!resultBattles || !resultBattles.results || resultBattles.results.length === 0 || !resultBattles.results[0].result || resultBattles.results[0].result.error) {
-                console.error('Battle failed, results missing or contained error:', resultBattles);
-                const failedResult = {
-                    result: { stars: 0, win: false },
-                    progress: [{ attackers: { heroes: {} } }],
-                    battleData: { attackers: {} },
-                    teamNum: args.teamNum,
-                    attackerType: args.attackerType
-                };
-                args.resolve(failedResult);
-                return;
-            }
-
-            let battleData = resultBattles.results[0].result.response;
-            let battleType = 'get_tower';
-            if (battleData.type == 'dungeon_titan') {
-                battleType = 'get_titan';
-            }
-            battleData.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
-            BattleCalc(battleData, battleType, function (result) {
-                result.result = result.result || { stars: 3 };
-                if (result.result.stars < 3) {
-                    console.warn("BattleCalc returned less than 3 stars. Treating as fail.");
+                const pet = heroTeam.find((v) => v > 6000) || null;
+                const heroes = heroTeam.filter((v) => v < 6000);
+                const option = await startAndSimulate(heroBattleIndex, heroes, pet, 'hero');
+                if (!option) {
+                    lastError = 'Failed to start hero battle';
+                    endDungeon(lastError);
+                    return false;
                 }
-                
-                result.teamNum = args.teamNum;
-                result.attackerType = args.attackerType;
-                args.resolve(result);
-            });
-        }
-
-        async function endBattle(battleInfo) {
-            if (!battleInfo || battleInfo.result.stars < 3) {
-                endDungeon('Hero or Titan may have died in battle / Error during attack!', battleInfo);
-                return;
+                if (!option.result?.win) {
+                    lastError = 'Hero battle would lose';
+                    endDungeon(lastError, option);
+                    return false;
+                }
+                lastDebugString += debugString(option, 'hero');
+                if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
+                const ok = await executeOption(option, 'hero', lastDebugString);
+                timeDungeon.steps += Date.now() - stepStart;
+                return ok !== false;
             }
 
-            if (!!battleInfo) {
-                const args = {
-                    result: battleInfo.result,
-                    progress: battleInfo.progress,
-                };
-                
-                // Match native HWH endBattle: only set isRaid when HWHData has cards; send hook decrements HWHData.
-                const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
-                if (predictionCards > 0) {
-                    args.isRaid = true;
-                } else {
-                    const timer = getTimer(battleInfo.battleTime);
-                    if (DUNGEON_VERBOSE) console.log(timer);
-                    await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
-                }
-                const calls = [{ name: 'dungeonEndBattle', args, ident: 'body' }];
-                send(JSON.stringify({ calls }), resultEndBattle);
-            } else {
-                endDungeon('dungeonEndBattle win: false\n', battleInfo);
-            }
-        }
+            const options = [];
+            for (let teamNum = 0; teamNum < userData.length; teamNum++) {
+                if (stopDung) break;
+                const { attackerType } = userData[teamNum];
+                let team = null;
+                let useHealingIndex = 0;
 
-        function resultEndBattle(e) {
-            // Check for top-level errors first
-            if (e && e.error) {
-                let errorName = '';
-                let errorDescription = '';
-                
-                if (typeof e.error === 'string') {
-                    errorDescription = e.error;
-                    if (e.error.includes('NotFound') || e.error.includes('not found')) {
-                        errorName = 'NotFound';
-                    }
-                } else {
-                    errorName = e.error.name || '';
-                    errorDescription = e.error.description || '';
-                }
-                
-                if (errorName === 'NotFound' || errorDescription.includes('NotFound') || errorDescription.includes('not found')) {
-                    console.warn('Battle not found at top level (may have been completed/expired), refreshing dungeon info and continuing...', e.error);
-                    let refreshCall = {
-                        calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
-                    };
-                    send(JSON.stringify(refreshCall), function(refreshResult) {
-                        if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
-                            let dungeonGetInfo = refreshResult.results[0].result.response;
-                            titansStates = dungeonGetInfo.states?.titans || titansStates;
-                            checkFloor(dungeonGetInfo);
-                        } else {
-                            endDungeon('Failed to refresh dungeon after NotFound error', refreshResult);
-                        }
-                    });
-                    return;
-                }
-                
-                endDungeon('errorRequest', e.error);
-                return;
-            }
-            
-            if (!!e && !!e.results) {
-                let result = e.results[0].result;
-                
-                // Check for errors in the result structure
-                if (result.error) {
-                    let errorName = '';
-                    let errorDescription = '';
-                    
-                    // Handle both object and string error formats
-                    if (typeof result.error === 'string') {
-                        errorDescription = result.error;
-                        if (result.error.includes('NotFound') || result.error.includes('not found')) {
-                            errorName = 'NotFound';
-                        }
-                    } else {
-                        errorName = result.error.name || '';
-                        errorDescription = result.error.description || '';
-                    }
-                    
-                    // Handle NotFound errors gracefully - battle may have been completed/expired
-                    if (errorName === 'NotFound' || errorDescription.includes('NotFound') || errorDescription.includes('not found')) {
-                        console.warn('Battle not found (may have been completed/expired), refreshing dungeon info and continuing...', result.error);
-                        // Refresh dungeon info and continue
-                        let refreshCall = {
-                            calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
-                        };
-                        send(JSON.stringify(refreshCall), function(refreshResult) {
-                            if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
-                                let dungeonGetInfo = refreshResult.results[0].result.response;
-                                titansStates = dungeonGetInfo.states?.titans || titansStates;
-                                checkFloor(dungeonGetInfo);
-                            } else {
-                                // If refresh fails, try to continue anyway
-                                console.warn('Failed to refresh dungeon info, continuing with current state...');
-                                // Get fresh dungeon info using the same pattern as startDungeon
-                                let callsExecuteDungeon = {
-                                    calls: [
-                                        { name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' },
-                                    ],
-                                };
-                                send(JSON.stringify(callsExecuteDungeon), function(refreshResult2) {
-                                    if (refreshResult2 && refreshResult2.results && refreshResult2.results[0] && refreshResult2.results[0].result && refreshResult2.results[0].result.response) {
-                                        let dungeonGetInfo = refreshResult2.results[0].result.response;
-                                        titansStates = dungeonGetInfo.states?.titans || titansStates;
-                                        checkFloor(dungeonGetInfo);
-                                    } else {
-                                        endDungeon('Failed to refresh dungeon after NotFound error', refreshResult2);
-                                    }
-                                });
+                if (attackerType === 'neutral') {
+                    if (isAbleToHeal) {
+                        let healingTeam = null;
+                        let healingOption = null;
+                        while (true) {
+                            healingTeam = getTitansForPotentialHealingTeam(aliveTitans, states, useHealingIndex);
+                            if (!healingTeam) break;
+                            healingOption = await startAndSimulate(teamNum, healingTeam, null, attackerType);
+                            if (!healingOption?.win) {
+                                useHealingIndex++;
+                                continue;
                             }
-                        });
-                        return;
-                    }
-                    
-                    // For other errors, stop the dungeon
-                    endDungeon('errorBattleResult', result.error);
-                    return;
-                }
-                
-                let battleResult = result.response;
-                if (!battleResult) {
-                    // If no response, try to refresh dungeon info
-                    console.warn('No battle result in response, refreshing dungeon info and continuing...');
-                    let refreshCall = {
-                        calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
-                    };
-                    send(JSON.stringify(refreshCall), function(refreshResult) {
-                        if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
-                            let dungeonGetInfo = refreshResult.results[0].result.response;
-                            titansStates = dungeonGetInfo.states?.titans || titansStates;
-                            checkFloor(dungeonGetInfo);
-                        } else {
-                            endDungeon('Failed to refresh dungeon after missing response', refreshResult);
-                        }
-                    });
-                    return;
-                }
-                
-                if ('error' in battleResult) {
-                    let errorName = '';
-                    let errorDescription = '';
-                    
-                    // Handle both object and string error formats
-                    if (typeof battleResult.error === 'string') {
-                        errorDescription = battleResult.error;
-                        if (battleResult.error.includes('NotFound') || battleResult.error.includes('not found')) {
-                            errorName = 'NotFound';
-                        }
-                    } else {
-                        errorName = battleResult.error?.name || '';
-                        errorDescription = battleResult.error?.description || '';
-                    }
-                    
-                    // Handle NotFound errors in response as well
-                    if (errorName === 'NotFound' || errorDescription.includes('NotFound') || errorDescription.includes('not found')) {
-                        console.warn('Battle not found in response (may have been completed/expired), refreshing dungeon info and continuing...', battleResult.error);
-                        // Refresh dungeon info and continue
-                        let refreshCall = {
-                            calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }],
-                        };
-                        send(JSON.stringify(refreshCall), function(refreshResult) {
-                            if (refreshResult && refreshResult.results && refreshResult.results[0] && refreshResult.results[0].result && refreshResult.results[0].result.response) {
-                                let dungeonGetInfo = refreshResult.results[0].result.response;
-                                titansStates = dungeonGetInfo.states?.titans || titansStates;
-                                checkFloor(dungeonGetInfo);
-                            } else {
-                                endDungeon('Failed to refresh dungeon after NotFound error', refreshResult);
+                            if (isHealingSuccessful(healingTeam, healingOption.progress, states) && getDeads(healingOption) === 0) {
+                                team = { heroes: healingTeam, pet: null, isHealing: true, option: healingOption };
+                                break;
                             }
-                        });
-                        return;
+                            useHealingIndex++;
+                        }
                     }
-                    
-                    endDungeon('errorBattleResult', battleResult);
-                    return;
+                    if (!team) {
+                        const neutralTeam = getNeutralTitans(aliveTitans, !isAbleToHeal);
+                        team = neutralTeam.length > 0 ? { heroes: neutralTeam, pet: null } : null;
+                    }
+                } else {
+                    const pool = aliveTitans[attackerType] ? aliveTitans[attackerType] : aliveTitans.all;
+                    const heroes = pool.slice(0, 5).map((t) => t.id);
+                    team = heroes.length > 0 ? { heroes, pet: null } : null;
                 }
-                
-                let dungeonGetInfo = battleResult.dungeon ?? battleResult;
-                dungeonActivity += battleResult.reward?.dungeonActivity ?? 0;
-                checkFloor(dungeonGetInfo);
-            } else {
-                endDungeon('Lost connection to game server!', 'break');
-            }
-        }
 
-        function saveProgress() {
-            let saveProgressCall = {
-                calls: [{ name: 'dungeonSaveProgress', args: {}, ident: 'body' }],
-            };
-            send(JSON.stringify(saveProgressCall), resultEndBattle);
+                if (!team) {
+                    options.push(null);
+                    continue;
+                }
+
+                const option = team.option || (await startAndSimulate(teamNum, team.heroes, team.pet, attackerType));
+                if (!option?.win) {
+                    options.push(null);
+                    continue;
+                }
+
+                if (team.isHealing && option.win) {
+                    lastDebugString += debugString(option, attackerType) + ' ðŸŒŠ';
+                    if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
+                    const ok = await executeOption(option, attackerType, lastDebugString);
+                    timeDungeon.steps += Date.now() - stepStart;
+                    return ok !== false;
+                }
+                if (team.isHealing) {
+                    const fallback = getNeutralTitans(aliveTitans);
+                    if (fallback.length > 0) {
+                        const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType);
+                        options.push(fallbackOption?.win ? { option: fallbackOption, attackerType } : null);
+                    } else {
+                        options.push(null);
+                    }
+                    continue;
+                }
+                options.push({ option, attackerType });
+            }
+
+            const valid = options.filter(Boolean);
+            if (valid.length === 0) {
+                lastError = 'No winnable battles available';
+                endDungeon(lastError);
+                return false;
+            }
+
+            if (valid.length > 1) {
+                lastDebugString += valid.map((v) => debugString(v.option, v.attackerType)).join(' | ');
+            } else {
+                lastDebugString += debugString(valid[0].option, valid[0].attackerType);
+            }
+
+            const best = valid.length === 1
+                ? valid[0]
+                : valid.reduce((b, cur) => (isOptionBetter(b?.option, cur?.option) ? cur : b));
+
+            if (!best?.option) {
+                lastError = 'No best battle found';
+                endDungeon(lastError);
+                return false;
+            }
+
+            lastDebugString += ` -> ${best.option.teamNum} `;
+
+            let finalOption = best.option;
+            if (best.option.teamNum !== userData.length - 1) {
+                const restarted = await startAndSimulate(best.option.teamNum, best.option.heroes, best.option.pet, best.attackerType);
+                if (!restarted?.win) {
+                    lastError = 'Restart failed';
+                    endDungeon(lastError);
+                    return false;
+                }
+                lastDebugString += debugString(restarted, best.attackerType) + ' ðŸ”';
+                finalOption = restarted;
+            }
+
+            if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
+            const ok = await executeOption(finalOption, best.attackerType, lastDebugString);
+            stepCount++;
+            timeDungeon.steps += Date.now() - stepStart;
+            return ok !== false;
         }
 
         function showStats() {
             if (!DUNGEON_VERBOSE) return;
-            let activity = dungeonActivity - startDungeonActivity;
-            let workTime = clone(timeDungeon);
-            workTime.all = new Date().getTime() - workTime.all;
-            for (let i in workTime) {
-                workTime[i] = Math.round(workTime[i] / 1000);
+            const activity = dungeonActivity - startDungeonActivity;
+            const totalSec = Math.round((Date.now() - timeDungeon.all) / 1000);
+            console.log('[Dungeon] Titanite collected:', activity);
+            console.log('[Dungeon] Steps:', stepCount);
+            if (totalSec > 0) {
+                console.log('[Dungeon] Speed:', Math.round((3600 * activity) / totalSec), 'titanite/hour');
             }
-            if (countTeam.length > 0) {
-                countTeam.sort(function (a, b) {
-                    return b.count - a.count;
-                });
-                console.log('Team usage frequency: ');
-                for (let i in countTeam) {
-                    let teams = countTeam[i];
-                    console.log(teams.team + ': ', teams.count);
-                }
-            }
-            console.log(titansStates);
-            console.log('Titanite collected: ', activity);
-            console.log('Collection speed: ' + Math.round((3600 * activity) / workTime.all) + ' titanite/hour');
-            console.log('Dungeon time: ');
-            for (let i in workTime) {
-                let timeNow = workTime[i];
-                console.log(i + ': ', Math.round(timeNow / 3600) + ' h. ' + Math.round((timeNow % 3600) / 60) + ' min. ' + (timeNow % 60) + ' sec.');
-            }
+            console.log('[Dungeon] Sim time (ms):', timeDungeon.steps);
         }
 
         function endDungeon(reason, info) {
-            if (!end) {
-                end = true;
-                console.log('[Dungeon]', reason, info != null && info !== '' ? info : '');
-                showStats();
-                if (info == 'break') {
-                    setProgress(
-                        'Dungeon stopped: Titanite ' + dungeonActivity + '/' + maxDungeonActivity + '\r\nLost connection to game server!',
-                        false,
-                        hideProgress
-                    );
-                } else {
-                    setProgress('Dungeon completed: Titanite ' + dungeonActivity + '/' + maxDungeonActivity, false, hideProgress);
-                }
-
-                if (titanHealthSettings.autoRefreshPage) {
-                    setTimeout(() => {
-                        location.reload();
-                    }, 1000);
-                } else {
-                    setTimeout(cheats.refreshGame, 1000);
-                }
-
-                resolve();
+            if (end) return;
+            end = true;
+            console.log('[Dungeon]', reason, info != null && info !== '' ? info : '');
+            showStats();
+            if (info === 'break') {
+                setProgress(
+                    'Dungeon stopped: Titanite ' + dungeonActivity + '/' + maxDungeonActivity + '\r\nLost connection to game server!',
+                    false,
+                    hideProgress
+                );
+            } else {
+                setProgress('Dungeon completed: Titanite ' + dungeonActivity + '/' + maxDungeonActivity, false, hideProgress);
             }
+            if (titanHealthSettings.autoRefreshPage) {
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                setTimeout(cheats.refreshGame, 1000);
+            }
+            resolve();
         }
+
+        async function initialize() {
+            const res = await Send({
+                calls: [
+                    { name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' },
+                    { name: 'teamGetAll', args: {}, ident: 'teamGetAll' },
+                    { name: 'teamGetFavor', args: {}, ident: 'teamGetFavor' },
+                    { name: 'clanGetInfo', args: {}, ident: 'clanGetInfo' },
+                    { name: 'titanGetAll', args: {}, ident: 'titanGetAll' },
+                    { name: 'inventoryGet', args: {}, ident: 'inventoryGet' },
+                ],
+            });
+
+            const dungeonGetInfo = res.results[0]?.result?.response;
+            if (!dungeonGetInfo) {
+                lastError = 'noDungeon';
+                return false;
+            }
+
+            teamGetAll = res.results[1]?.result?.response;
+            const clanStat = res.results[3]?.result?.response?.stat;
+            const dungeonStat = dungeonGetInfo?.stat;
+            const todayAct = clanStat?.todayDungeonActivity ?? dungeonStat?.todayDungeonActivity ?? 0;
+            dungeonActivity = todayAct;
+            startDungeonActivity = todayAct;
+            syncPredictionCardsFromInventory(res.results[5]);
+
+            const titanRaw = res.results[4]?.result?.response;
+            titansList = Array.isArray(titanRaw)
+                ? titanRaw
+                : Object.values(titanRaw || {}).filter((t) => t && t.id != null);
+
+            const layout = getTitans(titansList);
+            const waterPower = layout.water.reduce((a, b) => a + (b.power || 0), 0);
+            const earthPower = layout.earth.reduce((a, b) => a + (b.power || 0), 0);
+            const firePower = layout.fire.reduce((a, b) => a + (b.power || 0), 0);
+            const waterStrongest = waterPower >= earthPower && waterPower >= firePower;
+            const waterWithin25Percent = earthPower <= waterPower * 1.25 && firePower <= waterPower * 1.25;
+            isAbleToHeal = waterStrongest || waterWithin25Percent;
+
+            if (DUNGEON_VERBOSE) {
+                console.log('[Dungeon] Water', waterPower, '| Earth', earthPower, '| Fire', firePower, '| canHeal:', isAbleToHeal);
+                console.log('[Dungeon] Starting full dungeon run:', new Date());
+            }
+            return true;
+        }
+
+        this.start = async function (titanit) {
+            maxDungeonActivity = titanit || getInput('countTitanit');
+            stopDung = false;
+            end = false;
+            isRestart = false;
+            lastError = null;
+            stepCount = 0;
+            timeDungeon = { all: Date.now(), steps: 0 };
+
+            try {
+                const ok = await initialize();
+                if (!ok) {
+                    endDungeon('Failed to initialize dungeon', lastError);
+                    return;
+                }
+                while (!end && !stopDung) {
+                    const success = await runStep();
+                    if (!success) {
+                        if (lastError && !end) {
+                            endDungeon(lastError);
+                        }
+                        break;
+                    }
+                    await sleep(100);
+                }
+            } catch (err) {
+                console.error('[Dungeon] Fatal error:', err);
+                endDungeon('Fatal dungeon error', err);
+                reject(err);
+            }
+        };
     }
 
     async function executeTestDungeon() {
         const { HWHClasses, HWHFuncs } = window;
 
-        // Prefer the native implementation from HeroWarsHelper (it returns a Promise and has the "perfect" flow).
-        const hasNativeDungeon = await waitFor(() => typeof window.testDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
-        if (hasNativeDungeon) {
-            HWHFuncs.setProgress('Executing: Dungeon (native)', true);
-            // Dungeon can take a while; prevent the entire Auto Daily run from hanging forever if something goes wrong.
-            return await withTimeout(window.testDungeon(), 20 * 60 * 1000, 'Dungeon timed out');
-        }
-
-        // Ensure merged executeDungeon is available in HWHClasses if not already present
-        if (window.HWHClasses && !window.HWHClasses.executeDungeon && typeof executeDungeon === 'function') {
+        if (window.HWHClasses && typeof executeDungeon === 'function') {
             window.HWHClasses.executeDungeon = executeDungeon;
         }
 
-        // Fallback: older approach (directly instantiate executeDungeon) if native function isn't available.
-        const hasExecuteDungeon = await waitFor(() => (HWHClasses && typeof HWHClasses.executeDungeon === 'function') || typeof executeDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
-        if (!hasExecuteDungeon) {
-            throw new Error('Dungeon API not ready (missing testDungeon/executeDungeon)');
+        const hasStealtherDungeon = await waitFor(() => typeof executeDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
+        if (hasStealtherDungeon) {
+            HWHFuncs.setProgress('Executing: Dungeon (Stealther)', true);
+            return await withTimeout(
+                new Promise((resolve, reject) => {
+                    try {
+                        const dung = new executeDungeon(resolve, reject);
+                        dung.start();
+                    } catch (e) {
+                        reject(e);
+                    }
+                }),
+                20 * 60 * 1000,
+                'Dungeon timed out'
+            );
         }
 
-        HWHFuncs.setProgress('Executing: Dungeon (fallback)', true);
-        return await withTimeout(
-            new Promise((resolve, reject) => {
-                try {
-                    // Use HWHClasses.executeDungeon if available, otherwise use merged executeDungeon
-                    const DungeonClass = (HWHClasses && HWHClasses.executeDungeon) ? HWHClasses.executeDungeon : executeDungeon;
-                    const dung = new DungeonClass(resolve, reject);
-                    dung.start();
-                } catch (e) {
-                    reject(e);
-                }
-            }),
-            20 * 60 * 1000,
-            'Dungeon timed out (fallback)'
-        );
+        const hasNativeDungeon = await waitFor(() => typeof window.testDungeon === 'function', { timeoutMs: 5000, intervalMs: 200 });
+        if (hasNativeDungeon) {
+            HWHFuncs.setProgress('Executing: Dungeon (native fallback)', true);
+            return await withTimeout(window.testDungeon(), 20 * 60 * 1000, 'Dungeon timed out');
+        }
+
+        throw new Error('Dungeon API not ready (missing executeDungeon/testDungeon)');
     }
 
     // --- DUNGEON SETTINGS GUI ---
@@ -1622,7 +1619,7 @@ async function executeGetDailyBonus() {
                 <div class="auto-daily-popup-column"><h2>UPGRADE</h2><ul class="auto-daily-task-list" id="auto-daily-upgrade-list"></ul></div>
             </div>
             <div class="auto-daily-footer">
-                <button class="sync-button" id="sync-settings-btn" title="Save/Load Settings">💾</button>
+                <button class="sync-button" id="sync-settings-btn" title="Save/Load Settings">ðŸ’¾</button>
                 <label><input type="checkbox" id="hide-doall-btn" ${hideButtonsState.doAll ? 'checked' : ''}> Hide 'Do All'</label>
                 <label><input type="checkbox" id="hide-quests-btn" ${hideButtonsState.quests ? 'checked' : ''}> Hide 'Quests'</label>
                 <label><input type="checkbox" id="hide-actions-btn" ${hideButtonsState.actions ? 'checked' : ''}> Hide 'Actions'</label>
@@ -1642,7 +1639,7 @@ async function executeGetDailyBonus() {
                 li.className = 'auto-daily-task-item';
                 li.dataset.taskId = task.id;
                 const checkboxHTML = `<label><input type="checkbox" data-task-id="${task.id}" ${executionState[task.id] ? 'checked' : ''}><span>${task.label}</span></label>`;
-                const actionHTML = isQuest ? `<div class="auto-daily-status-icon" data-task-id="${task.id}">⏳</div>` : `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                const actionHTML = isQuest ? `<div class="auto-daily-status-icon" data-task-id="${task.id}">â³</div>` : `<button class="auto-daily-fire-btn" data-task-id="${task.id}">ðŸ”¥</button>`;
                 li.innerHTML = checkboxHTML + actionHTML;
                 list.appendChild(li);
             });
@@ -1848,7 +1845,7 @@ async function executeGetDailyBonus() {
             const buttonList = [{
                 name: 'Auto Daily', onClick: createPopup, title: 'Open the Auto Daily control panel',
             }, {
-                name: '🔄',
+                name: 'ðŸ”„',
                 onClick: () => { HWHFuncs.setProgress('Syncing...', true); window.cheats.refreshGame(); },
                 title: 'Run Sync', color: 'green',
             }];
@@ -1887,11 +1884,11 @@ async function executeGetDailyBonus() {
             const questData = allQuests.find(q => q.id === questId);
             const questUI = document.querySelector(`.auto-daily-status-icon[data-task-id="${task.id}"]`);
             if (!questUI) return;
-            let iconHTML = `<span title="Not available">🌑</span>`;
+            let iconHTML = `<span title="Not available">ðŸŒ‘</span>`;
             if (questData) {
                  // Check if quest is completed (state === 2) - following API documentation
                  if (questData.state === 2) {
-                    iconHTML = `<span title="Already done">✅</span>`;
+                    iconHTML = `<span title="Already done">âœ…</span>`;
                 } else {
                     // Try numeric key first (as that's what the API uses), then string key
                     const questHandler = questManager.dataQuests[questId] || questManager.dataQuests[task.id];
@@ -1899,11 +1896,11 @@ async function executeGetDailyBonus() {
                         // Handle quests with doItFunc (like dungeon quest 10022)
                         // These quests can be executed even if isWeCanDo returns false
                         if (questHandler.doItFunc && questData.state === 1) {
-                            iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                            iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">ðŸ”¥</button>`;
                         } else if (questHandler.isWeCanDo && typeof questHandler.isWeCanDo === 'function') {
                             try {
                                 if (questHandler.isWeCanDo.call(questManager)) {
-                                    iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">🔥</button>`;
+                                    iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">ðŸ”¥</button>`;
                                 }
                             } catch (e) {
                                 // If isWeCanDo check fails, just show as not available
