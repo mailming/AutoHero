@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.1.3
+// @version      3.2.0
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.1.3";
+    const EXTENSION_VERSION = "3.2.0";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
@@ -189,6 +189,13 @@
         let timeDungeon = { all: Date.now(), steps: 0 };
 
         function getApiResult(result) {
+            if (!result) return null;
+            if (result.status >= 400 || result.errors) {
+                return { error: result, validation: result.errors };
+            }
+            if (result.error && !result.results) {
+                return { error: result.error };
+            }
             return result?.results?.[0]?.result;
         }
 
@@ -669,20 +676,23 @@
                 args: {
                     heroes,
                     favor: favor || {},
-                    teamNum,
+                    teamNum: Number(teamNum),
                     ...(pet ? { pet } : {}),
                 },
+                ident: 'body',
             };
         }
 
         async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}) {
             const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
             const apiResult = getApiResult(raw);
-            if (apiResult?.error) {
-                const errMsg = typeof apiResult.error === 'string'
-                    ? apiResult.error
-                    : `${apiResult.error.name || 'Error'}: ${apiResult.error.description || ''}`;
-                console.warn(`[Dungeon] dungeonStartBattle failed (${attackerType}, team ${teamNum}):`, errMsg, apiResult.error);
+            if (apiResult?.error || apiResult?.validation) {
+                const errMsg = apiResult.validation
+                    ? JSON.stringify(apiResult.validation)
+                    : (typeof apiResult.error === 'string'
+                        ? apiResult.error
+                        : `${apiResult.error?.name || apiResult.error?.title || 'Error'}: ${apiResult.error?.description || apiResult.error?.title || ''}`);
+                console.warn(`[Dungeon] dungeonStartBattle failed (${attackerType}, team ${teamNum}):`, errMsg, raw);
                 return null;
             }
             const battleData = apiResult?.response;
