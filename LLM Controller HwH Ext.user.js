@@ -1,0 +1,564 @@
+// ==UserScript==
+// @name         LLM Controller HwH Ext
+// @namespace    HeroWarsHelper.LLMController
+// @version      1.0
+// @description  Provides an LLM-accessible API interface to control HeroWarsHelper functions directly
+// @author       YourName
+// @match        https://www.hero-wars.com/*
+// @match        https://apps-1701433570146040.apps.fbsbx.com/*
+// @grant        none
+// @run-at       document-end
+// @downloadURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/LLM%20Controller%20HwH%20Ext.user.js
+// @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/LLM%20Controller%20HwH%20Ext.user.js
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    const EXTENSION_NAME = "LLM Controller Extension";
+    const EXTENSION_VERSION = "1.0";
+    const EXTENSION_AUTHOR = "YourName";
+
+    // Wait for HWH to be ready
+    const waitForHWH = setInterval(() => {
+        if (window.HWHClasses && window.HWHClasses.ScriptMenu && window.lib && window.cheats && window.Send && window.HWHFuncs) {
+            const scriptMenu = window.HWHClasses.ScriptMenu.getInst();
+            if (scriptMenu && scriptMenu.mainMenu) {
+                clearInterval(waitForHWH);
+                initializeExtension();
+            }
+        }
+    }, 200);
+
+    function initializeExtension() {
+        console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
+        
+        const { HWHClasses, HWHFuncs, Send, cheats, Caller, lib } = window;
+        HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
+
+        // Create LLM API interface
+        window.LLMHWH = createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib });
+
+        // Add menu button for testing
+        const scriptMenu = HWHClasses.ScriptMenu.getInst();
+        scriptMenu.addButton({
+            name: 'LLM API',
+            title: 'Open LLM API documentation and test interface',
+            onClick: openLLMInterface
+        });
+
+        console.log(`${EXTENSION_NAME} initialized. LLM API available at window.LLMHWH`);
+    }
+
+    function createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib }) {
+        /**
+         * LLM API Interface for HeroWarsHelper
+         * 
+         * This API allows LLMs to directly control HeroWarsHelper functions.
+         * All functions return Promises and can be awaited.
+         */
+        return {
+            // ========== CORE API FUNCTIONS ==========
+            
+            /**
+             * Send API request directly
+             * @param {Object|string} request - API call object or JSON string
+             * @returns {Promise} API response
+             */
+            async sendAPI(request) {
+                try {
+                    if (typeof request === 'string') {
+                        request = JSON.parse(request);
+                    }
+                    return await Send(request);
+                } catch (error) {
+                    throw new Error(`API call failed: ${error.message}`);
+                }
+            },
+
+            /**
+             * Get user information
+             * @returns {Promise<Object>} User info
+             */
+            async getUserInfo() {
+                return await Send({ calls: [{ name: "userGetInfo", args: {}, ident: "userInfo" }] });
+            },
+
+            /**
+             * Get all heroes
+             * @returns {Promise<Object>} Hero data
+             */
+            async getHeroes() {
+                return await Send({ calls: [{ name: "heroGetAll", args: {}, ident: "heroes" }] });
+            },
+
+            /**
+             * Get all titans
+             * @returns {Promise<Object>} Titan data
+             */
+            async getTitans() {
+                return await Send({ calls: [{ name: "titanGetAll", args: {}, ident: "titans" }] });
+            },
+
+            /**
+             * Get inventory
+             * @returns {Promise<Object>} Inventory data
+             */
+            async getInventory() {
+                return await Send({ calls: [{ name: "inventoryGet", args: {}, ident: "inventory" }] });
+            },
+
+            /**
+             * Get all quests
+             * @returns {Promise<Object>} Quest data
+             */
+            async getQuests() {
+                return await Send({ calls: [{ name: "questGetAll", args: {}, ident: "quests" }] });
+            },
+
+            // ========== GAME OPERATIONS ==========
+
+            /**
+             * Execute Outland (boss raids and chests)
+             * @returns {Promise<string>} Status message
+             */
+            async executeOutland() {
+                return new Promise((resolve, reject) => {
+                    try {
+                        HWHFuncs.setProgress('Executing: Outland', true);
+                        const getOutland = window.getOutland || window.HWHData?.buttons?.getOutland?.button?.onclick;
+                        if (getOutland) {
+                            getOutland();
+                            setTimeout(() => resolve('Outland executed'), 2000);
+                        } else {
+                            // Fallback: direct API call
+                            Send({ calls: [{ name: "bossGetAll", args: {}, ident: "bossGetAll" }] })
+                                .then(data => {
+                                    const bosses = data.results[0].result.response;
+                                    const calls = [];
+                                    for (const boss of bosses) {
+                                        if (boss.mayRaid) calls.push({ name: "bossRaid", args: { bossId: boss.id }, ident: "bossRaid_" + boss.id });
+                                        if (boss.chestId === 1 || boss.mayRaid) calls.push({ name: "bossOpenChest", args: { bossId: boss.id, amount: 1, starmoney: 0 }, ident: "bossOpenChest_" + boss.id });
+                                    }
+                                    if (calls.length > 0) {
+                                        return Send({ calls });
+                                    }
+                                })
+                                .then(() => {
+                                    HWHFuncs.setProgress('Outland: Done!', true);
+                                    resolve('Outland executed successfully');
+                                })
+                                .catch(reject);
+                        }
+                    } catch (error) {
+                        reject(new Error(`Outland execution failed: ${error.message}`));
+                    }
+                });
+            },
+
+            /**
+             * Execute Tower
+             * @returns {Promise<string>} Status message
+             */
+            async executeTower() {
+                return new Promise((resolve, reject) => {
+                    try {
+                        HWHFuncs.setProgress('Executing: Tower', true);
+                        const executeTower = new HWHClasses.executeTower(resolve, reject);
+                        executeTower.start();
+                    } catch (error) {
+                        reject(new Error(`Tower execution failed: ${error.message}`));
+                    }
+                });
+            },
+
+            /**
+             * Execute Dungeon
+             * @param {number} maxTitanite - Maximum titanite to collect (optional)
+             * @returns {Promise<string>} Status message
+             */
+            async executeDungeon(maxTitanite = null) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        HWHFuncs.setProgress('Executing: Dungeon', true);
+                        const testDungeon = window.testDungeon || HWHClasses.executeDungeon;
+                        if (typeof testDungeon === 'function') {
+                            const dungeon = new testDungeon(resolve, reject);
+                            if (maxTitanite) {
+                                dungeon.start(maxTitanite);
+                            } else {
+                                dungeon.start();
+                            }
+                        } else {
+                            reject(new Error('Dungeon function not available'));
+                        }
+                    } catch (error) {
+                        reject(new Error(`Dungeon execution failed: ${error.message}`));
+                    }
+                });
+            },
+
+            /**
+             * Execute Expeditions
+             * @returns {Promise<string>} Status message
+             */
+            async executeExpeditions() {
+                return new Promise((resolve, reject) => {
+                    try {
+                        HWHFuncs.setProgress('Executing: Expeditions', true);
+                        const expedition = new HWHClasses.Expedition(resolve, reject);
+                        expedition.start();
+                    } catch (error) {
+                        reject(new Error(`Expeditions execution failed: ${error.message}`));
+                    }
+                });
+            },
+
+            /**
+             * Collect all quest rewards
+             * @returns {Promise<string>} Status message
+             */
+            async collectQuestRewards() {
+                try {
+                    HWHFuncs.setProgress('Collecting quest rewards', true);
+                    const questData = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "quests" }] });
+                    const quests = questData.results[0].result.response;
+                    const questsToFarm = quests.filter(q => q && q.id < 1000000 && q.state === 2);
+                    
+                    if (questsToFarm.length === 0) {
+                        HWHFuncs.setProgress('No quests ready to collect', true);
+                        return 'No quests ready to collect';
+                    }
+                    
+                    const questCalls = questsToFarm.map(q => ({ 
+                        name: "questFarm", 
+                        args: { questId: q.id }, 
+                        ident: `questFarm_${q.id}` 
+                    }));
+                    
+                    await Send({ calls: questCalls });
+                    HWHFuncs.setProgress(`Collected ${questsToFarm.length} quest rewards`, true);
+                    return `Collected ${questsToFarm.length} quest rewards`;
+                } catch (error) {
+                    throw new Error(`Quest collection failed: ${error.message}`);
+                }
+            },
+
+            /**
+             * Collect mail
+             * @returns {Promise<string>} Status message
+             */
+            async collectMail() {
+                try {
+                    HWHFuncs.setProgress('Collecting mail', true);
+                    const mailData = await Send({ calls: [{ name: "mailGetAll", args: {}, ident: "mail" }] });
+                    const letters = mailData.results[0].result.response.letters;
+                    const letterIds = HWHClasses.Letters.filter(letters);
+                    
+                    if (letterIds.length > 0) {
+                        await Send({ calls: [{ name: "mailFarm", args: { letterIds }, ident: "mailFarm" }] });
+                        HWHFuncs.setProgress(`Collected ${letterIds.length} mail items`, true);
+                        return `Collected ${letterIds.length} mail items`;
+                    } else {
+                        HWHFuncs.setProgress('No mail to collect', true);
+                        return 'No mail to collect';
+                    }
+                } catch (error) {
+                    throw new Error(`Mail collection failed: ${error.message}`);
+                }
+            },
+
+            /**
+             * Get daily bonus
+             * @returns {Promise<string>} Status message
+             */
+            async getDailyBonus() {
+                try {
+                    HWHFuncs.setProgress('Getting daily bonus', true);
+                    const doYourBest = new HWHClasses.doYourBest(() => {}, () => {});
+                    if (doYourBest.functions && doYourBest.functions.getDailyBonus) {
+                        await doYourBest.functions.getDailyBonus();
+                        HWHFuncs.setProgress('Daily bonus collected', true);
+                        return 'Daily bonus collected';
+                    } else {
+                        throw new Error('Daily bonus function not available');
+                    }
+                } catch (error) {
+                    throw new Error(`Daily bonus failed: ${error.message}`);
+                }
+            },
+
+            /**
+             * Execute Seer (Ascension Chest)
+             * @returns {Promise<string>} Status message
+             */
+            async executeSeer() {
+                try {
+                    HWHFuncs.setProgress('Executing: Seer', true);
+                    const data = await Send({ calls: [{ name: "userGetInfo", args: {}, ident: "userInfo" }] });
+                    const refillable = data.results[0].result.response.refillable;
+                    const seerCharges = refillable.find(i => i.id == 47);
+                    
+                    if (seerCharges && seerCharges.amount > 0) {
+                        await Send({ calls: [{ name: "ascensionChest_open", args: { paid: false, amount: 1 }, ident: "seer" }] });
+                        HWHFuncs.setProgress('Seer: Done!', true);
+                        return 'Seer executed successfully';
+                    } else {
+                        HWHFuncs.setProgress('Seer: No charges available', true);
+                        return 'No seer charges available';
+                    }
+                } catch (error) {
+                    throw new Error(`Seer execution failed: ${error.message}`);
+                }
+            },
+
+            // ========== BATTLE OPERATIONS ==========
+
+            /**
+             * Execute Arena battle
+             * @param {Object} team - Team configuration
+             * @returns {Promise<Object>} Battle result
+             */
+            async executeArenaBattle(team) {
+                try {
+                    const battleCall = {
+                        calls: [{
+                            name: "arenaStartBattle",
+                            args: team,
+                            ident: "arenaBattle"
+                        }]
+                    };
+                    return await Send(battleCall);
+                } catch (error) {
+                    throw new Error(`Arena battle failed: ${error.message}`);
+                }
+            },
+
+            /**
+             * Execute Grand Arena battle
+             * @param {Object} teams - Team configurations (3 teams)
+             * @returns {Promise<Object>} Battle result
+             */
+            async executeGrandArenaBattle(teams) {
+                try {
+                    const battleCall = {
+                        calls: [{
+                            name: "grandArenaStartBattle",
+                            args: teams,
+                            ident: "grandArenaBattle"
+                        }]
+                    };
+                    return await Send(battleCall);
+                } catch (error) {
+                    throw new Error(`Grand Arena battle failed: ${error.message}`);
+                }
+            },
+
+            // ========== UTILITY FUNCTIONS ==========
+
+            /**
+             * Translate a key
+             * @param {string} key - Translation key
+             * @returns {string} Translated text
+             */
+            translate(key) {
+                return cheats.translate(key);
+            },
+
+            /**
+             * Get library data
+             * @param {string} id - Library data ID (e.g., 'hero', 'titan', 'mission')
+             * @returns {Object} Library data
+             */
+            getLibraryData(id) {
+                return lib.getData(id);
+            },
+
+            /**
+             * Set progress message
+             * @param {string} message - Progress message
+             * @param {boolean} autoHide - Auto-hide after timeout
+             */
+            setProgress(message, autoHide = true) {
+                HWHFuncs.setProgress(message, autoHide);
+            },
+
+            /**
+             * Show popup confirmation
+             * @param {string} message - Popup message
+             * @param {Array} buttons - Button configurations
+             * @returns {Promise} User selection
+             */
+            async showPopup(message, buttons) {
+                return await HWHFuncs.popup.confirm(message, buttons);
+            },
+
+            // ========== BATCH OPERATIONS ==========
+
+            /**
+             * Execute multiple operations in sequence
+             * @param {Array<string>} operations - Array of operation names
+             * @returns {Promise<Array>} Results array
+             */
+            async executeBatch(operations) {
+                const results = [];
+                for (const op of operations) {
+                    try {
+                        const result = await this.executeOperation(op);
+                        results.push({ operation: op, success: true, result });
+                    } catch (error) {
+                        results.push({ operation: op, success: false, error: error.message });
+                    }
+                }
+                return results;
+            },
+
+            /**
+             * Execute a single operation by name
+             * @param {string} operationName - Name of operation
+             * @param {Object} params - Optional parameters
+             * @returns {Promise} Operation result
+             */
+            async executeOperation(operationName, params = {}) {
+                const operations = {
+                    'outland': () => this.executeOutland(),
+                    'tower': () => this.executeTower(),
+                    'dungeon': () => this.executeDungeon(params.maxTitanite),
+                    'expeditions': () => this.executeExpeditions(),
+                    'quests': () => this.collectQuestRewards(),
+                    'mail': () => this.collectMail(),
+                    'dailyBonus': () => this.getDailyBonus(),
+                    'seer': () => this.executeSeer(),
+                };
+
+                if (operations[operationName.toLowerCase()]) {
+                    return await operations[operationName.toLowerCase()]();
+                } else {
+                    throw new Error(`Unknown operation: ${operationName}`);
+                }
+            },
+
+            // ========== INFORMATION ==========
+
+            /**
+             * Get available operations list
+             * @returns {Array<string>} List of available operations
+             */
+            getAvailableOperations() {
+                return [
+                    'outland',
+                    'tower',
+                    'dungeon',
+                    'expeditions',
+                    'quests',
+                    'mail',
+                    'dailyBonus',
+                    'seer',
+                    'arenaBattle',
+                    'grandArenaBattle'
+                ];
+            },
+
+            /**
+             * Get API documentation
+             * @returns {Object} API documentation
+             */
+            getDocumentation() {
+                return {
+                    version: EXTENSION_VERSION,
+                    description: 'LLM API Interface for HeroWarsHelper',
+                    operations: {
+                        sendAPI: 'Send any API request directly',
+                        getUserInfo: 'Get current user information',
+                        getHeroes: 'Get all hero data',
+                        getTitans: 'Get all titan data',
+                        getInventory: 'Get inventory data',
+                        getQuests: 'Get all quests',
+                        executeOutland: 'Execute Outland (boss raids)',
+                        executeTower: 'Execute Tower of Elements',
+                        executeDungeon: 'Execute Dungeon (with optional maxTitanite param)',
+                        executeExpeditions: 'Execute Expeditions',
+                        collectQuestRewards: 'Collect all completed quest rewards',
+                        collectMail: 'Collect all mail',
+                        getDailyBonus: 'Get daily bonus',
+                        executeSeer: 'Execute Seer (Ascension Chest)',
+                        executeArenaBattle: 'Execute Arena battle (requires team param)',
+                        executeGrandArenaBattle: 'Execute Grand Arena battle (requires teams param)',
+                        executeBatch: 'Execute multiple operations in sequence',
+                        executeOperation: 'Execute operation by name',
+                        translate: 'Translate a key to text',
+                        getLibraryData: 'Get library data by ID',
+                        setProgress: 'Set progress message',
+                        showPopup: 'Show popup confirmation',
+                        getAvailableOperations: 'Get list of available operations'
+                    }
+                };
+            }
+        };
+    }
+
+    function openLLMInterface() {
+        const { HWHFuncs } = window;
+        const api = window.LLMHWH;
+        
+        if (!api) {
+            HWHFuncs.setProgress('LLM API not initialized', true);
+            return;
+        }
+
+        const doc = api.getDocumentation();
+        const operations = api.getAvailableOperations();
+        
+        const content = document.createElement('div');
+        content.style.cssText = 'padding: 20px; color: #fce1ac; font-family: monospace; max-width: 800px;';
+        content.innerHTML = `
+            <h2 style="color: #ce9767; border-bottom: 2px solid #ce9767; padding-bottom: 10px;">
+                LLM API Interface
+            </h2>
+            <div style="margin: 20px 0;">
+                <h3 style="color: #87CEEB;">Available Operations:</h3>
+                <ul style="list-style: none; padding: 0;">
+                    ${operations.map(op => `<li style="padding: 5px 0;">• <code style="color: #FFD700;">${op}</code></li>`).join('')}
+                </ul>
+            </div>
+            <div style="margin: 20px 0;">
+                <h3 style="color: #87CEEB;">Usage Examples:</h3>
+                <pre style="background: rgba(0,0,0,0.5); padding: 15px; border-radius: 5px; overflow-x: auto;">
+// In browser console:
+await LLMHWH.executeOutland();
+await LLMHWH.collectQuestRewards();
+await LLMHWH.executeBatch(['outland', 'quests', 'mail']);
+
+// Get data:
+const userInfo = await LLMHWH.getUserInfo();
+const heroes = await LLMHWH.getHeroes();
+
+// Custom API call:
+await LLMHWH.sendAPI({
+    calls: [{
+        name: "userGetInfo",
+        args: {},
+        ident: "body"
+    }]
+});
+                </pre>
+            </div>
+            <div style="margin: 20px 0;">
+                <p><strong>API is available globally as:</strong> <code style="color: #FFD700;">window.LLMHWH</code></p>
+                <p>All functions return Promises and can be used with async/await.</p>
+            </div>
+        `;
+
+        HWHFuncs.popup.confirm('LLM API Documentation', [
+            { msg: 'Close', result: true, isClose: true }
+        ]).then(() => {
+            const popupBody = document.querySelector('.PopUp_Container');
+            if (popupBody) {
+                popupBody.innerHTML = '';
+                popupBody.appendChild(content);
+            }
+        });
+    }
+
+})();
+
