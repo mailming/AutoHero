@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.1
+// @version      3.2.0
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,14 +15,12 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.1";
+    const EXTENSION_VERSION = "3.2.0";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
     /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
-    /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES` (default 10). */
-    /** Step delay between floors ms: `window.HWH_DUNGEON_STEP_DELAY_MS` (default 100). */
-    /** Brute-force budget ms: `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000). */
+    /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES = 10` (Stealther dungeon). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
     const UI_ICON = {
@@ -161,9 +159,8 @@
         const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
 
         const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
+        /** Battle pre-calculation count (0-25). Set window.HWH_DUNGEON_NUM_TRIES (default 10). */
         const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
-        const BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_BRUTEFORCE_MS) || 60000));
-        const STEP_DELAY_MS = Math.max(0, Math.min(1000, Number(window.HWH_DUNGEON_STEP_DELAY_MS) || 100));
 
         function syncPredictionCardsFromInventory(invRes) {
             const raw = invRes?.result?.response?.consumable?.[81];
@@ -259,9 +256,7 @@
         function extractTimers(battleResult) {
             const logs = battleResult.battleLogs?.[0] || [];
             const timeLimit = Math.max(...logs.map((e) => e.time), 168.8);
-            const timers = [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))].filter((t) => t > 0);
-            timers.sort(() => Math.random() - 0.5);
-            return timers.length > 0 ? timers : [0];
+            return [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))].filter((t) => t > 0);
         }
 
         class PvPBattleHandler {
@@ -370,17 +365,14 @@
                 return thisState > bestState;
             }
 
-            async *bruteforce(endTime = Date.now() + BRUTEFORCE_MS) {
+            async *bruteforce(endTime = Date.now() + 60000) {
                 if (endTime < Date.now()) {
-                    endTime = Date.now() + BRUTEFORCE_MS;
+                    endTime = Date.now() + 60000;
                 }
                 if (!this._initialBattle) {
                     this._initialBattle = await this.init();
                 }
                 while (Date.now() < endTime && this._counter < this._maxBattles) {
-                    if (stopDung || end) {
-                        break;
-                    }
                     if (!(this._lastBattle = await this.reCalculate())) {
                         continue;
                     }
@@ -408,9 +400,6 @@
                 }
                 const originalSeed = this._battle?.seed;
                 for (let i = 0; i < times; i++) {
-                    if (stopDung || end) {
-                        break;
-                    }
                     if (this._battle) {
                         this._battle.seed = Math.floor(Date.now() / 1000) + Math.random() * 1000;
                     }
@@ -694,7 +683,23 @@
             };
         }
 
-        async function simulateFromBattleData(battleData, teamNum, heroes, pet, attackerType, favor = {}) {
+        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}) {
+            const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
+            const apiResult = getApiResult(raw);
+            if (apiResult?.error || apiResult?.validation) {
+                const errMsg = apiResult.validation
+                    ? JSON.stringify(apiResult.validation)
+                    : (typeof apiResult.error === 'string'
+                        ? apiResult.error
+                        : `${apiResult.error?.name || apiResult.error?.title || 'Error'}: ${apiResult.error?.description || apiResult.error?.title || ''}`);
+                console.warn(`[Dungeon] dungeonStartBattle failed (${attackerType}, team ${teamNum}):`, errMsg, raw);
+                return null;
+            }
+            const battleData = apiResult?.response;
+            if (!battleData) {
+                console.warn(`[Dungeon] dungeonStartBattle empty response (${attackerType}, team ${teamNum})`, raw);
+                return null;
+            }
             const isBruteForceBattle = attackerType !== 'hero';
             const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
             const handler = new DungeonBattleHandler(battleData, battleType);
@@ -708,6 +713,7 @@
             }
             const battle = handlerResult.bestBattle ?? handlerResult.initBattle;
             if (!battle?.result) {
+                console.warn(`[Dungeon] No simulated battle result (${attackerType}, team ${teamNum})`);
                 return null;
             }
             const wrapped = {
@@ -728,62 +734,18 @@
             };
         }
 
-        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}) {
-            const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
-            const apiResult = getApiResult(raw);
-            if (apiResult?.error || apiResult?.validation) {
-                const errMsg = apiResult.validation
-                    ? JSON.stringify(apiResult.validation)
-                    : (typeof apiResult.error === 'string'
-                        ? apiResult.error
-                        : `${apiResult.error?.name || apiResult.error?.title || 'Error'}: ${apiResult.error?.description || apiResult.error?.title || ''}`);
-                console.warn(`[Dungeon] dungeonStartBattle failed (${attackerType}, team ${teamNum}):`, errMsg, raw);
-                return null;
+        async function waitForBattle(option, attackerType, debug = '') {
+            const rounds = Math.ceil(option.timer || 0);
+            for (let r = rounds; r > 0; r--) {
+                if (stopDung || end) return;
+                const msg = `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${r}s`;
+                setProgress(msg, true);
+                await sleep(1000);
             }
-            const battleData = apiResult?.response;
-            if (!battleData) {
-                console.warn(`[Dungeon] dungeonStartBattle empty response (${attackerType}, team ${teamNum})`, raw);
-                return null;
-            }
-            return simulateFromBattleData(battleData, teamNum, heroes, pet, attackerType, favor);
         }
 
-        async function batchSimulateDoors(doors) {
-            if (doors.length === 0) {
-                return [];
-            }
-            if (doors.length === 1) {
-                const d = doors[0];
-                const option = await startAndSimulate(d.teamNum, d.heroes, d.pet, d.attackerType, d.favor);
-                return [{ option, attackerType: d.attackerType }];
-            }
-            const calls = doors.map((d, i) => ({
-                ...createBattleArgs(d.teamNum, d.heroes, d.pet, d.favor),
-                ident: `dungeon_start_${i}`,
-            }));
-            const raw = await Send({ calls });
-            const results = [];
-            for (let i = 0; i < doors.length; i++) {
-                const door = doors[i];
-                const apiResult = raw.results?.[i]?.result;
-                if (apiResult?.error || !apiResult?.response) {
-                    results.push(null);
-                    continue;
-                }
-                const option = await simulateFromBattleData(
-                    apiResult.response,
-                    door.teamNum,
-                    door.heroes,
-                    door.pet,
-                    door.attackerType,
-                    door.favor
-                );
-                results.push(option?.win ? { option, attackerType: door.attackerType } : null);
-            }
-            return results;
-        }
-
-        async function executeOption(option) {
+        async function executeOption(option, attackerType, debug = '') {
+            await waitForBattle(option, attackerType, debug);
             if (stopDung || end) return false;
             return endBattleOption(option);
         }
@@ -919,7 +881,7 @@
 
         async function runStep() {
             const stepStart = Date.now();
-            await sleep(STEP_DELAY_MS);
+            await sleep(100);
             if (!isRestart) {
                 lastDebugString = '';
             }
@@ -938,7 +900,6 @@
 
             const data = await fetchDungeonData();
             if (!data || titansList.length === 0) {
-                lastError = lastError || 'Failed to fetch dungeon data';
                 return false;
             }
 
@@ -1002,13 +963,12 @@
                 }
                 lastDebugString += debugString(option, 'hero');
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                const ok = await executeOption(option);
+                const ok = await executeOption(option, 'hero', lastDebugString);
                 timeDungeon.steps += Date.now() - stepStart;
                 return ok !== false;
             }
 
             const options = [];
-            const batchDoors = [];
             for (let teamNum = 0; teamNum < userData.length; teamNum++) {
                 if (stopDung) break;
                 const { attackerType } = userData[teamNum];
@@ -1020,13 +980,8 @@
                         let healingTeam = null;
                         let healingOption = null;
                         while (true) {
-                            if (stopDung || end) {
-                                break;
-                            }
                             healingTeam = getTitansForPotentialHealingTeam(aliveTitans, states, useHealingIndex);
-                            if (!healingTeam) {
-                                break;
-                            }
+                            if (!healingTeam) break;
                             healingOption = await startAndSimulate(teamNum, healingTeam, null, attackerType);
                             if (!healingOption?.win) {
                                 useHealingIndex++;
@@ -1050,33 +1005,34 @@
                 }
 
                 if (!team) {
+                    options.push(null);
                     continue;
                 }
 
-                if (team.isHealing && team.option?.win) {
-                    lastDebugString += debugString(team.option, attackerType) + ' [heal]';
+                const option = team.option || (await startAndSimulate(teamNum, team.heroes, team.pet, attackerType));
+                if (!option?.win) {
+                    options.push(null);
+                    continue;
+                }
+
+                if (team.isHealing && option.win) {
+                    lastDebugString += debugString(option, attackerType) + ' [heal]';
                     if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                    const ok = await executeOption(team.option);
+                    const ok = await executeOption(option, attackerType, lastDebugString);
                     timeDungeon.steps += Date.now() - stepStart;
                     return ok !== false;
                 }
-
-                batchDoors.push({
-                    teamNum,
-                    heroes: team.heroes,
-                    pet: team.pet || null,
-                    favor: team.favor || {},
-                    attackerType,
-                });
-            }
-
-            if (batchDoors.length > 0) {
-                const batchResults = await batchSimulateDoors(batchDoors);
-                for (const entry of batchResults) {
-                    if (entry) {
-                        options.push(entry);
+                if (team.isHealing) {
+                    const fallback = getNeutralTitans(aliveTitans);
+                    if (fallback.length > 0) {
+                        const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType);
+                        options.push(fallbackOption?.win ? { option: fallbackOption, attackerType } : null);
+                    } else {
+                        options.push(null);
                     }
+                    continue;
                 }
+                options.push({ option, attackerType });
             }
 
             const valid = options.filter(Boolean);
@@ -1123,7 +1079,7 @@
             }
 
             if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-            const ok = await executeOption(finalOption);
+            const ok = await executeOption(finalOption, best.attackerType, lastDebugString);
             stepCount++;
             timeDungeon.steps += Date.now() - stepStart;
             return ok !== false;
@@ -1228,14 +1184,12 @@
                 while (!end && !stopDung) {
                     const success = await runStep();
                     if (!success) {
+                        if (lastError && !end) {
+                            endDungeon(lastError);
+                        }
                         break;
                     }
-                    await sleep(STEP_DELAY_MS);
-                }
-                if (lastError && !end) {
-                    endDungeon(lastError);
-                } else if (stopDung && !end) {
-                    endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
+                    await sleep(100);
                 }
             } catch (err) {
                 console.error('[Dungeon] Fatal error:', err);
