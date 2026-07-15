@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.0
+// @version      3.2.3
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,12 +15,16 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.0";
+    const EXTENSION_VERSION = "3.2.3";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
     /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
-    /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES = 10` (Stealther dungeon). */
+    /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES` (default 10). */
+    /** Step delay between floors ms: `window.HWH_DUNGEON_STEP_DELAY_MS` (default 100). */
+    /** Brute-force budget ms (execute): `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000). */
+    /** Brute-force budget ms (door eval): `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS` (default 12000). Set to 60000 for full Stealther door comparison. */
+    /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (default 25). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
     const UI_ICON = {
@@ -41,6 +45,7 @@
     let combinedButton = null;
     let cachedQuestData = null; // Cache for questGetAll results
     let autoRunInProgress = false;
+    let dungeonRunning = false;
 
     // --- DUNGEON TITAN HEALTH SETTINGS ---
     const defaultTitanHealthSettings = {
@@ -159,8 +164,13 @@
         const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
 
         const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
-        /** Battle pre-calculation count (0-25). Set window.HWH_DUNGEON_NUM_TRIES (default 10). */
         const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
+        const BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_BRUTEFORCE_MS) || 60000));
+        const EVAL_BRUTEFORCE_MS = Math.max(2000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || 12000));
+        const STEP_DELAY_MS = Math.max(0, Math.min(1000, Number(window.HWH_DUNGEON_STEP_DELAY_MS) || 100));
+        const MAX_TIMER_TRIES = Math.max(1, Math.min(50, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 25));
+        const BRUTE_STALE_TRIES = 4;
+        const SIM_YIELD_EVERY = 3;
 
         function syncPredictionCardsFromInventory(invRes) {
             const raw = invRes?.result?.response?.consumable?.[81];
@@ -185,6 +195,8 @@
         let lastError = null;
         let lastDebugString = '';
         let lastBattleHandler = null;
+        let lastStartedTeamNum = -1;
+        let battleStartTime = 0;
         let stepCount = 0;
         let timeDungeon = { all: Date.now(), steps: 0 };
 
@@ -253,10 +265,12 @@
             });
         }
 
-        function extractTimers(battleResult) {
+        function extractTimers(battleResult, maxTimerTries = MAX_TIMER_TRIES) {
             const logs = battleResult.battleLogs?.[0] || [];
             const timeLimit = Math.max(...logs.map((e) => e.time), 168.8);
-            return [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))].filter((t) => t > 0);
+            const timers = [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))].filter((t) => t > 0);
+            timers.sort(() => Math.random() - 0.5);
+            return timers.length > 0 ? timers.slice(0, maxTimerTries) : [0];
         }
 
         class PvPBattleHandler {
@@ -274,11 +288,12 @@
                 this._bestBattle = undefined;
                 this._maxBattles = 0;
                 this._errors = 0;
+                this._staleTries = 0;
             }
 
-            async init() {
+            async init(maxTimerTries = MAX_TIMER_TRIES) {
                 this._initialBattle = await this.reCalculate(0);
-                this._timers = extractTimers(this._initialBattle);
+                this._timers = extractTimers(this._initialBattle, maxTimerTries);
                 if (this._timers.length === 0) {
                     this._timers = [0];
                 }
@@ -365,16 +380,26 @@
                 return thisState > bestState;
             }
 
-            async *bruteforce(endTime = Date.now() + 60000) {
+            async *bruteforce(endTime = Date.now() + BRUTEFORCE_MS) {
                 if (endTime < Date.now()) {
-                    endTime = Date.now() + 60000;
+                    endTime = Date.now() + BRUTEFORCE_MS;
                 }
                 if (!this._initialBattle) {
                     this._initialBattle = await this.init();
                 }
+                const initAlreadyWins = !!this._initialBattle?.result?.win;
+                if (initAlreadyWins && !this._bestBattle) {
+                    this._bestBattle = this._initialBattle;
+                }
                 while (Date.now() < endTime && this._counter < this._maxBattles) {
+                    if (stopDung || end) {
+                        break;
+                    }
                     if (!(this._lastBattle = await this.reCalculate())) {
                         continue;
+                    }
+                    if (this._counter % SIM_YIELD_EVERY === 0) {
+                        await sleep(0);
                     }
                     yield this._counter;
                     if (!this._bestBattle) {
@@ -382,8 +407,15 @@
                         continue;
                     }
                     if (!this.isBetter(this._bestBattle, this._lastBattle)) {
+                        if (initAlreadyWins && this._bestBattle?.result?.win) {
+                            this._staleTries++;
+                            if (this._staleTries >= BRUTE_STALE_TRIES) {
+                                break;
+                            }
+                        }
                         continue;
                     }
+                    this._staleTries = 0;
                     this._bestBattle = this._lastBattle;
                     if (!this._bestBattle.result?.win) {
                         continue;
@@ -400,12 +432,18 @@
                 }
                 const originalSeed = this._battle?.seed;
                 for (let i = 0; i < times; i++) {
+                    if (stopDung || end) {
+                        break;
+                    }
                     if (this._battle) {
                         this._battle.seed = Math.floor(Date.now() / 1000) + Math.random() * 1000;
                     }
                     const battleBuffer = await simulateBattle(structuredClone(this._battle), this._type);
                     if (battleBuffer?.result?.win) {
                         wins++;
+                    }
+                    if ((i + 1) % SIM_YIELD_EVERY === 0) {
+                        await sleep(0);
                     }
                     yield wins;
                 }
@@ -426,8 +464,10 @@
             }
         }
 
-        async function runBattleHandler(battleHandler, forceFix = false, skipPreCalc = false) {
-            const initBattle = await battleHandler.init();
+        async function runBattleHandler(battleHandler, forceFix = false, skipPreCalc = false, simOpts = {}) {
+            const bruteMs = simOpts.bruteforceMs ?? BRUTEFORCE_MS;
+            const maxTimerTries = simOpts.maxTimerTries ?? MAX_TIMER_TRIES;
+            const initBattle = await battleHandler.init(maxTimerTries);
             if (!initBattle) {
                 return { initBattle: null, bestBattle: null, isWin: false, timer: 0 };
             }
@@ -449,8 +489,20 @@
                 return { initBattle, bestBattle: null, isWin, timer: initBattle.battleTime ?? 0 };
             }
 
-            for await (const _count of battleHandler.bruteforce()) {
-                if (stopDung) break;
+            if (bruteMs <= 0) {
+                const resolved = battleHandler.bestBattle() ?? initBattle;
+                return {
+                    initBattle,
+                    bestBattle: null,
+                    isWin: !!resolved?.result?.win,
+                    timer: resolved?.battleTime ?? 0,
+                };
+            }
+
+            for await (const _count of battleHandler.bruteforce(Date.now() + bruteMs)) {
+                if (stopDung || end) {
+                    break;
+                }
             }
 
             const bestBattle = battleHandler.bestBattle();
@@ -683,7 +735,7 @@
             };
         }
 
-        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}) {
+        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, simPhase = 'eval') {
             const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
             const apiResult = getApiResult(raw);
             if (apiResult?.error || apiResult?.validation) {
@@ -700,13 +752,25 @@
                 console.warn(`[Dungeon] dungeonStartBattle empty response (${attackerType}, team ${teamNum})`, raw);
                 return null;
             }
+            if (simPhase === 'execute') {
+                lastStartedTeamNum = teamNum;
+                battleStartTime = Date.now();
+            }
             const isBruteForceBattle = attackerType !== 'hero';
             const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
             const handler = new DungeonBattleHandler(battleData, battleType);
             lastBattleHandler = handler;
+            const isExecute = simPhase === 'execute';
+            const bruteMs = isExecute ? BRUTEFORCE_MS : EVAL_BRUTEFORCE_MS;
+            const maxTimerTries = isExecute ? MAX_TIMER_TRIES : Math.min(MAX_TIMER_TRIES, 12);
             let handlerResult;
             try {
-                handlerResult = await runBattleHandler(handler, isBruteForceBattle, isBruteForceBattle);
+                handlerResult = await runBattleHandler(
+                    handler,
+                    isBruteForceBattle,
+                    isBruteForceBattle,
+                    { bruteforceMs: bruteMs, maxTimerTries }
+                );
             } catch (err) {
                 console.warn(`[Dungeon] BattleCalc failed (${attackerType}, team ${teamNum}):`, err);
                 return null;
@@ -734,23 +798,55 @@
             };
         }
 
-        async function waitForBattle(option, attackerType, debug = '') {
-            const rounds = Math.ceil(option.timer || 0);
-            for (let r = rounds; r > 0; r--) {
-                if (stopDung || end) return;
-                const msg = `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${r}s`;
-                setProgress(msg, true);
-                await sleep(1000);
+        function isNotFoundError(err) {
+            const desc = typeof err === 'string'
+                ? err
+                : (err?.description || err?.name || err?.title || JSON.stringify(err));
+            return /not\s*found|NotFound/i.test(desc);
+        }
+
+        async function waitRemainingBattleTime(option, debug = '') {
+            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+            if (predictionCards > 0) {
+                return;
             }
+            const totalTimer = Math.ceil(option.timer ?? getTimer(option.battleTime ?? 0));
+            const elapsed = battleStartTime ? Math.ceil((Date.now() - battleStartTime) / 1000) : 0;
+            const remaining = Math.max(0, totalTimer - elapsed);
+            if (DUNGEON_VERBOSE) {
+                console.log('[Dungeon] battle wait remaining:', remaining, 's (total', totalTimer, 'elapsed', elapsed, ')');
+            }
+            if (remaining <= 0) {
+                return;
+            }
+            const msg = `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`;
+            await countdownTimer(remaining, msg);
         }
 
         async function executeOption(option, attackerType, debug = '') {
-            await waitForBattle(option, attackerType, debug);
-            if (stopDung || end) return false;
-            return endBattleOption(option);
+            if (stopDung || end) {
+                return false;
+            }
+            const finalized = await startAndSimulate(
+                option.teamNum,
+                option.heroes,
+                option.pet,
+                attackerType,
+                option.favor || {},
+                'execute'
+            );
+            if (!finalized?.win) {
+                lastError = 'Failed to finalize dungeon battle on server';
+                return false;
+            }
+            await waitRemainingBattleTime(finalized, debug);
+            if (stopDung || end) {
+                return false;
+            }
+            return endBattleOption(finalized, attackerType);
         }
 
-        async function endBattleOption(option) {
+        async function endBattleOption(option, attackerType, isRetry = false) {
             if (!option?.result?.win) {
                 endDungeon('Hero or Titan may have died in battle!', option);
                 return false;
@@ -762,24 +858,25 @@
             const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
             if (predictionCards > 0) {
                 args.isRaid = true;
-            } else {
-                const timer = option.timer ?? getTimer(option.battleTime ?? 0);
-                if (DUNGEON_VERBOSE) console.log('[Dungeon] wait timer:', timer);
-                await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
             }
 
             let e;
             try {
                 e = await Send({ calls: [{ name: 'dungeonEndBattle', args, ident: 'body' }] });
             } catch (err) {
+                if (!isRetry && isNotFoundError(err)) {
+                    return retryEndBattleAfterNotFound(option, attackerType);
+                }
                 endDungeon('errorRequest', err);
                 return false;
             }
 
             if (e?.error) {
-                const desc = typeof e.error === 'string' ? e.error : (e.error.description || '');
-                if (desc.includes('NotFound') || desc.includes('not found')) {
-                    console.warn('[Dungeon] Battle not found, continuing...', e.error);
+                if (isNotFoundError(e.error)) {
+                    if (!isRetry) {
+                        return retryEndBattleAfterNotFound(option, attackerType);
+                    }
+                    console.warn('[Dungeon] Battle not found after retry, continuing...', e.error);
                     return true;
                 }
                 endDungeon('errorRequest', e.error);
@@ -793,9 +890,11 @@
 
             const result = e.results[0].result;
             if (result.error) {
-                const desc = typeof result.error === 'string' ? result.error : (result.error.description || '');
-                if (desc.includes('NotFound') || desc.includes('not found')) {
-                    console.warn('[Dungeon] Battle not found in result, continuing...', result.error);
+                if (isNotFoundError(result.error)) {
+                    if (!isRetry) {
+                        return retryEndBattleAfterNotFound(option, attackerType);
+                    }
+                    console.warn('[Dungeon] Battle not found in result after retry, continuing...', result.error);
                     return true;
                 }
                 endDungeon('errorBattleResult', result.error);
@@ -809,8 +908,10 @@
             }
 
             if (battleResult.error) {
-                const desc = typeof battleResult.error === 'string' ? battleResult.error : (battleResult.error.description || '');
-                if (desc.includes('NotFound') || desc.includes('not found')) {
+                if (isNotFoundError(battleResult.error)) {
+                    if (!isRetry) {
+                        return retryEndBattleAfterNotFound(option, attackerType);
+                    }
                     return true;
                 }
                 endDungeon('errorBattleResult', battleResult);
@@ -825,6 +926,24 @@
 
             dungeonActivity += battleResult.reward?.dungeonActivity ?? 0;
             return true;
+        }
+
+        async function retryEndBattleAfterNotFound(option, attackerType) {
+            console.warn('[Dungeon] NotFound on end battle — restarting battle on server and retrying once');
+            const refreshed = await startAndSimulate(
+                option.teamNum,
+                option.heroes,
+                option.pet,
+                attackerType,
+                option.favor || {},
+                'execute'
+            );
+            if (!refreshed?.win) {
+                lastError = 'NotFound recovery failed (could not restart battle)';
+                return false;
+            }
+            await waitRemainingBattleTime(refreshed);
+            return endBattleOption(refreshed, attackerType, true);
         }
 
         async function checkTalent(dungeonInfo) {
@@ -851,18 +970,24 @@
             talentMsg = `<br>TMNT Talent: ${doorsAmount}/3 ${talentMsgReward}<br>`;
         }
 
-        async function fetchDungeonData() {
-            const result = await Send({ calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }] });
-            if (!Array.isArray(result.results)) {
-                lastError = 'Error fetching dungeonGetInfo';
-                return null;
+        async function fetchDungeonData(retries = 3) {
+            for (let attempt = 1; attempt <= retries; attempt++) {
+                const result = await Send({ calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }] });
+                if (Array.isArray(result.results)) {
+                    const dungeonGetInfo = getResponse(result);
+                    if (dungeonGetInfo?.floor?.userData) {
+                        return { dungeonGetInfo };
+                    }
+                    lastError = 'No dungeon data';
+                } else {
+                    lastError = 'Error fetching dungeonGetInfo';
+                }
+                if (attempt < retries) {
+                    console.warn(`[Dungeon] fetchDungeonData attempt ${attempt}/${retries} failed, retrying...`);
+                    await sleep(500);
+                }
             }
-            const dungeonGetInfo = getResponse(result);
-            if (!dungeonGetInfo?.floor?.userData) {
-                lastError = 'No dungeon data';
-                return null;
-            }
-            return { dungeonGetInfo };
+            return null;
         }
 
         async function handleRestart(dungeonGetInfo) {
@@ -881,7 +1006,9 @@
 
         async function runStep() {
             const stepStart = Date.now();
-            await sleep(100);
+            if (STEP_DELAY_MS > 0) {
+                await sleep(STEP_DELAY_MS);
+            }
             if (!isRestart) {
                 lastDebugString = '';
             }
@@ -899,7 +1026,11 @@
             }
 
             const data = await fetchDungeonData();
-            if (!data || titansList.length === 0) {
+            if (!data) {
+                return false;
+            }
+            if (titansList.length === 0) {
+                lastError = lastError || 'No titans loaded';
                 return false;
             }
 
@@ -949,7 +1080,8 @@
                     heroBattle.heroes,
                     heroBattle.pet,
                     'hero',
-                    heroBattle.favor
+                    heroBattle.favor,
+                    'execute'
                 );
                 if (!option) {
                     lastError = 'Failed to start hero battle (check console for API/BattleCalc details)';
@@ -963,7 +1095,11 @@
                 }
                 lastDebugString += debugString(option, 'hero');
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                const ok = await executeOption(option, 'hero', lastDebugString);
+                await waitRemainingBattleTime(option, lastDebugString);
+                if (stopDung || end) {
+                    return false;
+                }
+                const ok = await endBattleOption(option, 'hero');
                 timeDungeon.steps += Date.now() - stepStart;
                 return ok !== false;
             }
@@ -982,7 +1118,7 @@
                         while (true) {
                             healingTeam = getTitansForPotentialHealingTeam(aliveTitans, states, useHealingIndex);
                             if (!healingTeam) break;
-                            healingOption = await startAndSimulate(teamNum, healingTeam, null, attackerType);
+                            healingOption = await startAndSimulate(teamNum, healingTeam, null, attackerType, {}, 'eval');
                             if (!healingOption?.win) {
                                 useHealingIndex++;
                                 continue;
@@ -1009,7 +1145,7 @@
                     continue;
                 }
 
-                const option = team.option || (await startAndSimulate(teamNum, team.heroes, team.pet, attackerType));
+                const option = team.option || (await startAndSimulate(teamNum, team.heroes, team.pet, attackerType, team.favor || {}, 'eval'));
                 if (!option?.win) {
                     options.push(null);
                     continue;
@@ -1025,7 +1161,7 @@
                 if (team.isHealing) {
                     const fallback = getNeutralTitans(aliveTitans);
                     if (fallback.length > 0) {
-                        const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType);
+                        const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType, {}, 'eval');
                         options.push(fallbackOption?.win ? { option: fallbackOption, attackerType } : null);
                     } else {
                         options.push(null);
@@ -1060,26 +1196,8 @@
 
             lastDebugString += ` -> ${best.option.teamNum} `;
 
-            let finalOption = best.option;
-            if (best.option.teamNum !== userData.length - 1) {
-                const restarted = await startAndSimulate(
-                    best.option.teamNum,
-                    best.option.heroes,
-                    best.option.pet,
-                    best.attackerType,
-                    best.option.favor
-                );
-                if (!restarted?.win) {
-                    lastError = 'Restart failed';
-                    endDungeon(lastError);
-                    return false;
-                }
-                lastDebugString += debugString(restarted, best.attackerType) + ' [retry]';
-                finalOption = restarted;
-            }
-
             if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-            const ok = await executeOption(finalOption, best.attackerType, lastDebugString);
+            const ok = await executeOption(best.option, best.attackerType, lastDebugString);
             stepCount++;
             timeDungeon.steps += Date.now() - stepStart;
             return ok !== false;
@@ -1100,6 +1218,8 @@
         function endDungeon(reason, info) {
             if (end) return;
             end = true;
+            dungeonRunning = false;
+            window.HWH_DUNGEON_RUNNING = false;
             console.log('[Dungeon]', reason, info != null && info !== '' ? info : '');
             showStats();
             if (info === 'break') {
@@ -1111,10 +1231,16 @@
             } else {
                 setProgress('Dungeon completed: Titanite ' + dungeonActivity + '/' + maxDungeonActivity, false, hideProgress);
             }
-            if (titanHealthSettings.autoRefreshPage) {
-                setTimeout(() => location.reload(), 1000);
-            } else {
-                setTimeout(cheats.refreshGame, 1000);
+            const reasonText = String(reason || '');
+            const shouldRefresh = reasonText.includes('titanite collected')
+                || reasonText.includes('floor saved')
+                || reasonText.includes('Dungeon completed');
+            if (shouldRefresh) {
+                if (titanHealthSettings.autoRefreshPage) {
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    setTimeout(cheats.refreshGame, 1000);
+                }
             }
             resolve();
         }
@@ -1172,7 +1298,11 @@
             end = false;
             isRestart = false;
             lastError = null;
+            lastStartedTeamNum = -1;
+            battleStartTime = 0;
             stepCount = 0;
+            dungeonRunning = true;
+            window.HWH_DUNGEON_RUNNING = true;
             timeDungeon = { all: Date.now(), steps: 0 };
 
             try {
@@ -1189,12 +1319,21 @@
                         }
                         break;
                     }
-                    await sleep(100);
+                }
+                if (!end && stopDung) {
+                    endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
+                } else if (!end && !lastError) {
+                    console.warn('[Dungeon] Run loop ended without error (possible silent stop)');
                 }
             } catch (err) {
                 console.error('[Dungeon] Fatal error:', err);
                 endDungeon('Fatal dungeon error', err);
                 reject(err);
+            } finally {
+                if (dungeonRunning) {
+                    dungeonRunning = false;
+                    window.HWH_DUNGEON_RUNNING = false;
+                }
             }
         };
     }
@@ -2149,7 +2288,10 @@ async function executeGetDailyBonus() {
         // Run sequentially (await each). The previous setTimeout-based scheduler could overlap long tasks and stall mid-run.
         setTimeout(async () => {
             const { HWHFuncs } = window;
-            if (autoRunInProgress) return;
+            if (autoRunInProgress || dungeonRunning || window.HWH_DUNGEON_RUNNING) {
+                console.log('[Auto Daily] Skipping auto-run — dungeon already in progress');
+                return;
+            }
             autoRunInProgress = true;
             try {
                 for (const task of ordered) {
