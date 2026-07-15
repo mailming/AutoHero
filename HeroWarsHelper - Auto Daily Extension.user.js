@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.5
+// @version      3.2.6
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,16 +15,16 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.5";
+    const EXTENSION_VERSION = "3.2.6";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
     /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
     /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES` (default 10). */
     /** Step delay between floors ms: `window.HWH_DUNGEON_STEP_DELAY_MS` (default 100). */
-    /** Brute-force budget ms (execute): `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000). */
-    /** Brute-force budget ms (door eval): `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS` (default 12000). */
-    /** Brute-force budget ms (live battle finalize): `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS` (default 12000). */
+    /** Brute-force budget ms per battle sim: `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000, Stealther default). */
+    /** Optional override for door comparison only: `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS`. */
+    /** Optional override when restarting a non-last door: `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS`. */
     /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (default 25). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
@@ -182,11 +182,10 @@
         const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
         const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
         const BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_BRUTEFORCE_MS) || 60000));
-        const EVAL_BRUTEFORCE_MS = Math.max(2000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || 12000));
-        const EXECUTE_BRUTEFORCE_MS = Math.max(2000, Math.min(60000, Number(window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS) || 12000));
+        const EVAL_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || BRUTEFORCE_MS));
+        const RESTART_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS) || BRUTEFORCE_MS));
         const STEP_DELAY_MS = Math.max(0, Math.min(1000, Number(window.HWH_DUNGEON_STEP_DELAY_MS) || 100));
         const MAX_TIMER_TRIES = Math.max(1, Math.min(50, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 25));
-        const BRUTE_STALE_TRIES = 4;
         const SIM_YIELD_EVERY = 3;
 
         function syncPredictionCardsFromInventory(invRes) {
@@ -305,7 +304,6 @@
                 this._bestBattle = undefined;
                 this._maxBattles = 0;
                 this._errors = 0;
-                this._staleTries = 0;
             }
 
             async init(maxTimerTries = MAX_TIMER_TRIES) {
@@ -404,10 +402,6 @@
                 if (!this._initialBattle) {
                     this._initialBattle = await this.init();
                 }
-                const initAlreadyWins = !!this._initialBattle?.result?.win;
-                if (initAlreadyWins && !this._bestBattle) {
-                    this._bestBattle = this._initialBattle;
-                }
                 while (Date.now() < endTime && this._counter < this._maxBattles) {
                     if (stopDung || end) {
                         break;
@@ -424,15 +418,8 @@
                         continue;
                     }
                     if (!this.isBetter(this._bestBattle, this._lastBattle)) {
-                        if (initAlreadyWins && this._bestBattle?.result?.win) {
-                            this._staleTries++;
-                            if (this._staleTries >= BRUTE_STALE_TRIES) {
-                                break;
-                            }
-                        }
                         continue;
                     }
-                    this._staleTries = 0;
                     this._bestBattle = this._lastBattle;
                     if (!this._bestBattle.result?.win) {
                         continue;
@@ -478,6 +465,24 @@
                 const beforeTitans = result.battleData?.attackers || {};
                 const afterTitans = result.progress?.[0]?.attackers?.heroes || {};
                 return this.getFactor(beforeTitans, afterTitans);
+            }
+
+            isBetter(bestBattle, thisBattle) {
+                if (!bestBattle || !thisBattle) {
+                    return !!thisBattle;
+                }
+                const bestState = this.getState(bestBattle);
+                const thisState = this.getState(thisBattle);
+                if (!thisBattle.result?.win) {
+                    return false;
+                }
+                if (!isFinite(thisState)) {
+                    return false;
+                }
+                if (!isFinite(bestState)) {
+                    return true;
+                }
+                return thisState > bestState;
             }
         }
 
@@ -752,7 +757,7 @@
             };
         }
 
-        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, simPhase = 'eval', hintOption = null) {
+        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, bruteforceMs = EVAL_BRUTEFORCE_MS) {
             const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
             const apiResult = getApiResult(raw);
             if (apiResult?.error || apiResult?.validation) {
@@ -770,19 +775,12 @@
                 return null;
             }
 
-            const isExecute = simPhase === 'execute';
-            if (isExecute) {
-                lastStartedTeamNum = teamNum;
-                battleStartTime = Date.now();
-                setBattleOpen(true);
-            }
+            lastStartedTeamNum = teamNum;
+            battleStartTime = Date.now();
+            setBattleOpen(true);
 
-            const isBruteForceBattle = attackerType !== 'hero';
-            const bruteMs = isExecute ? EXECUTE_BRUTEFORCE_MS : EVAL_BRUTEFORCE_MS;
-            const maxTimerTries = isExecute ? Math.min(MAX_TIMER_TRIES, 10) : Math.min(MAX_TIMER_TRIES, 12);
-            let option;
             try {
-                option = await simulateOnBattleData(
+                return await simulateOnBattleData(
                     battleData,
                     teamNum,
                     heroes,
@@ -790,25 +788,15 @@
                     attackerType,
                     favor,
                     {
-                        bruteforceMs: bruteMs,
-                        maxTimerTries,
-                        hintTimer: isExecute && hintOption ? hintOption.simTimer : null,
+                        bruteforceMs,
+                        maxTimerTries: MAX_TIMER_TRIES,
                     }
                 );
             } catch (err) {
                 console.warn(`[Dungeon] BattleCalc failed (${attackerType}, team ${teamNum}):`, err);
-                if (isExecute) {
-                    setBattleOpen(false);
-                }
+                setBattleOpen(false);
                 return null;
             }
-            if (!option) {
-                console.warn(`[Dungeon] No simulated battle result (${attackerType}, team ${teamNum})`);
-                if (isExecute) {
-                    setBattleOpen(false);
-                }
-            }
-            return option;
         }
 
         function isNotFoundError(err) {
@@ -853,15 +841,6 @@
             const handler = new DungeonBattleHandler(battleData, battleType);
             lastBattleHandler = handler;
             const maxTimerTries = simOpts.maxTimerTries ?? MAX_TIMER_TRIES;
-            const hintTimer = simOpts.hintTimer;
-
-            if (hintTimer != null && Number.isFinite(Number(hintTimer))) {
-                await handler.init(maxTimerTries);
-                const hinted = await handler.reCalculate(Number(hintTimer));
-                if (hinted?.result?.win) {
-                    return wrapBattleOption(teamNum, heroes, pet, favor, hinted, battleData, handler, { timer: hinted.battleTime ?? 0 });
-                }
-            }
 
             const handlerResult = await runBattleHandler(
                 handler,
@@ -874,6 +853,7 @@
             );
             const battle = handlerResult.bestBattle ?? handlerResult.initBattle;
             if (!battle?.result) {
+                setBattleOpen(false);
                 return null;
             }
             return wrapBattleOption(teamNum, heroes, pet, favor, battle, battleData, handler, handlerResult);
@@ -897,28 +877,34 @@
             await countdownTimer(remaining, msg);
         }
 
-        async function executeOption(option, attackerType, debug = '') {
+        async function executeChosenOption(option, attackerType, doorCount, debug = '', skipRestart = false) {
             if (stopDung || end) {
                 return false;
             }
-            const finalized = await startAndSimulate(
-                option.teamNum,
-                option.heroes,
-                option.pet,
-                attackerType,
-                option.favor || {},
-                'execute',
-                option
-            );
-            if (!finalized?.win) {
-                lastError = 'Failed to finalize dungeon battle on server';
-                return false;
+            let finalOption = option;
+            if (!skipRestart && option.teamNum !== doorCount - 1) {
+                const restarted = await startAndSimulate(
+                    option.teamNum,
+                    option.heroes,
+                    option.pet,
+                    attackerType,
+                    option.favor || {},
+                    RESTART_BRUTEFORCE_MS
+                );
+                if (!restarted?.win) {
+                    lastError = 'Restart failed';
+                    endDungeon(lastError);
+                    return false;
+                }
+                finalOption = restarted;
+                lastDebugString += debugString(restarted, attackerType) + ' [restart]';
+                if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
             }
-            await waitRemainingBattleTime(finalized, debug);
+            await waitRemainingBattleTime(finalOption, debug);
             if (stopDung || end) {
                 return false;
             }
-            return endBattleOption(finalized, attackerType);
+            return endBattleOption(finalOption, attackerType);
         }
 
         async function endBattleOption(option, attackerType, isRetry = false) {
@@ -1029,8 +1015,7 @@
                 option.pet,
                 attackerType,
                 option.favor || {},
-                'execute',
-                option
+                RESTART_BRUTEFORCE_MS
             );
             if (!refreshed?.win) {
                 lastError = 'NotFound recovery failed (could not restart battle)';
@@ -1174,8 +1159,7 @@
                     heroBattle.heroes,
                     heroBattle.pet,
                     'hero',
-                    heroBattle.favor,
-                    'execute'
+                    heroBattle.favor
                 );
                 if (!option) {
                     lastError = 'Failed to start hero battle (check console for API/BattleCalc details)';
@@ -1212,7 +1196,7 @@
                         while (true) {
                             healingTeam = getTitansForPotentialHealingTeam(aliveTitans, states, useHealingIndex);
                             if (!healingTeam) break;
-                            healingOption = await startAndSimulate(teamNum, healingTeam, null, attackerType, {}, 'eval');
+                            healingOption = await startAndSimulate(teamNum, healingTeam, null, attackerType);
                             if (!healingOption?.win) {
                                 useHealingIndex++;
                                 continue;
@@ -1239,7 +1223,7 @@
                     continue;
                 }
 
-                const option = team.option || (await startAndSimulate(teamNum, team.heroes, team.pet, attackerType, team.favor || {}, 'eval'));
+                const option = team.option || (await startAndSimulate(teamNum, team.heroes, team.pet, attackerType, team.favor || {}));
                 if (!option?.win) {
                     options.push(null);
                     continue;
@@ -1248,14 +1232,14 @@
                 if (team.isHealing && option.win) {
                     lastDebugString += debugString(option, attackerType) + ' [heal]';
                     if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                    const ok = await executeOption(option, attackerType, lastDebugString);
+                    const ok = await executeChosenOption(option, attackerType, userData.length, lastDebugString, true);
                     timeDungeon.steps += Date.now() - stepStart;
                     return ok !== false;
                 }
                 if (team.isHealing) {
                     const fallback = getNeutralTitans(aliveTitans);
                     if (fallback.length > 0) {
-                        const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType, {}, 'eval');
+                        const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType);
                         options.push(fallbackOption?.win ? { option: fallbackOption, attackerType } : null);
                     } else {
                         options.push(null);
@@ -1291,7 +1275,7 @@
             lastDebugString += ` -> ${best.option.teamNum} `;
 
             if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-            const ok = await executeOption(best.option, best.attackerType, lastDebugString);
+            const ok = await executeChosenOption(best.option, best.attackerType, userData.length, lastDebugString);
             stepCount++;
             timeDungeon.steps += Date.now() - stepStart;
             return ok !== false;
