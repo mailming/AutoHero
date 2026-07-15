@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.4
+// @version      3.2.5
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.4";
+    const EXTENSION_VERSION = "3.2.5";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
@@ -50,6 +50,17 @@
 
     function setDungeonBattleOpen(isOpen) {
         window.HWH_DUNGEON_BATTLE_OPEN = !!isOpen;
+    }
+
+    async function waitForAutoBattleIdle(maxWaitMs = 45 * 60 * 1000) {
+        const start = Date.now();
+        while (window.HWH_AUTOBATTLE_RUNNING && Date.now() - start < maxWaitMs) {
+            if (window.HWHFuncs?.setProgress) {
+                window.HWHFuncs.setProgress('Dungeon: waiting for AutoBattle to finish...', true);
+            }
+            await sleep(1000);
+        }
+        return !window.HWH_AUTOBATTLE_RUNNING;
     }
 
     // --- DUNGEON TITAN HEALTH SETTINGS ---
@@ -1377,6 +1388,13 @@
         }
 
         this.start = async function (titanit) {
+            await waitForAutoBattleIdle();
+            if (window.HWH_AUTOBATTLE_RUNNING) {
+                lastError = 'AutoBattle still running — dungeon aborted to avoid API conflict';
+                endDungeon(lastError);
+                return;
+            }
+
             maxDungeonActivity = titanit || getInput('countTitanit');
             stopDung = false;
             end = false;
@@ -1424,6 +1442,13 @@
 
     async function executeTestDungeon() {
         const { HWHClasses, HWHFuncs } = window;
+
+        await waitForAutoBattleIdle();
+        if (window.HWH_AUTOBATTLE_RUNNING) {
+            console.warn('[Dungeon] AutoBattle still running — aborting dungeon start');
+            HWHFuncs.setProgress('Dungeon: AutoBattle still running', true);
+            return;
+        }
 
         if (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
             console.warn('[Dungeon] Already running — ignoring duplicate start');
@@ -2250,6 +2275,13 @@ async function executeGetDailyBonus() {
             HWHFuncs.setProgress(`${task.label}: skipped (dungeon running)`, true);
             return;
         }
+        if (isDungeonTask && window.HWH_AUTOBATTLE_RUNNING) {
+            await waitForAutoBattleIdle();
+            if (window.HWH_AUTOBATTLE_RUNNING) {
+                HWHFuncs.setProgress(`${task.label}: skipped (AutoBattle still running)`, true);
+                return;
+            }
+        }
         try {
             if (task.func) {
                 if (task.id === 'testDungeon') {
@@ -2405,6 +2437,10 @@ async function executeGetDailyBonus() {
                         console.log('[Auto Daily] Stopping auto-run — dungeon started');
                         break;
                     }
+                    const isDungeonTask = task.id === 'testDungeon' || task.id === '10022';
+                    if (isDungeonTask && window.HWH_AUTOBATTLE_RUNNING) {
+                        await waitForAutoBattleIdle();
+                    }
                     await executeSingleTask(task);
                     await sleep(500);
                 }
@@ -2444,6 +2480,10 @@ async function executeGetDailyBonus() {
         loadTitanHealthSettings(); // Load dungeon titan health settings
         console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
+
+        if (window.HWHClasses) {
+            window.HWHClasses.executeDungeon = executeDungeon;
+        }
         
         // Create dungeon settings GUI
         if (document.readyState === 'loading') {

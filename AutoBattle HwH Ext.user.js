@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AutoBattle HwH Ext
 // @namespace    HeroWarsHelper.AutoBattle
-// @version      1.0
+// @version      1.1
 // @description  Auto-execute Arena, Grand Arena, Guild War attacks, and Raid Nodes on script load
 // @author       YourName
 // @match        https://www.hero-wars.com/*
@@ -3654,8 +3654,63 @@
         HWHClasses.executeRaidBoss = executeRaidBoss;
         HWHClasses.executeCrossClanWar = executeCrossClanWar;
 
-        // Auto-execute all battles on script load
+        let autoBattleRunning = false;
+
+        function isDungeonActive() {
+            return !!(window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN);
+        }
+
+        function sleep(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        async function waitForDungeonIdle(maxWaitMs = 60000) {
+            const start = Date.now();
+            while (isDungeonActive() && Date.now() - start < maxWaitMs) {
+                await sleep(500);
+            }
+            return !isDungeonActive();
+        }
+
+        function shouldStopForDungeon() {
+            return isDungeonActive();
+        }
+
+        async function runAutoBattleStep(label, progressMsg, fn) {
+            if (shouldStopForDungeon()) {
+                console.log(`AutoBattle: Skipping ${label} — dungeon active`);
+                return false;
+            }
+            try {
+                console.log(`AutoBattle: Starting ${label}...`);
+                HWHFuncs.setProgress(progressMsg);
+                await fn();
+                console.log(`%cAutoBattle: ${label} completed`, 'color: lightgreen; font-weight: bold;');
+                return true;
+            } catch (error) {
+                console.error(`AutoBattle: ${label} error:`, error);
+                return false;
+            }
+        }
+
         async function autoBattle() {
+            if (autoBattleRunning) {
+                console.log('AutoBattle: Already running — skipped');
+                return;
+            }
+            if (isDungeonActive()) {
+                console.log('AutoBattle: Dungeon active — waiting before auto-battles...');
+                HWHFuncs.setProgress('AutoBattle: Waiting for dungeon...', true);
+                const ready = await waitForDungeonIdle();
+                if (!ready) {
+                    console.warn('AutoBattle: Dungeon still active — skipping auto-battles');
+                    return;
+                }
+            }
+
+            autoBattleRunning = true;
+            window.HWH_AUTOBATTLE_RUNNING = true;
+
             try {
                 console.log('AutoBattle: Starting auto-battle sequence...');
                 HWHFuncs.setProgress('AutoBattle: Starting auto-battles...');
@@ -3670,126 +3725,85 @@
                     crossClanWar: false
                 };
 
-                // 1. Auto Arena
-                try {
-                    console.log('AutoBattle: Starting Arena...');
-                    HWHFuncs.setProgress('AutoBattle: Arena battles...');
-                    await new Promise((resolve, reject) => {
+                results.arena = await runAutoBattleStep('Arena', 'AutoBattle: Arena battles...', () =>
+                    new Promise((resolve, reject) => {
                         const arena = new executeArena(resolve, reject);
                         arena.start('arena');
-                    });
-                    results.arena = true;
-                    console.log('%cAutoBattle: Arena completed', 'color: lightgreen; font-weight: bold;');
-                } catch (error) {
-                    console.error('AutoBattle: Arena error:', error);
-                }
+                    })
+                );
 
-                // 2. Auto Grand Arena
-                try {
-                    console.log('AutoBattle: Starting Grand Arena...');
-                    HWHFuncs.setProgress('AutoBattle: Grand Arena battles...');
-                    await new Promise((resolve, reject) => {
+                results.grandArena = await runAutoBattleStep('Grand Arena', 'AutoBattle: Grand Arena battles...', () =>
+                    new Promise((resolve, reject) => {
                         const grandArena = new executeArena(resolve, reject);
                         grandArena.start('grand');
-                    });
-                    results.grandArena = true;
-                    console.log('%cAutoBattle: Grand Arena completed', 'color: lightgreen; font-weight: bold;');
-                } catch (error) {
-                    console.error('AutoBattle: Grand Arena error:', error);
-                }
+                    })
+                );
 
-                // 3. Auto Guild War
-                try {
-                    console.log('AutoBattle: Starting Guild War...');
-                    HWHFuncs.setProgress('AutoBattle: Guild War attacks...');
-                    await new Promise((resolve, reject) => {
+                results.guildWar = await runAutoBattleStep('Guild War', 'AutoBattle: Guild War attacks...', () =>
+                    new Promise((resolve, reject) => {
                         const guildWar = new executeGuildWar(resolve, reject);
                         guildWar.start();
-                    });
-                    results.guildWar = true;
-                    console.log('%cAutoBattle: Guild War completed', 'color: lightgreen; font-weight: bold;');
-                } catch (error) {
-                    console.error('AutoBattle: Guild War error:', error);
-                }
+                    })
+                );
 
-                // 4. Auto Raid Nodes
-                try {
-                    console.log('AutoBattle: Starting Raid Nodes...');
-                    HWHFuncs.setProgress('AutoBattle: Raid Nodes...');
-                    await new Promise((resolve, reject) => {
+                results.raidNodes = await runAutoBattleStep('Raid Nodes', 'AutoBattle: Raid Nodes...', () =>
+                    new Promise((resolve, reject) => {
                         const raidNodes = new executeRaidNodes(resolve, reject);
                         raidNodes.start();
-                    });
-                    results.raidNodes = true;
-                    console.log('%cAutoBattle: Raid Nodes completed', 'color: lightgreen; font-weight: bold;');
-                } catch (error) {
-                    console.error('AutoBattle: Raid Nodes error:', error);
-                }
+                    })
+                );
 
-                // 5. Auto Titan Arena (Monday - Saturday only, not Sunday)
-                try {
-                    if (Utils.isTitanArenaDay()) {
-                        console.log('AutoBattle: Starting Titan Arena (ToE)...');
-                        HWHFuncs.setProgress('AutoBattle: Titan Arena (ToE)...');
-                        
-                        // Use HWHClasses.executeTitanArena if available, otherwise use local implementation
-                        if (window.HWHClasses && window.HWHClasses.executeTitanArena) {
-                            await new Promise((resolve, reject) => {
-                                const titanArena = new window.HWHClasses.executeTitanArena(resolve, reject);
-                                titanArena.start();
+                if (shouldStopForDungeon()) {
+                    console.log('AutoBattle: Stopping before Titan Arena — dungeon active');
+                } else {
+                    try {
+                        if (Utils.isTitanArenaDay()) {
+                            results.titanArena = await runAutoBattleStep('Titan Arena (ToE)', 'AutoBattle: Titan Arena (ToE)...', async () => {
+                                if (window.HWHClasses && window.HWHClasses.executeTitanArena) {
+                                    await new Promise((resolve, reject) => {
+                                        const titanArena = new window.HWHClasses.executeTitanArena(resolve, reject);
+                                        titanArena.start();
+                                    });
+                                } else if (window.testTitanArena && typeof window.testTitanArena === 'function') {
+                                    await window.testTitanArena();
+                                } else {
+                                    throw new Error('Titan Arena execution class not available');
+                                }
                             });
                         } else {
-                            // Fallback: use testTitanArena function if available
-                            if (window.testTitanArena && typeof window.testTitanArena === 'function') {
-                                await window.testTitanArena();
-                            } else {
-                                throw new Error('Titan Arena execution class not available');
-                            }
+                            Utils.log('log', `AutoBattle: Skipping Titan Arena (not Monday-Saturday, current day: ${Utils.getDayOfWeek()})`);
                         }
-                        results.titanArena = true;
-                        Utils.log('log', '%cAutoBattle: Titan Arena (ToE) completed', 'color: lightgreen; font-weight: bold;');
-                    } else {
-                        Utils.log('log', `AutoBattle: Skipping Titan Arena (not Monday-Saturday, current day: ${Utils.getDayOfWeek()})`);
-                        results.titanArena = false;
+                    } catch (error) {
+                        console.error('AutoBattle: Titan Arena error:', error);
                     }
-                } catch (error) {
-                    console.error('AutoBattle: Titan Arena error:', error);
                 }
 
-                // 6. Auto Raid Boss (Saturday or Sunday only)
-                try {
-                    if (Utils.isRaidBossDay()) {
-                        console.log('AutoBattle: Starting Raid Boss...');
-                        HWHFuncs.setProgress('AutoBattle: Raid Boss attacks...');
-                        await new Promise((resolve, reject) => {
-                            const raidBoss = new executeRaidBoss(resolve, reject);
-                            raidBoss.start();
-                        });
-                        results.raidBoss = true;
-                        Utils.log('log', '%cAutoBattle: Raid Boss completed', 'color: lightgreen; font-weight: bold;');
-                    } else {
-                        Utils.log('log', `AutoBattle: Skipping Raid Boss (not Saturday/Sunday, current day: ${Utils.getDayOfWeek()})`);
-                        results.raidBoss = false;
+                if (shouldStopForDungeon()) {
+                    console.log('AutoBattle: Stopping before Raid Boss — dungeon active');
+                } else {
+                    try {
+                        if (Utils.isRaidBossDay()) {
+                            results.raidBoss = await runAutoBattleStep('Raid Boss', 'AutoBattle: Raid Boss attacks...', () =>
+                                new Promise((resolve, reject) => {
+                                    const raidBoss = new executeRaidBoss(resolve, reject);
+                                    raidBoss.start();
+                                })
+                            );
+                        } else {
+                            Utils.log('log', `AutoBattle: Skipping Raid Boss (not Saturday/Sunday, current day: ${Utils.getDayOfWeek()})`);
+                        }
+                    } catch (error) {
+                        console.error('AutoBattle: Raid Boss error:', error);
                     }
-                } catch (error) {
-                    console.error('AutoBattle: Raid Boss error:', error);
                 }
 
-                // 7. Auto Cross Clan War
-                try {
-                    console.log('AutoBattle: Starting Cross Clan War...');
-                    HWHFuncs.setProgress('AutoBattle: Cross Clan War attacks...');
-                    await new Promise((resolve, reject) => {
+                results.crossClanWar = await runAutoBattleStep('Cross Clan War', 'AutoBattle: Cross Clan War attacks...', () =>
+                    new Promise((resolve, reject) => {
                         const crossClanWar = new executeCrossClanWar(resolve, reject);
                         crossClanWar.start();
-                    });
-                    results.crossClanWar = true;
-                    Utils.log('log', '%cAutoBattle: Cross Clan War completed', 'color: lightgreen; font-weight: bold;');
-                } catch (error) {
-                    console.error('AutoBattle: Cross Clan War error:', error);
-                }
+                    })
+                );
 
-                // Summary
                 const completed = Object.values(results).filter(v => v === true).length;
                 const total = Object.keys(results).length;
                 const summary = [
@@ -3805,10 +3819,12 @@
                 console.log(`%cAutoBattle: Completed ${completed}/${total} battle types`, 'color: cyan; font-weight: bold;');
                 console.log(summary);
                 HWHFuncs.setProgress(`AutoBattle: Complete! ${completed}/${total} battle types executed.`, true);
-
             } catch (error) {
                 console.error('AutoBattle: Fatal error:', error);
                 HWHFuncs.setProgress(`AutoBattle: Error - ${error.message}`, true);
+            } finally {
+                autoBattleRunning = false;
+                window.HWH_AUTOBATTLE_RUNNING = false;
             }
         }
 
