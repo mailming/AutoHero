@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.3
+// @version      3.2.4
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.3";
+    const EXTENSION_VERSION = "3.2.4";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
@@ -23,7 +23,8 @@
     /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES` (default 10). */
     /** Step delay between floors ms: `window.HWH_DUNGEON_STEP_DELAY_MS` (default 100). */
     /** Brute-force budget ms (execute): `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000). */
-    /** Brute-force budget ms (door eval): `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS` (default 12000). Set to 60000 for full Stealther door comparison. */
+    /** Brute-force budget ms (door eval): `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS` (default 12000). */
+    /** Brute-force budget ms (live battle finalize): `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS` (default 12000). */
     /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (default 25). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
@@ -46,6 +47,10 @@
     let cachedQuestData = null; // Cache for questGetAll results
     let autoRunInProgress = false;
     let dungeonRunning = false;
+
+    function setDungeonBattleOpen(isOpen) {
+        window.HWH_DUNGEON_BATTLE_OPEN = !!isOpen;
+    }
 
     // --- DUNGEON TITAN HEALTH SETTINGS ---
     const defaultTitanHealthSettings = {
@@ -167,6 +172,7 @@
         const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
         const BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_BRUTEFORCE_MS) || 60000));
         const EVAL_BRUTEFORCE_MS = Math.max(2000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || 12000));
+        const EXECUTE_BRUTEFORCE_MS = Math.max(2000, Math.min(60000, Number(window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS) || 12000));
         const STEP_DELAY_MS = Math.max(0, Math.min(1000, Number(window.HWH_DUNGEON_STEP_DELAY_MS) || 100));
         const MAX_TIMER_TRIES = Math.max(1, Math.min(50, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 25));
         const BRUTE_STALE_TRIES = 4;
@@ -735,7 +741,7 @@
             };
         }
 
-        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, simPhase = 'eval') {
+        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, simPhase = 'eval', hintOption = null) {
             const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
             const apiResult = getApiResult(raw);
             if (apiResult?.error || apiResult?.validation) {
@@ -752,34 +758,65 @@
                 console.warn(`[Dungeon] dungeonStartBattle empty response (${attackerType}, team ${teamNum})`, raw);
                 return null;
             }
-            if (simPhase === 'execute') {
+
+            const isExecute = simPhase === 'execute';
+            if (isExecute) {
                 lastStartedTeamNum = teamNum;
                 battleStartTime = Date.now();
+                setBattleOpen(true);
             }
+
             const isBruteForceBattle = attackerType !== 'hero';
-            const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
-            const handler = new DungeonBattleHandler(battleData, battleType);
-            lastBattleHandler = handler;
-            const isExecute = simPhase === 'execute';
-            const bruteMs = isExecute ? BRUTEFORCE_MS : EVAL_BRUTEFORCE_MS;
-            const maxTimerTries = isExecute ? MAX_TIMER_TRIES : Math.min(MAX_TIMER_TRIES, 12);
-            let handlerResult;
+            const bruteMs = isExecute ? EXECUTE_BRUTEFORCE_MS : EVAL_BRUTEFORCE_MS;
+            const maxTimerTries = isExecute ? Math.min(MAX_TIMER_TRIES, 10) : Math.min(MAX_TIMER_TRIES, 12);
+            let option;
             try {
-                handlerResult = await runBattleHandler(
-                    handler,
-                    isBruteForceBattle,
-                    isBruteForceBattle,
-                    { bruteforceMs: bruteMs, maxTimerTries }
+                option = await simulateOnBattleData(
+                    battleData,
+                    teamNum,
+                    heroes,
+                    pet,
+                    attackerType,
+                    favor,
+                    {
+                        bruteforceMs: bruteMs,
+                        maxTimerTries,
+                        hintTimer: isExecute && hintOption ? hintOption.simTimer : null,
+                    }
                 );
             } catch (err) {
                 console.warn(`[Dungeon] BattleCalc failed (${attackerType}, team ${teamNum}):`, err);
+                if (isExecute) {
+                    setBattleOpen(false);
+                }
                 return null;
             }
-            const battle = handlerResult.bestBattle ?? handlerResult.initBattle;
-            if (!battle?.result) {
+            if (!option) {
                 console.warn(`[Dungeon] No simulated battle result (${attackerType}, team ${teamNum})`);
-                return null;
+                if (isExecute) {
+                    setBattleOpen(false);
+                }
             }
+            return option;
+        }
+
+        function isNotFoundError(err) {
+            if (!err) {
+                return false;
+            }
+            if (typeof err === 'string') {
+                return /not\s*found|NotFound/i.test(err);
+            }
+            const name = String(err.name || err.title || '');
+            const desc = String(err.description || err.message || '');
+            return /not\s*found|NotFound/i.test(name) || /not\s*found|NotFound/i.test(desc);
+        }
+
+        function setBattleOpen(isOpen) {
+            setDungeonBattleOpen(isOpen);
+        }
+
+        function wrapBattleOption(teamNum, heroes, pet, favor, battle, battleData, handler, handlerResult) {
             const wrapped = {
                 ...battle,
                 battleData: battle.battleData ?? battleData,
@@ -793,16 +830,42 @@
                 progress: wrapped.progress,
                 timer: getTimer(wrapped.battleTime ?? handlerResult.timer ?? 0),
                 battleTime: wrapped.battleTime,
+                simTimer: battle.timer ?? battle.battleTime ?? handlerResult.timer ?? 0,
                 win: wrapped.result?.win,
                 state: handler.getState(wrapped),
             };
         }
 
-        function isNotFoundError(err) {
-            const desc = typeof err === 'string'
-                ? err
-                : (err?.description || err?.name || err?.title || JSON.stringify(err));
-            return /not\s*found|NotFound/i.test(desc);
+        async function simulateOnBattleData(battleData, teamNum, heroes, pet, attackerType, favor, simOpts = {}) {
+            const isBruteForceBattle = attackerType !== 'hero';
+            const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
+            const handler = new DungeonBattleHandler(battleData, battleType);
+            lastBattleHandler = handler;
+            const maxTimerTries = simOpts.maxTimerTries ?? MAX_TIMER_TRIES;
+            const hintTimer = simOpts.hintTimer;
+
+            if (hintTimer != null && Number.isFinite(Number(hintTimer))) {
+                await handler.init(maxTimerTries);
+                const hinted = await handler.reCalculate(Number(hintTimer));
+                if (hinted?.result?.win) {
+                    return wrapBattleOption(teamNum, heroes, pet, favor, hinted, battleData, handler, { timer: hinted.battleTime ?? 0 });
+                }
+            }
+
+            const handlerResult = await runBattleHandler(
+                handler,
+                isBruteForceBattle,
+                isBruteForceBattle,
+                {
+                    bruteforceMs: simOpts.bruteforceMs ?? BRUTEFORCE_MS,
+                    maxTimerTries,
+                }
+            );
+            const battle = handlerResult.bestBattle ?? handlerResult.initBattle;
+            if (!battle?.result) {
+                return null;
+            }
+            return wrapBattleOption(teamNum, heroes, pet, favor, battle, battleData, handler, handlerResult);
         }
 
         async function waitRemainingBattleTime(option, debug = '') {
@@ -833,7 +896,8 @@
                 option.pet,
                 attackerType,
                 option.favor || {},
-                'execute'
+                'execute',
+                option
             );
             if (!finalized?.win) {
                 lastError = 'Failed to finalize dungeon battle on server';
@@ -864,6 +928,7 @@
             try {
                 e = await Send({ calls: [{ name: 'dungeonEndBattle', args, ident: 'body' }] });
             } catch (err) {
+                setBattleOpen(false);
                 if (!isRetry && isNotFoundError(err)) {
                     return retryEndBattleAfterNotFound(option, attackerType);
                 }
@@ -873,41 +938,56 @@
 
             if (e?.error) {
                 if (isNotFoundError(e.error)) {
+                    setBattleOpen(false);
                     if (!isRetry) {
                         return retryEndBattleAfterNotFound(option, attackerType);
                     }
-                    console.warn('[Dungeon] Battle not found after retry, continuing...', e.error);
+                    console.warn('[Dungeon] Battle not found after retry, refreshing floor state...', e.error);
                     return true;
                 }
+                setBattleOpen(false);
                 endDungeon('errorRequest', e.error);
                 return false;
             }
 
             if (!e?.results) {
+                setBattleOpen(false);
                 endDungeon('Lost connection to game server!', 'break');
                 return false;
             }
 
-            const result = e.results[0].result;
+            const result = e.results[0]?.result;
+            if (!result) {
+                setBattleOpen(false);
+                if (!isRetry && isNotFoundError(e)) {
+                    return retryEndBattleAfterNotFound(option, attackerType);
+                }
+                endDungeon('errorRequest', 'empty dungeonEndBattle result');
+                return false;
+            }
             if (result.error) {
                 if (isNotFoundError(result.error)) {
+                    setBattleOpen(false);
                     if (!isRetry) {
                         return retryEndBattleAfterNotFound(option, attackerType);
                     }
-                    console.warn('[Dungeon] Battle not found in result after retry, continuing...', result.error);
+                    console.warn('[Dungeon] Battle not found in result after retry, refreshing floor state...', result.error);
                     return true;
                 }
+                setBattleOpen(false);
                 endDungeon('errorBattleResult', result.error);
                 return false;
             }
 
             const battleResult = result.response;
             if (!battleResult) {
+                setBattleOpen(false);
                 console.warn('[Dungeon] No battle result, continuing...');
                 return true;
             }
 
             if (battleResult.error) {
+                setBattleOpen(false);
                 if (isNotFoundError(battleResult.error)) {
                     if (!isRetry) {
                         return retryEndBattleAfterNotFound(option, attackerType);
@@ -917,6 +997,8 @@
                 endDungeon('errorBattleResult', battleResult);
                 return false;
             }
+
+            setBattleOpen(false);
 
             if (!battleResult.dungeon && !battleResult.floor) {
                 try {
@@ -936,7 +1018,8 @@
                 option.pet,
                 attackerType,
                 option.favor || {},
-                'execute'
+                'execute',
+                option
             );
             if (!refreshed?.win) {
                 lastError = 'NotFound recovery failed (could not restart battle)';
@@ -1220,6 +1303,7 @@
             end = true;
             dungeonRunning = false;
             window.HWH_DUNGEON_RUNNING = false;
+            setBattleOpen(false);
             console.log('[Dungeon]', reason, info != null && info !== '' ? info : '');
             showStats();
             if (info === 'break') {
@@ -1341,34 +1425,49 @@
     async function executeTestDungeon() {
         const { HWHClasses, HWHFuncs } = window;
 
+        if (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
+            console.warn('[Dungeon] Already running — ignoring duplicate start');
+            HWHFuncs.setProgress('Dungeon: already running', true);
+            return;
+        }
+        dungeonRunning = true;
+        window.HWH_DUNGEON_RUNNING = true;
+
         if (window.HWHClasses && typeof executeDungeon === 'function') {
             window.HWHClasses.executeDungeon = executeDungeon;
         }
 
-        const hasStealtherDungeon = await waitFor(() => typeof executeDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
-        if (hasStealtherDungeon) {
-            HWHFuncs.setProgress('Executing: Dungeon (Stealther)', true);
-            return await withTimeout(
-                new Promise((resolve, reject) => {
-                    try {
-                        const dung = new executeDungeon(resolve, reject);
-                        dung.start();
-                    } catch (e) {
-                        reject(e);
-                    }
-                }),
-                20 * 60 * 1000,
-                'Dungeon timed out'
-            );
-        }
+        try {
+            const hasStealtherDungeon = await waitFor(() => typeof executeDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
+            if (hasStealtherDungeon) {
+                HWHFuncs.setProgress('Executing: Dungeon (Stealther)', true);
+                return await withTimeout(
+                    new Promise((resolve, reject) => {
+                        try {
+                            const dung = new executeDungeon(resolve, reject);
+                            dung.start();
+                        } catch (e) {
+                            reject(e);
+                        }
+                    }),
+                    20 * 60 * 1000,
+                    'Dungeon timed out'
+                );
+            }
 
-        const hasNativeDungeon = await waitFor(() => typeof window.testDungeon === 'function', { timeoutMs: 5000, intervalMs: 200 });
-        if (hasNativeDungeon) {
-            HWHFuncs.setProgress('Executing: Dungeon (native fallback)', true);
-            return await withTimeout(window.testDungeon(), 20 * 60 * 1000, 'Dungeon timed out');
-        }
+            const hasNativeDungeon = await waitFor(() => typeof window.testDungeon === 'function', { timeoutMs: 5000, intervalMs: 200 });
+            if (hasNativeDungeon) {
+                HWHFuncs.setProgress('Executing: Dungeon (native fallback)', true);
+                return await withTimeout(window.testDungeon(), 20 * 60 * 1000, 'Dungeon timed out');
+            }
 
-        throw new Error('Dungeon API not ready (missing executeDungeon/testDungeon)');
+            throw new Error('Dungeon API not ready (missing executeDungeon/testDungeon)');
+        } catch (err) {
+            dungeonRunning = false;
+            window.HWH_DUNGEON_RUNNING = false;
+            setDungeonBattleOpen(false);
+            throw err;
+        }
     }
 
     // --- DUNGEON SETTINGS GUI ---
@@ -2146,8 +2245,16 @@ async function executeGetDailyBonus() {
     }
     async function executeSingleTask(task) {
         const { HWHFuncs, Send, HWHClasses } = window;
+        const isDungeonTask = task.id === 'testDungeon' || task.id === '10022';
+        if (!isDungeonTask && (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN)) {
+            HWHFuncs.setProgress(`${task.label}: skipped (dungeon running)`, true);
+            return;
+        }
         try {
             if (task.func) {
+                if (task.id === 'testDungeon') {
+                    await sleep(2000);
+                }
                 HWHFuncs.setProgress(`Executing: ${task.label}`, true);
                 await task.func();
             } else {
@@ -2201,8 +2308,7 @@ async function executeGetDailyBonus() {
                      // Quest uses a function instead of API calls
                      if (task.id === '10022') {
                          // Special handling for dungeon quest - ensure it executes last
-                         // Wait a bit to ensure all other operations are complete
-                         await new Promise(resolve => setTimeout(resolve, 2000));
+                         await sleep(2000);
                          await executeTestDungeon();
                          invalidateQuestCache();
                          return;
@@ -2288,15 +2394,18 @@ async function executeGetDailyBonus() {
         // Run sequentially (await each). The previous setTimeout-based scheduler could overlap long tasks and stall mid-run.
         setTimeout(async () => {
             const { HWHFuncs } = window;
-            if (autoRunInProgress || dungeonRunning || window.HWH_DUNGEON_RUNNING) {
+            if (autoRunInProgress || dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
                 console.log('[Auto Daily] Skipping auto-run — dungeon already in progress');
                 return;
             }
             autoRunInProgress = true;
             try {
                 for (const task of ordered) {
+                    if (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
+                        console.log('[Auto Daily] Stopping auto-run — dungeon started');
+                        break;
+                    }
                     await executeSingleTask(task);
-                    // Small gap to keep UI responsive and avoid bursting calls.
                     await sleep(500);
                 }
                 HWHFuncs.setProgress('Auto Daily: All selected tasks finished!', true);
