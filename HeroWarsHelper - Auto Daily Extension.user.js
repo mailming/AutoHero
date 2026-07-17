@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.6
+// @version      3.2.7
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.6";
+    const EXTENSION_VERSION = "3.2.7";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
@@ -25,7 +25,7 @@
     /** Brute-force budget ms per battle sim: `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000, Stealther default). */
     /** Optional override for door comparison only: `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS`. */
     /** Optional override when restarting a non-last door: `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS`. */
-    /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (default 25). */
+    /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (0 = unlimited, Stealther default). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
     const UI_ICON = {
@@ -185,7 +185,9 @@
         const EVAL_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || BRUTEFORCE_MS));
         const RESTART_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS) || BRUTEFORCE_MS));
         const STEP_DELAY_MS = Math.max(0, Math.min(1000, Number(window.HWH_DUNGEON_STEP_DELAY_MS) || 100));
-        const MAX_TIMER_TRIES = Math.max(1, Math.min(50, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 25));
+        const MAX_TIMER_TRIES = window.HWH_DUNGEON_MAX_TIMER_TRIES != null
+            ? Math.max(0, Math.min(200, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 0))
+            : 0;
         const SIM_YIELD_EVERY = 3;
 
         function syncPredictionCardsFromInventory(invRes) {
@@ -283,10 +285,16 @@
 
         function extractTimers(battleResult, maxTimerTries = MAX_TIMER_TRIES) {
             const logs = battleResult.battleLogs?.[0] || [];
+            if (logs.length === 0) {
+                return [0];
+            }
             const timeLimit = Math.max(...logs.map((e) => e.time), 168.8);
-            const timers = [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))].filter((t) => t > 0);
+            const timers = [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))];
             timers.sort(() => Math.random() - 0.5);
-            return timers.length > 0 ? timers.slice(0, maxTimerTries) : [0];
+            if (maxTimerTries > 0 && timers.length > maxTimerTries) {
+                return timers.slice(0, maxTimerTries);
+            }
+            return timers.length > 0 ? timers : [0];
         }
 
         class PvPBattleHandler {
@@ -346,6 +354,10 @@
 
             isWin() {
                 return !!this._initialBattle?.result?.win;
+            }
+
+            success(bestBattle) {
+                return !!bestBattle?.result?.win;
             }
 
             bestBattle() {
@@ -421,7 +433,7 @@
                         continue;
                     }
                     this._bestBattle = this._lastBattle;
-                    if (!this._bestBattle.result?.win) {
+                    if (!this.success(this._bestBattle)) {
                         continue;
                     }
                     break;
@@ -483,6 +495,10 @@
                     return true;
                 }
                 return thisState > bestState;
+            }
+
+            success() {
+                return false;
             }
         }
 
@@ -859,22 +875,20 @@
             return wrapBattleOption(teamNum, heroes, pet, favor, battle, battleData, handler, handlerResult);
         }
 
-        async function waitRemainingBattleTime(option, debug = '') {
+        async function waitForBattleFullTimer(option, debug = '') {
             const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
             if (predictionCards > 0) {
                 return;
             }
             const totalTimer = Math.ceil(option.timer ?? getTimer(option.battleTime ?? 0));
-            const elapsed = battleStartTime ? Math.ceil((Date.now() - battleStartTime) / 1000) : 0;
-            const remaining = Math.max(0, totalTimer - elapsed);
-            if (DUNGEON_VERBOSE) {
-                console.log('[Dungeon] battle wait remaining:', remaining, 's (total', totalTimer, 'elapsed', elapsed, ')');
-            }
-            if (remaining <= 0) {
+            if (totalTimer <= 0) {
                 return;
             }
+            if (DUNGEON_VERBOSE) {
+                console.log('[Dungeon] battle wait:', totalTimer, 's', debug || '');
+            }
             const msg = `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`;
-            await countdownTimer(remaining, msg);
+            await countdownTimer(totalTimer, msg);
         }
 
         async function executeChosenOption(option, attackerType, doorCount, debug = '', skipRestart = false) {
@@ -900,7 +914,7 @@
                 lastDebugString += debugString(restarted, attackerType) + ' [restart]';
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
             }
-            await waitRemainingBattleTime(finalOption, debug);
+            await waitForBattleFullTimer(finalOption, debug);
             if (stopDung || end) {
                 return false;
             }
@@ -1021,7 +1035,7 @@
                 lastError = 'NotFound recovery failed (could not restart battle)';
                 return false;
             }
-            await waitRemainingBattleTime(refreshed);
+            await waitForBattleFullTimer(refreshed);
             return endBattleOption(refreshed, attackerType, true);
         }
 
@@ -1173,7 +1187,7 @@
                 }
                 lastDebugString += debugString(option, 'hero');
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                await waitRemainingBattleTime(option, lastDebugString);
+                await waitForBattleFullTimer(option, lastDebugString);
                 if (stopDung || end) {
                     return false;
                 }
