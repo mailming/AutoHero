@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LLM Controller HwH Ext
 // @namespace    HeroWarsHelper.LLMController
-// @version      1.0
-// @description  Provides an LLM-accessible API interface to control HeroWarsHelper functions directly
+// @version      1.1
+// @description  Provides an LLM-accessible API interface and localhost bridge for Cursor control
 // @author       YourName
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
@@ -16,7 +16,9 @@
     'use strict';
 
     const EXTENSION_NAME = "LLM Controller Extension";
-    const EXTENSION_VERSION = "1.0";
+    const EXTENSION_VERSION = "1.1";
+    const BRIDGE_URL = 'http://127.0.0.1:9876';
+    const BRIDGE_POLL_MS = 500;
     const EXTENSION_AUTHOR = "YourName";
 
     // Wait for HWH to be ready
@@ -37,17 +39,86 @@
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
 
         // Create LLM API interface
-        window.LLMHWH = createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib });
+        const api = createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib });
+        window.LLMHWH = api;
+
+        // Localhost bridge for Cursor (polls llm-bridge-server.mjs)
+        startBridgeClient(api, HWHFuncs);
 
         // Add menu button for testing
         const scriptMenu = HWHClasses.ScriptMenu.getInst();
-        scriptMenu.addButton({
-            name: 'LLM API',
-            title: 'Open LLM API documentation and test interface',
-            onClick: openLLMInterface
-        });
+        scriptMenu.addCombinedButton([
+            {
+                name: 'LLM API',
+                title: 'Open LLM API documentation and test interface',
+                onClick: openLLMInterface
+            },
+            {
+                name: 'Bridge',
+                title: 'LLM bridge status (Cursor localhost server)',
+                onClick: () => {
+                    const status = api.getBridgeStatus();
+                    HWHFuncs.setProgress(
+                        `Bridge: ${status.connected ? 'connected' : 'waiting'} | server: ${status.serverReachable ? 'up' : 'down'}`,
+                        true
+                    );
+                },
+                color: 'gray'
+            }
+        ]);
 
         console.log(`${EXTENSION_NAME} initialized. LLM API available at window.LLMHWH`);
+    }
+
+    function startBridgeClient(api, HWHFuncs) {
+        let running = false;
+        let connected = false;
+        let serverReachable = false;
+
+        api.getBridgeStatus = () => ({ connected, serverReachable, url: BRIDGE_URL });
+
+        async function pollOnce() {
+            if (running) return;
+            running = true;
+            try {
+                const health = await fetch(`${BRIDGE_URL}/health`).then(r => r.json()).catch(() => null);
+                serverReachable = !!health?.ok;
+
+                const res = await fetch(`${BRIDGE_URL}/poll`);
+                if (res.status === 204) {
+                    connected = serverReachable;
+                    return;
+                }
+                if (!res.ok) return;
+
+                const command = await res.json();
+                connected = true;
+
+                let result;
+                let ok = true;
+                let error = null;
+                try {
+                    result = await api.runCommand(command.method, command.args || []);
+                } catch (e) {
+                    ok = false;
+                    error = e.message || String(e);
+                }
+
+                await fetch(`${BRIDGE_URL}/result`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: command.id, ok, result, error }),
+                });
+            } catch (e) {
+                connected = false;
+            } finally {
+                running = false;
+            }
+        }
+
+        setInterval(pollOnce, BRIDGE_POLL_MS);
+        pollOnce();
+        console.log(`${EXTENSION_NAME}: bridge client polling ${BRIDGE_URL}`);
     }
 
     function createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib }) {
@@ -181,19 +252,42 @@
                 return new Promise((resolve, reject) => {
                     try {
                         HWHFuncs.setProgress('Executing: Dungeon', true);
-                        const testDungeon = window.testDungeon || HWHClasses.executeDungeon;
-                        if (typeof testDungeon === 'function') {
-                            const dungeon = new testDungeon(resolve, reject);
-                            if (maxTitanite) {
+                        if (typeof window.testDungeon === 'function') {
+                            window.testDungeon().then(resolve).catch(reject);
+                            return;
+                        }
+                        if (HWHClasses.executeDungeon) {
+                            const dungeon = new HWHClasses.executeDungeon(resolve, reject);
+                            if (maxTitanite != null) {
                                 dungeon.start(maxTitanite);
                             } else {
                                 dungeon.start();
                             }
-                        } else {
-                            reject(new Error('Dungeon function not available'));
+                            return;
                         }
+                        reject(new Error('Dungeon function not available'));
                     } catch (error) {
                         reject(new Error(`Dungeon execution failed: ${error.message}`));
+                    }
+                });
+            },
+
+            /**
+             * Execute Arena (all attempts) via AutoBattle if available
+             * @param {string} arenaType - 'arena' or 'grand'
+             * @returns {Promise<string>} Status message
+             */
+            async executeArena(arenaType = 'arena') {
+                if (!HWHClasses.executeArena) {
+                    throw new Error('executeArena not available (install AutoBattle HwH Ext)');
+                }
+                return new Promise((resolve, reject) => {
+                    try {
+                        HWHFuncs.setProgress(`Executing: ${arenaType === 'grand' ? 'Grand Arena' : 'Arena'}`, true);
+                        const arena = new HWHClasses.executeArena(resolve, reject);
+                        arena.start(arenaType);
+                    } catch (error) {
+                        reject(new Error(`Arena execution failed: ${error.message}`));
                     }
                 });
             },
@@ -424,10 +518,12 @@
                     'outland': () => this.executeOutland(),
                     'tower': () => this.executeTower(),
                     'dungeon': () => this.executeDungeon(params.maxTitanite),
+                    'arena': () => this.executeArena('arena'),
+                    'grandarena': () => this.executeArena('grand'),
                     'expeditions': () => this.executeExpeditions(),
                     'quests': () => this.collectQuestRewards(),
                     'mail': () => this.collectMail(),
-                    'dailyBonus': () => this.getDailyBonus(),
+                    'dailybonus': () => this.getDailyBonus(),
                     'seer': () => this.executeSeer(),
                 };
 
@@ -449,6 +545,8 @@
                     'outland',
                     'tower',
                     'dungeon',
+                    'arena',
+                    'grandArena',
                     'expeditions',
                     'quests',
                     'mail',
@@ -457,6 +555,22 @@
                     'arenaBattle',
                     'grandArenaBattle'
                 ];
+            },
+
+            /**
+             * Run any public LLMHWH method by name (used by localhost bridge)
+             * @param {string} method
+             * @param {Array} args
+             * @returns {Promise<*>}
+             */
+            async runCommand(method, args = []) {
+                if (method === 'getBridgeStatus') {
+                    return this.getBridgeStatus ? this.getBridgeStatus() : { connected: false };
+                }
+                if (typeof this[method] !== 'function') {
+                    throw new Error(`Unknown method: ${method}`);
+                }
+                return await this[method](...args);
             },
 
             /**
@@ -477,6 +591,7 @@
                         executeOutland: 'Execute Outland (boss raids)',
                         executeTower: 'Execute Tower of Elements',
                         executeDungeon: 'Execute Dungeon (with optional maxTitanite param)',
+                        executeArena: 'Execute Arena (requires AutoBattle ext)',
                         executeExpeditions: 'Execute Expeditions',
                         collectQuestRewards: 'Collect all completed quest rewards',
                         collectMail: 'Collect all mail',
@@ -486,6 +601,8 @@
                         executeGrandArenaBattle: 'Execute Grand Arena battle (requires teams param)',
                         executeBatch: 'Execute multiple operations in sequence',
                         executeOperation: 'Execute operation by name',
+                        runCommand: 'Run any API method by name (bridge)',
+                        getBridgeStatus: 'Localhost bridge connection status',
                         translate: 'Translate a key to text',
                         getLibraryData: 'Get library data by ID',
                         setProgress: 'Set progress message',
@@ -541,6 +658,9 @@ await LLMHWH.sendAPI({
         ident: "body"
     }]
 });
+
+// Cursor bridge (run llm-bridge-server.mjs first):
+// curl -X POST http://127.0.0.1:9876/run -H "Content-Type: application/json" -d "{\"method\":\"getUserInfo\",\"args\":[]}"
                 </pre>
             </div>
             <div style="margin: 20px 0;">
