@@ -7,6 +7,7 @@ param(
     [int]$SimulationsPerCombo = 10,
     [string]$Label = 'single-round',
     [string]$OutputDir = 'arena-training-results',
+    [switch]$SkipLocalCopy,
     [int]$TimeoutMs = 1800000
 )
 
@@ -25,12 +26,16 @@ if (-not $health.browserConnected) {
     throw 'Bridge browser not connected. Open Hero Wars with LLM Controller + Arena Training loaded.'
 }
 
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$outFile = Join-Path $OutputDir "arena-training-$stamp.json"
+$outFile = $null
+if (-not $SkipLocalCopy) {
+    New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $outFile = Join-Path $OutputDir "arena-training-$stamp.json"
+}
 
 $options = @{
     label = $Label
+    opponentSource = 'topGet'
     opponentIndex = $OpponentIndex
     heroPoolSize = $HeroPoolSize
     maxCombinations = $MaxCombinations
@@ -45,11 +50,15 @@ if ($OpponentUserId) {
 
 Write-Host "Starting single arena training round vs opponent index $OpponentIndex..."
 $result = Invoke-Bridge -Method 'arenaTrainingRun' -Args @($options) -Timeout $TimeoutMs
-$result | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 $outFile
+if ($outFile) {
+    $result | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 $outFile
+}
 
 if ($result.best) {
     Write-Host "Best combo: $($result.best.heroNames -join ', ') + pet $($result.best.pet)"
     Write-Host "Win rate: $([math]::Round($result.best.winRate, 1))%"
 }
-Write-Host "Also saved via bridge to arena-training-results/"
-Write-Host "Local copy: $outFile"
+Write-Host 'Also saved via bridge to PostgreSQL (training_rounds).'
+if ($outFile) {
+    Write-Host "Local copy: $outFile"
+}

@@ -3,7 +3,11 @@
  * Local bridge server for Cursor -> Hero Wars (LLMHWH).
  *
  * Usage:
+ *   npm install
  *   node llm-bridge-server.mjs
+ *
+ * Environment:
+ *   DATABASE_URL=postgresql://user:pass@localhost:5432/autohero
  *
  * Cursor / shell:
  *   curl http://127.0.0.1:9876/health
@@ -11,12 +15,13 @@
  */
 
 import http from 'http';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TRAINING_DIR = path.join(__dirname, 'arena-training-results');
+import {
+    initDatabase,
+    saveTrainingRound,
+    getTrainingSummary,
+    getDatabaseStatus,
+    closeDatabase,
+} from './training-db.mjs';
 
 const PORT = 9876;
 const HOST = '127.0.0.1';
@@ -25,6 +30,7 @@ const DEFAULT_TIMEOUT_MS = 120000;
 let commandQueue = [];
 let lastBrowserPollAt = 0;
 const waiters = new Map();
+let databaseReady = false;
 
 function sendJson(res, status, body) {
     res.writeHead(status, {
@@ -56,65 +62,6 @@ function isBrowserConnected() {
     return Date.now() - lastBrowserPollAt < 5000;
 }
 
-async function ensureTrainingDir() {
-    await fs.mkdir(TRAINING_DIR, { recursive: true });
-}
-
-async function saveTrainingRound(body) {
-    await ensureTrainingDir();
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const sessionId = body?.sessionId || `round_${Date.now()}`;
-    const fileName = `${stamp}_${sessionId}.json`;
-    const filePath = path.join(TRAINING_DIR, fileName);
-    await fs.writeFile(filePath, JSON.stringify(body, null, 2), 'utf8');
-
-    const summary = {
-        savedAt: new Date().toISOString(),
-        file: fileName,
-        sessionId: body?.sessionId,
-        label: body?.label,
-        opponent: body?.opponent?.name || body?.opponent?.userId,
-        bestWinRate: body?.best?.winRate,
-        bestHeroes: body?.best?.heroNames,
-        bestPet: body?.best?.pet,
-    };
-    await fs.appendFile(
-        path.join(TRAINING_DIR, 'training-log.jsonl'),
-        `${JSON.stringify(summary)}\n`,
-        'utf8'
-    );
-    return { file: fileName, summary };
-}
-
-async function getTrainingSummary() {
-    await ensureTrainingDir();
-    const files = await fs.readdir(TRAINING_DIR);
-    const rounds = files.filter((f) => f.endsWith('.json')).sort();
-    const latest = rounds.at(-1) || null;
-    let latestSummary = null;
-    if (latest) {
-        try {
-            const raw = await fs.readFile(path.join(TRAINING_DIR, latest), 'utf8');
-            const data = JSON.parse(raw);
-            latestSummary = {
-                file: latest,
-                sessionId: data.sessionId,
-                best: data.best,
-                opponent: data.opponent,
-                completedAt: data.completedAt,
-            };
-        } catch {
-            latestSummary = { file: latest };
-        }
-    }
-    return {
-        dir: TRAINING_DIR,
-        roundFiles: rounds.length,
-        latestFile: latest,
-        latestSummary,
-    };
-}
-
 const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
         res.writeHead(204, {
@@ -135,6 +82,7 @@ const server = http.createServer(async (req, res) => {
                 lastBrowserPollAt,
                 queuedCommands: commandQueue.length,
                 port: PORT,
+                database: getDatabaseStatus(),
             });
         }
 
@@ -151,11 +99,25 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (req.method === 'GET' && url.pathname === '/training/summary') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
             const summary = await getTrainingSummary();
             return sendJson(res, 200, { ok: true, ...summary });
         }
 
         if (req.method === 'POST' && url.pathname === '/training/save') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
             const body = await readBody(req);
             const saved = await saveTrainingRound(body);
             return sendJson(res, 200, { ok: true, ...saved });
@@ -220,8 +182,37 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
-server.listen(PORT, HOST, () => {
-    console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
-    console.log(`Training results save to ${TRAINING_DIR}`);
-    console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
+async function startServer() {
+    try {
+        await initDatabase();
+        databaseReady = true;
+        console.log('PostgreSQL connected:', getDatabaseStatus().url);
+    } catch (error) {
+        databaseReady = false;
+        console.error('PostgreSQL init failed:', error.message);
+        console.error('Set DATABASE_URL or start PostgreSQL, then restart the bridge.');
+    }
+
+    server.on('error', (error) => {
+        console.error('Bridge server error:', error.message);
+        process.exit(1);
+    });
+
+    server.listen(PORT, HOST, () => {
+        console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
+        console.log('Arena training results save to PostgreSQL (training_rounds / training_combo_results)');
+        console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
+    });
+}
+
+startServer();
+
+process.on('SIGINT', async () => {
+    await closeDatabase();
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    await closeDatabase();
+    process.exit(0);
 });

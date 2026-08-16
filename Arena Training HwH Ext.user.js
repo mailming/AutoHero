@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.1
+// @version      1.4
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.1';
+    const EXTENSION_VERSION = '1.4';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -50,7 +50,7 @@
             window.LLMHWH.arenaTrainingStartLoop = (options) => training.startLoop(options);
             window.LLMHWH.arenaTrainingStopLoop = () => training.stopLoop();
             window.LLMHWH.arenaTrainingGetLoopHistory = () => training.getLoopHistory();
-            window.LLMHWH.arenaTrainingGetOpponents = () => training.getOpponents();
+            window.LLMHWH.arenaTrainingGetOpponents = (forceRefresh, options) => training.getOpponents(forceRefresh, options);
             window.LLMHWH.arenaTrainingGetResults = () => training.getResults();
             window.LLMHWH.arenaTrainingExportResults = () => training.exportResults();
             window.LLMHWH.arenaTrainingGetStatus = () => training.getStatus();
@@ -59,8 +59,8 @@
 
         HWHClasses.ScriptMenu.getInst().addButton({
             name: 'Arena Train',
-            title: 'Loop arena training — auto-saves results (demo battles, no attempts)',
-            onClick: () => training.startLoop({ label: 'menu-loop' }),
+            title: 'Loop arena top-list training — auto-saves results (demo battles, no attempts)',
+            onClick: () => training.startLoop({ label: 'menu-loop', opponentSource: 'topGet' }),
             color: 'purple',
         });
 
@@ -76,6 +76,7 @@
         let lastResults = null;
         let loopSession = null;
         let opponentsCache = null;
+        let opponentsMeta = { myPlace: null, serverId: null };
 
         function sleep(ms) {
             return new Promise((resolve) => setTimeout(resolve, ms));
@@ -166,10 +167,223 @@
             return favor;
         }
 
-        async function loadGameData() {
+        function buildRatingStashEvents(meta = {}) {
+            const actionTs = meta.actionTs || getActionTs();
+            const timestamp = meta.timestamp || Math.floor(Date.now() / 1000);
+            const sessionNumber = meta.sessionNumber || 1;
+            const windowCounter = meta.windowCounter || 12;
+            const baseParams = {
+                sessionNumber,
+                assetsReloadNum: 0,
+                assetsType: 'web',
+                assetsLoadingPercent: 0,
+                assetsLoadingTime: 0,
+            };
+            return [
+                {
+                    type: '.client.window.close',
+                    params: {
+                        ...baseParams,
+                        actionTs,
+                        windowName: 'rating',
+                        prevWindowName: 'global',
+                        timestamp,
+                        windowCounter,
+                    },
+                },
+                {
+                    type: '.client.button.click',
+                    params: {
+                        ...baseParams,
+                        actionTs: actionTs + 100,
+                        windowName: 'rating',
+                        buttonName: 'rating_tab:0',
+                        timestamp,
+                        windowCounter: 0,
+                        assetsType: 'cache',
+                        assetsLoadingTime: 0,
+                    },
+                },
+                {
+                    type: '.client.window.open',
+                    params: {
+                        ...baseParams,
+                        actionTs: actionTs + 103,
+                        windowName: 'rating',
+                        prevWindowName: 'global',
+                        timestamp,
+                        windowCounter: windowCounter + 1,
+                        assetsLoadingTime: 17,
+                    },
+                },
+            ];
+        }
+
+        function parseTopGetArenaEntry(entry, users = {}, index = 0) {
+            if (!entry || typeof entry !== 'object') return null;
+
+            const userId = entry.userId ?? entry.id ?? entry.uid ?? entry.user_id;
+            const user = entry.user || users[String(userId)] || users[userId] || {};
+            const heroesRaw = entry.heroes
+                || entry.heroIds
+                || entry.team?.units
+                || entry.team?.heroes
+                || entry.defenceTeam?.units
+                || entry.defence?.units
+                || [];
+
+            const heroes = [];
+            const heroItems = Array.isArray(heroesRaw) ? heroesRaw : Object.values(heroesRaw || {});
+            for (const item of heroItems) {
+                if (typeof item === 'number') {
+                    heroes.push({ id: item });
+                } else if (item?.id != null) {
+                    heroes.push(item);
+                }
+            }
+
+            const petId = entry.pet ?? entry.team?.pet ?? entry.defenceTeam?.pet;
+            if (petId != null && !heroes.some((hero) => (hero?.id || hero) >= 6000)) {
+                heroes.push({ id: Number(petId), type: 'pet' });
+            }
+
+            if (!heroes.length && !userId) return null;
+
+            const banners = entry.banners
+                || (entry.banner != null ? [{ id: entry.banner }] : [])
+                || (entry.defenceBanner != null ? [{ id: entry.defenceBanner }] : []);
+
+            return {
+                userId: userId != null ? String(userId) : `top_${index}`,
+                place: entry.place ?? entry.rank ?? entry.position ?? String(index + 1),
+                power: entry.power ?? entry.teamPower ?? entry.score ?? entry.value,
+                heroes,
+                banners,
+                user: { name: user.name || entry.name || entry.nickname || `Top ${index + 1}` },
+                source: 'topGet',
+            };
+        }
+
+        function normalizeArenaTopResponse(response, users = {}) {
+            if (!response) return [];
+
+            const userMap = users && typeof users === 'object' ? users : {};
+            let entries = [];
+
+            if (Array.isArray(response.top)) {
+                entries = response.top;
+            } else if (Array.isArray(response)) {
+                entries = response;
+            } else if (Array.isArray(response.list)) {
+                entries = response.list;
+            } else if (Array.isArray(response.rating)) {
+                entries = response.rating;
+            } else if (Array.isArray(response.data)) {
+                entries = response.data;
+            } else if (Array.isArray(response.entries)) {
+                entries = response.entries;
+            } else if (typeof response === 'object') {
+                entries = Object.entries(response)
+                    .filter(([key]) => key !== 'users' && key !== 'place')
+                    .map(([, value]) => value)
+                    .filter((value) => (
+                        value
+                        && typeof value === 'object'
+                        && !Array.isArray(value)
+                        && (value.heroes || value.heroIds || value.team || value.userId || value.id)
+                    ));
+            }
+
+            return entries
+                .map((entry, index) => parseTopGetArenaEntry(entry, userMap, index))
+                .filter((entry) => entry && entry.heroes.length > 0);
+        }
+
+        function extractTopGetResult(response) {
+            return response?.results?.find((r) => (
+                r.ident === 'group_1_body' || r.ident === 'topGet'
+            ))?.result?.response;
+        }
+
+        async function resolveServerId(options = {}) {
+            if (options.serverId != null) return Number(options.serverId);
+            const response = await Send({
+                calls: [{ name: 'userGetInfo', args: {}, ident: 'userGetInfo' }],
+            });
+            const userInfo = response.results?.find((r) => r.ident === 'userGetInfo')?.result?.response || {};
+            return Number(userInfo.serverId || userInfo.server || 0) || null;
+        }
+
+        async function fetchArenaTopOpponents(options = {}) {
+            const actionTs = getActionTs();
+            const serverId = await resolveServerId(options);
+            if (!serverId) {
+                throw new Error('Could not resolve serverId for topGet arena');
+            }
+
+            const calls = [];
+            if (options.skipStashClient !== true) {
+                calls.push({
+                    name: 'stashClient',
+                    args: { data: buildRatingStashEvents({ ...options.stashMeta, actionTs }) },
+                    context: { actionTs },
+                    ident: 'group_0_body',
+                });
+            }
+
+            calls.push({
+                name: 'topGet',
+                args: {
+                    type: 'arena',
+                    extraId: options.extraId ?? 0,
+                    serverId,
+                },
+                context: { actionTs: actionTs + 1500 },
+                ident: 'group_1_body',
+            });
+
+            const response = await Send({ calls });
+            if (response?.error) {
+                throw new Error(`${response.error.name}: ${response.error.description}`);
+            }
+
+            const topGetResult = extractTopGetResult(response);
+            const users = topGetResult?.users || {};
+            let opponents = normalizeArenaTopResponse(topGetResult, users);
+            if (options.opponentLimit > 0) {
+                opponents = opponents.slice(0, options.opponentLimit);
+            }
+            if (!opponents.length) {
+                throw new Error('topGet arena returned no opponent teams');
+            }
+
+            opponentsMeta = {
+                myPlace: topGetResult?.place || null,
+                serverId,
+                count: opponents.length,
+            };
+
+            return opponents;
+        }
+
+        async function fetchArenaFindEnemies() {
+            const response = await Send({
+                calls: [{ name: 'arenaFindEnemies', args: {}, ident: 'arenaFindEnemies' }],
+            });
+            return response.results?.find((r) => r.ident === 'arenaFindEnemies')?.result?.response || [];
+        }
+
+        async function fetchOpponents(options = {}) {
+            const source = options.opponentSource || 'topGet';
+            if (source === 'arenaFindEnemies') {
+                return fetchArenaFindEnemies();
+            }
+            return fetchArenaTopOpponents(options);
+        }
+
+        async function loadTrainingBaseData() {
             const response = await Send({
                 calls: [
-                    { name: 'arenaFindEnemies', args: {}, ident: 'arenaFindEnemies' },
                     { name: 'teamGetAll', args: {}, ident: 'teamGetAll' },
                     { name: 'teamGetFavor', args: {}, ident: 'teamGetFavor' },
                     { name: 'heroGetAll', args: {}, ident: 'heroGetAll' },
@@ -179,12 +393,19 @@
 
             const get = (ident) => response.results?.find((r) => r.ident === ident)?.result?.response;
             return {
-                opponents: get('arenaFindEnemies') || [],
                 teams: get('teamGetAll') || {},
                 favor: get('teamGetFavor') || {},
                 heroes: parseHeroes(get('heroGetAll')),
                 userInfo: get('userGetInfo') || {},
             };
+        }
+
+        async function loadGameData(options = {}) {
+            const [base, opponents] = await Promise.all([
+                loadTrainingBaseData(),
+                fetchOpponents(options),
+            ]);
+            return { ...base, opponents };
         }
 
         function extractOpponentConfig(opponent) {
@@ -362,6 +583,17 @@
             return 1;
         }
 
+        function resolveHeroPoolSize(options = {}) {
+            if (options.topLimit > 0) return Number(options.topLimit);
+            if (options.heroPoolSize > 0) return Number(options.heroPoolSize);
+            return CONSTANTS.DEFAULT_POOL_SIZE;
+        }
+
+        function applyTrainingOptions(options = {}) {
+            const heroPoolSize = resolveHeroPoolSize(options);
+            return { ...options, heroPoolSize, topLimit: heroPoolSize };
+        }
+
         function buildCandidateTeams(data, options) {
             const arenaTeam = data.teams?.arena || [];
             const arenaFavor = data.favor?.arena || {};
@@ -374,7 +606,7 @@
                 .sort((a, b) => heroPower(b) - heroPower(a))
                 .map((h) => h.id);
 
-            const poolSize = options.heroPoolSize || CONSTANTS.DEFAULT_POOL_SIZE;
+            const poolSize = resolveHeroPoolSize(options);
             const heroPool = (options.heroPool?.length
                 ? options.heroPool.map(Number)
                 : ownedHeroes.slice(0, poolSize).map((h) => h.id));
@@ -442,19 +674,35 @@
         }
 
         return {
-            async getOpponents(forceRefresh = false) {
-                if (!forceRefresh && opponentsCache) return opponentsCache;
-                const data = await loadGameData();
-                opponentsCache = (data.opponents || []).map((opp, index) => ({
-                    index,
-                    userId: opp.userId,
-                    name: opp.user?.name || `Opponent ${opp.userId}`,
-                    place: opp.place,
-                    power: opp.power,
-                    heroes: (opp.heroes || []).filter((h) => (h?.id || h) < 6000).map((h) => h?.id || h),
-                    pet: (opp.heroes || []).find((h) => (h?.id || h) >= 6000)?.id,
-                }));
-                return opponentsCache;
+            async getOpponents(forceRefresh = false, options = {}) {
+                const source = options.opponentSource || 'topGet';
+                if (!forceRefresh && opponentsCache?.source === source && opponentsCache?.list) {
+                    return opponentsCache.list;
+                }
+
+                const opponents = await fetchOpponents({ ...options, opponentSource: source });
+                opponentsCache = {
+                    source,
+                    myPlace: opponentsMeta.myPlace,
+                    serverId: opponentsMeta.serverId,
+                    list: opponents.map((opp, index) => ({
+                        index,
+                        userId: opp.userId,
+                        name: opp.user?.name || `Opponent ${opp.userId}`,
+                        place: opp.place,
+                        power: opp.power,
+                        heroes: (opp.heroes || [])
+                            .filter((h) => (h?.id || h) < 6000)
+                            .map((h) => h?.id || h),
+                        heroNames: (opp.heroes || [])
+                            .filter((h) => (h?.id || h) < 6000)
+                            .map((h) => heroName(h?.id || h)),
+                        pet: (opp.heroes || []).map((h) => h?.id || h).find((id) => id >= 6000),
+                        banner: opp.banners?.[0]?.id ?? opp.banners?.[0] ?? null,
+                        source,
+                    })),
+                };
+                return opponentsCache.list;
             },
 
             getStatus() {
@@ -504,6 +752,8 @@
 
                 const trainDefaults = {
                     label: 'loop',
+                    opponentSource: 'topGet',
+                    topLimit: 12,
                     heroPoolSize: 12,
                     maxCombinations: 20,
                     simulationsPerCombo: 5,
@@ -513,7 +763,7 @@
                     repeatCycle: true,
                     maxRounds: 0,
                 };
-                const trainOptions = { ...trainDefaults, ...options };
+                const trainOptions = applyTrainingOptions({ ...trainDefaults, ...options });
 
                 loopRunning = true;
                 stopRequested = false;
@@ -533,7 +783,7 @@
                     let roundNum = 0;
                     try {
                         while (loopRunning && !stopRequested) {
-                            const opponents = await this.getOpponents(true);
+                            const opponents = await this.getOpponents(true, trainOptions);
                             const indexes = Array.isArray(trainOptions.opponentIndexes) && trainOptions.opponentIndexes.length
                                 ? trainOptions.opponentIndexes
                                 : opponents.map((o) => o.index);
@@ -615,6 +865,7 @@
                     throw new Error('Arena training already running');
                 }
 
+                options = applyTrainingOptions(options);
                 running = true;
                 stopRequested = false;
                 const sessionId = `arena_train_${Date.now()}`;
@@ -632,7 +883,7 @@
 
                 try {
                     HWHFuncs.setProgress('Arena Training: loading opponents and heroes...', true);
-                    const data = await loadGameData();
+                    const data = await loadGameData(options);
                     const opponentRaw = pickOpponent(data.opponents, options);
                     const opponentTeam = extractOpponentConfig(opponentRaw);
                     if (!opponentTeam.hasValidTeam) {
@@ -701,6 +952,8 @@
                             name: opponentRaw.user?.name,
                             place: opponentRaw.place,
                             power: opponentRaw.power,
+                            banner: opponentTeam.banner,
+                            source: opponentRaw.source || options.opponentSource || 'topGet',
                             team: opponentTeam,
                         },
                         config: {
@@ -709,6 +962,11 @@
                             simulationsPerCombo,
                             maxCombinations: options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS,
                             includeCurrentTeam: options.includeCurrentTeam !== false,
+                            opponentSource: options.opponentSource || 'topGet',
+                            topLimit: options.topLimit,
+                            heroPoolSize: options.heroPoolSize,
+                            opponentLimit: options.opponentLimit || 0,
+                            myArenaPlace: opponentsMeta.myPlace,
                         },
                         testedCombos: rankings.length,
                         rankings,
@@ -742,10 +1000,10 @@
             content.style.cssText = 'padding: 16px; color: #fce1ac; max-width: 640px; line-height: 1.5;';
             content.innerHTML = `
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
-                <p><b>Loop mode</b> cycles all opponents, tests combos, and auto-saves each round to the bridge.</p>
+                <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code> and tests your combos vs each defense team.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
-                <p>Defaults: top 12 heroes, 20 combos, 5 sims each, 2s between rounds.</p>
-                <p>Run <code>node llm-bridge-server.mjs</code> so results save to <code>arena-training-results/</code>.</p>
+                <p>Defaults: top <b>12</b> heroes (<code>topLimit</code>), 20 combos, 5 sims each, all arena top teams.</p>
+                <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 
             const popupPromise = HWHFuncs.popup.confirm('', [
@@ -764,7 +1022,7 @@
             if (choice === 'loop') {
                 training.startLoop({ label: 'popup-loop' });
             } else if (choice === 'run') {
-                training.run({ label: 'popup-single', opponentIndex: 0 }).catch((err) => {
+                training.run({ label: 'popup-single', opponentIndex: 0, opponentSource: 'topGet' }).catch((err) => {
                     HWHFuncs.setProgress(`Arena Training failed: ${err.message}`, true);
                 });
             } else if (choice === 'stop') {

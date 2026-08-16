@@ -30,5 +30,8 @@ Thumbs.db
 # hero_wars_events_email.txt
 # hero_wars_schedule.ics
 
+# Node
+node_modules/
+
 # Environment variables
 .env

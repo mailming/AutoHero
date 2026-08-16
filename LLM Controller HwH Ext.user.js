@@ -692,11 +692,11 @@
                 return await window.ArenaTraining.run(options);
             },
 
-            async arenaTrainingGetOpponents(forceRefresh = false) {
+            async arenaTrainingGetOpponents(forceRefresh = false, options = {}) {
                 if (!window.ArenaTraining) {
                     throw new Error('Arena Training not available (install Arena Training HwH Ext)');
                 }
-                return await window.ArenaTraining.getOpponents(forceRefresh);
+                return await window.ArenaTraining.getOpponents(forceRefresh, options);
             },
 
             arenaTrainingGetResults() {
@@ -910,7 +910,7 @@
                         exportApiRecording: 'Export full recording snapshot',
                         getApiRecordingStatus: 'API recording status',
                         arenaTrainingRun: 'Test hero combos vs arena opponent (demo battles)',
-                        arenaTrainingGetOpponents: 'List current arena opponents',
+                        arenaTrainingGetOpponents: 'List arena opponents (topGet arena list by default)',
                         arenaTrainingGetResults: 'Get latest arena training results',
                         arenaTrainingExportResults: 'Export latest arena training results',
                         arenaTrainingGetStatus: 'Arena training run status',
