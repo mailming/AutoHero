@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LLM Controller HwH Ext
 // @namespace    HeroWarsHelper.LLMController
-// @version      1.3
+// @version      1.4
 // @description  Provides an LLM-accessible API interface and localhost bridge for Cursor control
 // @author       YourName
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = "LLM Controller Extension";
-    const EXTENSION_VERSION = "1.3";
+    const EXTENSION_VERSION = "1.4";
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const BRIDGE_POLL_MS = 500;
     const EXTENSION_AUTHOR = "YourName";
@@ -678,6 +678,55 @@
                 }
             },
 
+            // ========== ARENA TRAINING ==========
+
+            /**
+             * Run arena combo training via Arena Training extension (demo battles, no attempts used)
+             * @param {Object} options
+             * @returns {Promise<Object>}
+             */
+            async arenaTrainingRun(options = {}) {
+                if (!window.ArenaTraining) {
+                    throw new Error('Arena Training not available (install Arena Training HwH Ext)');
+                }
+                return await window.ArenaTraining.run(options);
+            },
+
+            async arenaTrainingGetOpponents(forceRefresh = false) {
+                if (!window.ArenaTraining) {
+                    throw new Error('Arena Training not available (install Arena Training HwH Ext)');
+                }
+                return await window.ArenaTraining.getOpponents(forceRefresh);
+            },
+
+            arenaTrainingGetResults() {
+                if (!window.ArenaTraining) {
+                    throw new Error('Arena Training not available (install Arena Training HwH Ext)');
+                }
+                return window.ArenaTraining.getResults();
+            },
+
+            arenaTrainingExportResults() {
+                if (!window.ArenaTraining) {
+                    throw new Error('Arena Training not available (install Arena Training HwH Ext)');
+                }
+                return window.ArenaTraining.exportResults();
+            },
+
+            arenaTrainingGetStatus() {
+                if (!window.ArenaTraining) {
+                    return { available: false, running: false };
+                }
+                return { available: true, ...window.ArenaTraining.getStatus() };
+            },
+
+            arenaTrainingStop() {
+                if (!window.ArenaTraining) {
+                    throw new Error('Arena Training not available (install Arena Training HwH Ext)');
+                }
+                return window.ArenaTraining.stop();
+            },
+
             // ========== UTILITY FUNCTIONS ==========
 
             /**
@@ -839,6 +888,12 @@
                         clearApiRecording: 'Clear recorded API calls',
                         exportApiRecording: 'Export full recording snapshot',
                         getApiRecordingStatus: 'API recording status',
+                        arenaTrainingRun: 'Test hero combos vs arena opponent (demo battles)',
+                        arenaTrainingGetOpponents: 'List current arena opponents',
+                        arenaTrainingGetResults: 'Get latest arena training results',
+                        arenaTrainingExportResults: 'Export latest arena training results',
+                        arenaTrainingGetStatus: 'Arena training run status',
+                        arenaTrainingStop: 'Stop arena training run',
                         translate: 'Translate a key to text',
                         getLibraryData: 'Get library data by ID',
                         setProgress: 'Set progress message',
