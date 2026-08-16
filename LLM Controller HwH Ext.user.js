@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LLM Controller HwH Ext
 // @namespace    HeroWarsHelper.LLMController
-// @version      1.1
+// @version      1.3
 // @description  Provides an LLM-accessible API interface and localhost bridge for Cursor control
 // @author       YourName
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = "LLM Controller Extension";
-    const EXTENSION_VERSION = "1.1";
+    const EXTENSION_VERSION = "1.3";
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const BRIDGE_POLL_MS = 500;
     const EXTENSION_AUTHOR = "YourName";
@@ -39,7 +39,8 @@
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
 
         // Create LLM API interface
-        const api = createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib });
+        const apiRecorder = createApiRecorder({ Send: window.Send, HWHFuncs });
+        const api = createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib, apiRecorder });
         window.LLMHWH = api;
 
         // Localhost bridge for Cursor (polls llm-bridge-server.mjs)
@@ -64,6 +65,21 @@
                     );
                 },
                 color: 'gray'
+            },
+            {
+                name: 'Record',
+                title: 'Toggle API recording for manual UI playthroughs',
+                onClick: () => {
+                    const status = api.getApiRecordingStatus();
+                    if (status.recording) {
+                        const result = api.stopApiRecording();
+                        HWHFuncs.setProgress(`API recording stopped (${result.entryCount} calls)`, true);
+                    } else {
+                        const result = api.startApiRecording({ label: 'manual-ui' });
+                        HWHFuncs.setProgress(`API recording started (${result.sessionId})`, true);
+                    }
+                },
+                color: 'purple'
             }
         ]);
 
@@ -121,7 +137,222 @@
         console.log(`${EXTENSION_NAME}: bridge client polling ${BRIDGE_URL}`);
     }
 
-    function createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib }) {
+    function createApiRecorder({ Send, HWHFuncs }) {
+        let recording = false;
+        let sessionId = null;
+        let label = '';
+        let startedAt = null;
+        let entries = [];
+        let entryCounter = 0;
+        let pollTimer = null;
+        let originalSend = null;
+        const seenHistoryIds = new Set();
+        const seenSendKeys = new Set();
+
+        function parseJson(value) {
+            if (value == null) return null;
+            if (typeof value === 'object') return value;
+            try {
+                return JSON.parse(value);
+            } catch {
+                return null;
+            }
+        }
+
+        function normalizeCalls(request) {
+            const parsed = parseJson(request);
+            if (!parsed) return [];
+            if (Array.isArray(parsed.calls)) return parsed.calls;
+            if (parsed.name) return [parsed];
+            return [];
+        }
+
+        function matchResults(calls, response) {
+            const parsed = parseJson(response);
+            if (!parsed?.results || !Array.isArray(parsed.results)) {
+                return calls.map((call) => ({ call, result: parsed }));
+            }
+            const byIdent = new Map(parsed.results.map((item) => [item.ident, item]));
+            return calls.map((call, index) => ({
+                call,
+                result: byIdent.get(call.ident) ?? parsed.results[index] ?? null,
+            }));
+        }
+
+        function addEntry({ source, apiName, args, ident, request, response, error, meta = {} }) {
+            const entry = {
+                id: ++entryCounter,
+                timestamp: new Date().toISOString(),
+                source,
+                apiName,
+                args: args ?? {},
+                ident: ident ?? null,
+                request: request ?? null,
+                response: response ?? null,
+                error: error ?? null,
+                meta,
+            };
+            entries.push(entry);
+            console.log(`[LLM API Recorder] ${apiName}`, entry);
+            return entry;
+        }
+
+        function captureSendPayload(request, response, error, durationMs) {
+            const calls = normalizeCalls(request);
+            if (!calls.length) return;
+
+            const pairs = matchResults(calls, response);
+            for (const { call, result } of pairs) {
+                const dedupeKey = `send:${call.name}:${JSON.stringify(call.args)}:${JSON.stringify(result)}`;
+                if (seenSendKeys.has(dedupeKey)) continue;
+                seenSendKeys.add(dedupeKey);
+
+                addEntry({
+                    source: 'send',
+                    apiName: call.name,
+                    args: call.args,
+                    ident: call.ident,
+                    request: call,
+                    response: result,
+                    error,
+                    meta: { durationMs },
+                });
+            }
+        }
+
+        function captureRequestHistory() {
+            const history = typeof window.getRequestHistory === 'function'
+                ? window.getRequestHistory()
+                : null;
+            if (!history) return;
+
+            for (const [historyId, item] of Object.entries(history)) {
+                if (!item?.response || seenHistoryIds.has(historyId)) continue;
+                seenHistoryIds.add(historyId);
+
+                const calls = normalizeCalls(item.request);
+                const pairs = matchResults(calls, item.response);
+                for (const { call, result } of pairs) {
+                    addEntry({
+                        source: 'xhr',
+                        apiName: call.name,
+                        args: call.args,
+                        ident: call.ident,
+                        request: call,
+                        response: result,
+                        meta: { historyId },
+                    });
+                }
+            }
+        }
+
+        function installSendHook() {
+            if (originalSend || typeof window.Send !== 'function') return;
+            originalSend = window.Send;
+            window.Send = function hookedSend(json, pr) {
+                const started = Date.now();
+                return originalSend.call(this, json, pr)
+                    .then((response) => {
+                        if (recording) {
+                            captureSendPayload(json, response, null, Date.now() - started);
+                        }
+                        return response;
+                    })
+                    .catch((error) => {
+                        if (recording) {
+                            captureSendPayload(json, null, {
+                                name: error?.name,
+                                message: error?.message || String(error),
+                            }, Date.now() - started);
+                        }
+                        throw error;
+                    });
+            };
+        }
+
+        function uninstallSendHook() {
+            if (originalSend) {
+                window.Send = originalSend;
+                originalSend = null;
+            }
+        }
+
+        return {
+            startApiRecording(options = {}) {
+                if (recording) {
+                    return this.getApiRecordingStatus();
+                }
+                installSendHook();
+                recording = true;
+                sessionId = `rec_${Date.now()}`;
+                label = options.label || 'manual-ui';
+                startedAt = new Date().toISOString();
+                entries = [];
+                entryCounter = 0;
+                seenHistoryIds.clear();
+                seenSendKeys.clear();
+                captureRequestHistory();
+                pollTimer = setInterval(captureRequestHistory, 1000);
+                HWHFuncs?.setProgress?.(`API recording started (${sessionId})`, true);
+                return this.getApiRecordingStatus();
+            },
+
+            stopApiRecording() {
+                if (!recording) {
+                    return this.getApiRecordingStatus();
+                }
+                recording = false;
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+                captureRequestHistory();
+                uninstallSendHook();
+                const status = this.getApiRecordingStatus();
+                HWHFuncs?.setProgress?.(`API recording stopped (${status.entryCount} calls)`, true);
+                return status;
+            },
+
+            clearApiRecording() {
+                entries = [];
+                entryCounter = 0;
+                seenHistoryIds.clear();
+                seenSendKeys.clear();
+                return this.getApiRecordingStatus();
+            },
+
+            getApiRecordingStatus() {
+                return {
+                    recording,
+                    sessionId,
+                    label,
+                    startedAt,
+                    entryCount: entries.length,
+                };
+            },
+
+            getApiRecording(options = {}) {
+                const sinceId = Number(options.sinceId) || 0;
+                const slice = sinceId > 0
+                    ? entries.filter((entry) => entry.id > sinceId)
+                    : entries;
+                return {
+                    ...this.getApiRecordingStatus(),
+                    entries: slice,
+                    lastEntryId: entries.length ? entries[entries.length - 1].id : 0,
+                };
+            },
+
+            exportApiRecording() {
+                return {
+                    exportedAt: new Date().toISOString(),
+                    ...this.getApiRecording(),
+                };
+            },
+        };
+    }
+
+    function createLLMAPI({ HWHClasses, HWHFuncs, Send, cheats, Caller, lib, apiRecorder }) {
         /**
          * LLM API Interface for HeroWarsHelper
          * 
@@ -130,6 +361,7 @@
          */
         return {
             // ========== CORE API FUNCTIONS ==========
+            ...apiRecorder,
             
             /**
              * Send API request directly
@@ -249,23 +481,21 @@
              * @returns {Promise<string>} Status message
              */
             async executeDungeon(maxTitanite = null) {
+                if (!HWHClasses.executeDungeon) {
+                    throw new Error('Dungeon function not available (install Auto Daily ext for Stealther dungeon)');
+                }
+                if (window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
+                    throw new Error('Dungeon already running');
+                }
                 return new Promise((resolve, reject) => {
                     try {
                         HWHFuncs.setProgress('Executing: Dungeon', true);
-                        if (typeof window.testDungeon === 'function') {
-                            window.testDungeon().then(resolve).catch(reject);
-                            return;
+                        const dungeon = new HWHClasses.executeDungeon(resolve, reject);
+                        if (maxTitanite != null) {
+                            dungeon.start(maxTitanite);
+                        } else {
+                            dungeon.start();
                         }
-                        if (HWHClasses.executeDungeon) {
-                            const dungeon = new HWHClasses.executeDungeon(resolve, reject);
-                            if (maxTitanite != null) {
-                                dungeon.start(maxTitanite);
-                            } else {
-                                dungeon.start();
-                            }
-                            return;
-                        }
-                        reject(new Error('Dungeon function not available'));
                     } catch (error) {
                         reject(new Error(`Dungeon execution failed: ${error.message}`));
                     }
@@ -603,6 +833,12 @@
                         executeOperation: 'Execute operation by name',
                         runCommand: 'Run any API method by name (bridge)',
                         getBridgeStatus: 'Localhost bridge connection status',
+                        startApiRecording: 'Start recording game API calls (UI + scripts)',
+                        stopApiRecording: 'Stop API recording',
+                        getApiRecording: 'Get recorded API calls (optional sinceId)',
+                        clearApiRecording: 'Clear recorded API calls',
+                        exportApiRecording: 'Export full recording snapshot',
+                        getApiRecordingStatus: 'API recording status',
                         translate: 'Translate a key to text',
                         getLibraryData: 'Get library data by ID',
                         setProgress: 'Set progress message',
