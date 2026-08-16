@@ -1,10 +1,11 @@
+# Single-round training. For continuous loop + auto-save, use loop-arena-training.ps1 instead.
 param(
     [int]$OpponentIndex = 0,
     [string]$OpponentUserId = '',
     [int]$HeroPoolSize = 12,
     [int]$MaxCombinations = 40,
     [int]$SimulationsPerCombo = 10,
-    [string]$Label = 'bridge-training',
+    [string]$Label = 'single-round',
     [string]$OutputDir = 'arena-training-results',
     [int]$TimeoutMs = 1800000
 )
@@ -35,18 +36,20 @@ $options = @{
     maxCombinations = $MaxCombinations
     simulationsPerCombo = $SimulationsPerCombo
     includeCurrentTeam = $true
+    saveToBridge = $true
 }
 if ($OpponentUserId) {
     $options.opponentUserId = $OpponentUserId
     $options.Remove('opponentIndex')
 }
 
-Write-Host "Starting arena training vs opponent index $OpponentIndex..."
+Write-Host "Starting single arena training round vs opponent index $OpponentIndex..."
 $result = Invoke-Bridge -Method 'arenaTrainingRun' -Args @($options) -Timeout $TimeoutMs
 $result | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 $outFile
 
 if ($result.best) {
     Write-Host "Best combo: $($result.best.heroNames -join ', ') + pet $($result.best.pet)"
-    Write-Host "Win rate: $([math]::Round($result.best.winRate, 1))% ($($result.best.wins)/$($result.best.wins + $result.best.losses))"
+    Write-Host "Win rate: $([math]::Round($result.best.winRate, 1))%"
 }
-Write-Host "Saved to $outFile"
+Write-Host "Also saved via bridge to arena-training-results/"
+Write-Host "Local copy: $outFile"

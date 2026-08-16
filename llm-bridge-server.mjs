@@ -11,6 +11,12 @@
  */
 
 import http from 'http';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TRAINING_DIR = path.join(__dirname, 'arena-training-results');
 
 const PORT = 9876;
 const HOST = '127.0.0.1';
@@ -50,6 +56,65 @@ function isBrowserConnected() {
     return Date.now() - lastBrowserPollAt < 5000;
 }
 
+async function ensureTrainingDir() {
+    await fs.mkdir(TRAINING_DIR, { recursive: true });
+}
+
+async function saveTrainingRound(body) {
+    await ensureTrainingDir();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const sessionId = body?.sessionId || `round_${Date.now()}`;
+    const fileName = `${stamp}_${sessionId}.json`;
+    const filePath = path.join(TRAINING_DIR, fileName);
+    await fs.writeFile(filePath, JSON.stringify(body, null, 2), 'utf8');
+
+    const summary = {
+        savedAt: new Date().toISOString(),
+        file: fileName,
+        sessionId: body?.sessionId,
+        label: body?.label,
+        opponent: body?.opponent?.name || body?.opponent?.userId,
+        bestWinRate: body?.best?.winRate,
+        bestHeroes: body?.best?.heroNames,
+        bestPet: body?.best?.pet,
+    };
+    await fs.appendFile(
+        path.join(TRAINING_DIR, 'training-log.jsonl'),
+        `${JSON.stringify(summary)}\n`,
+        'utf8'
+    );
+    return { file: fileName, summary };
+}
+
+async function getTrainingSummary() {
+    await ensureTrainingDir();
+    const files = await fs.readdir(TRAINING_DIR);
+    const rounds = files.filter((f) => f.endsWith('.json')).sort();
+    const latest = rounds.at(-1) || null;
+    let latestSummary = null;
+    if (latest) {
+        try {
+            const raw = await fs.readFile(path.join(TRAINING_DIR, latest), 'utf8');
+            const data = JSON.parse(raw);
+            latestSummary = {
+                file: latest,
+                sessionId: data.sessionId,
+                best: data.best,
+                opponent: data.opponent,
+                completedAt: data.completedAt,
+            };
+        } catch {
+            latestSummary = { file: latest };
+        }
+    }
+    return {
+        dir: TRAINING_DIR,
+        roundFiles: rounds.length,
+        latestFile: latest,
+        latestSummary,
+    };
+}
+
 const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
         res.writeHead(204, {
@@ -83,6 +148,17 @@ const server = http.createServer(async (req, res) => {
                 'Access-Control-Allow-Origin': '*',
             });
             return res.end();
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/summary') {
+            const summary = await getTrainingSummary();
+            return sendJson(res, 200, { ok: true, ...summary });
+        }
+
+        if (req.method === 'POST' && url.pathname === '/training/save') {
+            const body = await readBody(req);
+            const saved = await saveTrainingRound(body);
+            return sendJson(res, 200, { ok: true, ...saved });
         }
 
         if (req.method === 'POST' && url.pathname === '/result') {
@@ -146,5 +222,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
     console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
+    console.log(`Training results save to ${TRAINING_DIR}`);
     console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
 });

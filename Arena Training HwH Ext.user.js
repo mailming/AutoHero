@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.0
+// @version      1.1
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,8 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.0';
+    const EXTENSION_VERSION = '1.1';
+    const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
     const CONSTANTS = {
@@ -46,6 +47,9 @@
 
         if (window.LLMHWH) {
             window.LLMHWH.arenaTrainingRun = (options) => training.run(options);
+            window.LLMHWH.arenaTrainingStartLoop = (options) => training.startLoop(options);
+            window.LLMHWH.arenaTrainingStopLoop = () => training.stopLoop();
+            window.LLMHWH.arenaTrainingGetLoopHistory = () => training.getLoopHistory();
             window.LLMHWH.arenaTrainingGetOpponents = () => training.getOpponents();
             window.LLMHWH.arenaTrainingGetResults = () => training.getResults();
             window.LLMHWH.arenaTrainingExportResults = () => training.exportResults();
@@ -55,8 +59,8 @@
 
         HWHClasses.ScriptMenu.getInst().addButton({
             name: 'Arena Train',
-            title: 'Test arena hero combinations with demo battles (no attempts used)',
-            onClick: () => openTrainingPopup(training, HWHFuncs),
+            title: 'Loop arena training — auto-saves results (demo battles, no attempts)',
+            onClick: () => training.startLoop({ label: 'menu-loop' }),
             color: 'purple',
         });
 
@@ -66,10 +70,34 @@
     function createArenaTraining({ Send, cheats, lib, HWHFuncs }) {
         const BattleCalc = cheats.BattleCalc;
         let running = false;
+        let loopRunning = false;
         let stopRequested = false;
-        let status = { running: false };
+        let status = { running: false, loopRunning: false };
         let lastResults = null;
+        let loopSession = null;
         let opponentsCache = null;
+
+        function sleep(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        async function saveRoundToBridge(result) {
+            try {
+                const res = await fetch(`${BRIDGE_URL}/training/save`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(result),
+                });
+                if (!res.ok) {
+                    console.warn('[Arena Training] Bridge save failed:', res.status);
+                    return false;
+                }
+                return true;
+            } catch (e) {
+                console.warn('[Arena Training] Bridge save error:', e.message);
+                return false;
+            }
+        }
 
         function getActionTs() {
             return Date.now();
@@ -430,7 +458,11 @@
             },
 
             getStatus() {
-                return { ...status, lastResultsId: lastResults?.sessionId || null };
+                return {
+                    ...status,
+                    ...this.getLoopStatus(),
+                    lastResultsId: lastResults?.sessionId || null,
+                };
             },
 
             getResults() {
@@ -443,10 +475,142 @@
 
             stop() {
                 stopRequested = true;
+                loopRunning = false;
                 return this.getStatus();
             },
 
+            stopLoop() {
+                return this.stop();
+            },
+
+            getLoopHistory() {
+                return loopSession;
+            },
+
+            getLoopStatus() {
+                return {
+                    loopRunning,
+                    loopId: loopSession?.loopId || null,
+                    roundCount: loopSession?.rounds?.length || 0,
+                    startedAt: loopSession?.startedAt || null,
+                    lastSavedAt: loopSession?.lastSavedAt || null,
+                };
+            },
+
+            startLoop(options = {}) {
+                if (loopRunning) {
+                    return { started: false, ...this.getLoopStatus(), message: 'Loop already running' };
+                }
+
+                const trainDefaults = {
+                    label: 'loop',
+                    heroPoolSize: 12,
+                    maxCombinations: 20,
+                    simulationsPerCombo: 5,
+                    includeCurrentTeam: true,
+                    saveToBridge: true,
+                    delayBetweenRoundsMs: 2000,
+                    repeatCycle: true,
+                    maxRounds: 0,
+                };
+                const trainOptions = { ...trainDefaults, ...options };
+
+                loopRunning = true;
+                stopRequested = false;
+                loopSession = {
+                    loopId: `loop_${Date.now()}`,
+                    label: trainOptions.label,
+                    startedAt: new Date().toISOString(),
+                    config: trainOptions,
+                    rounds: [],
+                    lastSavedAt: null,
+                };
+
+                status.loopRunning = true;
+                status.message = 'Loop training started';
+
+                (async () => {
+                    let roundNum = 0;
+                    try {
+                        while (loopRunning && !stopRequested) {
+                            const opponents = await this.getOpponents(true);
+                            const indexes = Array.isArray(trainOptions.opponentIndexes) && trainOptions.opponentIndexes.length
+                                ? trainOptions.opponentIndexes
+                                : opponents.map((o) => o.index);
+
+                            for (const idx of indexes) {
+                                if (!loopRunning || stopRequested) break;
+                                if (trainOptions.maxRounds > 0 && roundNum >= trainOptions.maxRounds) {
+                                    loopRunning = false;
+                                    break;
+                                }
+
+                                roundNum++;
+                                status.loopRound = roundNum;
+                                status.message = `Loop round ${roundNum} — opponent ${idx}`;
+
+                                try {
+                                    const result = await this.runSingle({
+                                        ...trainOptions,
+                                        opponentIndex: idx,
+                                        label: `${trainOptions.label}-r${roundNum}`,
+                                    });
+                                    loopSession.rounds.push(result);
+                                    lastResults = result;
+
+                                    if (trainOptions.saveToBridge !== false) {
+                                        const saved = await saveRoundToBridge(result);
+                                        if (saved) {
+                                            loopSession.lastSavedAt = new Date().toISOString();
+                                        }
+                                    }
+
+                                    const best = result.best;
+                                    if (best) {
+                                        console.log(
+                                            `[Arena Training] Round ${roundNum} saved — best ${best.winRate.toFixed(1)}%:`,
+                                            best.heroNames.join(', ')
+                                        );
+                                    }
+                                } catch (err) {
+                                    console.error(`[Arena Training] Round ${roundNum} failed:`, err);
+                                    loopSession.rounds.push({
+                                        round: roundNum,
+                                        opponentIndex: idx,
+                                        error: err.message,
+                                        completedAt: new Date().toISOString(),
+                                    });
+                                }
+
+                                if (trainOptions.delayBetweenRoundsMs > 0) {
+                                    await sleep(trainOptions.delayBetweenRoundsMs);
+                                }
+                            }
+
+                            if (trainOptions.maxRounds > 0 && roundNum >= trainOptions.maxRounds) break;
+                            if (!trainOptions.repeatCycle) break;
+                        }
+                    } finally {
+                        loopRunning = false;
+                        status.loopRunning = false;
+                        status.message = stopRequested
+                            ? `Loop stopped after ${roundNum} rounds`
+                            : `Loop finished after ${roundNum} rounds`;
+                        loopSession.completedAt = new Date().toISOString();
+                        loopSession.totalRounds = roundNum;
+                        HWHFuncs.setProgress(status.message, true);
+                    }
+                })();
+
+                HWHFuncs.setProgress('Arena loop training started — results auto-save to bridge', true);
+                return { started: true, ...this.getLoopStatus(), message: 'Loop training started' };
+            },
+
             async run(options = {}) {
+                return this.runSingle(options);
+            },
+
+            async runSingle(options = {}) {
                 if (running) {
                     throw new Error('Arena training already running');
                 }
@@ -574,19 +738,20 @@
 
     async function openTrainingPopup(training, HWHFuncs) {
         try {
-            const opponents = await training.getOpponents();
-            const lines = opponents.slice(0, 6).map((o, i) => `${i}: ${o.name} (#${o.place}, power ${o.power})`).join('<br>');
             const content = document.createElement('div');
             content.style.cssText = 'padding: 16px; color: #fce1ac; max-width: 640px; line-height: 1.5;';
             content.innerHTML = `
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
-                <p>Runs demo battles only — <b>no arena attempts consumed</b>.</p>
-                <p><b>Opponents</b><br>${lines || 'No opponents loaded'}</p>
-                <p>Default test: top 12 heroes, up to 40 combos, 10 sims each, opponent index 0.</p>
+                <p><b>Loop mode</b> cycles all opponents, tests combos, and auto-saves each round to the bridge.</p>
+                <p>Demo battles only — <b>no arena attempts used</b>.</p>
+                <p>Defaults: top 12 heroes, 20 combos, 5 sims each, 2s between rounds.</p>
+                <p>Run <code>node llm-bridge-server.mjs</code> so results save to <code>arena-training-results/</code>.</p>
             `;
 
             const popupPromise = HWHFuncs.popup.confirm('', [
-                { msg: 'Run training', result: 'run', color: 'green' },
+                { msg: 'Start loop', result: 'loop', color: 'green' },
+                { msg: 'One round only', result: 'run', color: 'blue' },
+                { msg: 'Stop loop', result: 'stop', color: 'red' },
                 { msg: 'Close', result: false, isClose: true },
             ]);
             await new Promise((resolve) => setTimeout(resolve, 0));
@@ -596,10 +761,15 @@
                 popupBody.appendChild(content);
             }
             const choice = await popupPromise;
-            if (choice === 'run') {
-                training.run({ label: 'manual-ui', opponentIndex: 0 }).catch((err) => {
+            if (choice === 'loop') {
+                training.startLoop({ label: 'popup-loop' });
+            } else if (choice === 'run') {
+                training.run({ label: 'popup-single', opponentIndex: 0 }).catch((err) => {
                     HWHFuncs.setProgress(`Arena Training failed: ${err.message}`, true);
                 });
+            } else if (choice === 'stop') {
+                training.stopLoop();
+                HWHFuncs.setProgress('Arena loop stopped', true);
             }
         } catch (error) {
             HWHFuncs.setProgress(`Arena Training error: ${error.message}`, true);
