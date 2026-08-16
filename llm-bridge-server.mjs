@@ -19,6 +19,7 @@ import {
     initDatabase,
     saveTrainingRound,
     getTrainingSummary,
+    getMatchups,
     getDatabaseStatus,
     closeDatabase,
 } from './training-db.mjs';
@@ -96,6 +97,20 @@ const server = http.createServer(async (req, res) => {
                 'Access-Control-Allow-Origin': '*',
             });
             return res.end();
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/matchups') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const comboKey = url.searchParams.get('comboKey') || undefined;
+            const limit = Number(url.searchParams.get('limit')) || 50;
+            const matchups = await getMatchups({ comboKey, limit });
+            return sendJson(res, 200, { ok: true, matchups });
         }
 
         if (req.method === 'GET' && url.pathname === '/training/summary') {
@@ -200,7 +215,7 @@ async function startServer() {
 
     server.listen(PORT, HOST, () => {
         console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
-        console.log('Arena training results save to PostgreSQL (training_rounds / training_combo_results)');
+        console.log('Arena training: opponent_combos + matchup_tests (GET /training/matchups)');
         console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
     });
 }

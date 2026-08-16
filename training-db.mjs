@@ -31,6 +31,52 @@ export function getDatabaseStatus() {
 }
 
 const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS opponent_combos (
+    id SERIAL PRIMARY KEY,
+    combo_key TEXT NOT NULL UNIQUE,
+    hero_ids INTEGER[] NOT NULL,
+    hero_names TEXT[],
+    pet INTEGER,
+    banner INTEGER,
+    opponent_user_id TEXT,
+    opponent_name TEXT,
+    opponent_place TEXT,
+    opponent_power BIGINT,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS matchup_tests (
+    id SERIAL PRIMARY KEY,
+    opponent_combo_id INTEGER NOT NULL REFERENCES opponent_combos(id) ON DELETE CASCADE,
+    session_id TEXT,
+    my_hero_ids INTEGER[] NOT NULL,
+    my_hero_names TEXT[],
+    my_pet INTEGER,
+    wins INTEGER,
+    losses INTEGER,
+    win_rate NUMERIC NOT NULL,
+    rank INTEGER,
+    tested_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_matchup_tests_unique_session
+    ON matchup_tests (opponent_combo_id, session_id, my_hero_ids, my_pet);
+
+CREATE INDEX IF NOT EXISTS idx_opponent_combos_last_seen
+    ON opponent_combos (last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_matchup_tests_opponent_combo_id
+    ON matchup_tests (opponent_combo_id);
+
+CREATE INDEX IF NOT EXISTS idx_matchup_tests_tested_at
+    ON matchup_tests (tested_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_matchup_tests_win_rate
+    ON matchup_tests (win_rate DESC);
+
+-- Legacy round archive (optional full payload)
 CREATE TABLE IF NOT EXISTS training_rounds (
     id SERIAL PRIMARY KEY,
     session_id TEXT NOT NULL UNIQUE,
@@ -38,6 +84,7 @@ CREATE TABLE IF NOT EXISTS training_rounds (
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     stopped_early BOOLEAN NOT NULL DEFAULT FALSE,
+    opponent_combo_key TEXT,
     opponent_user_id TEXT,
     opponent_name TEXT,
     opponent_place TEXT,
@@ -47,40 +94,20 @@ CREATE TABLE IF NOT EXISTS training_rounds (
     best_hero_ids INTEGER[],
     best_hero_names TEXT[],
     best_pet INTEGER,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS training_combo_results (
-    id SERIAL PRIMARY KEY,
-    round_id INTEGER NOT NULL REFERENCES training_rounds(id) ON DELETE CASCADE,
-    rank INTEGER NOT NULL,
-    heroes INTEGER[] NOT NULL,
-    hero_names TEXT[],
-    pet INTEGER,
-    wins INTEGER,
-    losses INTEGER,
-    win_rate NUMERIC,
-    average_battle_time NUMERIC,
-    source TEXT,
-    simulations JSONB,
+    payload JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_training_rounds_completed_at
     ON training_rounds (completed_at DESC);
+`;
 
-CREATE INDEX IF NOT EXISTS idx_training_rounds_opponent_user_id
-    ON training_rounds (opponent_user_id);
+const MIGRATION_SQL = `
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS opponent_combo_key TEXT;
+ALTER TABLE training_rounds ALTER COLUMN payload DROP NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_training_rounds_best_win_rate
-    ON training_rounds (best_win_rate DESC);
-
-CREATE INDEX IF NOT EXISTS idx_training_combo_results_round_id
-    ON training_combo_results (round_id);
-
-CREATE INDEX IF NOT EXISTS idx_training_combo_results_win_rate
-    ON training_combo_results (win_rate DESC);
+CREATE INDEX IF NOT EXISTS idx_training_rounds_opponent_combo_key
+    ON training_rounds (opponent_combo_key);
 `;
 
 function parseTimestamp(value) {
@@ -95,26 +122,114 @@ function parseBigInt(value) {
     return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
+export function buildComboKey(heroIds, pet, banner = 0) {
+    const heroes = (Array.isArray(heroIds) ? heroIds : []).map(Number).filter((id) => id > 0 && id < 6000);
+    return `${heroes.join(',')}|${Number(pet) || 0}|${Number(banner) || 0}`;
+}
+
+function extractOpponentTeam(body) {
+    const team = body?.opponent?.team || {};
+    const heroIds = Array.isArray(team.heroes)
+        ? team.heroes.map(Number).filter((id) => id > 0 && id < 6000)
+        : [];
+    const pet = team.pet != null ? Number(team.pet) : null;
+    const banner = team.banner != null ? Number(team.banner) : null;
+    const comboKey = buildComboKey(heroIds, pet, banner);
+
+    return {
+        comboKey,
+        heroIds,
+        pet,
+        banner,
+        opponentUserId: body?.opponent?.userId != null ? String(body.opponent.userId) : null,
+        opponentName: body?.opponent?.name || null,
+        opponentPlace: body?.opponent?.place != null ? String(body.opponent.place) : null,
+        opponentPower: parseBigInt(body?.opponent?.power),
+    };
+}
+
 function extractRoundFields(body) {
     const best = body?.best || null;
+    const opponent = extractOpponentTeam(body);
     return {
         sessionId: body?.sessionId || `round_${Date.now()}`,
         label: body?.label || null,
         startedAt: parseTimestamp(body?.startedAt),
         completedAt: parseTimestamp(body?.completedAt),
         stoppedEarly: !!body?.stoppedEarly,
-        opponentUserId: body?.opponent?.userId != null ? String(body.opponent.userId) : null,
-        opponentName: body?.opponent?.name || null,
-        opponentPlace: body?.opponent?.place != null ? String(body.opponent.place) : null,
-        opponentPower: parseBigInt(body?.opponent?.power),
+        opponent,
         testedCombos: Number.isFinite(Number(body?.testedCombos)) ? Number(body.testedCombos) : null,
         bestWinRate: best?.winRate != null ? Number(best.winRate) : null,
         bestHeroIds: Array.isArray(best?.heroes) ? best.heroes.map(Number) : null,
         bestHeroNames: Array.isArray(best?.heroNames) ? best.heroNames : null,
         bestPet: best?.pet != null ? Number(best.pet) : null,
-        payload: body,
         rankings: Array.isArray(body?.rankings) ? body.rankings : [],
     };
+}
+
+async function upsertOpponentCombo(client, opponent, testedAt) {
+    const result = await client.query(
+        `INSERT INTO opponent_combos (
+            combo_key, hero_ids, pet, banner,
+            opponent_user_id, opponent_name, opponent_place, opponent_power,
+            first_seen_at, last_seen_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+        ON CONFLICT (combo_key) DO UPDATE SET
+            opponent_user_id = COALESCE(EXCLUDED.opponent_user_id, opponent_combos.opponent_user_id),
+            opponent_name = COALESCE(EXCLUDED.opponent_name, opponent_combos.opponent_name),
+            opponent_place = COALESCE(EXCLUDED.opponent_place, opponent_combos.opponent_place),
+            opponent_power = COALESCE(EXCLUDED.opponent_power, opponent_combos.opponent_power),
+            last_seen_at = GREATEST(opponent_combos.last_seen_at, EXCLUDED.last_seen_at)
+        RETURNING id, combo_key`,
+        [
+            opponent.comboKey,
+            opponent.heroIds,
+            opponent.pet,
+            opponent.banner,
+            opponent.opponentUserId,
+            opponent.opponentName,
+            opponent.opponentPlace,
+            opponent.opponentPower,
+            testedAt || new Date().toISOString(),
+        ]
+    );
+    return result.rows[0];
+}
+
+async function saveMatchupTests(client, opponentComboId, sessionId, rankings, testedAt) {
+    let saved = 0;
+    for (const ranking of rankings) {
+        const myHeroIds = Array.isArray(ranking.heroes) ? ranking.heroes.map(Number) : [];
+        if (!myHeroIds.length) continue;
+
+        await client.query(
+            `INSERT INTO matchup_tests (
+                opponent_combo_id, session_id, my_hero_ids, my_hero_names, my_pet,
+                wins, losses, win_rate, rank, tested_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (opponent_combo_id, session_id, my_hero_ids, my_pet) DO UPDATE SET
+                my_hero_names = EXCLUDED.my_hero_names,
+                wins = EXCLUDED.wins,
+                losses = EXCLUDED.losses,
+                win_rate = EXCLUDED.win_rate,
+                rank = EXCLUDED.rank,
+                tested_at = EXCLUDED.tested_at`,
+            [
+                opponentComboId,
+                sessionId,
+                myHeroIds,
+                Array.isArray(ranking.heroNames) ? ranking.heroNames : null,
+                ranking.pet != null ? Number(ranking.pet) : null,
+                ranking.wins != null ? Number(ranking.wins) : null,
+                ranking.losses != null ? Number(ranking.losses) : null,
+                ranking.winRate != null ? Number(ranking.winRate) : 0,
+                ranking.rank != null ? Number(ranking.rank) : null,
+                testedAt,
+            ]
+        );
+        saved++;
+    }
+    return saved;
 }
 
 export async function initDatabase() {
@@ -125,6 +240,7 @@ export async function initDatabase() {
     const client = await pool.connect();
     try {
         await client.query(SCHEMA_SQL);
+        await client.query(MIGRATION_SQL);
         ready = true;
         lastError = null;
     } catch (error) {
@@ -142,26 +258,41 @@ export async function saveTrainingRound(body) {
     }
 
     const fields = extractRoundFields(body);
+    if (!fields.opponent.heroIds.length) {
+        throw new Error('Opponent team missing hero combo data');
+    }
+
+    const testedAt = fields.completedAt || new Date().toISOString();
     const client = await pool.connect();
 
     try {
         await client.query('BEGIN');
 
+        const opponentRow = await upsertOpponentCombo(client, fields.opponent, testedAt);
+        const matchupCount = await saveMatchupTests(
+            client,
+            opponentRow.id,
+            fields.sessionId,
+            fields.rankings,
+            testedAt
+        );
+
         const roundResult = await client.query(
             `INSERT INTO training_rounds (
                 session_id, label, started_at, completed_at, stopped_early,
-                opponent_user_id, opponent_name, opponent_place, opponent_power,
+                opponent_combo_key, opponent_user_id, opponent_name, opponent_place, opponent_power,
                 tested_combos, best_win_rate, best_hero_ids, best_hero_names, best_pet, payload
             ) VALUES (
                 $1, $2, $3, $4, $5,
-                $6, $7, $8, $9,
-                $10, $11, $12, $13, $14, $15::jsonb
+                $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, NULL
             )
             ON CONFLICT (session_id) DO UPDATE SET
                 label = EXCLUDED.label,
                 started_at = EXCLUDED.started_at,
                 completed_at = EXCLUDED.completed_at,
                 stopped_early = EXCLUDED.stopped_early,
+                opponent_combo_key = EXCLUDED.opponent_combo_key,
                 opponent_user_id = EXCLUDED.opponent_user_id,
                 opponent_name = EXCLUDED.opponent_name,
                 opponent_place = EXCLUDED.opponent_place,
@@ -170,53 +301,26 @@ export async function saveTrainingRound(body) {
                 best_win_rate = EXCLUDED.best_win_rate,
                 best_hero_ids = EXCLUDED.best_hero_ids,
                 best_hero_names = EXCLUDED.best_hero_names,
-                best_pet = EXCLUDED.best_pet,
-                payload = EXCLUDED.payload
+                best_pet = EXCLUDED.best_pet
             RETURNING id, session_id, completed_at`,
             [
                 fields.sessionId,
                 fields.label,
                 fields.startedAt,
-                fields.completedAt,
+                testedAt,
                 fields.stoppedEarly,
-                fields.opponentUserId,
-                fields.opponentName,
-                fields.opponentPlace,
-                fields.opponentPower,
+                fields.opponent.comboKey,
+                fields.opponent.opponentUserId,
+                fields.opponent.opponentName,
+                fields.opponent.opponentPlace,
+                fields.opponent.opponentPower,
                 fields.testedCombos,
                 fields.bestWinRate,
                 fields.bestHeroIds,
                 fields.bestHeroNames,
                 fields.bestPet,
-                JSON.stringify(fields.payload),
             ]
         );
-
-        const roundId = roundResult.rows[0].id;
-
-        await client.query('DELETE FROM training_combo_results WHERE round_id = $1', [roundId]);
-
-        for (const ranking of fields.rankings) {
-            await client.query(
-                `INSERT INTO training_combo_results (
-                    round_id, rank, heroes, hero_names, pet, wins, losses,
-                    win_rate, average_battle_time, source, simulations
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
-                [
-                    roundId,
-                    ranking.rank != null ? Number(ranking.rank) : null,
-                    Array.isArray(ranking.heroes) ? ranking.heroes.map(Number) : [],
-                    Array.isArray(ranking.heroNames) ? ranking.heroNames : null,
-                    ranking.pet != null ? Number(ranking.pet) : null,
-                    ranking.wins != null ? Number(ranking.wins) : null,
-                    ranking.losses != null ? Number(ranking.losses) : null,
-                    ranking.winRate != null ? Number(ranking.winRate) : null,
-                    ranking.averageBattleTime != null ? Number(ranking.averageBattleTime) : null,
-                    ranking.source || null,
-                    JSON.stringify(ranking.simulations || []),
-                ]
-            );
-        }
 
         await client.query('COMMIT');
         ready = true;
@@ -224,17 +328,22 @@ export async function saveTrainingRound(body) {
 
         return {
             storage: 'postgresql',
-            roundId,
+            roundId: roundResult.rows[0].id,
             sessionId: roundResult.rows[0].session_id,
             completedAt: roundResult.rows[0].completed_at,
+            opponentComboKey: opponentRow.combo_key,
+            matchupCount,
             summary: {
                 sessionId: fields.sessionId,
                 label: fields.label,
-                opponent: fields.opponentName || fields.opponentUserId,
+                opponentComboKey: opponentRow.combo_key,
+                opponentHeroes: fields.opponent.heroIds,
+                opponentPet: fields.opponent.pet,
+                opponent: fields.opponent.opponentName || fields.opponent.opponentUserId,
                 bestWinRate: fields.bestWinRate,
                 bestHeroes: fields.bestHeroNames,
                 bestPet: fields.bestPet,
-                comboCount: fields.rankings.length,
+                comboCount: matchupCount,
             },
         };
     } catch (error) {
@@ -251,30 +360,31 @@ export async function getTrainingSummary() {
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
 
-    const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM training_rounds');
-    const latestResult = await pool.query(
-        `SELECT session_id, completed_at, opponent_name, opponent_user_id,
-                best_win_rate, best_hero_names, best_pet, payload
-         FROM training_rounds
-         ORDER BY completed_at DESC NULLS LAST, id DESC
-         LIMIT 1`
-    );
+    const [roundCount, opponentCount, matchupCount, latestMatchup] = await Promise.all([
+        pool.query('SELECT COUNT(*)::int AS count FROM training_rounds'),
+        pool.query('SELECT COUNT(*)::int AS count FROM opponent_combos'),
+        pool.query('SELECT COUNT(*)::int AS count FROM matchup_tests'),
+        pool.query(
+            `SELECT oc.combo_key, oc.hero_ids, oc.pet, oc.opponent_name,
+                    mt.my_hero_ids, mt.my_pet, mt.win_rate, mt.tested_at
+             FROM matchup_tests mt
+             JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
+             ORDER BY mt.tested_at DESC NULLS LAST, mt.id DESC
+             LIMIT 1`
+        ),
+    ]);
 
-    const latestRow = latestResult.rows[0] || null;
+    const latestRow = latestMatchup.rows[0] || null;
     const latestSummary = latestRow
         ? {
-            sessionId: latestRow.session_id,
-            completedAt: latestRow.completed_at,
-            opponent: {
-                name: latestRow.opponent_name,
-                userId: latestRow.opponent_user_id,
-            },
-            best: {
-                winRate: latestRow.best_win_rate != null ? Number(latestRow.best_win_rate) : null,
-                heroNames: latestRow.best_hero_names,
-                pet: latestRow.best_pet,
-            },
-            payload: latestRow.payload,
+            opponentComboKey: latestRow.combo_key,
+            opponentHeroes: latestRow.hero_ids,
+            opponentPet: latestRow.pet,
+            opponentName: latestRow.opponent_name,
+            myHeroes: latestRow.my_hero_ids,
+            myPet: latestRow.my_pet,
+            winRate: latestRow.win_rate != null ? Number(latestRow.win_rate) : null,
+            testedAt: latestRow.tested_at,
         }
         : null;
 
@@ -284,13 +394,145 @@ export async function getTrainingSummary() {
     return {
         storage: 'postgresql',
         databaseUrl: maskDatabaseUrl(getDatabaseUrl()),
-        roundCount: countResult.rows[0]?.count || 0,
-        latestSessionId: latestRow?.session_id || null,
+        roundCount: roundCount.rows[0]?.count || 0,
+        opponentComboCount: opponentCount.rows[0]?.count || 0,
+        matchupTestCount: matchupCount.rows[0]?.count || 0,
+        latestSessionId: latestRow ? null : null,
         latestSummary,
-        // Backward-compatible aliases for older scripts
-        roundFiles: countResult.rows[0]?.count || 0,
-        latestFile: latestRow?.session_id || null,
+        roundFiles: roundCount.rows[0]?.count || 0,
+        latestFile: latestRow?.combo_key || null,
     };
+}
+
+export async function getMatchups({ comboKey, limit = 50 } = {}) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    if (comboKey) {
+        const result = await pool.query(
+            `SELECT
+                oc.combo_key,
+                oc.hero_ids AS opponent_hero_ids,
+                oc.pet AS opponent_pet,
+                oc.banner AS opponent_banner,
+                oc.opponent_name,
+                oc.opponent_place,
+                oc.opponent_power,
+                oc.last_seen_at,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'myHeroIds', mt.my_hero_ids,
+                            'myHeroNames', mt.my_hero_names,
+                            'myPet', mt.my_pet,
+                            'winRate', mt.win_rate,
+                            'wins', mt.wins,
+                            'losses', mt.losses,
+                            'rank', mt.rank,
+                            'testedAt', mt.tested_at,
+                            'sessionId', mt.session_id
+                        )
+                        ORDER BY mt.win_rate DESC, mt.tested_at DESC
+                    ) FILTER (WHERE mt.id IS NOT NULL),
+                    '[]'::json
+                ) AS tests
+             FROM opponent_combos oc
+             LEFT JOIN matchup_tests mt ON mt.opponent_combo_id = oc.id
+             WHERE oc.combo_key = $1
+             GROUP BY oc.id`,
+            [comboKey]
+        );
+        return result.rows[0] || null;
+    }
+
+    const result = await pool.query(
+        `SELECT
+            oc.combo_key,
+            oc.hero_ids AS opponent_hero_ids,
+            oc.pet AS opponent_pet,
+            oc.banner AS opponent_banner,
+            oc.opponent_name,
+            oc.opponent_place,
+            oc.opponent_power,
+            oc.last_seen_at,
+            COUNT(mt.id)::int AS test_count,
+            MAX(mt.tested_at) AS last_tested_at,
+            MAX(mt.win_rate) AS best_win_rate
+         FROM opponent_combos oc
+         LEFT JOIN matchup_tests mt ON mt.opponent_combo_id = oc.id
+         GROUP BY oc.id
+         ORDER BY oc.last_seen_at DESC NULLS LAST, oc.id DESC
+         LIMIT $1`,
+        [limit]
+    );
+
+    return result.rows.map((row) => ({
+        comboKey: row.combo_key,
+        opponentHeroIds: row.opponent_hero_ids,
+        opponentPet: row.opponent_pet,
+        opponentBanner: row.opponent_banner,
+        opponentName: row.opponent_name,
+        opponentPlace: row.opponent_place,
+        opponentPower: row.opponent_power != null ? Number(row.opponent_power) : null,
+        lastSeenAt: row.last_seen_at,
+        testCount: row.test_count,
+        lastTestedAt: row.last_tested_at,
+        bestWinRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
+    }));
+}
+
+export async function backfillMatchupsFromRounds() {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const legacy = await pool.query(
+        `SELECT session_id, payload, completed_at
+         FROM training_rounds
+         WHERE payload IS NOT NULL
+         ORDER BY id`
+    );
+
+    let imported = 0;
+    for (const row of legacy.rows) {
+        const body = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+        if (!body?.rankings?.length || !body?.opponent?.team?.heroes?.length) continue;
+        body.sessionId = body.sessionId || row.session_id;
+        body.completedAt = body.completedAt || row.completed_at;
+        await saveTrainingRound(body);
+        imported++;
+    }
+
+    return { importedFromPayload: imported };
+}
+
+export async function backfillMatchupsFromJsonDir() {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+    const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'arena-training-results');
+
+    let imported = 0;
+    try {
+        const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.json'));
+        for (const file of files) {
+            const raw = await fs.readFile(path.join(dir, file), 'utf8');
+            const body = JSON.parse(raw);
+            if (!body?.rankings?.length || !body?.opponent?.team?.heroes?.length) continue;
+            await saveTrainingRound(body);
+            imported++;
+        }
+    } catch {
+        // directory may not exist
+    }
+    return { importedFromJson: imported };
+}
+
+export async function backfillAllMatchups() {
+    const fromPayload = await backfillMatchupsFromRounds();
+    const fromJson = await backfillMatchupsFromJsonDir();
+    return { ...fromPayload, ...fromJson };
 }
 
 export async function closeDatabase() {
