@@ -4,8 +4,7 @@ This document contains a complete list of all heroes defined in the hero data ob
 
 ## Summary
 
-- **Total Heroes**: 74
-- **Regular Heroes**: 70 (IDs 1-70)
+- **Total Heroes**: 74+ (IDs 1–70 in `heroData.txt`; 71+ such as Fluffy, Byrna verified via `LIB_HERO_NAME_{id}` in-game)
 - **Corrupted Heroes**: 4 (IDs 7002, 7013, 7015, 7024)
 
 ## Hero List
@@ -82,10 +81,16 @@ This document contains a complete list of all heroes defined in the hero data ob
 | 68 | hero_68_gus | strength | middle | healer |
 | 69 | hero_69_cascade | intelligence | middle | - |
 | 70 | hero_70_electra | strength | front | - |
+| 71 | — | — | — | — |
+| 72 | — | — | — | — |
+| 73 | — | — | — | — |
+| 74 | — | — | — | — |
 | 7002 | hero7002_corrupted_galahad | strength | front | warrior |
 | 7013 | hero7013_corrupted_orion | intelligence | back | snob |
 | 7015 | hero7015_corrupted_ginger | agility | back | snob |
 | 7024 | hero7024_corrupted_cleaver | strength | front | warrior |
+
+**IDs 71–74+:** Not in `heroData.txt`. Display names from in-game translations: 71 = Fluffy, 72 = Byrna, 73 = Adam, 74 = Somna.
 
 ## Hero Categories
 

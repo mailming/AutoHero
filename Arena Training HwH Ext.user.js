@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.4
+// @version      1.6
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.4';
+    const EXTENSION_VERSION = '1.6';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -126,13 +126,24 @@
         }
 
         function heroName(heroId) {
+            const id = Number(heroId);
+            if (!Number.isFinite(id)) return String(heroId);
+
             try {
+                const key = id >= 6000 && id < 7000
+                    ? `LIB_PET_NAME_${id}`
+                    : `LIB_HERO_NAME_${id}`;
+                const translated = cheats?.translate?.(key);
+                if (translated && translated !== key) return translated;
+
                 const data = lib?.getData?.('hero');
-                const hero = data?.[heroId] || data?.[String(heroId)];
-                return hero?.name || hero?.caption || `Hero ${heroId}`;
+                const hero = data?.[id] || data?.[String(id)];
+                if (hero?.name || hero?.caption) return hero.name || hero.caption;
             } catch {
-                return `Hero ${heroId}`;
+                // fall through to numeric fallback
             }
+
+            return id >= 6000 && id < 7000 ? `Pet ${id}` : `Hero ${id}`;
         }
 
         function combinations(items, size, maxCount) {
@@ -583,6 +594,36 @@
             return 1;
         }
 
+        function resolveGrandBanners(userInfo, fallbackBanner = 1) {
+            const banners = [];
+            if (Array.isArray(userInfo?.banners) && userInfo.banners.length) {
+                for (let i = 0; i < 3; i++) {
+                    banners.push(Number(userInfo.banners[i] ?? userInfo.banners[0]));
+                }
+                return banners;
+            }
+            if (userInfo?.banner != null) {
+                const banner = Array.isArray(userInfo.banner) ? userInfo.banner[0] : userInfo.banner;
+                return [banner, banner, banner];
+            }
+            return [fallbackBanner, fallbackBanner + 1, fallbackBanner + 2].map((b) => b || 1);
+        }
+
+        function candidateKey(candidate) {
+            return `${candidate.heroes.join(',')}:${candidate.pet}`;
+        }
+
+        function dedupeCandidates(candidates, seen = new Set()) {
+            const unique = [];
+            for (const candidate of candidates) {
+                const key = candidateKey(candidate);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                unique.push(candidate);
+            }
+            return unique;
+        }
+
         function resolveHeroPoolSize(options = {}) {
             if (options.topLimit > 0) return Number(options.topLimit);
             if (options.heroPoolSize > 0) return Number(options.heroPoolSize);
@@ -597,6 +638,7 @@
         function buildCandidateTeams(data, options) {
             const arenaTeam = data.teams?.arena || [];
             const arenaFavor = data.favor?.arena || {};
+            const grandFavor = data.favor?.grand || arenaFavor;
             const ownedHeroes = data.heroes
                 .filter((h) => h?.id && h.id < 6000)
                 .sort((a, b) => heroPower(b) - heroPower(a));
@@ -622,11 +664,12 @@
             const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
             const heroCombos = combinations(heroPool, 5, maxCombinations);
             const banner = options.banner ?? resolveBanner(data.userInfo, data.teams);
+            const grandBanners = resolveGrandBanners(data.userInfo, banner);
 
-            const candidates = [];
+            const priorityCandidates = [];
             if (options.includeCurrentTeam !== false && arenaTeam.length >= 6) {
                 for (const pet of petPool.slice(0, 2)) {
-                    candidates.push({
+                    priorityCandidates.push({
                         heroes: arenaTeam.slice(0, 5).map(Number),
                         pet: Number(pet),
                         banner,
@@ -636,9 +679,26 @@
                 }
             }
 
+            if (options.includeGrandArenaTeams !== false) {
+                const grandTeams = data.teams?.grand || [];
+                grandTeams.forEach((team, index) => {
+                    if (!Array.isArray(team) || team.length < 6) return;
+                    const heroes = team.slice(0, 5).map(Number);
+                    if (heroes.some((id) => !id)) return;
+                    priorityCandidates.push({
+                        heroes,
+                        pet: Number(team[5]),
+                        banner: grandBanners[index] ?? banner,
+                        favor: pickFavor(heroes, grandFavor),
+                        source: `grand-arena-team-${index + 1}`,
+                    });
+                });
+            }
+
+            const generatedCandidates = [];
             for (const heroIds of heroCombos) {
                 for (const pet of petPool) {
-                    candidates.push({
+                    generatedCandidates.push({
                         heroes: heroIds,
                         pet,
                         banner,
@@ -648,15 +708,17 @@
                 }
             }
 
-            const unique = [];
             const seen = new Set();
-            for (const candidate of candidates) {
-                const key = `${candidate.heroes.join(',')}:${candidate.pet}`;
+            const unique = dedupeCandidates(priorityCandidates, seen);
+            const priorityCount = unique.length;
+            for (const candidate of generatedCandidates) {
+                if (unique.length >= priorityCount + maxCombinations) break;
+                const key = candidateKey(candidate);
                 if (seen.has(key)) continue;
                 seen.add(key);
                 unique.push(candidate);
-                if (unique.length >= maxCombinations) break;
             }
+
             return { candidates: unique, arenaFavor, banner, heroPool, petPool };
         }
 
@@ -756,8 +818,9 @@
                     topLimit: 12,
                     heroPoolSize: 12,
                     maxCombinations: 20,
-                    simulationsPerCombo: 5,
+                    simulationsPerCombo: 10,
                     includeCurrentTeam: true,
+                    includeGrandArenaTeams: true,
                     saveToBridge: true,
                     delayBetweenRoundsMs: 2000,
                     repeatCycle: true,
@@ -1002,7 +1065,7 @@
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code> and tests your combos vs each defense team.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
-                <p>Defaults: top <b>12</b> heroes (<code>topLimit</code>), 20 combos, 5 sims each, all arena top teams.</p>
+                <p>Defaults: top <b>12</b> heroes (<code>topLimit</code>), 20 generated combos, <b>10</b> sims each, arena + grand arena teams included.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 

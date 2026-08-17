@@ -3,7 +3,7 @@ param(
     [int]$TopLimit = 0,
     [int]$HeroPoolSize = 12,
     [int]$MaxCombinations = 20,
-    [int]$SimulationsPerCombo = 5,
+    [int]$SimulationsPerCombo = 10,
     [int]$DelaySeconds = 2,
     [int]$MaxRounds = 0,
     [int]$StatusIntervalSeconds = 30

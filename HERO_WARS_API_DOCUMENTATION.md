@@ -6251,6 +6251,11 @@ The following table provides a reference for Hero IDs used throughout the Hero W
 | 69 | Cascade |
 | 70 | Electra von Grave |
 | 71 | Fluffy |
+| 72 | Byrna |
+| 73 | Adam |
+| 74 | Somna |
+
+**Note:** For heroes added after this table was written, resolve display names in-game with `cheats.translate('LIB_HERO_NAME_' + id)` (e.g. ID 72 → `"Byrna"`).
 
 ---
 

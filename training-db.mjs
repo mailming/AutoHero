@@ -404,6 +404,79 @@ export async function getTrainingSummary() {
     };
 }
 
+export async function getTrainingResultCount({ comboKey } = {}) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const params = [];
+    let where = '';
+    if (comboKey) {
+        params.push(comboKey);
+        where = 'WHERE oc.combo_key = $1';
+    }
+
+    const result = await pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM matchup_tests mt
+         JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
+         ${where}`,
+        params
+    );
+
+    return result.rows[0]?.count || 0;
+}
+
+export async function getTrainingResults({ limit, offset = 0, comboKey } = {}) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const params = [];
+    let where = '';
+    if (comboKey) {
+        params.push(comboKey);
+        where = 'WHERE oc.combo_key = $1';
+    }
+
+    let paging = '';
+    if (offset > 0) {
+        params.push(offset);
+        paging += ` OFFSET $${params.length}`;
+    }
+    if (limit != null && limit > 0) {
+        params.push(limit);
+        paging += ` LIMIT $${params.length}`;
+    }
+
+    const result = await pool.query(
+        `SELECT
+            oc.combo_key,
+            oc.hero_ids AS opponent_hero_ids,
+            oc.pet AS opponent_pet,
+            oc.opponent_name,
+            oc.opponent_place,
+            oc.opponent_power,
+            mt.my_hero_ids,
+            mt.my_hero_names,
+            mt.my_pet,
+            mt.win_rate,
+            mt.wins,
+            mt.losses,
+            mt.rank,
+            mt.tested_at,
+            mt.session_id
+         FROM matchup_tests mt
+         JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
+         ${where}
+         ORDER BY mt.tested_at DESC NULLS LAST, mt.id DESC
+         ${paging}`,
+        params
+    );
+
+    return result.rows;
+}
+
 export async function getMatchups({ comboKey, limit = 50 } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });

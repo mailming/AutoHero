@@ -20,9 +20,12 @@ import {
     saveTrainingRound,
     getTrainingSummary,
     getMatchups,
+    getTrainingResults,
+    getTrainingResultCount,
     getDatabaseStatus,
     closeDatabase,
 } from './training-db.mjs';
+import { formatTrainingResultRow, renderTrainingResultsPage } from './training-view.mjs';
 
 const PORT = 9876;
 const HOST = '127.0.0.1';
@@ -97,6 +100,65 @@ const server = http.createServer(async (req, res) => {
                 'Access-Control-Allow-Origin': '*',
             });
             return res.end();
+        }
+
+        if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/training/view')) {
+            if (!databaseReady) {
+                res.writeHead(503, { 'Content-Type': 'text/plain' });
+                return res.end('Database not ready');
+            }
+            const comboKey = url.searchParams.get('comboKey') || undefined;
+            const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+            const limitParam = url.searchParams.get('limit');
+            const pageSize = limitParam == null ? 500 : Math.max(0, Number(limitParam) || 0);
+            const [rows, summary, total] = await Promise.all([
+                getTrainingResults({
+                    comboKey,
+                    offset,
+                    limit: pageSize > 0 ? pageSize : undefined,
+                }),
+                getTrainingSummary(),
+                getTrainingResultCount({ comboKey }),
+            ]);
+            const results = rows.map(formatTrainingResultRow);
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            return res.end(renderTrainingResultsPage(results, summary, {
+                total,
+                offset,
+                pageSize: pageSize > 0 ? pageSize : total,
+                comboKey,
+            }));
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/results') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const comboKey = url.searchParams.get('comboKey') || undefined;
+            const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+            const limitParam = url.searchParams.get('limit');
+            const limit = limitParam == null ? 100 : Math.max(0, Number(limitParam) || 0);
+            const [rows, total] = await Promise.all([
+                getTrainingResults({
+                    comboKey,
+                    offset,
+                    limit: limit > 0 ? limit : undefined,
+                }),
+                getTrainingResultCount({ comboKey }),
+            ]);
+            const results = rows.map(formatTrainingResultRow);
+            return sendJson(res, 200, {
+                ok: true,
+                count: results.length,
+                total,
+                offset,
+                limit: limit > 0 ? limit : total,
+                results,
+            });
         }
 
         if (req.method === 'GET' && url.pathname === '/training/matchups') {
@@ -215,7 +277,7 @@ async function startServer() {
 
     server.listen(PORT, HOST, () => {
         console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
-        console.log('Arena training: opponent_combos + matchup_tests (GET /training/matchups)');
+        console.log('Arena training: GET /training/view (HTML), /training/results (JSON), /training/matchups');
         console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
     });
 }
