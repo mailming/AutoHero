@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.6
+// @version      1.7
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.6';
+    const EXTENSION_VERSION = '1.7';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -26,6 +26,7 @@
         DEFAULT_SIMULATIONS: 10,
         DEFAULT_MAX_COMBOS: 40,
         DEFAULT_POOL_SIZE: 12,
+        DEFAULT_TARGET_WIN_RATE: 80,
     };
 
     const waitForHWH = setInterval(() => {
@@ -146,11 +147,13 @@
             return id >= 6000 && id < 7000 ? `Pet ${id}` : `Hero ${id}`;
         }
 
-        function combinations(items, size, maxCount) {
+        function combinations(items, size, maxCount = Infinity) {
+            if (!Array.isArray(items) || items.length < size) return [];
+            const limit = maxCount == null || !Number.isFinite(maxCount) ? Infinity : maxCount;
             const result = [];
             const combo = [];
             function backtrack(start) {
-                if (result.length >= maxCount) return;
+                if (result.length >= limit) return;
                 if (combo.length === size) {
                     result.push([...combo]);
                     return;
@@ -635,7 +638,29 @@
             return { ...options, heroPoolSize, topLimit: heroPoolSize };
         }
 
-        function buildCandidateTeams(data, options) {
+        function resolvePetPool(ownedPets, arenaTeam, options = {}) {
+            if (options.petPool?.length) {
+                return options.petPool.map(Number);
+            }
+
+            const exhaustive = options.searchUntilTarget !== false;
+            if (exhaustive) {
+                const pets = [...new Set([
+                    arenaTeam[5],
+                    ...ownedPets,
+                    CONSTANTS.DEFAULT_PET_ID,
+                ].filter(Boolean))];
+                return pets.length ? pets : [CONSTANTS.DEFAULT_PET_ID];
+            }
+
+            return [...new Set([
+                arenaTeam[5],
+                ...ownedPets.slice(0, 3),
+                CONSTANTS.DEFAULT_PET_ID,
+            ].filter(Boolean))];
+        }
+
+        function buildTrainingPools(data, options) {
             const arenaTeam = data.teams?.arena || [];
             const arenaFavor = data.favor?.arena || {};
             const grandFavor = data.favor?.grand || arenaFavor;
@@ -653,16 +678,7 @@
                 ? options.heroPool.map(Number)
                 : ownedHeroes.slice(0, poolSize).map((h) => h.id));
 
-            const petPool = (options.petPool?.length
-                ? options.petPool.map(Number)
-                : [...new Set([
-                    arenaTeam[5],
-                    ...ownedPets.slice(0, 3),
-                    CONSTANTS.DEFAULT_PET_ID,
-                ].filter(Boolean))]);
-
-            const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
-            const heroCombos = combinations(heroPool, 5, maxCombinations);
+            const petPool = resolvePetPool(ownedPets, arenaTeam, options);
             const banner = options.banner ?? resolveBanner(data.userInfo, data.teams);
             const grandBanners = resolveGrandBanners(data.userInfo, banner);
 
@@ -695,10 +711,24 @@
                 });
             }
 
-            const generatedCandidates = [];
+            return {
+                arenaTeam,
+                arenaFavor,
+                heroPool,
+                petPool,
+                banner,
+                priorityCandidates,
+            };
+        }
+
+        function buildGeneratedCandidates(pools, maxHeroCombos = Infinity) {
+            const { heroPool, petPool, banner, arenaFavor } = pools;
+            const heroCombos = combinations(heroPool, 5, maxHeroCombos);
+            const generated = [];
+
             for (const heroIds of heroCombos) {
                 for (const pet of petPool) {
-                    generatedCandidates.push({
+                    generated.push({
                         heroes: heroIds,
                         pet,
                         banner,
@@ -708,18 +738,43 @@
                 }
             }
 
-            const seen = new Set();
-            const unique = dedupeCandidates(priorityCandidates, seen);
-            const priorityCount = unique.length;
+            return generated;
+        }
+
+        function buildCandidateTeams(data, options) {
+            const pools = buildTrainingPools(data, options);
+            const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
+            const priorityCandidates = dedupeCandidates(pools.priorityCandidates);
+            const generatedCandidates = buildGeneratedCandidates(pools, maxCombinations);
+
+            const seen = new Set(priorityCandidates.map(candidateKey));
+            const unique = [...priorityCandidates];
             for (const candidate of generatedCandidates) {
-                if (unique.length >= priorityCount + maxCombinations) break;
+                if (unique.length >= priorityCandidates.length + maxCombinations) break;
                 const key = candidateKey(candidate);
                 if (seen.has(key)) continue;
                 seen.add(key);
                 unique.push(candidate);
             }
 
-            return { candidates: unique, arenaFavor, banner, heroPool, petPool };
+            return { candidates: unique, ...pools };
+        }
+
+        function buildExhaustiveCandidateTeams(data, options) {
+            const pools = buildTrainingPools(data, options);
+            const priorityCandidates = dedupeCandidates(pools.priorityCandidates);
+            const generatedCandidates = buildGeneratedCandidates(pools, Infinity);
+
+            const seen = new Set(priorityCandidates.map(candidateKey));
+            const unique = [...priorityCandidates];
+            for (const candidate of generatedCandidates) {
+                const key = candidateKey(candidate);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                unique.push(candidate);
+            }
+
+            return { candidates: unique, ...pools };
         }
 
         function pickOpponent(opponents, options) {
@@ -819,6 +874,8 @@
                     heroPoolSize: 12,
                     maxCombinations: 20,
                     simulationsPerCombo: 10,
+                    targetWinRate: CONSTANTS.DEFAULT_TARGET_WIN_RATE,
+                    searchUntilTarget: true,
                     includeCurrentTeam: true,
                     includeGrandArenaTeams: true,
                     saveToBridge: true,
@@ -880,8 +937,13 @@
 
                                     const best = result.best;
                                     if (best) {
+                                        const targetNote = result.targetMet
+                                            ? `target ${result.targetWinRate}%+ met`
+                                            : (result.config?.searchUntilTarget
+                                                ? `no ${result.targetWinRate}%+ in ${result.testedCombos}/${result.plannedCombos}`
+                                                : 'search complete');
                                         console.log(
-                                            `[Arena Training] Round ${roundNum} saved — best ${best.winRate.toFixed(1)}%:`,
+                                            `[Arena Training] Round ${roundNum} saved — best ${best.winRate.toFixed(1)}% (${targetNote}):`,
                                             best.heroNames.join(', ')
                                         );
                                     }
@@ -934,12 +996,16 @@
                 const sessionId = `arena_train_${Date.now()}`;
                 const startedAt = new Date().toISOString();
                 const simulationsPerCombo = options.simulationsPerCombo || CONSTANTS.DEFAULT_SIMULATIONS;
+                const targetWinRate = Number(options.targetWinRate ?? CONSTANTS.DEFAULT_TARGET_WIN_RATE);
+                const searchUntilTarget = options.searchUntilTarget !== false;
 
                 status = {
                     running: true,
                     sessionId,
                     currentCombo: 0,
                     totalCombos: 0,
+                    targetWinRate,
+                    searchUntilTarget,
                     label: options.label || 'arena-training',
                     message: 'Loading arena data...',
                 };
@@ -953,13 +1019,22 @@
                         throw new Error('Selected opponent has invalid team data');
                     }
 
-                    const { candidates, heroPool, petPool, banner } = buildCandidateTeams(data, options);
+                    const built = searchUntilTarget
+                        ? buildExhaustiveCandidateTeams(data, options)
+                        : buildCandidateTeams(data, options);
+                    const { candidates, heroPool, petPool, banner } = built;
                     status.totalCombos = candidates.length;
-                    status.message = `Testing ${candidates.length} teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                    status.message = searchUntilTarget
+                        ? `Testing up to ${candidates.length} teams vs ${opponentRaw.user?.name || opponentRaw.userId} (stop at ${targetWinRate}%+)`
+                        : `Testing ${candidates.length} teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
 
                     const rankings = [];
+                    let stoppedBecause = 'exhausted';
                     for (let i = 0; i < candidates.length; i++) {
-                        if (stopRequested) break;
+                        if (stopRequested) {
+                            stoppedBecause = 'user_stop';
+                            break;
+                        }
                         const candidate = candidates[i];
                         status.currentCombo = i + 1;
                         status.message = `Simulating ${i + 1}/${candidates.length}`;
@@ -978,7 +1053,7 @@
                         );
 
                         const simulation = await simulateTeam(myTeam, opponentTeam, simulationsPerCombo);
-                        rankings.push({
+                        const resultEntry = {
                             rank: 0,
                             heroes: candidate.heroes,
                             heroNames: heroLabels,
@@ -991,7 +1066,14 @@
                             winRate: simulation.winRate,
                             averageBattleTime: simulation.averageBattleTime,
                             simulations: simulation.simulations,
-                        });
+                        };
+                        rankings.push(resultEntry);
+
+                        if (searchUntilTarget && simulation.winRate >= targetWinRate) {
+                            stoppedBecause = 'target_met';
+                            status.message = `Found ${simulation.winRate.toFixed(1)}% combo after ${i + 1}/${candidates.length} tests`;
+                            break;
+                        }
                     }
 
                     rankings.sort((a, b) => {
@@ -1009,6 +1091,9 @@
                         startedAt,
                         completedAt: new Date().toISOString(),
                         stoppedEarly: stopRequested,
+                        stoppedBecause,
+                        targetWinRate,
+                        targetMet: rankings.some((entry) => entry.winRate >= targetWinRate),
                         opponent: {
                             index: data.opponents.indexOf(opponentRaw),
                             userId: opponentRaw.userId,
@@ -1023,14 +1108,20 @@
                             heroPool,
                             petPool,
                             simulationsPerCombo,
-                            maxCombinations: options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS,
+                            targetWinRate,
+                            searchUntilTarget,
+                            maxCombinations: searchUntilTarget
+                                ? candidates.length
+                                : (options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS),
                             includeCurrentTeam: options.includeCurrentTeam !== false,
+                            includeGrandArenaTeams: options.includeGrandArenaTeams !== false,
                             opponentSource: options.opponentSource || 'topGet',
                             topLimit: options.topLimit,
                             heroPoolSize: options.heroPoolSize,
                             opponentLimit: options.opponentLimit || 0,
                             myArenaPlace: opponentsMeta.myPlace,
                         },
+                        plannedCombos: candidates.length,
                         testedCombos: rankings.length,
                         rankings,
                         best: rankings[0] || null,
@@ -1040,7 +1131,10 @@
                     const summary = best
                         ? `Best: ${best.heroNames.join(', ')} + pet ${best.pet} (${best.winRate.toFixed(1)}% WR)`
                         : 'No combinations tested';
-                    HWHFuncs.setProgress(`Arena Training done. ${summary}`, true);
+                    const stopNote = stoppedBecause === 'target_met'
+                        ? ` Target ${targetWinRate}%+ reached.`
+                        : (searchUntilTarget ? ` Exhausted ${rankings.length} combos (no ${targetWinRate}%+).` : '');
+                    HWHFuncs.setProgress(`Arena Training done. ${summary}${stopNote}`, true);
                     console.log('[Arena Training] Results:', lastResults);
                     return lastResults;
                 } finally {
@@ -1065,7 +1159,7 @@
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code> and tests your combos vs each defense team.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
-                <p>Defaults: top <b>12</b> heroes (<code>topLimit</code>), 20 generated combos, <b>10</b> sims each, arena + grand arena teams included.</p>
+                <p>Defaults: top <b>12</b> heroes, <b>10</b> sims each, arena + grand arena teams, search until <b>80%+</b> win rate or all combos tested.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 
