@@ -246,7 +246,7 @@ Single round only:
 |---------|---------|
 | Simulations per combo | 10 demo battles |
 | Target win rate | 80% (stop when found) |
-| Test order | Arena team → 3 Grand Arena teams → generated combos |
+| Test order | Arena team → 3 Grand Arena teams → meta teams (DB) → generated combos |
 | Skip cached opponents | Yes — skip if DB has ≥80% counter within 30 days |
 | Opponent source | Arena top 50 via `topGet` |
 | Arena attempts used | **None** (demo battles only) |
@@ -302,7 +302,10 @@ View via bridge API:
 ```powershell
 Invoke-RestMethod http://127.0.0.1:9876/training/meta-snapshots
 Invoke-RestMethod "http://127.0.0.1:9876/training/meta-teams?snapshotId=1"
+Invoke-RestMethod "http://127.0.0.1:9876/training/meta-candidates?limit=10"
 ```
+
+Arena Training (v1.11+) fetches meta candidates from `/training/meta-candidates` (latest snapshot by default). Combos are filtered to heroes you own, ordered by popularity, and tested in **Phase 3** after grand arena teams.
 
 **HTML table:** [http://127.0.0.1:9876/training/meta-view](http://127.0.0.1:9876/training/meta-view)
 

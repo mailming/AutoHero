@@ -27,6 +27,7 @@ import {
     getMetaTeamSnapshotById,
     getMetaTeamCountForSnapshot,
     getMetaTeamsForSnapshot,
+    getMetaTeamCandidates,
     getDatabaseStatus,
     closeDatabase,
 } from './training-db.mjs';
@@ -222,6 +223,29 @@ const server = http.createServer(async (req, res) => {
                 offset,
                 pageSize: pageSize > 0 ? pageSize : total,
             }));
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/meta-candidates') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const snapshotId = Number(url.searchParams.get('snapshotId')) || undefined;
+            const limitParam = url.searchParams.get('limit');
+            const limit = limitParam == null ? undefined : Math.max(0, Number(limitParam) || 0);
+            const result = await getMetaTeamCandidates({
+                snapshotId,
+                limit: limit > 0 ? limit : undefined,
+            });
+            return sendJson(res, 200, {
+                ok: true,
+                snapshotId: result.snapshotId,
+                count: result.candidates.length,
+                candidates: result.candidates,
+            });
         }
 
         if (req.method === 'GET' && url.pathname === '/training/meta-snapshots') {

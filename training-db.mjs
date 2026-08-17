@@ -792,6 +792,77 @@ export async function getMetaTeamsForSnapshot(snapshotId, { limit, offset = 0 } 
     }));
 }
 
+export async function getMetaTeamCandidates({ snapshotId, limit } = {}) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    let resolvedSnapshotId = snapshotId;
+    if (!resolvedSnapshotId) {
+        const latest = await pool.query(
+            `SELECT id FROM meta_team_snapshots ORDER BY captured_at DESC NULLS LAST, id DESC LIMIT 1`
+        );
+        resolvedSnapshotId = latest.rows[0]?.id;
+        if (!resolvedSnapshotId) {
+            return { snapshotId: null, candidates: [] };
+        }
+    }
+
+    const params = [resolvedSnapshotId];
+    let limitClause = '';
+    if (limit != null && limit > 0) {
+        params.push(limit);
+        limitClause = ` LIMIT $${params.length}`;
+    }
+
+    const result = await pool.query(
+        `SELECT
+            combo_key,
+            hero_ids,
+            hero_names,
+            pet,
+            pet_name,
+            banner,
+            popularity_count,
+            row_rank
+         FROM (
+            SELECT
+                combo_key,
+                hero_ids,
+                hero_names,
+                pet,
+                pet_name,
+                banner,
+                popularity_count,
+                row_rank,
+                ROW_NUMBER() OVER (
+                    PARTITION BY combo_key
+                    ORDER BY popularity_count DESC NULLS LAST, row_rank ASC NULLS LAST
+                ) AS dedupe_rank
+            FROM meta_teams
+            WHERE snapshot_id = $1
+         ) ranked
+         WHERE dedupe_rank = 1
+         ORDER BY popularity_count DESC NULLS LAST, row_rank ASC NULLS LAST
+         ${limitClause}`,
+        params
+    );
+
+    return {
+        snapshotId: resolvedSnapshotId,
+        candidates: result.rows.map((row) => ({
+            comboKey: row.combo_key,
+            heroIds: row.hero_ids,
+            heroNames: row.hero_names,
+            pet: row.pet,
+            petName: row.pet_name,
+            banner: row.banner,
+            popularityCount: row.popularity_count,
+            rowRank: row.row_rank,
+        })),
+    };
+}
+
 export async function backfillMatchupsFromRounds() {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });

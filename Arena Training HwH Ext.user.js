@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.10.1
+// @version      1.11
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.10.1';
+    const EXTENSION_VERSION = '1.11';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -29,6 +29,7 @@
         DEFAULT_TARGET_WIN_RATE: 80,
         DEFAULT_SKIP_CACHE_MIN_WIN_RATE: 80,
         DEFAULT_SKIP_CACHE_MAX_AGE_DAYS: 30,
+        DEFAULT_META_TEAMS_LIMIT: 0,
     };
 
     const waitForHWH = setInterval(() => {
@@ -121,6 +122,81 @@
             HWHFuncs.setProgress(`Arena Training stopped — ${error.message}`, true);
             console.error(`[Arena Training] Fatal error, stopping loop${context ? ` (${context})` : ''}:`, error);
             return true;
+        }
+
+        async function fetchMetaTeamCandidates(options = {}) {
+            const params = new URLSearchParams();
+            if (options.metaTeamsSnapshotId) {
+                params.set('snapshotId', String(options.metaTeamsSnapshotId));
+            }
+            const limit = Number(options.metaTeamsLimit ?? CONSTANTS.DEFAULT_META_TEAMS_LIMIT);
+            if (limit > 0) {
+                params.set('limit', String(limit));
+            }
+
+            try {
+                const res = await fetch(`${BRIDGE_URL}/training/meta-candidates?${params}`);
+                if (!res.ok) {
+                    console.warn('[Arena Training] Bridge meta-candidates failed:', res.status);
+                    return { snapshotId: null, candidates: [] };
+                }
+                const data = await res.json();
+                return data.ok
+                    ? { snapshotId: data.snapshotId, candidates: data.candidates || [] }
+                    : { snapshotId: null, candidates: [] };
+            } catch (e) {
+                console.warn('[Arena Training] Bridge meta-candidates error:', e.message);
+                return { snapshotId: null, candidates: [] };
+            }
+        }
+
+        function buildMetaTeamCandidates(metaTeams, data, options, defaultBanner) {
+            if (!metaTeams?.length) return [];
+
+            const arenaFavor = data.favor?.arena || {};
+            const ownedHeroIds = new Set(
+                (data.heroes || [])
+                    .filter((h) => h?.id && h.id < 6000)
+                    .map((h) => Number(h.id))
+            );
+            const ownedPetIds = new Set(
+                (data.heroes || [])
+                    .filter((h) => h?.id >= 6000 && h.id < 7000)
+                    .map((h) => Number(h.id))
+            );
+            const arenaPet = data.teams?.arena?.[5];
+            const fallbackPet = arenaPet && ownedPetIds.has(Number(arenaPet))
+                ? Number(arenaPet)
+                : CONSTANTS.DEFAULT_PET_ID;
+
+            const candidates = [];
+            for (const team of metaTeams) {
+                const heroes = (team.heroIds || team.hero_ids || []).map(Number).filter((id) => id > 0 && id < 6000);
+                if (heroes.length !== 5) continue;
+                if (!heroes.every((id) => ownedHeroIds.has(id))) continue;
+
+                let pet = team.pet != null ? Number(team.pet) : null;
+                if (pet && !ownedPetIds.has(pet)) {
+                    pet = fallbackPet;
+                }
+                if (!pet) {
+                    pet = fallbackPet;
+                }
+
+                const banner = team.banner != null ? Number(team.banner) : (defaultBanner || 1);
+                candidates.push({
+                    heroes,
+                    pet,
+                    banner,
+                    favor: pickFavor(heroes, arenaFavor),
+                    source: 'meta-team',
+                    metaPopularity: team.popularityCount ?? team.popularity_count ?? null,
+                    metaRank: team.rowRank ?? team.row_rank ?? null,
+                    metaComboKey: team.comboKey ?? team.combo_key ?? buildComboKey(heroes, pet, banner),
+                });
+            }
+
+            return candidates;
         }
 
         async function saveRoundToBridge(result) {
@@ -983,6 +1059,8 @@
                     skipCacheMaxAgeDays: CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS,
                     includeCurrentTeam: true,
                     includeGrandArenaTeams: true,
+                    useMetaTeams: true,
+                    metaTeamsLimit: CONSTANTS.DEFAULT_META_TEAMS_LIMIT,
                     saveToBridge: true,
                     delayBetweenRoundsMs: 2000,
                     repeatCycle: true,
@@ -1226,11 +1304,26 @@
                         petPool,
                         banner,
                     } = plan;
+
+                    let metaTeamCandidates = [];
+                    let metaTeamsSnapshotId = null;
+                    if (options.useMetaTeams !== false) {
+                        const meta = await fetchMetaTeamCandidates(options);
+                        metaTeamsSnapshotId = meta.snapshotId;
+                        metaTeamCandidates = buildMetaTeamCandidates(meta.candidates, data, options, banner);
+                        if (metaTeamCandidates.length) {
+                            console.log(
+                                `[Arena Training] Loaded ${metaTeamCandidates.length} meta team candidates from snapshot ${metaTeamsSnapshotId}`
+                            );
+                        }
+                    }
+
                     const testedKeys = new Set();
                     const rankings = [];
                     let stoppedBecause = 'exhausted';
                     let targetMet = false;
                     let plannedGenerated = 0;
+                    let plannedMeta = metaTeamCandidates.length;
 
                     const testCandidateBatch = async (candidates, phaseLabel) => {
                         for (let i = 0; i < candidates.length; i++) {
@@ -1286,7 +1379,7 @@
                         return false;
                     };
 
-                    status.totalCombos = arenaCandidates.length + grandArenaCandidates.length;
+                    status.totalCombos = arenaCandidates.length + grandArenaCandidates.length + plannedMeta;
                     status.message = `Phase 1: arena team vs ${opponentRaw.user?.name || opponentRaw.userId}`;
 
                     if (await testCandidateBatch(arenaCandidates, 'arena')) {
@@ -1295,21 +1388,32 @@
                         status.message = `Phase 2: grand arena teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
                         status.totalCombos += grandArenaCandidates.length;
                         if (!(await testCandidateBatch(grandArenaCandidates, 'grand arena'))) {
-                            const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
-                            const generatedCandidates = searchUntilTarget
-                                ? buildGeneratedCandidates(plan, { excludeKeys: testedKeys })
-                                : buildGeneratedCandidates(plan, {
-                                    maxHeroCombos: maxCombinations,
-                                    excludeKeys: testedKeys,
-                                }).slice(0, maxCombinations);
+                            const runGeneratedPhase = async (phaseNumber) => {
+                                const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
+                                const generatedCandidates = searchUntilTarget
+                                    ? buildGeneratedCandidates(plan, { excludeKeys: testedKeys })
+                                    : buildGeneratedCandidates(plan, {
+                                        maxHeroCombos: maxCombinations,
+                                        excludeKeys: testedKeys,
+                                    }).slice(0, maxCombinations);
 
-                            if (generatedCandidates.length > 0) {
-                                plannedGenerated = generatedCandidates.length;
-                                status.totalCombos += plannedGenerated;
-                                status.message = `Phase 3: testing ${plannedGenerated} generated combos`;
-                                await testCandidateBatch(generatedCandidates, 'generated');
-                            } else if (!searchUntilTarget) {
-                                stoppedBecause = 'max_combos';
+                                if (generatedCandidates.length > 0) {
+                                    plannedGenerated = generatedCandidates.length;
+                                    status.totalCombos += plannedGenerated;
+                                    status.message = `Phase ${phaseNumber}: testing ${plannedGenerated} generated combos`;
+                                    await testCandidateBatch(generatedCandidates, 'generated');
+                                } else if (!searchUntilTarget) {
+                                    stoppedBecause = 'max_combos';
+                                }
+                            };
+
+                            if (metaTeamCandidates.length > 0) {
+                                status.message = `Phase 3: ${metaTeamCandidates.length} meta teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                                if (!(await testCandidateBatch(metaTeamCandidates, 'meta'))) {
+                                    await runGeneratedPhase(4);
+                                }
+                            } else {
+                                await runGeneratedPhase(3);
                             }
                         }
                     }
@@ -1339,6 +1443,8 @@
                         searchPhases: {
                             arena: arenaCandidates.length,
                             grandArena: grandArenaCandidates.length,
+                            meta: plannedMeta,
+                            metaSnapshotId: metaTeamsSnapshotId,
                             generated: plannedGenerated,
                         },
                         opponent: {
@@ -1360,13 +1466,16 @@
                             maxCombinations: options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS,
                             includeCurrentTeam: options.includeCurrentTeam !== false,
                             includeGrandArenaTeams: options.includeGrandArenaTeams !== false,
+                            useMetaTeams: options.useMetaTeams !== false,
+                            metaTeamsLimit: Number(options.metaTeamsLimit ?? CONSTANTS.DEFAULT_META_TEAMS_LIMIT),
+                            metaTeamsSnapshotId: options.metaTeamsSnapshotId || metaTeamsSnapshotId || null,
                             opponentSource: options.opponentSource || 'topGet',
                             topLimit: options.topLimit,
                             heroPoolSize: options.heroPoolSize,
                             opponentLimit: options.opponentLimit || 0,
                             myArenaPlace: opponentsMeta.myPlace,
                         },
-                        plannedCombos: arenaCandidates.length + grandArenaCandidates.length + plannedGenerated,
+                        plannedCombos: arenaCandidates.length + grandArenaCandidates.length + plannedMeta + plannedGenerated,
                         testedCombos: rankings.length,
                         rankings,
                         best: rankings[0] || null,
@@ -1405,7 +1514,7 @@
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code> and tests your combos vs each defense team.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
                 <p>Skips opponents already solved in PostgreSQL: <b>80%+</b> counter found within <b>30 days</b> (via bridge).</p>
-                <p>Test order: <b>arena team</b> → <b>3 grand arena teams</b> → generated combos (only if none hit <b>80%+</b>).</p>
+                <p>Test order: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> (DB) → generated combos. Stops at <b>80%+</b>.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 
