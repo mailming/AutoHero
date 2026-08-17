@@ -22,6 +22,7 @@ import {
     getMatchups,
     getTrainingResults,
     getTrainingResultCount,
+    getOpponentSkipCheck,
     getDatabaseStatus,
     closeDatabase,
 } from './training-db.mjs';
@@ -159,6 +160,24 @@ const server = http.createServer(async (req, res) => {
                 limit: limit > 0 ? limit : total,
                 results,
             });
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/skip-check') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const comboKey = url.searchParams.get('comboKey');
+            if (!comboKey) {
+                return sendJson(res, 400, { ok: false, error: 'comboKey query param is required' });
+            }
+            const minWinRate = Number(url.searchParams.get('minWinRate')) || 80;
+            const maxAgeDays = Number(url.searchParams.get('maxAgeDays')) || 30;
+            const skip = await getOpponentSkipCheck({ comboKey, minWinRate, maxAgeDays });
+            return sendJson(res, 200, { ok: true, ...skip });
         }
 
         if (req.method === 'GET' && url.pathname === '/training/matchups') {

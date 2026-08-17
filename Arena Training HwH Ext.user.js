@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.7
+// @version      1.9
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.7';
+    const EXTENSION_VERSION = '1.9';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -27,6 +27,8 @@
         DEFAULT_MAX_COMBOS: 40,
         DEFAULT_POOL_SIZE: 12,
         DEFAULT_TARGET_WIN_RATE: 80,
+        DEFAULT_SKIP_CACHE_MIN_WIN_RATE: 80,
+        DEFAULT_SKIP_CACHE_MAX_AGE_DAYS: 30,
     };
 
     const waitForHWH = setInterval(() => {
@@ -98,6 +100,36 @@
             } catch (e) {
                 console.warn('[Arena Training] Bridge save error:', e.message);
                 return false;
+            }
+        }
+
+        function buildComboKey(heroIds, pet, banner = 0) {
+            const heroes = (Array.isArray(heroIds) ? heroIds : [])
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000);
+            return `${heroes.join(',')}|${Number(pet) || 0}|${Number(banner) || 0}`;
+        }
+
+        async function fetchOpponentSkipCheck(comboKey, options = {}) {
+            const minWinRate = Number(options.skipCacheMinWinRate ?? CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE);
+            const maxAgeDays = Number(options.skipCacheMaxAgeDays ?? CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS);
+            const params = new URLSearchParams({
+                comboKey,
+                minWinRate: String(minWinRate),
+                maxAgeDays: String(maxAgeDays),
+            });
+
+            try {
+                const res = await fetch(`${BRIDGE_URL}/training/skip-check?${params}`);
+                if (!res.ok) {
+                    console.warn('[Arena Training] Bridge skip-check failed:', res.status);
+                    return { shouldSkip: false, reason: 'bridge_error' };
+                }
+                const data = await res.json();
+                return data.ok ? data : { shouldSkip: false, reason: 'invalid_response' };
+            } catch (e) {
+                console.warn('[Arena Training] Bridge skip-check error:', e.message);
+                return { shouldSkip: false, reason: 'bridge_unreachable' };
             }
         }
 
@@ -437,7 +469,9 @@
                 }
             }
 
-            if (opponent.banners?.[0]) {
+            if (opponent.banner != null) {
+                banner = Number(opponent.banner);
+            } else if (opponent.banners?.[0]) {
                 const b = opponent.banners[0];
                 banner = typeof b === 'number' ? b : (b?.id || 1);
             }
@@ -682,34 +716,10 @@
             const banner = options.banner ?? resolveBanner(data.userInfo, data.teams);
             const grandBanners = resolveGrandBanners(data.userInfo, banner);
 
-            const priorityCandidates = [];
-            if (options.includeCurrentTeam !== false && arenaTeam.length >= 6) {
-                for (const pet of petPool.slice(0, 2)) {
-                    priorityCandidates.push({
-                        heroes: arenaTeam.slice(0, 5).map(Number),
-                        pet: Number(pet),
-                        banner,
-                        favor: pickFavor(arenaTeam.slice(0, 5), arenaFavor),
-                        source: 'current-team-variant',
-                    });
-                }
-            }
-
-            if (options.includeGrandArenaTeams !== false) {
-                const grandTeams = data.teams?.grand || [];
-                grandTeams.forEach((team, index) => {
-                    if (!Array.isArray(team) || team.length < 6) return;
-                    const heroes = team.slice(0, 5).map(Number);
-                    if (heroes.some((id) => !id)) return;
-                    priorityCandidates.push({
-                        heroes,
-                        pet: Number(team[5]),
-                        banner: grandBanners[index] ?? banner,
-                        favor: pickFavor(heroes, grandFavor),
-                        source: `grand-arena-team-${index + 1}`,
-                    });
-                });
-            }
+            const priorityCandidates = [
+                ...buildArenaCandidates(arenaTeam, arenaFavor, banner, options),
+                ...buildGrandArenaCandidates(data.teams?.grand || [], grandFavor, grandBanners, banner, options),
+            ];
 
             return {
                 arenaTeam,
@@ -721,60 +731,111 @@
             };
         }
 
-        function buildGeneratedCandidates(pools, maxHeroCombos = Infinity) {
+        function buildArenaCandidates(arenaTeam, arenaFavor, banner, options = {}) {
+            if (options.includeCurrentTeam === false || arenaTeam.length < 6) {
+                return [];
+            }
+
+            const heroes = arenaTeam.slice(0, 5).map(Number);
+            return [{
+                heroes,
+                pet: Number(arenaTeam[5]),
+                banner,
+                favor: pickFavor(heroes, arenaFavor),
+                source: 'arena-team',
+            }];
+        }
+
+        function buildGrandArenaCandidates(grandTeams, grandFavor, grandBanners, banner, options = {}) {
+            if (options.includeGrandArenaTeams === false || !Array.isArray(grandTeams)) {
+                return [];
+            }
+
+            const candidates = [];
+            grandTeams.forEach((team, index) => {
+                if (!Array.isArray(team) || team.length < 6) return;
+                const heroes = team.slice(0, 5).map(Number);
+                if (heroes.some((id) => !id)) return;
+                candidates.push({
+                    heroes,
+                    pet: Number(team[5]),
+                    banner: grandBanners[index] ?? banner,
+                    favor: pickFavor(heroes, grandFavor),
+                    source: `grand-arena-team-${index + 1}`,
+                });
+            });
+            return candidates;
+        }
+
+        function buildGeneratedCandidates(pools, { maxHeroCombos = Infinity, excludeKeys = new Set() } = {}) {
             const { heroPool, petPool, banner, arenaFavor } = pools;
             const heroCombos = combinations(heroPool, 5, maxHeroCombos);
             const generated = [];
 
             for (const heroIds of heroCombos) {
                 for (const pet of petPool) {
-                    generated.push({
+                    const candidate = {
                         heroes: heroIds,
                         pet,
                         banner,
                         favor: pickFavor(heroIds, arenaFavor),
                         source: 'generated',
-                    });
+                    };
+                    if (excludeKeys.has(candidateKey(candidate))) continue;
+                    generated.push(candidate);
                 }
             }
 
             return generated;
         }
 
-        function buildCandidateTeams(data, options) {
+        function buildPhasedCandidatePlan(data, options) {
             const pools = buildTrainingPools(data, options);
-            const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
-            const priorityCandidates = dedupeCandidates(pools.priorityCandidates);
-            const generatedCandidates = buildGeneratedCandidates(pools, maxCombinations);
+            const arenaCandidates = buildArenaCandidates(
+                pools.arenaTeam,
+                pools.arenaFavor,
+                pools.banner,
+                options
+            );
+            const grandArenaCandidates = buildGrandArenaCandidates(
+                data.teams?.grand || [],
+                data.favor?.grand || pools.arenaFavor,
+                resolveGrandBanners(data.userInfo, pools.banner),
+                pools.banner,
+                options
+            );
+            const priorityCandidates = dedupeCandidates([
+                ...arenaCandidates,
+                ...grandArenaCandidates,
+            ]);
 
-            const seen = new Set(priorityCandidates.map(candidateKey));
-            const unique = [...priorityCandidates];
-            for (const candidate of generatedCandidates) {
-                if (unique.length >= priorityCandidates.length + maxCombinations) break;
-                const key = candidateKey(candidate);
-                if (seen.has(key)) continue;
-                seen.add(key);
-                unique.push(candidate);
-            }
-
-            return { candidates: unique, ...pools };
+            return {
+                ...pools,
+                arenaCandidates,
+                grandArenaCandidates,
+                priorityCandidates,
+            };
         }
 
-        function buildExhaustiveCandidateTeams(data, options) {
-            const pools = buildTrainingPools(data, options);
-            const priorityCandidates = dedupeCandidates(pools.priorityCandidates);
-            const generatedCandidates = buildGeneratedCandidates(pools, Infinity);
+        function buildCandidateTeams(data, options) {
+            const plan = buildPhasedCandidatePlan(data, options);
+            const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
+            const testedKeys = new Set(plan.priorityCandidates.map(candidateKey));
+            const generatedCandidates = buildGeneratedCandidates(plan, {
+                maxHeroCombos: maxCombinations,
+                excludeKeys: testedKeys,
+            });
 
-            const seen = new Set(priorityCandidates.map(candidateKey));
-            const unique = [...priorityCandidates];
+            const unique = [...plan.priorityCandidates];
             for (const candidate of generatedCandidates) {
+                if (unique.length >= plan.priorityCandidates.length + maxCombinations) break;
                 const key = candidateKey(candidate);
-                if (seen.has(key)) continue;
-                seen.add(key);
+                if (testedKeys.has(key)) continue;
+                testedKeys.add(key);
                 unique.push(candidate);
             }
 
-            return { candidates: unique, ...pools };
+            return { candidates: unique, ...plan };
         }
 
         function pickOpponent(opponents, options) {
@@ -876,6 +937,9 @@
                     simulationsPerCombo: 10,
                     targetWinRate: CONSTANTS.DEFAULT_TARGET_WIN_RATE,
                     searchUntilTarget: true,
+                    skipCachedOpponents: true,
+                    skipCacheMinWinRate: CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE,
+                    skipCacheMaxAgeDays: CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS,
                     includeCurrentTeam: true,
                     includeGrandArenaTeams: true,
                     saveToBridge: true,
@@ -920,8 +984,51 @@
                                 status.message = `Loop round ${roundNum} — opponent ${idx}`;
 
                                 try {
+                                    const opponentList = await this.getOpponents(false, trainOptions);
+                                    const opponentMeta = opponentList.find((o) => o.index === idx);
+                                    let skipInfo = null;
+
+                                    if (
+                                        trainOptions.skipCachedOpponents !== false
+                                        && opponentMeta?.heroes?.length === 5
+                                    ) {
+                                        const comboKey = buildComboKey(
+                                            opponentMeta.heroes,
+                                            opponentMeta.pet,
+                                            opponentMeta.banner
+                                        );
+                                        skipInfo = await fetchOpponentSkipCheck(comboKey, trainOptions);
+                                        if (skipInfo.shouldSkip) {
+                                            const skippedResult = {
+                                                skipped: true,
+                                                skipReason: 'cached_counter',
+                                                opponentComboKey: comboKey,
+                                                cachedBestWinRate: skipInfo.bestWinRate,
+                                                cachedBestMatch: skipInfo.bestMatch,
+                                                cachedLastTestedAt: skipInfo.lastTestedAt,
+                                                opponent: {
+                                                    index: idx,
+                                                    userId: opponentMeta.userId,
+                                                    name: opponentMeta.name,
+                                                    place: opponentMeta.place,
+                                                    power: opponentMeta.power,
+                                                },
+                                                completedAt: new Date().toISOString(),
+                                            };
+                                            loopSession.rounds.push(skippedResult);
+                                            console.log(
+                                                `[Arena Training] Round ${roundNum} skipped — cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter for ${comboKey}`
+                                            );
+                                            if (trainOptions.delayBetweenRoundsMs > 0) {
+                                                await sleep(trainOptions.delayBetweenRoundsMs);
+                                            }
+                                            continue;
+                                        }
+                                    }
+
                                     const result = await this.runSingle({
                                         ...trainOptions,
+                                        skipCachedOpponents: false,
                                         opponentIndex: idx,
                                         label: `${trainOptions.label}-r${roundNum}`,
                                     });
@@ -1019,61 +1126,149 @@
                         throw new Error('Selected opponent has invalid team data');
                     }
 
-                    const built = searchUntilTarget
-                        ? buildExhaustiveCandidateTeams(data, options)
-                        : buildCandidateTeams(data, options);
-                    const { candidates, heroPool, petPool, banner } = built;
-                    status.totalCombos = candidates.length;
-                    status.message = searchUntilTarget
-                        ? `Testing up to ${candidates.length} teams vs ${opponentRaw.user?.name || opponentRaw.userId} (stop at ${targetWinRate}%+)`
-                        : `Testing ${candidates.length} teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                    const opponentComboKey = buildComboKey(
+                        opponentTeam.heroes,
+                        opponentTeam.pet,
+                        opponentTeam.banner
+                    );
 
+                    if (options.skipCachedOpponents !== false) {
+                        const skipInfo = await fetchOpponentSkipCheck(opponentComboKey, options);
+                        if (skipInfo.shouldSkip) {
+                            const skippedResult = {
+                                sessionId,
+                                label: options.label || 'arena-training',
+                                startedAt,
+                                completedAt: new Date().toISOString(),
+                                skipped: true,
+                                skipReason: 'cached_counter',
+                                opponentComboKey,
+                                cachedBestWinRate: skipInfo.bestWinRate,
+                                cachedBestMatch: skipInfo.bestMatch,
+                                cachedLastTestedAt: skipInfo.lastTestedAt,
+                                opponent: {
+                                    index: data.opponents.indexOf(opponentRaw),
+                                    userId: opponentRaw.userId,
+                                    name: opponentRaw.user?.name,
+                                    place: opponentRaw.place,
+                                    power: opponentRaw.power,
+                                    banner: opponentTeam.banner,
+                                    source: opponentRaw.source || options.opponentSource || 'topGet',
+                                    team: opponentTeam,
+                                },
+                                config: {
+                                    skipCachedOpponents: true,
+                                    skipCacheMinWinRate: Number(options.skipCacheMinWinRate ?? CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE),
+                                    skipCacheMaxAgeDays: Number(options.skipCacheMaxAgeDays ?? CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS),
+                                },
+                            };
+                            lastResults = skippedResult;
+                            HWHFuncs.setProgress(
+                                `Arena Training skipped — cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter (${opponentComboKey})`,
+                                true
+                            );
+                            return skippedResult;
+                        }
+                    }
+
+                    const plan = buildPhasedCandidatePlan(data, options);
+                    const {
+                        arenaCandidates,
+                        grandArenaCandidates,
+                        heroPool,
+                        petPool,
+                        banner,
+                    } = plan;
+                    const testedKeys = new Set();
                     const rankings = [];
                     let stoppedBecause = 'exhausted';
-                    for (let i = 0; i < candidates.length; i++) {
-                        if (stopRequested) {
-                            stoppedBecause = 'user_stop';
-                            break;
+                    let targetMet = false;
+                    let plannedGenerated = 0;
+
+                    const testCandidateBatch = async (candidates, phaseLabel) => {
+                        for (let i = 0; i < candidates.length; i++) {
+                            if (stopRequested) {
+                                stoppedBecause = 'user_stop';
+                                return true;
+                            }
+
+                            const candidate = candidates[i];
+                            const key = candidateKey(candidate);
+                            if (testedKeys.has(key)) continue;
+                            testedKeys.add(key);
+
+                            status.currentCombo = rankings.length + 1;
+                            status.message = `${phaseLabel} ${i + 1}/${candidates.length}`;
+
+                            const heroLabels = candidate.heroes.map(heroName);
+                            HWHFuncs.setProgress(
+                                `Arena Training [${phaseLabel}] ${heroLabels.join(', ')}`,
+                                true
+                            );
+
+                            const myTeam = buildMyTeamConfig(
+                                candidate.heroes,
+                                candidate.pet,
+                                candidate.banner ?? banner,
+                                candidate.favor
+                            );
+
+                            const simulation = await simulateTeam(myTeam, opponentTeam, simulationsPerCombo);
+                            rankings.push({
+                                rank: 0,
+                                heroes: candidate.heroes,
+                                heroNames: heroLabels,
+                                pet: candidate.pet,
+                                banner: myTeam.banners[0],
+                                favor: myTeam.favor,
+                                source: candidate.source,
+                                wins: simulation.wins,
+                                losses: simulation.losses,
+                                winRate: simulation.winRate,
+                                averageBattleTime: simulation.averageBattleTime,
+                                simulations: simulation.simulations,
+                            });
+
+                            if (searchUntilTarget && simulation.winRate >= targetWinRate) {
+                                stoppedBecause = 'target_met';
+                                targetMet = true;
+                                status.message = `Found ${simulation.winRate.toFixed(1)}% in ${phaseLabel}`;
+                                return true;
+                            }
                         }
-                        const candidate = candidates[i];
-                        status.currentCombo = i + 1;
-                        status.message = `Simulating ${i + 1}/${candidates.length}`;
+                        return false;
+                    };
 
-                        const heroLabels = candidate.heroes.map(heroName);
-                        HWHFuncs.setProgress(
-                            `Arena Training ${i + 1}/${candidates.length}: ${heroLabels.join(', ')}`,
-                            true
-                        );
+                    status.totalCombos = arenaCandidates.length + grandArenaCandidates.length;
+                    status.message = `Phase 1: arena team vs ${opponentRaw.user?.name || opponentRaw.userId}`;
 
-                        const myTeam = buildMyTeamConfig(
-                            candidate.heroes,
-                            candidate.pet,
-                            candidate.banner ?? banner,
-                            candidate.favor
-                        );
+                    if (await testCandidateBatch(arenaCandidates, 'arena')) {
+                        // target met or user stopped
+                    } else {
+                        status.message = `Phase 2: grand arena teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                        status.totalCombos += grandArenaCandidates.length;
+                        if (!(await testCandidateBatch(grandArenaCandidates, 'grand arena'))) {
+                            const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
+                            const generatedCandidates = searchUntilTarget
+                                ? buildGeneratedCandidates(plan, { excludeKeys: testedKeys })
+                                : buildGeneratedCandidates(plan, {
+                                    maxHeroCombos: maxCombinations,
+                                    excludeKeys: testedKeys,
+                                }).slice(0, maxCombinations);
 
-                        const simulation = await simulateTeam(myTeam, opponentTeam, simulationsPerCombo);
-                        const resultEntry = {
-                            rank: 0,
-                            heroes: candidate.heroes,
-                            heroNames: heroLabels,
-                            pet: candidate.pet,
-                            banner: myTeam.banners[0],
-                            favor: myTeam.favor,
-                            source: candidate.source,
-                            wins: simulation.wins,
-                            losses: simulation.losses,
-                            winRate: simulation.winRate,
-                            averageBattleTime: simulation.averageBattleTime,
-                            simulations: simulation.simulations,
-                        };
-                        rankings.push(resultEntry);
-
-                        if (searchUntilTarget && simulation.winRate >= targetWinRate) {
-                            stoppedBecause = 'target_met';
-                            status.message = `Found ${simulation.winRate.toFixed(1)}% combo after ${i + 1}/${candidates.length} tests`;
-                            break;
+                            if (generatedCandidates.length > 0) {
+                                plannedGenerated = generatedCandidates.length;
+                                status.totalCombos += plannedGenerated;
+                                status.message = `Phase 3: testing ${plannedGenerated} generated combos`;
+                                await testCandidateBatch(generatedCandidates, 'generated');
+                            } else if (!searchUntilTarget) {
+                                stoppedBecause = 'max_combos';
+                            }
                         }
+                    }
+
+                    if (stopRequested && stoppedBecause !== 'target_met') {
+                        stoppedBecause = 'user_stop';
                     }
 
                     rankings.sort((a, b) => {
@@ -1093,7 +1288,12 @@
                         stoppedEarly: stopRequested,
                         stoppedBecause,
                         targetWinRate,
-                        targetMet: rankings.some((entry) => entry.winRate >= targetWinRate),
+                        targetMet,
+                        searchPhases: {
+                            arena: arenaCandidates.length,
+                            grandArena: grandArenaCandidates.length,
+                            generated: plannedGenerated,
+                        },
                         opponent: {
                             index: data.opponents.indexOf(opponentRaw),
                             userId: opponentRaw.userId,
@@ -1110,9 +1310,7 @@
                             simulationsPerCombo,
                             targetWinRate,
                             searchUntilTarget,
-                            maxCombinations: searchUntilTarget
-                                ? candidates.length
-                                : (options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS),
+                            maxCombinations: options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS,
                             includeCurrentTeam: options.includeCurrentTeam !== false,
                             includeGrandArenaTeams: options.includeGrandArenaTeams !== false,
                             opponentSource: options.opponentSource || 'topGet',
@@ -1121,7 +1319,7 @@
                             opponentLimit: options.opponentLimit || 0,
                             myArenaPlace: opponentsMeta.myPlace,
                         },
-                        plannedCombos: candidates.length,
+                        plannedCombos: arenaCandidates.length + grandArenaCandidates.length + plannedGenerated,
                         testedCombos: rankings.length,
                         rankings,
                         best: rankings[0] || null,
@@ -1159,7 +1357,8 @@
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code> and tests your combos vs each defense team.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
-                <p>Defaults: top <b>12</b> heroes, <b>10</b> sims each, arena + grand arena teams, search until <b>80%+</b> win rate or all combos tested.</p>
+                <p>Skips opponents already solved in PostgreSQL: <b>80%+</b> counter found within <b>30 days</b> (via bridge).</p>
+                <p>Test order: <b>arena team</b> → <b>3 grand arena teams</b> → generated combos (only if none hit <b>80%+</b>).</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 

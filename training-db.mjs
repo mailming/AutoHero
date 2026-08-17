@@ -477,6 +477,71 @@ export async function getTrainingResults({ limit, offset = 0, comboKey } = {}) {
     return result.rows;
 }
 
+export async function getOpponentSkipCheck({
+    comboKey,
+    minWinRate = 80,
+    maxAgeDays = 30,
+} = {}) {
+    if (!comboKey) {
+        return { shouldSkip: false, reason: 'missing_combo_key' };
+    }
+
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const result = await pool.query(
+        `SELECT
+            oc.combo_key,
+            oc.opponent_name,
+            MAX(mt.win_rate) AS best_win_rate,
+            MAX(mt.tested_at) AS last_tested_at,
+            (
+                SELECT json_build_object(
+                    'myHeroIds', best.my_hero_ids,
+                    'myHeroNames', best.my_hero_names,
+                    'myPet', best.my_pet,
+                    'winRate', best.win_rate,
+                    'testedAt', best.tested_at
+                )
+                FROM matchup_tests best
+                WHERE best.opponent_combo_id = oc.id
+                  AND best.win_rate >= $2
+                  AND best.tested_at >= NOW() - ($3::text || ' days')::interval
+                ORDER BY best.win_rate DESC, best.tested_at DESC
+                LIMIT 1
+            ) AS best_match
+         FROM opponent_combos oc
+         JOIN matchup_tests mt ON mt.opponent_combo_id = oc.id
+         WHERE oc.combo_key = $1
+           AND mt.win_rate >= $2
+           AND mt.tested_at >= NOW() - ($3::text || ' days')::interval
+         GROUP BY oc.id, oc.combo_key, oc.opponent_name`,
+        [comboKey, minWinRate, String(maxAgeDays)]
+    );
+
+    const row = result.rows[0];
+    if (!row?.best_match) {
+        return {
+            shouldSkip: false,
+            comboKey,
+            minWinRate,
+            maxAgeDays,
+        };
+    }
+
+    return {
+        shouldSkip: true,
+        comboKey: row.combo_key,
+        opponentName: row.opponent_name,
+        bestWinRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
+        lastTestedAt: row.last_tested_at,
+        bestMatch: row.best_match,
+        minWinRate,
+        maxAgeDays,
+    };
+}
+
 export async function getMatchups({ comboKey, limit = 50 } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
