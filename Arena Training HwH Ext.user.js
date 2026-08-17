@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.9
+// @version      1.10
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.9';
+    const EXTENSION_VERSION = '1.10';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -81,8 +81,42 @@
         let opponentsCache = null;
         let opponentsMeta = { myPlace: null, serverId: null };
 
-        function sleep(ms) {
-            return new Promise((resolve) => setTimeout(resolve, ms));
+        const FATAL_ERROR_PATTERNS = [
+            /InvalidSession/i,
+            /Invalid session/i,
+        ];
+
+        function isFatalTrainingError(error) {
+            const message = String(error?.message || error || '');
+            return FATAL_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+        }
+
+        function throwIfSendError(response, label = 'API call') {
+            if (response?.error) {
+                throw new Error(`${response.error.name}: ${response.error.description}`);
+            }
+            for (const item of response?.results || []) {
+                if (item?.error) {
+                    throw new Error(`${item.error.name}: ${item.error.description}`);
+                }
+            }
+        }
+
+        function stopTrainingOnFatalError(error, context = '') {
+            if (!isFatalTrainingError(error)) {
+                return false;
+            }
+            stopRequested = true;
+            loopRunning = false;
+            const prefix = context ? `${context}: ` : '';
+            status.message = `${prefix}${error.message}`;
+            if (loopSession) {
+                loopSession.fatalError = error.message;
+                loopSession.stoppedAt = new Date().toISOString();
+            }
+            HWHFuncs.setProgress(`Arena Training stopped — ${error.message}`, true);
+            console.error(`[Arena Training] Fatal error, stopping loop${context ? ` (${context})` : ''}:`, error);
+            return true;
         }
 
         async function saveRoundToBridge(result) {
@@ -520,6 +554,8 @@
                 }],
             });
 
+            throwIfSendError(response, 'demoBattles_endBattle');
+
             const battle = response?.results?.[0]?.result?.response?.battle;
             return {
                 parentId: battle?.parentId,
@@ -564,6 +600,7 @@
             if (startResponse?.error) {
                 throw new Error(`${startResponse.error.name}: ${startResponse.error.description}`);
             }
+            throwIfSendError(startResponse, 'demoBattles_startBattle');
 
             const responseData = startResponse.results?.[0]?.result?.response;
             const battleData = responseData?.battle || responseData;
@@ -1060,8 +1097,12 @@
                                         round: roundNum,
                                         opponentIndex: idx,
                                         error: err.message,
+                                        fatal: isFatalTrainingError(err),
                                         completedAt: new Date().toISOString(),
                                     });
+                                    if (stopTrainingOnFatalError(err, `round ${roundNum}`)) {
+                                        break;
+                                    }
                                 }
 
                                 if (trainOptions.delayBetweenRoundsMs > 0) {
@@ -1075,9 +1116,11 @@
                     } finally {
                         loopRunning = false;
                         status.loopRunning = false;
-                        status.message = stopRequested
-                            ? `Loop stopped after ${roundNum} rounds`
-                            : `Loop finished after ${roundNum} rounds`;
+                        status.message = loopSession?.fatalError
+                            ? `Loop stopped — ${loopSession.fatalError}`
+                            : stopRequested
+                                ? `Loop stopped after ${roundNum} rounds`
+                                : `Loop finished after ${roundNum} rounds`;
                         loopSession.completedAt = new Date().toISOString();
                         loopSession.totalRounds = roundNum;
                         HWHFuncs.setProgress(status.message, true);
