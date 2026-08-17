@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.7
+// @version      3.2.8
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.7";
+    const EXTENSION_VERSION = "3.2.8";
     const EXTENSION_AUTHOR = "You";
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
@@ -283,13 +283,15 @@
             });
         }
 
+        // Stealther uses battlePresets.get_timeLimit(); 180s covers standard dungeon/tower battles.
+        const BATTLE_TIME_LIMIT = 180;
+
         function extractTimers(battleResult, maxTimerTries = MAX_TIMER_TRIES) {
             const logs = battleResult.battleLogs?.[0] || [];
             if (logs.length === 0) {
                 return [0];
             }
-            const timeLimit = Math.max(...logs.map((e) => e.time), 168.8);
-            const timers = [...new Set(logs.map((e) => (e.time < timeLimit && e.time !== 168.8 ? e.time : 0)))];
+            const timers = [...new Set(logs.map((e) => (e.time > 0 && e.time < BATTLE_TIME_LIMIT && e.time !== 168.8 ? e.time : 0)))];
             timers.sort(() => Math.random() - 0.5);
             if (maxTimerTries > 0 && timers.length > maxTimerTries) {
                 return timers.slice(0, maxTimerTries);
