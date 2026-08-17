@@ -8,7 +8,8 @@
     "bridge": "node llm-bridge-server.mjs",
     "db:init": "node -e \"import('./training-db.mjs').then(m => m.initDatabase().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); }))\"",
     "db:import-json": "node import-training-json.mjs",
-    "db:backfill-matchups": "node db-backfill-matchups.mjs"
+    "db:backfill-matchups": "node db-backfill-matchups.mjs",
+    "db:scrape-meta-teams": "python scrape_meta_teams_to_db.py"
   },
   "dependencies": {
     "pg": "^8.16.3"

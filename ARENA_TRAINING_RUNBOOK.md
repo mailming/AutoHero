@@ -270,7 +270,45 @@ Invoke-RestMethod "http://127.0.0.1:9876/training/skip-check?comboKey=7,64,17,12
 
 ---
 
-## 9. Optional maintenance
+## 9. Scrape meta arena teams (hw-recruit)
+
+Collect popular arena defense teams from [hw-recruit.com](https://hw-recruit.com/arena) and store each run as a **timestamped snapshot** in PostgreSQL.
+
+Each run creates:
+- `meta_team_snapshots` — capture time, pages scraped, team counts
+- `meta_teams` — hero combo, banner, popularity count, row rank
+
+```powershell
+pip install -r requirements.txt
+npm run db:init
+npm run db:scrape-meta-teams
+```
+
+Options:
+
+```powershell
+# Top-10 arena meta only, first 5 pages (quick test)
+python scrape_meta_teams_to_db.py --position 10 --max-page 5
+
+# Full scrape until empty pages (can take a while)
+python scrape_meta_teams_to_db.py --position 10 --max-page 0
+
+# Scrape without writing to DB
+python scrape_meta_teams_to_db.py --max-page 1 --dry-run
+```
+
+View via bridge API:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:9876/training/meta-snapshots
+Invoke-RestMethod "http://127.0.0.1:9876/training/meta-teams?snapshotId=1"
+```
+
+**HTML table:** [http://127.0.0.1:9876/training/meta-view](http://127.0.0.1:9876/training/meta-view)
+
+---
+
+## 10. Optional maintenance
 
 ### Import old JSON results
 
@@ -300,7 +338,7 @@ await pool.end();
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
@@ -322,7 +360,7 @@ window.cheats?.translate('LIB_HERO_NAME_55')  // should return 'Iris'
 
 ---
 
-## 11. Daily startup checklist
+## 12. Daily startup checklist
 
 1. Start PostgreSQL (usually automatic)
 2. `cd AutoHero` → `npm run bridge`
@@ -343,4 +381,5 @@ window.cheats?.translate('LIB_HERO_NAME_55')  // should return 'Iris'
 | `hero-names.mjs` | Hero/pet ID → name mapping |
 | `loop-arena-training.ps1` | Start loop via PowerShell |
 | `run-arena-training.ps1` | Single training round via PowerShell |
+| `scrape_meta_teams_to_db.py` | Scrape hw-recruit meta teams into PostgreSQL snapshots |
 | `.env` | `DATABASE_URL` (not committed; copy from `.env.example`) |

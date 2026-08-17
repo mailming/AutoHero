@@ -23,10 +23,14 @@ import {
     getTrainingResults,
     getTrainingResultCount,
     getOpponentSkipCheck,
+    getMetaTeamSnapshots,
+    getMetaTeamSnapshotById,
+    getMetaTeamCountForSnapshot,
+    getMetaTeamsForSnapshot,
     getDatabaseStatus,
     closeDatabase,
 } from './training-db.mjs';
-import { formatTrainingResultRow, renderTrainingResultsPage } from './training-view.mjs';
+import { formatTrainingResultRow, renderTrainingResultsPage, renderMetaTeamsPage } from './training-view.mjs';
 
 const PORT = 9876;
 const HOST = '127.0.0.1';
@@ -180,6 +184,77 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, { ok: true, ...skip });
         }
 
+        if (req.method === 'GET' && url.pathname === '/training/meta-view') {
+            if (!databaseReady) {
+                res.writeHead(503, { 'Content-Type': 'text/plain' });
+                return res.end('Database not ready');
+            }
+
+            const snapshots = await getMetaTeamSnapshots({ limit: 50 });
+            if (!snapshots.length) {
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                return res.end(renderMetaTeamsPage([], null, [], { total: 0 }));
+            }
+
+            const requestedId = Number(url.searchParams.get('snapshotId'));
+            const snapshot = requestedId
+                ? await getMetaTeamSnapshotById(requestedId)
+                : snapshots[0];
+            if (!snapshot) {
+                res.writeHead(404, { 'Content-Type': 'text/plain' });
+                return res.end('Snapshot not found');
+            }
+
+            const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+            const limitParam = url.searchParams.get('limit');
+            const pageSize = limitParam == null ? 500 : Math.max(0, Number(limitParam) || 0);
+            const [teams, total] = await Promise.all([
+                getMetaTeamsForSnapshot(snapshot.id, {
+                    offset,
+                    limit: pageSize > 0 ? pageSize : undefined,
+                }),
+                getMetaTeamCountForSnapshot(snapshot.id),
+            ]);
+
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            return res.end(renderMetaTeamsPage(teams, snapshot, snapshots, {
+                total,
+                offset,
+                pageSize: pageSize > 0 ? pageSize : total,
+            }));
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/meta-snapshots') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const limit = Number(url.searchParams.get('limit')) || 20;
+            const snapshots = await getMetaTeamSnapshots({ limit });
+            return sendJson(res, 200, { ok: true, count: snapshots.length, snapshots });
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/meta-teams') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const snapshotId = Number(url.searchParams.get('snapshotId'));
+            if (!snapshotId) {
+                return sendJson(res, 400, { ok: false, error: 'snapshotId query param is required' });
+            }
+            const limit = Number(url.searchParams.get('limit')) || 500;
+            const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+            const teams = await getMetaTeamsForSnapshot(snapshotId, { limit, offset });
+            return sendJson(res, 200, { ok: true, snapshotId, count: teams.length, teams });
+        }
+
         if (req.method === 'GET' && url.pathname === '/training/matchups') {
             if (!databaseReady) {
                 return sendJson(res, 503, {
@@ -296,7 +371,7 @@ async function startServer() {
 
     server.listen(PORT, HOST, () => {
         console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
-        console.log('Arena training: GET /training/view (HTML), /training/results (JSON), /training/matchups');
+        console.log('Arena training: GET /training/view, /training/meta-view (HTML), /training/results (JSON)');
         console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
     });
 }

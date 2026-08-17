@@ -100,6 +100,47 @@ CREATE TABLE IF NOT EXISTS training_rounds (
 
 CREATE INDEX IF NOT EXISTS idx_training_rounds_completed_at
     ON training_rounds (completed_at DESC);
+
+CREATE TABLE IF NOT EXISTS meta_team_snapshots (
+    id SERIAL PRIMARY KEY,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    source TEXT NOT NULL DEFAULT 'hw-recruit',
+    source_url TEXT,
+    position_max INTEGER,
+    pages_scraped INTEGER NOT NULL DEFAULT 0,
+    total_teams INTEGER NOT NULL DEFAULT 0,
+    unique_combos INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_team_snapshots_captured_at
+    ON meta_team_snapshots (captured_at DESC);
+
+CREATE TABLE IF NOT EXISTS meta_teams (
+    id SERIAL PRIMARY KEY,
+    snapshot_id INTEGER NOT NULL REFERENCES meta_team_snapshots(id) ON DELETE CASCADE,
+    combo_key TEXT NOT NULL,
+    hero_ids INTEGER[] NOT NULL,
+    hero_names TEXT[],
+    pet INTEGER,
+    pet_name TEXT,
+    banner INTEGER,
+    popularity_count INTEGER,
+    row_rank INTEGER,
+    page_number INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (snapshot_id, row_rank)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_teams_snapshot_id
+    ON meta_teams (snapshot_id);
+
+CREATE INDEX IF NOT EXISTS idx_meta_teams_combo_key
+    ON meta_teams (combo_key);
+
+CREATE INDEX IF NOT EXISTS idx_meta_teams_popularity
+    ON meta_teams (popularity_count DESC NULLS LAST);
 `;
 
 const MIGRATION_SQL = `
@@ -617,6 +658,137 @@ export async function getMatchups({ comboKey, limit = 50 } = {}) {
         testCount: row.test_count,
         lastTestedAt: row.last_tested_at,
         bestWinRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
+    }));
+}
+
+export async function getMetaTeamSnapshots({ limit = 20 } = {}) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const result = await pool.query(
+        `SELECT
+            id,
+            captured_at,
+            source,
+            source_url,
+            position_max,
+            pages_scraped,
+            total_teams,
+            unique_combos,
+            notes
+         FROM meta_team_snapshots
+         ORDER BY captured_at DESC
+         LIMIT $1`,
+        [limit]
+    );
+
+    return result.rows.map((row) => ({
+        id: row.id,
+        capturedAt: row.captured_at,
+        source: row.source,
+        sourceUrl: row.source_url,
+        positionMax: row.position_max,
+        pagesScraped: row.pages_scraped,
+        totalTeams: row.total_teams,
+        uniqueCombos: row.unique_combos,
+        notes: row.notes,
+    }));
+}
+
+export async function getMetaTeamSnapshotById(snapshotId) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const result = await pool.query(
+        `SELECT
+            id,
+            captured_at,
+            source,
+            source_url,
+            position_max,
+            pages_scraped,
+            total_teams,
+            unique_combos,
+            notes
+         FROM meta_team_snapshots
+         WHERE id = $1`,
+        [snapshotId]
+    );
+
+    const row = result.rows[0];
+    if (!row) return null;
+
+    return {
+        id: row.id,
+        capturedAt: row.captured_at,
+        source: row.source,
+        sourceUrl: row.source_url,
+        positionMax: row.position_max,
+        pagesScraped: row.pages_scraped,
+        totalTeams: row.total_teams,
+        uniqueCombos: row.unique_combos,
+        notes: row.notes,
+    };
+}
+
+export async function getMetaTeamCountForSnapshot(snapshotId) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const result = await pool.query(
+        'SELECT COUNT(*)::int AS count FROM meta_teams WHERE snapshot_id = $1',
+        [snapshotId]
+    );
+    return result.rows[0]?.count || 0;
+}
+
+export async function getMetaTeamsForSnapshot(snapshotId, { limit, offset = 0 } = {}) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const params = [snapshotId];
+    let paging = '';
+    if (offset > 0) {
+        params.push(offset);
+        paging += ` OFFSET $${params.length}`;
+    }
+    if (limit != null && limit > 0) {
+        params.push(limit);
+        paging += ` LIMIT $${params.length}`;
+    }
+
+    const result = await pool.query(
+        `SELECT
+            combo_key,
+            hero_ids,
+            hero_names,
+            pet,
+            pet_name,
+            banner,
+            popularity_count,
+            row_rank,
+            page_number
+         FROM meta_teams
+         WHERE snapshot_id = $1
+         ORDER BY row_rank ASC NULLS LAST, popularity_count DESC NULLS LAST
+         ${paging}`,
+        params
+    );
+
+    return result.rows.map((row) => ({
+        comboKey: row.combo_key,
+        heroIds: row.hero_ids,
+        heroNames: row.hero_names,
+        pet: row.pet,
+        petName: row.pet_name,
+        banner: row.banner,
+        popularityCount: row.popularity_count,
+        rowRank: row.row_rank,
+        pageNumber: row.page_number,
     }));
 }
 
