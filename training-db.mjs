@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { findGrandArenaSelections } from './grand-arena-selection.mjs';
 
 const { Pool } = pg;
 
@@ -496,6 +497,51 @@ function buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params
     return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
+async function queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinRate, limit } = {}) {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const params = [];
+    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
+    params.push(minWinRate);
+    const minWinRateParam = `$${params.length}`;
+
+    let limitClause = '';
+    if (limit != null && limit > 0) {
+        params.push(limit);
+        limitClause = `LIMIT $${params.length}`;
+    }
+
+    const result = await pool.query(
+        `SELECT
+            mt.my_hero_ids,
+            (array_agg(mt.my_hero_names ORDER BY mt.tested_at DESC NULLS LAST))[1] AS my_hero_names,
+            mt.my_pet,
+            COUNT(*)::int AS test_count,
+            ROUND(AVG(mt.win_rate)::numeric, 1) AS avg_win_rate,
+            COUNT(*) FILTER (WHERE mt.win_rate >= ${minWinRateParam})::int AS high_win_count,
+            ROUND(MAX(mt.win_rate)::numeric, 1) AS best_win_rate
+         FROM matchup_tests mt
+         JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
+         ${where}
+         GROUP BY mt.my_hero_ids, mt.my_pet
+         ORDER BY high_win_count DESC, test_count DESC, avg_win_rate DESC
+         ${limitClause}`,
+        params
+    );
+
+    return result.rows.map((row) => ({
+        myHeroIds: row.my_hero_ids,
+        myHeroNames: row.my_hero_names,
+        myPet: row.my_pet,
+        testCount: row.test_count,
+        avgWinRate: row.avg_win_rate != null ? Number(row.avg_win_rate) : null,
+        highWinCount: row.high_win_count,
+        bestWinRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
+    }));
+}
+
 export async function getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
@@ -565,6 +611,80 @@ export async function getTrainingResults({
     );
 
     return result.rows;
+}
+
+export async function getTrainingResultStats({
+    comboKey,
+    opponentHeroIds,
+    myHeroIds,
+    topN = 10,
+    minWinRate = 90,
+    grandArenaMaxResults = 5,
+} = {}) {
+    const [allCombos, topMyCombos, topHeroesResult] = await Promise.all([
+        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinRate }),
+        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinRate, limit: topN }),
+        (async () => {
+            if (!pool) {
+                pool = new Pool({ connectionString: getDatabaseUrl() });
+            }
+
+            const params = [];
+            const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
+            params.push(topN);
+            const topLimit = `$${params.length}`;
+            params.push(minWinRate);
+            const minWinRateParam = `$${params.length}`;
+
+            const result = await pool.query(
+                `WITH filtered AS (
+                    SELECT mt.my_hero_ids, mt.my_pet, mt.win_rate
+                    FROM matchup_tests mt
+                    JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
+                    ${where}
+                 ),
+                 hero_rows AS (
+                    SELECT unnest(my_hero_ids) AS hero_id, win_rate FROM filtered
+                    UNION ALL
+                    SELECT my_pet AS hero_id, win_rate FROM filtered WHERE my_pet IS NOT NULL
+                 )
+                 SELECT
+                    hero_id,
+                    COUNT(*)::int AS appearances,
+                    COUNT(*) FILTER (WHERE win_rate >= ${minWinRateParam})::int AS wins_90,
+                    ROUND(AVG(win_rate)::numeric, 1) AS avg_win_rate
+                 FROM hero_rows
+                 WHERE hero_id IS NOT NULL
+                 GROUP BY hero_id
+                 ORDER BY wins_90 DESC, avg_win_rate DESC, appearances DESC
+                 LIMIT ${topLimit}`,
+                params
+            );
+            return result.rows;
+        })(),
+    ]);
+
+    const grandArenaAll = findGrandArenaSelections(allCombos, {
+        maxResults: 0,
+    });
+    const grandArenaSelections = grandArenaMaxResults > 0
+        ? grandArenaAll.slice(0, grandArenaMaxResults)
+        : grandArenaAll;
+
+    return {
+        topMyCombos: topMyCombos,
+        topMyHeroes: topHeroesResult.map((row) => ({
+            heroId: row.hero_id,
+            appearances: row.appearances,
+            wins90: row.wins_90,
+            avgWinRate: row.avg_win_rate != null ? Number(row.avg_win_rate) : null,
+        })),
+        grandArenaSelections,
+        grandArenaSelectionCount: grandArenaAll.length,
+        grandArenaShownCount: grandArenaSelections.length,
+        comboPoolSize: allCombos.length,
+        minWinRate,
+    };
 }
 
 export async function getOpponentSkipCheck({

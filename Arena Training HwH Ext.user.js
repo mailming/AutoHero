@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.12
+// @version      1.13
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.12';
+    const EXTENSION_VERSION = '1.13';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -197,6 +197,70 @@
             }
 
             return candidates;
+        }
+
+        function buildMetaTeamOpponents(metaTeams) {
+            if (!metaTeams?.length) return [];
+
+            const opponents = [];
+            for (let index = 0; index < metaTeams.length; index++) {
+                const team = metaTeams[index];
+                const heroes = (team.heroIds || team.hero_ids || [])
+                    .map(Number)
+                    .filter((id) => id > 0 && id < 6000);
+                if (heroes.length !== 5) continue;
+
+                const pet = team.pet != null ? Number(team.pet) : CONSTANTS.DEFAULT_PET_ID;
+                const banner = team.banner != null ? Number(team.banner) : 1;
+                const comboKey = team.comboKey ?? team.combo_key ?? buildComboKey(heroes, pet, banner);
+                const heroNames = (team.heroNames || team.hero_names || heroes.map(heroName));
+                const popularity = team.popularityCount ?? team.popularity_count ?? null;
+                const rank = team.rowRank ?? team.row_rank ?? (index + 1);
+                const label = heroNames.length
+                    ? `Meta: ${heroNames.join(', ')}`
+                    : `Meta team #${rank}`;
+
+                const raw = {
+                    userId: `meta_${comboKey.replace(/\|/g, '_')}`,
+                    place: String(rank),
+                    power: popularity,
+                    heroes: [...heroes.map((id) => ({ id })), { id: pet, type: 'pet' }],
+                    banners: [{ id: banner }],
+                    user: { name: label },
+                    source: 'meta-opponent',
+                    metaComboKey: comboKey,
+                    metaPopularity: popularity,
+                    metaRank: rank,
+                };
+
+                opponents.push({
+                    index: opponents.length,
+                    userId: raw.userId,
+                    name: label,
+                    place: raw.place,
+                    power: raw.power,
+                    heroes,
+                    heroNames,
+                    pet,
+                    banner,
+                    source: raw.source,
+                    metaComboKey: comboKey,
+                    metaPopularity: popularity,
+                    metaRank: rank,
+                    raw,
+                });
+            }
+
+            return opponents;
+        }
+
+        async function fetchMetaTeamOpponents(options = {}) {
+            const meta = await fetchMetaTeamCandidates(options);
+            const opponents = buildMetaTeamOpponents(meta.candidates);
+            return {
+                snapshotId: meta.snapshotId,
+                opponents,
+            };
         }
 
         async function saveRoundToBridge(result) {
@@ -561,6 +625,11 @@
         }
 
         async function loadGameData(options = {}) {
+            if (options.opponentOverride) {
+                const base = await loadTrainingBaseData();
+                return { ...base, opponents: [options.opponentOverride] };
+            }
+
             const [base, opponents] = await Promise.all([
                 loadTrainingBaseData(),
                 fetchOpponents(options),
@@ -1060,6 +1129,7 @@
                     includeCurrentTeam: true,
                     includeGrandArenaTeams: true,
                     useMetaTeams: true,
+                    useMetaTeamsAsOpponents: true,
                     metaTeamsLimit: CONSTANTS.DEFAULT_META_TEAMS_LIMIT,
                     saveToBridge: true,
                     delayBetweenRoundsMs: 2000,
@@ -1084,6 +1154,109 @@
 
                 (async () => {
                     let roundNum = 0;
+
+                    const runOpponentRound = async (opponentMeta, runOptions = {}) => {
+                        if (!loopRunning || stopRequested) return false;
+                        if (trainOptions.maxRounds > 0 && roundNum >= trainOptions.maxRounds) {
+                            loopRunning = false;
+                            return false;
+                        }
+
+                        roundNum++;
+                        status.loopRound = roundNum;
+                        const phaseLabel = runOptions.phaseLabel || 'Loop';
+                        status.message = `${phaseLabel} round ${roundNum} — ${opponentMeta?.name || opponentMeta?.userId || 'opponent'}`;
+
+                        try {
+                            if (
+                                trainOptions.skipCachedOpponents !== false
+                                && opponentMeta?.heroes?.length === 5
+                            ) {
+                                const comboKey = buildComboKey(
+                                    opponentMeta.heroes,
+                                    opponentMeta.pet,
+                                    opponentMeta.banner
+                                );
+                                const skipInfo = await fetchOpponentSkipCheck(comboKey, trainOptions);
+                                if (skipInfo.shouldSkip) {
+                                    const skippedResult = {
+                                        skipped: true,
+                                        skipReason: 'cached_counter',
+                                        opponentComboKey: comboKey,
+                                        cachedBestWinRate: skipInfo.bestWinRate,
+                                        cachedBestMatch: skipInfo.bestMatch,
+                                        cachedLastTestedAt: skipInfo.lastTestedAt,
+                                        opponent: {
+                                            index: opponentMeta.index,
+                                            userId: opponentMeta.userId,
+                                            name: opponentMeta.name,
+                                            place: opponentMeta.place,
+                                            power: opponentMeta.power,
+                                            source: opponentMeta.source,
+                                            metaComboKey: opponentMeta.metaComboKey,
+                                            metaPopularity: opponentMeta.metaPopularity,
+                                            metaRank: opponentMeta.metaRank,
+                                        },
+                                        completedAt: new Date().toISOString(),
+                                    };
+                                    loopSession.rounds.push(skippedResult);
+                                    console.log(
+                                        `[Arena Training] Round ${roundNum} skipped — cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter for ${comboKey}`
+                                    );
+                                    return true;
+                                }
+                            }
+
+                            const result = await this.runSingle({
+                                ...trainOptions,
+                                skipCachedOpponents: false,
+                                opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
+                                opponentOverride: runOptions.opponentOverride ?? opponentMeta.raw ?? null,
+                                label: `${trainOptions.label}-r${roundNum}`,
+                            });
+                            loopSession.rounds.push(result);
+                            lastResults = result;
+
+                            if (trainOptions.saveToBridge !== false) {
+                                const saved = await saveRoundToBridge(result);
+                                if (saved) {
+                                    loopSession.lastSavedAt = new Date().toISOString();
+                                }
+                            }
+
+                            const best = result.best;
+                            if (best) {
+                                const targetNote = result.targetMet
+                                    ? `target ${result.targetWinRate}%+ met`
+                                    : (result.config?.searchUntilTarget
+                                        ? `no ${result.targetWinRate}%+ in ${result.testedCombos}/${result.plannedCombos}`
+                                        : 'search complete');
+                                console.log(
+                                    `[Arena Training] Round ${roundNum} saved — best ${best.winRate.toFixed(1)}% (${targetNote}):`,
+                                    best.heroNames.join(', ')
+                                );
+                            }
+                        } catch (err) {
+                            console.error(`[Arena Training] Round ${roundNum} failed:`, err);
+                            loopSession.rounds.push({
+                                round: roundNum,
+                                opponentIndex: opponentMeta?.index,
+                                opponentSource: opponentMeta?.source,
+                                error: err.message,
+                                fatal: isFatalTrainingError(err),
+                                completedAt: new Date().toISOString(),
+                            });
+                            if (stopTrainingOnFatalError(err, `round ${roundNum}`)) {
+                                return false;
+                            }
+                        }
+
+                        if (trainOptions.delayBetweenRoundsMs > 0) {
+                            await sleep(trainOptions.delayBetweenRoundsMs);
+                        }
+                        return true;
+                    };
+
                     try {
                         while (loopRunning && !stopRequested) {
                             const opponents = await this.getOpponents(true, trainOptions);
@@ -1093,102 +1266,38 @@
 
                             for (const idx of indexes) {
                                 if (!loopRunning || stopRequested) break;
-                                if (trainOptions.maxRounds > 0 && roundNum >= trainOptions.maxRounds) {
-                                    loopRunning = false;
-                                    break;
-                                }
+                                const opponentList = await this.getOpponents(false, trainOptions);
+                                const opponentMeta = opponentList.find((o) => o.index === idx);
+                                if (!opponentMeta) continue;
+                                const shouldContinue = await runOpponentRound.call(this, opponentMeta, {
+                                    phaseLabel: 'Arena',
+                                    opponentIndex: idx,
+                                });
+                                if (!shouldContinue) break;
+                            }
 
-                                roundNum++;
-                                status.loopRound = roundNum;
-                                status.message = `Loop round ${roundNum} — opponent ${idx}`;
-
-                                try {
-                                    const opponentList = await this.getOpponents(false, trainOptions);
-                                    const opponentMeta = opponentList.find((o) => o.index === idx);
-                                    let skipInfo = null;
-
-                                    if (
-                                        trainOptions.skipCachedOpponents !== false
-                                        && opponentMeta?.heroes?.length === 5
-                                    ) {
-                                        const comboKey = buildComboKey(
-                                            opponentMeta.heroes,
-                                            opponentMeta.pet,
-                                            opponentMeta.banner
-                                        );
-                                        skipInfo = await fetchOpponentSkipCheck(comboKey, trainOptions);
-                                        if (skipInfo.shouldSkip) {
-                                            const skippedResult = {
-                                                skipped: true,
-                                                skipReason: 'cached_counter',
-                                                opponentComboKey: comboKey,
-                                                cachedBestWinRate: skipInfo.bestWinRate,
-                                                cachedBestMatch: skipInfo.bestMatch,
-                                                cachedLastTestedAt: skipInfo.lastTestedAt,
-                                                opponent: {
-                                                    index: idx,
-                                                    userId: opponentMeta.userId,
-                                                    name: opponentMeta.name,
-                                                    place: opponentMeta.place,
-                                                    power: opponentMeta.power,
-                                                },
-                                                completedAt: new Date().toISOString(),
-                                            };
-                                            loopSession.rounds.push(skippedResult);
-                                            console.log(
-                                                `[Arena Training] Round ${roundNum} skipped — cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter for ${comboKey}`
-                                            );
-                                            if (trainOptions.delayBetweenRoundsMs > 0) {
-                                                await sleep(trainOptions.delayBetweenRoundsMs);
-                                            }
-                                            continue;
-                                        }
+                            if (
+                                loopRunning
+                                && !stopRequested
+                                && trainOptions.useMetaTeamsAsOpponents !== false
+                            ) {
+                                const meta = await fetchMetaTeamOpponents(trainOptions);
+                                if (meta.opponents.length) {
+                                    loopSession.metaOpponentsSnapshotId = meta.snapshotId;
+                                    console.log(
+                                        `[Arena Training] Meta opponent phase: ${meta.opponents.length} teams from snapshot ${meta.snapshotId}`
+                                    );
+                                    for (const opponentMeta of meta.opponents) {
+                                        if (!loopRunning || stopRequested) break;
+                                        const shouldContinue = await runOpponentRound.call(this, opponentMeta, {
+                                            phaseLabel: 'Meta opponent',
+                                            opponentOverride: opponentMeta.raw,
+                                            opponentIndex: 0,
+                                        });
+                                        if (!shouldContinue) break;
                                     }
-
-                                    const result = await this.runSingle({
-                                        ...trainOptions,
-                                        skipCachedOpponents: false,
-                                        opponentIndex: idx,
-                                        label: `${trainOptions.label}-r${roundNum}`,
-                                    });
-                                    loopSession.rounds.push(result);
-                                    lastResults = result;
-
-                                    if (trainOptions.saveToBridge !== false) {
-                                        const saved = await saveRoundToBridge(result);
-                                        if (saved) {
-                                            loopSession.lastSavedAt = new Date().toISOString();
-                                        }
-                                    }
-
-                                    const best = result.best;
-                                    if (best) {
-                                        const targetNote = result.targetMet
-                                            ? `target ${result.targetWinRate}%+ met`
-                                            : (result.config?.searchUntilTarget
-                                                ? `no ${result.targetWinRate}%+ in ${result.testedCombos}/${result.plannedCombos}`
-                                                : 'search complete');
-                                        console.log(
-                                            `[Arena Training] Round ${roundNum} saved — best ${best.winRate.toFixed(1)}% (${targetNote}):`,
-                                            best.heroNames.join(', ')
-                                        );
-                                    }
-                                } catch (err) {
-                                    console.error(`[Arena Training] Round ${roundNum} failed:`, err);
-                                    loopSession.rounds.push({
-                                        round: roundNum,
-                                        opponentIndex: idx,
-                                        error: err.message,
-                                        fatal: isFatalTrainingError(err),
-                                        completedAt: new Date().toISOString(),
-                                    });
-                                    if (stopTrainingOnFatalError(err, `round ${roundNum}`)) {
-                                        break;
-                                    }
-                                }
-
-                                if (trainOptions.delayBetweenRoundsMs > 0) {
-                                    await sleep(trainOptions.delayBetweenRoundsMs);
+                                } else {
+                                    console.warn('[Arena Training] No meta team opponents available from bridge');
                                 }
                             }
 
@@ -1245,7 +1354,7 @@
                 try {
                     HWHFuncs.setProgress('Arena Training: loading opponents and heroes...', true);
                     const data = await loadGameData(options);
-                    const opponentRaw = pickOpponent(data.opponents, options);
+                    const opponentRaw = options.opponentOverride || pickOpponent(data.opponents, options);
                     const opponentTeam = extractOpponentConfig(opponentRaw);
                     if (!opponentTeam.hasValidTeam) {
                         throw new Error('Selected opponent has invalid team data');
@@ -1448,13 +1557,16 @@
                             generated: plannedGenerated,
                         },
                         opponent: {
-                            index: data.opponents.indexOf(opponentRaw),
+                            index: options.opponentOverride ? (options.opponentIndex ?? 0) : data.opponents.indexOf(opponentRaw),
                             userId: opponentRaw.userId,
                             name: opponentRaw.user?.name,
                             place: opponentRaw.place,
                             power: opponentRaw.power,
                             banner: opponentTeam.banner,
                             source: opponentRaw.source || options.opponentSource || 'topGet',
+                            metaComboKey: opponentRaw.metaComboKey || null,
+                            metaPopularity: opponentRaw.metaPopularity ?? null,
+                            metaRank: opponentRaw.metaRank ?? null,
                             team: opponentTeam,
                         },
                         config: {
@@ -1467,6 +1579,7 @@
                             includeCurrentTeam: options.includeCurrentTeam !== false,
                             includeGrandArenaTeams: options.includeGrandArenaTeams !== false,
                             useMetaTeams: options.useMetaTeams !== false,
+                            useMetaTeamsAsOpponents: options.useMetaTeamsAsOpponents !== false,
                             metaTeamsLimit: Number(options.metaTeamsLimit ?? CONSTANTS.DEFAULT_META_TEAMS_LIMIT),
                             metaTeamsSnapshotId: options.metaTeamsSnapshotId || metaTeamsSnapshotId || null,
                             opponentSource: options.opponentSource || 'topGet',
@@ -1511,10 +1624,10 @@
             content.style.cssText = 'padding: 16px; color: #fce1ac; max-width: 640px; line-height: 1.5;';
             content.innerHTML = `
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
-                <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code> and tests your combos vs each defense team.</p>
+                <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code>, then tests vs <b>meta team</b> opponents from the bridge DB.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
                 <p>Skips opponents already solved in PostgreSQL: <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+</b> counter found within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b> (via bridge).</p>
-                <p>Test order: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> (DB) → generated combos. Stops at <b>${CONSTANTS.DEFAULT_TARGET_WIN_RATE}%+</b>.</p>
+                <p>Per opponent: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> (your combos) → generated. Stops at <b>${CONSTANTS.DEFAULT_TARGET_WIN_RATE}%+</b>.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 

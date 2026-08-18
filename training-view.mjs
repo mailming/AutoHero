@@ -122,6 +122,138 @@ function formatWhen(iso) {
     }
 }
 
+function renderTrainingStats(stats = {}) {
+    const minWinRate = stats.minWinRate ?? 90;
+    const topCombos = stats.topMyCombos || [];
+    const topHeroes = stats.topMyHeroes || [];
+
+    const comboRows = topCombos.map((row, index) => {
+        const combo = formatCombo(row.myHeroIds, row.myPet, row.myHeroNames);
+        return `
+        <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(combo.label)}</td>
+            <td class="win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
+            <td class="win">${escapeHtml(formatPct(row.bestWinRate))}</td>
+            <td>${row.highWinCount ?? 0}</td>
+            <td class="muted">${row.testCount ?? 0}</td>
+        </tr>`;
+    }).join('');
+
+    const heroRows = topHeroes.map((row, index) => {
+        const label = resolveHeroName(row.heroId);
+        const isPet = Number(row.heroId) >= 6000;
+        return `
+        <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(label)}${isPet ? ' <span class="muted">(pet)</span>' : ''}</td>
+            <td>${row.wins90 ?? 0}</td>
+            <td class="win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
+            <td class="muted">${row.appearances ?? 0}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+  <div class="stats-grid">
+    <div class="stats-panel">
+      <h2>Top 10 my combos</h2>
+      <p class="muted stats-note">Ranked by how often the combo hits ≥${minWinRate}% win rate in filtered tests.</p>
+      <div class="table-wrap stats-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>My combo</th>
+              <th>Avg win %</th>
+              <th>Best win %</th>
+              <th>≥${minWinRate}%</th>
+              <th>Tests</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${comboRows || `<tr><td colspan="6" class="muted">No combo data yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="stats-panel">
+      <h2>Top 10 heroes in winning lineups</h2>
+      <p class="muted stats-note">Ranked by appearances in tests with ≥${minWinRate}% win rate.</p>
+      <div class="table-wrap stats-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Hero / pet</th>
+              <th>≥${minWinRate}% wins</th>
+              <th>Avg win %</th>
+              <th>Appearances</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${heroRows || `<tr><td colspan="5" class="muted">No hero data yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderGrandArenaTeamCell(team, minWinRate) {
+    const combo = formatCombo(team.myHeroIds, team.myPet, team.myHeroNames);
+    return `
+      <div class="ga-team">
+        <div>${escapeHtml(combo.label)}</div>
+        <div class="muted ga-team-meta">≥${minWinRate}%: ${team.highWinCount ?? 0} · avg ${escapeHtml(formatPct(team.avgWinRate))}</div>
+      </div>`;
+}
+
+function renderGrandArenaSelections(stats = {}) {
+    const minWinRate = stats.minWinRate ?? 90;
+    const selections = stats.grandArenaSelections || [];
+    const totalFound = stats.grandArenaSelectionCount ?? selections.length;
+    const shownCount = stats.grandArenaShownCount ?? selections.length;
+    const poolSize = stats.comboPoolSize ?? 0;
+
+    const rows = selections.map((selection, index) => {
+        const [team1, team2, team3] = selection.teams;
+        return `
+        <tr>
+            <td>${index + 1}</td>
+            <td>${renderGrandArenaTeamCell(team1, minWinRate)}</td>
+            <td>${renderGrandArenaTeamCell(team2, minWinRate)}</td>
+            <td>${renderGrandArenaTeamCell(team3, minWinRate)}</td>
+            <td class="win good">${selection.totalHighWinCount}</td>
+            <td>${selection.minHighWinCount}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+  <div class="stats-panel ga-panel">
+    <h2>Grand Arena selection</h2>
+    <p class="muted stats-note">
+      ${totalFound} valid 3-team sets from ${poolSize} combos${shownCount < totalFound ? ` · showing top ${shownCount}` : ''} · each hero used once across all teams (pets may repeat) · ranked by total ≥${minWinRate}% wins
+    </p>
+    <div class="table-wrap ga-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Team 1</th>
+            <th>Team 2</th>
+            <th>Team 3</th>
+            <th>Total ≥${minWinRate}%</th>
+            <th>Min ≥${minWinRate}%</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td colspan="6" class="muted">No valid 3-team sets found (need 15 unique heroes across 3 five-hero combos).</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     const total = paging.total ?? results.length;
     const offset = paging.offset ?? 0;
@@ -183,6 +315,20 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     .chip:hover { background: #2f3f57; }
     .chip-x { color: #9fb3d1; font-weight: 700; }
     .filter-note { grid-column: 1 / -1; font-size: 0.85rem; }
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;
+      margin-bottom: 20px;
+    }
+    .stats-panel {
+      padding: 16px; border: 1px solid #243044; border-radius: 8px; background: #151d28;
+    }
+    .stats-panel h2 { margin: 0 0 4px; font-size: 1rem; color: #e7ecf3; }
+    .stats-note { margin: 0 0 12px; font-size: 0.85rem; }
+    .stats-table-wrap { max-height: 360px; }
+    .ga-panel { margin-bottom: 20px; }
+    .ga-table-wrap { max-height: 480px; }
+    .ga-team { display: flex; flex-direction: column; gap: 4px; }
+    .ga-team-meta { font-size: 0.8rem; }
     .table-wrap {
       max-height: calc(100vh - 180px);
       overflow: auto;
@@ -210,6 +356,8 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     <a href="/training/meta-view">Meta teams</a>
   </p>
   ${renderHeroFilters(paging)}
+  ${renderTrainingStats(paging.stats)}
+  ${renderGrandArenaSelections(paging.stats)}
   <div class="toolbar">
     <span class="status">Showing ${shownFrom}–${shownTo} of ${total}</span>
     ${pageSize > 0 && offset + pageSize < total ? `<a href="${allLink}">Show all</a>` : ''}

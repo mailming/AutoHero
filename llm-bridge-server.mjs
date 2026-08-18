@@ -22,6 +22,7 @@ import {
     getMatchups,
     getTrainingResults,
     getTrainingResultCount,
+    getTrainingResultStats,
     getOpponentSkipCheck,
     getMetaTeamSnapshots,
     getMetaTeamSnapshotById,
@@ -119,7 +120,7 @@ const server = http.createServer(async (req, res) => {
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const limitParam = url.searchParams.get('limit');
             const pageSize = limitParam == null ? 500 : Math.max(0, Number(limitParam) || 0);
-            const [rows, summary, total] = await Promise.all([
+            const [rows, summary, total, stats] = await Promise.all([
                 getTrainingResults({
                     comboKey,
                     opponentHeroIds,
@@ -129,6 +130,7 @@ const server = http.createServer(async (req, res) => {
                 }),
                 getTrainingSummary(),
                 getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds }),
+                getTrainingResultStats({ comboKey, opponentHeroIds, myHeroIds }),
             ]);
             const results = rows.map(formatTrainingResultRow);
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -139,6 +141,7 @@ const server = http.createServer(async (req, res) => {
                 comboKey,
                 opponentHeroIds,
                 myHeroIds,
+                stats,
             }));
         }
 
