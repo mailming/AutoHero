@@ -16,8 +16,8 @@ export const HERO_NAMES = {
 };
 
 export const PET_NAMES = {
-    6000: 'Merlin', 6001: 'Angus', 6002: 'Ava', 6003: 'Cain', 6004: 'Oliver',
-    6005: 'Fenris', 6006: 'Cain', 6007: 'Vulcan', 6008: 'Axel',
+    6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
+    6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
 };
 
 export function resolveHeroName(id) {

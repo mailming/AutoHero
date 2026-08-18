@@ -445,17 +445,64 @@ export async function getTrainingSummary() {
     };
 }
 
-export async function getTrainingResultCount({ comboKey } = {}) {
+function normalizeHeroFilterIds(heroIds) {
+    if (!Array.isArray(heroIds)) {
+        return [];
+    }
+    return [...new Set(
+        heroIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+    )];
+}
+
+function appendComboHeroFilterClauses({ heroIds, heroColumn, petColumn, params }) {
+    const ids = normalizeHeroFilterIds(heroIds);
+    if (!ids.length) {
+        return [];
+    }
+
+    const clauses = [];
+    const heroes = ids.filter((id) => id < 6000);
+    const pets = ids.filter((id) => id >= 6000);
+
+    if (heroes.length) {
+        params.push(heroes);
+        clauses.push(`${heroColumn} @> $${params.length}::int[]`);
+    }
+    for (const petId of pets) {
+        params.push(petId);
+        clauses.push(`${petColumn} = $${params.length}`);
+    }
+    return clauses;
+}
+
+function buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params }) {
+    const clauses = [];
+    if (comboKey) {
+        params.push(comboKey);
+        clauses.push(`oc.combo_key = $${params.length}`);
+    }
+    clauses.push(...appendComboHeroFilterClauses({
+        heroIds: opponentHeroIds,
+        heroColumn: 'oc.hero_ids',
+        petColumn: 'oc.pet',
+        params,
+    }));
+    clauses.push(...appendComboHeroFilterClauses({
+        heroIds: myHeroIds,
+        heroColumn: 'mt.my_hero_ids',
+        petColumn: 'mt.my_pet',
+        params,
+    }));
+    return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+}
+
+export async function getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
 
     const params = [];
-    let where = '';
-    if (comboKey) {
-        params.push(comboKey);
-        where = 'WHERE oc.combo_key = $1';
-    }
+    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
 
     const result = await pool.query(
         `SELECT COUNT(*)::int AS count
@@ -468,17 +515,19 @@ export async function getTrainingResultCount({ comboKey } = {}) {
     return result.rows[0]?.count || 0;
 }
 
-export async function getTrainingResults({ limit, offset = 0, comboKey } = {}) {
+export async function getTrainingResults({
+    limit,
+    offset = 0,
+    comboKey,
+    opponentHeroIds,
+    myHeroIds,
+} = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
 
     const params = [];
-    let where = '';
-    if (comboKey) {
-        params.push(comboKey);
-        where = 'WHERE oc.combo_key = $1';
-    }
+    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
 
     let paging = '';
     if (offset > 0) {
@@ -520,7 +569,7 @@ export async function getTrainingResults({ limit, offset = 0, comboKey } = {}) {
 
 export async function getOpponentSkipCheck({
     comboKey,
-    minWinRate = 80,
+    minWinRate = 90,
     maxAgeDays = 30,
 } = {}) {
     if (!comboKey) {

@@ -31,7 +31,7 @@ import {
     getDatabaseStatus,
     closeDatabase,
 } from './training-db.mjs';
-import { formatTrainingResultRow, renderTrainingResultsPage, renderMetaTeamsPage } from './training-view.mjs';
+import { formatTrainingResultRow, renderTrainingResultsPage, renderMetaTeamsPage, parseHeroFilterParams } from './training-view.mjs';
 
 const PORT = 9876;
 const HOST = '127.0.0.1';
@@ -114,17 +114,21 @@ const server = http.createServer(async (req, res) => {
                 return res.end('Database not ready');
             }
             const comboKey = url.searchParams.get('comboKey') || undefined;
+            const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
+            const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const limitParam = url.searchParams.get('limit');
             const pageSize = limitParam == null ? 500 : Math.max(0, Number(limitParam) || 0);
             const [rows, summary, total] = await Promise.all([
                 getTrainingResults({
                     comboKey,
+                    opponentHeroIds,
+                    myHeroIds,
                     offset,
                     limit: pageSize > 0 ? pageSize : undefined,
                 }),
                 getTrainingSummary(),
-                getTrainingResultCount({ comboKey }),
+                getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds }),
             ]);
             const results = rows.map(formatTrainingResultRow);
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -133,6 +137,8 @@ const server = http.createServer(async (req, res) => {
                 offset,
                 pageSize: pageSize > 0 ? pageSize : total,
                 comboKey,
+                opponentHeroIds,
+                myHeroIds,
             }));
         }
 
@@ -145,16 +151,20 @@ const server = http.createServer(async (req, res) => {
                 });
             }
             const comboKey = url.searchParams.get('comboKey') || undefined;
+            const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
+            const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const limitParam = url.searchParams.get('limit');
             const limit = limitParam == null ? 100 : Math.max(0, Number(limitParam) || 0);
             const [rows, total] = await Promise.all([
                 getTrainingResults({
                     comboKey,
+                    opponentHeroIds,
+                    myHeroIds,
                     offset,
                     limit: limit > 0 ? limit : undefined,
                 }),
-                getTrainingResultCount({ comboKey }),
+                getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds }),
             ]);
             const results = rows.map(formatTrainingResultRow);
             return sendJson(res, 200, {
@@ -163,6 +173,10 @@ const server = http.createServer(async (req, res) => {
                 total,
                 offset,
                 limit: limit > 0 ? limit : total,
+                filters: {
+                    opponentHeroIds,
+                    myHeroIds,
+                },
                 results,
             });
         }
@@ -179,7 +193,7 @@ const server = http.createServer(async (req, res) => {
             if (!comboKey) {
                 return sendJson(res, 400, { ok: false, error: 'comboKey query param is required' });
             }
-            const minWinRate = Number(url.searchParams.get('minWinRate')) || 80;
+            const minWinRate = Number(url.searchParams.get('minWinRate')) || 90;
             const maxAgeDays = Number(url.searchParams.get('maxAgeDays')) || 30;
             const skip = await getOpponentSkipCheck({ comboKey, minWinRate, maxAgeDays });
             return sendJson(res, 200, { ok: true, ...skip });

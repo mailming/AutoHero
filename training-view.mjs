@@ -1,4 +1,104 @@
-import { formatCombo } from './hero-names.mjs';
+import { formatCombo, HERO_NAMES, PET_NAMES, resolveHeroName } from './hero-names.mjs';
+
+export function parseHeroFilterParams(searchParams, key) {
+    const values = searchParams.getAll(key);
+    const ids = values
+        .map((value) => Number(value))
+        .filter((id) => Number.isFinite(id) && id > 0);
+    return [...new Set(ids)];
+}
+
+function buildHeroFilterOptions(selectedIds = []) {
+    const selected = new Set(selectedIds.map(Number));
+    const options = [];
+    for (const [id, name] of Object.entries(HERO_NAMES)) {
+        const heroId = Number(id);
+        if (!selected.has(heroId)) {
+            options.push({ id: heroId, label: name, group: 'Heroes' });
+        }
+    }
+    for (const [id, name] of Object.entries(PET_NAMES)) {
+        const petId = Number(id);
+        if (!selected.has(petId)) {
+            options.push({ id: petId, label: name, group: 'Pets' });
+        }
+    }
+    options.sort((a, b) => a.label.localeCompare(b.label));
+    return options;
+}
+
+function buildTrainingQueryBase(paging = {}) {
+    const parts = [];
+    if (paging.comboKey) {
+        parts.push(`comboKey=${encodeURIComponent(paging.comboKey)}`);
+    }
+    for (const id of paging.opponentHeroIds || []) {
+        parts.push(`opponentHero=${encodeURIComponent(id)}`);
+    }
+    for (const id of paging.myHeroIds || []) {
+        parts.push(`myHero=${encodeURIComponent(id)}`);
+    }
+    return parts.length ? `${parts.join('&')}&` : '';
+}
+
+function renderHeroFilterChips(side, heroIds) {
+    return (heroIds || []).map((id) => {
+        const label = resolveHeroName(id);
+        return `<button type="button" class="chip" onclick="removeHeroFilter('${side}', ${Number(id)})" title="Remove ${escapeHtml(label)}">${escapeHtml(label)} <span class="chip-x">×</span></button>`;
+    }).join('');
+}
+
+function renderHeroFilterSelect(side, heroIds) {
+    const options = buildHeroFilterOptions(heroIds);
+    const optionGroups = {
+        Heroes: [],
+        Pets: [],
+    };
+    for (const option of options) {
+        optionGroups[option.group].push(
+            `<option value="${option.id}">${escapeHtml(option.label)}</option>`
+        );
+    }
+    return `
+        <select id="${side}-hero-select" aria-label="${side} hero filter">
+            <option value="">Add hero or pet…</option>
+            ${optionGroups.Heroes.length ? `<optgroup label="Heroes">${optionGroups.Heroes.join('')}</optgroup>` : ''}
+            ${optionGroups.Pets.length ? `<optgroup label="Pets">${optionGroups.Pets.join('')}</optgroup>` : ''}
+        </select>`;
+}
+
+function renderHeroFilters(paging = {}) {
+    const opponentHeroIds = paging.opponentHeroIds || [];
+    const myHeroIds = paging.myHeroIds || [];
+    const hasFilters = opponentHeroIds.length > 0 || myHeroIds.length > 0;
+
+    return `
+  <div class="filters">
+    <div class="filter-group">
+      <div class="filter-title">Opponent combo filter</div>
+      <div class="chips" id="opponent-chips">
+        ${renderHeroFilterChips('opponent', opponentHeroIds) || '<span class="muted">Any opponent combo</span>'}
+      </div>
+      <div class="filter-row">
+        ${renderHeroFilterSelect('opponent', opponentHeroIds)}
+        <button type="button" onclick="addHeroFilter('opponent')">Add</button>
+        ${opponentHeroIds.length ? `<button type="button" class="ghost" onclick="clearHeroFilter('opponent')">Clear</button>` : ''}
+      </div>
+    </div>
+    <div class="filter-group">
+      <div class="filter-title">My combo filter</div>
+      <div class="chips" id="my-chips">
+        ${renderHeroFilterChips('my', myHeroIds) || '<span class="muted">Any of my combos</span>'}
+      </div>
+      <div class="filter-row">
+        ${renderHeroFilterSelect('my', myHeroIds)}
+        <button type="button" onclick="addHeroFilter('my')">Add</button>
+        ${myHeroIds.length ? `<button type="button" class="ghost" onclick="clearHeroFilter('my')">Clear</button>` : ''}
+      </div>
+    </div>
+    ${hasFilters ? '<div class="filter-note muted">Results must include every selected hero/pet in that combo.</div>' : ''}
+  </div>`;
+}
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -32,7 +132,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     const nextOffset = offset + results.length;
     const hasMore = nextOffset < total;
 
-    const queryBase = comboKey ? `comboKey=${encodeURIComponent(comboKey)}&` : '';
+    const queryBase = buildTrainingQueryBase(paging);
     const allLink = `/?${queryBase}limit=0`;
     const nextLink = `/?${queryBase}offset=${nextOffset}&limit=${pageSize}`;
 
@@ -63,6 +163,26 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       padding: 8px 12px; font-size: 0.9rem; text-decoration: none; cursor: pointer;
     }
     .toolbar a:hover, .toolbar button:hover { background: #243044; }
+    .filters {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;
+      margin-bottom: 16px; padding: 16px; border: 1px solid #243044; border-radius: 8px; background: #151d28;
+    }
+    .filter-group { display: flex; flex-direction: column; gap: 8px; }
+    .filter-title { font-size: 0.9rem; font-weight: 600; color: #9fb3d1; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .filter-row select {
+      min-width: 220px; flex: 1; color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57;
+      border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+    }
+    .filter-row button.ghost { background: transparent; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px; align-items: center; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; color: #e7ecf3; background: #243044;
+      border: 1px solid #3a4f6d; border-radius: 999px; padding: 4px 10px; font-size: 0.85rem; cursor: pointer;
+    }
+    .chip:hover { background: #2f3f57; }
+    .chip-x { color: #9fb3d1; font-weight: 700; }
+    .filter-note { grid-column: 1 / -1; font-size: 0.85rem; }
     .table-wrap {
       max-height: calc(100vh - 180px);
       overflow: auto;
@@ -86,8 +206,10 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
   <p class="meta">
     ${summary.opponentComboCount ?? 0} opponent combos ·
     ${summary.matchupTestCount ?? total} tests ·
-    JSON: <a href="/training/results?limit=0">/training/results</a>
+    JSON: <a href="/training/results?limit=0">/training/results</a> ·
+    <a href="/training/meta-view">Meta teams</a>
   </p>
+  ${renderHeroFilters(paging)}
   <div class="toolbar">
     <span class="status">Showing ${shownFrom}–${shownTo} of ${total}</span>
     ${pageSize > 0 && offset + pageSize < total ? `<a href="${allLink}">Show all</a>` : ''}
@@ -111,6 +233,50 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     </table>
   </div>
   ${hasMore ? `<p class="meta" style="margin-top:16px"><a href="${nextLink}">Load more results</a> · <a href="${allLink}">Show all ${total}</a></p>` : ''}
+  <script>
+    function currentParams() {
+      return new URL(window.location.href);
+    }
+    function heroFilterKey(side) {
+      return side === 'opponent' ? 'opponentHero' : 'myHero';
+    }
+    function addHeroFilter(side) {
+      const select = document.getElementById(side + '-hero-select');
+      const id = select && select.value;
+      if (!id) return;
+      const url = currentParams();
+      const key = heroFilterKey(side);
+      if (!url.searchParams.getAll(key).includes(String(id))) {
+        url.searchParams.append(key, id);
+      }
+      url.searchParams.delete('offset');
+      window.location.href = url.toString();
+    }
+    function removeHeroFilter(side, id) {
+      const url = currentParams();
+      const key = heroFilterKey(side);
+      const remaining = url.searchParams.getAll(key).filter((value) => value !== String(id));
+      url.searchParams.delete(key);
+      remaining.forEach((value) => url.searchParams.append(key, value));
+      url.searchParams.delete('offset');
+      window.location.href = url.toString();
+    }
+    function clearHeroFilter(side) {
+      const url = currentParams();
+      url.searchParams.delete(heroFilterKey(side));
+      url.searchParams.delete('offset');
+      window.location.href = url.toString();
+    }
+    document.querySelectorAll('.filter-row select').forEach((select) => {
+      select.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          const side = select.id.replace('-hero-select', '');
+          addHeroFilter(side);
+        }
+      });
+    });
+  </script>
 </body>
 </html>`;
 }

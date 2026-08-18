@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.11
+// @version      1.12
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.11';
+    const EXTENSION_VERSION = '1.12';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
 
@@ -26,8 +26,8 @@
         DEFAULT_SIMULATIONS: 10,
         DEFAULT_MAX_COMBOS: 40,
         DEFAULT_POOL_SIZE: 12,
-        DEFAULT_TARGET_WIN_RATE: 80,
-        DEFAULT_SKIP_CACHE_MIN_WIN_RATE: 80,
+        DEFAULT_TARGET_WIN_RATE: 90,
+        DEFAULT_SKIP_CACHE_MIN_WIN_RATE: 90,
         DEFAULT_SKIP_CACHE_MAX_AGE_DAYS: 30,
         DEFAULT_META_TEAMS_LIMIT: 0,
     };
@@ -1513,8 +1513,8 @@
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code> and tests your combos vs each defense team.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
-                <p>Skips opponents already solved in PostgreSQL: <b>80%+</b> counter found within <b>30 days</b> (via bridge).</p>
-                <p>Test order: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> (DB) → generated combos. Stops at <b>80%+</b>.</p>
+                <p>Skips opponents already solved in PostgreSQL: <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+</b> counter found within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b> (via bridge).</p>
+                <p>Test order: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> (DB) → generated combos. Stops at <b>${CONSTANTS.DEFAULT_TARGET_WIN_RATE}%+</b>.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 

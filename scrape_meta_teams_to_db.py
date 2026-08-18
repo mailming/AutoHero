@@ -47,8 +47,8 @@ HERO_NAMES = {
 }
 
 PET_NAMES = {
-    6000: 'Merlin', 6001: 'Angus', 6002: 'Ava', 6003: 'Cain', 6004: 'Oliver',
-    6005: 'Fenris', 6006: 'Cain', 6007: 'Vulcan', 6008: 'Axel',
+    6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
+    6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
 }
 
 DEFAULT_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/autohero'
@@ -72,15 +72,25 @@ def resolve_hero_name(hero_id: int) -> str:
     return HERO_NAMES.get(hero_id, f'Hero {hero_id}')
 
 
+def parse_pet_filename(base: str) -> int | None:
+    """hw-recruit pet icons: 6--8.png -> 6008 (Khorus), 6--6.png -> 6006 (Axel)."""
+    if '--' not in base:
+        return None
+    left, right = base.split('--', 1)
+    if not left.isdigit() or not right.isdigit():
+        return None
+    return int(f'{left}00{right}')
+
+
 def parse_team_images(image_names: list[str]) -> dict[str, Any]:
-    banner = 0
     hero_ids: list[int] = []
     pet_id: int | None = None
 
     for image_name in image_names:
         base = image_name.replace('.png', '').replace('.webp', '')
-        if '--' in base:
-            banner = int(base.split('--', 1)[0])
+        parsed_pet = parse_pet_filename(base)
+        if parsed_pet is not None:
+            pet_id = parsed_pet
             continue
         if not base.isdigit():
             continue
@@ -100,8 +110,8 @@ def parse_team_images(image_names: list[str]) -> dict[str, Any]:
         'hero_names': hero_names,
         'pet': pet_id,
         'pet_name': pet_name,
-        'banner': banner or None,
-        'combo_key': build_combo_key(hero_ids, pet_id, banner),
+        'banner': None,
+        'combo_key': build_combo_key(hero_ids, pet_id, None),
     }
 
 
