@@ -622,7 +622,7 @@ export async function getTrainingResultStats({
     grandArenaMaxResults = 5,
 } = {}) {
     const [allCombos, topMyCombos, topHeroesResult] = await Promise.all([
-        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinRate }),
+        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds: [], minWinRate }),
         queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinRate, limit: topN }),
         (async () => {
             if (!pool) {
@@ -664,8 +664,10 @@ export async function getTrainingResultStats({
         })(),
     ]);
 
+    const grandArenaRequiredHeroes = normalizeHeroFilterIds(myHeroIds);
     const grandArenaAll = findGrandArenaSelections(allCombos, {
         maxResults: 0,
+        requiredHeroIds: grandArenaRequiredHeroes,
     });
     const grandArenaSelections = grandArenaMaxResults > 0
         ? grandArenaAll.slice(0, grandArenaMaxResults)
@@ -683,6 +685,7 @@ export async function getTrainingResultStats({
         grandArenaSelectionCount: grandArenaAll.length,
         grandArenaShownCount: grandArenaSelections.length,
         comboPoolSize: allCombos.length,
+        grandArenaRequiredHeroes,
         minWinRate,
     };
 }

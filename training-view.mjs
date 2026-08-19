@@ -214,6 +214,9 @@ function renderGrandArenaSelections(stats = {}) {
     const totalFound = stats.grandArenaSelectionCount ?? selections.length;
     const shownCount = stats.grandArenaShownCount ?? selections.length;
     const poolSize = stats.comboPoolSize ?? 0;
+    const myHeroFilterNote = (stats.grandArenaRequiredHeroes || []).length
+        ? ' · my combo filter applies across all 3 teams (each hero once total)'
+        : '';
 
     const rows = selections.map((selection, index) => {
         const [team1, team2, team3] = selection.teams;
@@ -232,7 +235,7 @@ function renderGrandArenaSelections(stats = {}) {
   <div class="stats-panel ga-panel">
     <h2>Grand Arena selection</h2>
     <p class="muted stats-note">
-      ${totalFound} valid 3-team sets from ${poolSize} combos${shownCount < totalFound ? ` · showing top ${shownCount}` : ''} · each hero used once across all teams (pets may repeat) · ranked by total ≥${minWinRate}% wins
+      ${totalFound} valid 3-team sets from ${poolSize} combos${shownCount < totalFound ? ` · showing top ${shownCount}` : ''} · each hero used once across all teams (pets may repeat) · ranked by total ≥${minWinRate}% wins${myHeroFilterNote}
     </p>
     <div class="table-wrap ga-table-wrap">
       <table>
