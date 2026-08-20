@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.15
+// @version      1.16
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.15';
+    const EXTENSION_VERSION = '1.16';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -24,6 +24,103 @@
     const LEGACY_SETTINGS_STORAGE_KEY = 'arenaTrainingSettings';
 
     let autoStartTimer = null;
+
+    function registerI18n() {
+        if (!window.HWHData?.i18nLangData) {
+            return false;
+        }
+        Object.assign(window.HWHData.i18nLangData.en, {
+            AUTO_ARENA_TRAINING: 'Auto Arena Training',
+            AUTO_ARENA_TRAINING_TITLE: 'Auto-start arena training loop 1 minute after game load (demo battles, no attempts)',
+        });
+        Object.assign(window.HWHData.i18nLangData.ru, {
+            AUTO_ARENA_TRAINING: 'Авто-тренировка арены',
+            AUTO_ARENA_TRAINING_TITLE: 'Автозапуск цикла тренировки арены через 1 минуту после загрузки (демо-бои, без попыток)',
+        });
+        return true;
+    }
+
+    function createAutoStartCheckboxDefinition() {
+        return {
+            get label() {
+                return window.HWHFuncs?.I18N?.('AUTO_ARENA_TRAINING') || 'Auto Arena Training';
+            },
+            cbox: null,
+            get title() {
+                return window.HWHFuncs?.I18N?.('AUTO_ARENA_TRAINING_TITLE')
+                    || 'Auto-start arena training loop 1 minute after game load (demo battles, no attempts)';
+            },
+            default: false,
+        };
+    }
+
+    function registerSettingsCheckbox() {
+        if (!window.HWHData?.checkboxes) {
+            return false;
+        }
+        registerI18n();
+        const { checkboxes } = window.HWHData;
+        if (checkboxes[AUTO_START_CHECKBOX]) {
+            return true;
+        }
+
+        const entry = createAutoStartCheckboxDefinition();
+        const reordered = {};
+        for (const name in checkboxes) {
+            reordered[name] = checkboxes[name];
+            if (name === 'sendExpedition') {
+                reordered[AUTO_START_CHECKBOX] = entry;
+            }
+        }
+        if (!reordered[AUTO_START_CHECKBOX]) {
+            reordered[AUTO_START_CHECKBOX] = entry;
+        }
+        for (const name of Object.keys(checkboxes)) {
+            delete checkboxes[name];
+        }
+        Object.assign(checkboxes, reordered);
+        return true;
+    }
+
+    const registerSettingsInterval = setInterval(() => {
+        if (registerSettingsCheckbox()) {
+            clearInterval(registerSettingsInterval);
+        }
+    }, 50);
+
+    function ensureSettingsCheckboxUI(HWHFuncs) {
+        registerSettingsCheckbox();
+        const checkboxDef = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX];
+        if (!checkboxDef || checkboxDef.cbox) {
+            return checkboxDef?.cbox || null;
+        }
+
+        const scriptMenu = window.HWHClasses?.ScriptMenu?.getInst?.();
+        const settingsDetails = document.querySelector('details.scriptMenu_Details[data-name="settings"]');
+        if (!scriptMenu || !settingsDetails) {
+            return null;
+        }
+
+        checkboxDef.cbox = scriptMenu.addCheckbox(checkboxDef.label, checkboxDef.title, settingsDetails);
+
+        const expeditionCheckbox = window.HWHData.checkboxes.sendExpedition?.cbox;
+        if (expeditionCheckbox && checkboxDef.cbox) {
+            const expeditionRow = expeditionCheckbox.closest('.scriptMenu_divInput');
+            const autoRow = checkboxDef.cbox.closest('.scriptMenu_divInput');
+            if (expeditionRow && autoRow && expeditionRow.nextSibling !== autoRow) {
+                expeditionRow.parentNode.insertBefore(autoRow, expeditionRow.nextSibling);
+            }
+        }
+
+        const savedValue = HWHFuncs.getSaveVal?.(AUTO_START_CHECKBOX, checkboxDef.default);
+        checkboxDef.cbox.checked = !!savedValue;
+        checkboxDef.cbox.dataset.name = AUTO_START_CHECKBOX;
+        checkboxDef.cbox.addEventListener('change', function onAutoStartToggle() {
+            HWHFuncs.setSaveVal?.(AUTO_START_CHECKBOX, this.checked);
+        });
+
+        return checkboxDef.cbox;
+    }
 
     function clearAutoStartTimer() {
         if (autoStartTimer != null) {
@@ -33,7 +130,11 @@
     }
 
     function isAutoStartEnabled(HWHFuncs) {
-        return !!HWHFuncs?.isChecked?.(AUTO_START_CHECKBOX);
+        const checkboxDef = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX];
+        if (checkboxDef?.cbox) {
+            return checkboxDef.cbox.checked;
+        }
+        return !!HWHFuncs?.getSaveVal?.(AUTO_START_CHECKBOX, false);
     }
 
     function scheduleAutoStart(training, HWHFuncs) {
@@ -67,7 +168,7 @@
                 return;
             }
             HWHFuncs.setSaveVal?.(AUTO_START_CHECKBOX, true);
-            const checkbox = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX]?.cbox;
+            const checkbox = ensureSettingsCheckboxUI(HWHFuncs);
             if (checkbox) {
                 checkbox.checked = true;
             }
@@ -79,7 +180,7 @@
     }
 
     function bindAutoStartCheckbox(training, HWHFuncs) {
-        const checkbox = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX]?.cbox;
+        const checkbox = ensureSettingsCheckboxUI(HWHFuncs);
         if (!checkbox || checkbox.dataset.arenaTrainingBound === '1') {
             return;
         }
