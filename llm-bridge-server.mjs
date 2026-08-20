@@ -15,6 +15,8 @@
  */
 
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import {
     initDatabase,
     saveTrainingRound,
@@ -33,6 +35,7 @@ import {
     closeDatabase,
 } from './training-db.mjs';
 import { formatTrainingResultRow, renderTrainingResultsPage, renderMetaTeamsPage, parseHeroFilterParams } from './training-view.mjs';
+import { ICONS_DIR, LOCAL_ICON_WEB_PATH } from './hero-icons.mjs';
 
 const PORT = 9876;
 const HOST = '127.0.0.1';
@@ -73,6 +76,41 @@ function isBrowserConnected() {
     return Date.now() - lastBrowserPollAt < 5000;
 }
 
+function serveCachedIcon(req, res, url) {
+    if (req.method !== 'GET' || !url.pathname.startsWith(`${LOCAL_ICON_WEB_PATH}/`)) {
+        return false;
+    }
+
+    const filename = decodeURIComponent(url.pathname.slice(`${LOCAL_ICON_WEB_PATH}/`.length));
+    if (!filename || filename.includes('/') || filename.includes('..') || !/^[\w-]+\.png$/i.test(filename)) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Invalid icon path');
+        return true;
+    }
+
+    const filePath = path.join(ICONS_DIR, filename);
+    const resolvedDir = path.resolve(ICONS_DIR);
+    if (!path.resolve(filePath).startsWith(resolvedDir)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return true;
+    }
+
+    if (!fs.existsSync(filePath)) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Icon not found');
+        return true;
+    }
+
+    res.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'public, max-age=604800',
+        'Access-Control-Allow-Origin': '*',
+    });
+    fs.createReadStream(filePath).pipe(res);
+    return true;
+}
+
 const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
         res.writeHead(204, {
@@ -85,6 +123,10 @@ const server = http.createServer(async (req, res) => {
 
     try {
         const url = new URL(req.url, `http://${HOST}`);
+
+        if (serveCachedIcon(req, res, url)) {
+            return;
+        }
 
         if (req.method === 'GET' && url.pathname === '/health') {
             return sendJson(res, 200, {

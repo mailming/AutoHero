@@ -1,4 +1,5 @@
 import { formatCombo, HERO_NAMES, PET_NAMES, resolveHeroName } from './hero-names.mjs';
+import { HERO_ICON_TOOLTIP_CSS, iconUrlForUnit, renderComboLabelHtml, renderHeroListHtml, renderUnitNameHtml } from './hero-icons.mjs';
 
 export function parseHeroFilterParams(searchParams, key) {
     const values = searchParams.getAll(key);
@@ -44,27 +45,42 @@ function buildTrainingQueryBase(paging = {}) {
 function renderHeroFilterChips(side, heroIds) {
     return (heroIds || []).map((id) => {
         const label = resolveHeroName(id);
-        return `<button type="button" class="chip" onclick="removeHeroFilter('${side}', ${Number(id)})" title="Remove ${escapeHtml(label)}">${escapeHtml(label)} <span class="chip-x">×</span></button>`;
+        return `<button type="button" class="chip" onclick="removeHeroFilter('${side}', ${Number(id)})" title="Remove ${escapeHtml(label)}">${renderUnitNameHtml(id, label)} <span class="chip-x">×</span></button>`;
     }).join('');
+}
+
+function renderFilterPickerOption(option) {
+    const iconUrl = iconUrlForUnit(option.id);
+    const iconHtml = iconUrl
+        ? `<img class="filter-picker-icon" src="${escapeHtml(iconUrl)}" alt="" width="24" height="24" loading="lazy">`
+        : '<span class="filter-picker-icon filter-picker-icon-fallback" aria-hidden="true"></span>';
+    return `<button type="button" class="filter-picker-option" data-id="${option.id}" data-search="${escapeHtml(option.label.toLowerCase())}" role="option">${iconHtml}<span>${escapeHtml(option.label)}</span></button>`;
 }
 
 function renderHeroFilterSelect(side, heroIds) {
     const options = buildHeroFilterOptions(heroIds);
-    const optionGroups = {
-        Heroes: [],
-        Pets: [],
-    };
-    for (const option of options) {
-        optionGroups[option.group].push(
-            `<option value="${option.id}">${escapeHtml(option.label)}</option>`
-        );
-    }
+    const heroes = options.filter((option) => option.group === 'Heroes');
+    const pets = options.filter((option) => option.group === 'Pets');
+    const sideLabel = side === 'opponent' ? 'opponent' : 'your team';
+
     return `
-        <select id="${side}-hero-select" aria-label="Add ${side === 'opponent' ? 'opponent' : 'your team'} filter hero or pet">
-            <option value="">Choose a hero or pet…</option>
-            ${optionGroups.Heroes.length ? `<optgroup label="Heroes">${optionGroups.Heroes.join('')}</optgroup>` : ''}
-            ${optionGroups.Pets.length ? `<optgroup label="Pets">${optionGroups.Pets.join('')}</optgroup>` : ''}
-        </select>`;
+        <div class="filter-picker" id="${side}-hero-picker" data-side="${side}">
+          <input type="hidden" id="${side}-hero-select" value="">
+          <button type="button" class="filter-picker-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Choose ${sideLabel} hero or pet">
+            <span class="filter-picker-placeholder">Choose a hero or pet…</span>
+            <span class="filter-picker-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="filter-picker-menu" role="listbox" hidden>
+            <div class="filter-picker-search-wrap">
+              <input type="search" class="filter-picker-search" placeholder="Type to search heroes or pets…" autocomplete="off" aria-label="Search ${sideLabel} heroes and pets">
+            </div>
+            <div class="filter-picker-options">
+              ${heroes.length ? `<div class="filter-picker-group-label">Heroes</div>${heroes.map(renderFilterPickerOption).join('')}` : ''}
+              ${pets.length ? `<div class="filter-picker-group-label">Pets</div>${pets.map(renderFilterPickerOption).join('')}` : ''}
+              <div class="filter-picker-empty muted" hidden>No matches — try a different name</div>
+            </div>
+          </div>
+        </div>`;
 }
 
 function renderHeroFilters(paging = {}) {
@@ -76,7 +92,7 @@ function renderHeroFilters(paging = {}) {
   <section class="section" id="filters">
     <div class="section-head">
       <h2>Filter results</h2>
-      <p class="section-lead">Pick heroes or pets to narrow what you see. Everything below — best teams, Grand Arena picks, and the full log — updates to match.</p>
+      <p class="section-lead">Pick heroes or pets to narrow what you see, or type a name in the search box. Everything below updates to match.</p>
     </div>
     <div class="filters card">
       <div class="filter-group">
@@ -217,11 +233,10 @@ function renderTrainingStats(stats = {}) {
     const topHeroes = stats.topMyHeroes || [];
 
     const comboRows = topCombos.map((row, index) => {
-        const combo = formatCombo(row.myHeroIds, row.myPet, row.myHeroNames);
         return `
         <tr>
             <td>${index + 1}</td>
-            <td>${escapeHtml(combo.label)}</td>
+            <td>${renderComboLabelHtml(row.myHeroIds, row.myPet, row.myHeroNames)}</td>
             <td class="win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
             <td class="win">${escapeHtml(formatPct(row.bestWinRate))}</td>
             <td>${row.highWinCount ?? 0}</td>
@@ -235,7 +250,7 @@ function renderTrainingStats(stats = {}) {
         return `
         <tr>
             <td>${index + 1}</td>
-            <td>${escapeHtml(label)}${isPet ? ' <span class="muted">(pet)</span>' : ''}</td>
+            <td>${renderUnitNameHtml(row.heroId, label)}${isPet ? ' <span class="muted">(pet)</span>' : ''}</td>
             <td>${row.wins90 ?? 0}</td>
             <td class="win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
             <td class="muted">${row.appearances ?? 0}</td>
@@ -295,10 +310,9 @@ function renderTrainingStats(stats = {}) {
 }
 
 function renderGrandArenaTeamCell(team, minWinRate) {
-    const combo = formatCombo(team.myHeroIds, team.myPet, team.myHeroNames);
     return `
       <div class="ga-team">
-        <div>${escapeHtml(combo.label)}</div>
+        <div>${renderComboLabelHtml(team.myHeroIds, team.myPet, team.myHeroNames)}</div>
         <div class="muted ga-team-meta">${minWinRate}%+ wins: ${team.highWinCount ?? 0} · avg ${escapeHtml(formatPct(team.avgWinRate))}</div>
       </div>`;
 }
@@ -378,9 +392,9 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
         return `
         <tr>
             <td class="muted">${escapeHtml(source)}</td>
-            <td>${escapeHtml(row.opponentCombo.label)}</td>
+            <td>${renderComboLabelHtml(row.opponentCombo.heroIds, row.opponentCombo.pet, row.opponentCombo.heroNames)}</td>
             <td class="muted">${escapeHtml(opponentLabel)}</td>
-            <td>${escapeHtml(row.myCombo.label)}</td>
+            <td>${renderComboLabelHtml(row.myCombo.heroIds, row.myCombo.pet, row.myCombo.heroNames)}</td>
             <td>${renderWinRateCell(row.winRate, minWinRate)}</td>
             <td class="muted">${escapeHtml(formatRecord(row.wins, row.losses))}</td>
             <td class="muted">${escapeHtml(formatWhen(row.testedAt))}</td>
@@ -484,9 +498,129 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     .filter-title { font-size: 0.95rem; font-weight: 600; color: #e7ecf3; }
     .filter-help { margin: 0; font-size: 0.82rem; }
     .filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    .filter-row select {
-      min-width: 220px; flex: 1; color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57;
-      border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+    .filter-picker {
+      position: relative;
+      min-width: 240px;
+      flex: 1;
+    }
+    .filter-picker-trigger {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 40px;
+      color: #e7ecf3;
+      background: #1a2433;
+      border: 1px solid #2f3f57;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      text-align: left;
+    }
+    .filter-picker-trigger:hover,
+    .filter-picker.open .filter-picker-trigger {
+      background: #243044;
+      border-color: #3a5a8a;
+    }
+    .filter-picker-placeholder,
+    .filter-picker-value { color: #e7ecf3; flex: 1; }
+    .filter-picker-placeholder { color: #8b9bb4; }
+    .filter-picker-caret { color: #9fb3d1; font-size: 0.75rem; margin-left: auto; }
+    .filter-picker-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 30;
+      max-height: 320px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background: #151d28;
+      border: 1px solid #3a5a8a;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      padding: 6px;
+    }
+    .filter-picker-menu[hidden] { display: none; }
+    .filter-picker-search-wrap {
+      padding: 4px 4px 8px;
+      border-bottom: 1px solid #243044;
+      margin-bottom: 4px;
+    }
+    .filter-picker-search {
+      width: 100%;
+      box-sizing: border-box;
+      color: #e7ecf3;
+      background: #1a2433;
+      border: 1px solid #2f3f57;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 0.9rem;
+    }
+    .filter-picker-search:focus {
+      outline: none;
+      border-color: #3a5a8a;
+      box-shadow: 0 0 0 2px rgba(58, 90, 138, 0.35);
+    }
+    .filter-picker-options {
+      overflow: auto;
+      max-height: 240px;
+      padding-right: 2px;
+    }
+    .filter-picker-empty {
+      padding: 12px 8px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .filter-picker-option[hidden],
+    .filter-picker-group-label[hidden] {
+      display: none;
+    }
+    .filter-picker-group-label {
+      padding: 6px 8px 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #9fb3d1;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .filter-picker-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 6px 8px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #e7ecf3;
+      font-size: 0.9rem;
+      text-align: left;
+      cursor: pointer;
+    }
+    .filter-picker-option:hover,
+    .filter-picker-option:focus {
+      background: #243044;
+      outline: none;
+    }
+    .filter-picker-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .filter-picker-icon-fallback {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background: #243044;
+      border-radius: 4px;
+    }
+    .filter-picker-trigger .filter-picker-icon {
+      width: 28px;
+      height: 28px;
     }
     .filter-row button {
       color: #e7ecf3; background: #243044; border: 1px solid #3a4f6d; border-radius: 6px;
@@ -546,6 +680,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
     a { color: #7cb8ff; }
     .status { color: #9fb3d1; font-size: 0.9rem; }
+    ${HERO_ICON_TOOLTIP_CSS}
   </style>
 </head>
 <body>
@@ -631,15 +766,180 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       url.searchParams.delete('offset');
       window.location.href = url.toString();
     }
-    document.querySelectorAll('.filter-row select').forEach((select) => {
-      select.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          const side = select.id.replace('-hero-select', '');
-          addHeroFilter(side);
-        }
+    function closeAllFilterPickers() {
+      document.querySelectorAll('.filter-picker.open').forEach((picker) => {
+        picker.classList.remove('open');
+        const menu = picker.querySelector('.filter-picker-menu');
+        const trigger = picker.querySelector('.filter-picker-trigger');
+        const search = picker.querySelector('.filter-picker-search');
+        if (menu) menu.hidden = true;
+        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+        if (search) search.value = '';
+        filterPickerByText(picker, '');
       });
-    });
+    }
+    function filterPickerByText(picker, query) {
+      const normalized = String(query || '').trim().toLowerCase();
+      const options = picker.querySelectorAll('.filter-picker-option');
+      const groups = picker.querySelectorAll('.filter-picker-group-label');
+      let visibleCount = 0;
+
+      options.forEach((option) => {
+        const searchText = option.dataset.search || option.textContent.toLowerCase();
+        const match = !normalized || searchText.includes(normalized);
+        option.hidden = !match;
+        if (match) visibleCount += 1;
+      });
+
+      groups.forEach((label) => {
+        let node = label.nextElementSibling;
+        let groupVisible = false;
+        while (node && !node.classList.contains('filter-picker-group-label')) {
+          if (node.classList.contains('filter-picker-option') && !node.hidden) {
+            groupVisible = true;
+            break;
+          }
+          node = node.nextElementSibling;
+        }
+        label.hidden = !groupVisible;
+      });
+
+      const empty = picker.querySelector('.filter-picker-empty');
+      if (empty) empty.hidden = visibleCount > 0;
+      return visibleCount;
+    }
+    function visibleFilterPickerOptions(picker) {
+      return [...picker.querySelectorAll('.filter-picker-option')].filter((option) => !option.hidden);
+    }
+    function openFilterPicker(picker) {
+      const menu = picker.querySelector('.filter-picker-menu');
+      const trigger = picker.querySelector('.filter-picker-trigger');
+      const search = picker.querySelector('.filter-picker-search');
+      picker.classList.add('open');
+      if (menu) menu.hidden = false;
+      if (trigger) trigger.setAttribute('aria-expanded', 'true');
+      if (search) {
+        search.value = '';
+        filterPickerByText(picker, '');
+        setTimeout(() => search.focus(), 0);
+      }
+    }
+    function pickFilterOptionFromSearch(picker, side) {
+      const search = picker.querySelector('.filter-picker-search');
+      const query = search ? search.value.trim().toLowerCase() : '';
+      const visible = visibleFilterPickerOptions(picker);
+      if (!visible.length) return false;
+
+      let match = visible.find((option) => option.dataset.search === query);
+      if (!match && visible.length === 1) {
+        match = visible[0];
+      }
+      if (!match) {
+        match = visible.find((option) => option.dataset.search.startsWith(query));
+      }
+      if (!match) return false;
+
+      setFilterPickerSelection(picker, match);
+      closeAllFilterPickers();
+      addHeroFilter(side);
+      return true;
+    }
+    function setFilterPickerSelection(picker, optionButton) {
+      const hidden = picker.querySelector('input[type="hidden"]');
+      const trigger = picker.querySelector('.filter-picker-trigger');
+      if (!hidden || !trigger || !optionButton) return;
+      hidden.value = optionButton.dataset.id || '';
+      const icon = optionButton.querySelector('.filter-picker-icon');
+      const label = optionButton.querySelector('span:last-child');
+      trigger.innerHTML = '';
+      if (icon) {
+        trigger.appendChild(icon.cloneNode(true));
+      }
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'filter-picker-value';
+      valueSpan.textContent = label ? label.textContent : '';
+      trigger.appendChild(valueSpan);
+      const caret = document.createElement('span');
+      caret.className = 'filter-picker-caret';
+      caret.setAttribute('aria-hidden', 'true');
+      caret.textContent = '▾';
+      trigger.appendChild(caret);
+    }
+    function initFilterPickers() {
+      document.querySelectorAll('.filter-picker').forEach((picker) => {
+        const trigger = picker.querySelector('.filter-picker-trigger');
+        const menu = picker.querySelector('.filter-picker-menu');
+        const side = picker.dataset.side;
+        if (!trigger || !menu) return;
+
+        trigger.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const isOpen = picker.classList.contains('open');
+          closeAllFilterPickers();
+          if (!isOpen) {
+            openFilterPicker(picker);
+          }
+        });
+
+        if (menu) {
+          menu.addEventListener('click', (event) => event.stopPropagation());
+        }
+
+        const search = picker.querySelector('.filter-picker-search');
+        if (search) {
+          search.addEventListener('input', () => filterPickerByText(picker, search.value));
+          search.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              if (!pickFilterOptionFromSearch(picker, side)) {
+                const first = visibleFilterPickerOptions(picker)[0];
+                if (first) {
+                  setFilterPickerSelection(picker, first);
+                  closeAllFilterPickers();
+                  addHeroFilter(side);
+                }
+              }
+            } else if (event.key === 'Escape') {
+              closeAllFilterPickers();
+            } else if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              const first = visibleFilterPickerOptions(picker)[0];
+              if (first) first.focus();
+            }
+          });
+        }
+
+        menu.querySelectorAll('.filter-picker-option').forEach((option) => {
+          option.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setFilterPickerSelection(picker, option);
+            closeAllFilterPickers();
+          });
+        });
+
+        trigger.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            addHeroFilter(side);
+          } else if (event.key === 'Escape') {
+            closeAllFilterPickers();
+          } else if (event.key === 'ArrowDown' || event.key === ' ') {
+            event.preventDefault();
+            closeAllFilterPickers();
+            openFilterPicker(picker);
+            const firstOption = visibleFilterPickerOptions(picker)[0];
+            if (firstOption) firstOption.focus();
+          }
+        });
+      });
+
+      document.addEventListener('click', closeAllFilterPickers);
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeAllFilterPickers();
+      });
+    }
+    initFilterPickers();
   </script>
 </body>
 </html>`;
@@ -679,15 +979,15 @@ export function renderMetaTeamsPage(teams, snapshot, snapshots = [], paging = {}
 
     const rows = teams.map((team) => {
         const heroLabel = Array.isArray(team.heroNames) && team.heroNames.length
-            ? team.heroNames.join(', ')
-            : (team.heroIds || []).join(', ');
-        const petLabel = team.petName || (team.pet ? `Pet ${team.pet}` : '—');
+            ? team.heroNames
+            : (team.heroIds || []).map((id) => resolveHeroName(id));
+        const petLabel = team.petName || (team.pet ? resolveHeroName(team.pet) : '—');
         return `
         <tr>
             <td>${escapeHtml(team.rowRank ?? '—')}</td>
             <td class="pop">${escapeHtml(team.popularityCount ?? '—')}</td>
-            <td>${escapeHtml(heroLabel)}</td>
-            <td class="muted">${escapeHtml(petLabel)}</td>
+            <td>${renderHeroListHtml(team.heroIds, heroLabel)}</td>
+            <td class="muted">${team.pet ? renderUnitNameHtml(team.pet, petLabel) : escapeHtml(petLabel)}</td>
             <td class="muted">${escapeHtml(team.banner ?? '—')}</td>
             <td class="muted mono">${escapeHtml(team.comboKey)}</td>
             <td class="muted">${escapeHtml(team.pageNumber ?? '—')}</td>
@@ -727,6 +1027,7 @@ export function renderMetaTeamsPage(teams, snapshot, snapshots = [], paging = {}
     .mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
     a { color: #7cb8ff; }
     .status { color: #9fb3d1; font-size: 0.9rem; }
+    ${HERO_ICON_TOOLTIP_CSS}
   </style>
 </head>
 <body>
