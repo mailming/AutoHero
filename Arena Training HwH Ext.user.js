@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.14
+// @version      1.15
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,33 +16,14 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.14';
+    const EXTENSION_VERSION = '1.15';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
-    const SETTINGS_STORAGE_KEY = 'arenaTrainingSettings';
-
-    const DEFAULT_SETTINGS = {
-        autoStartOnLoad: false,
-        autoStartDelayMs: 60_000,
-    };
+    const AUTO_START_CHECKBOX = 'autoArenaTraining';
+    const AUTO_START_DELAY_MS = 60_000;
+    const LEGACY_SETTINGS_STORAGE_KEY = 'arenaTrainingSettings';
 
     let autoStartTimer = null;
-
-    function loadSettings() {
-        try {
-            const saved = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
-            return { ...DEFAULT_SETTINGS, ...saved };
-        } catch {
-            return { ...DEFAULT_SETTINGS };
-        }
-    }
-
-    function saveSettings(settings) {
-        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
-            ...loadSettings(),
-            ...settings,
-        }));
-    }
 
     function clearAutoStartTimer() {
         if (autoStartTimer != null) {
@@ -51,17 +32,22 @@
         }
     }
 
+    function isAutoStartEnabled(HWHFuncs) {
+        return !!HWHFuncs?.isChecked?.(AUTO_START_CHECKBOX);
+    }
+
     function scheduleAutoStart(training, HWHFuncs) {
         clearAutoStartTimer();
-        const settings = loadSettings();
-        if (!settings.autoStartOnLoad) {
+        if (!isAutoStartEnabled(HWHFuncs)) {
             return;
         }
 
-        const delayMs = Number(settings.autoStartDelayMs) || DEFAULT_SETTINGS.autoStartDelayMs;
-        console.log(`[Arena Training] Auto-start scheduled in ${Math.round(delayMs / 1000)}s`);
+        console.log(`[Arena Training] Auto-start scheduled in ${Math.round(AUTO_START_DELAY_MS / 1000)}s`);
         autoStartTimer = setTimeout(() => {
             autoStartTimer = null;
+            if (!isAutoStartEnabled(HWHFuncs)) {
+                return;
+            }
             const status = training.getStatus?.() || {};
             const loopStatus = training.getLoopStatus?.() || {};
             if (status.running || loopStatus.loopRunning) {
@@ -71,7 +57,36 @@
             console.log('[Arena Training] Auto-starting training loop');
             HWHFuncs.setProgress('Arena Training: auto-starting loop...', true);
             training.startLoop({ label: 'auto-loop', opponentSource: 'topGet' });
-        }, delayMs);
+        }, AUTO_START_DELAY_MS);
+    }
+
+    function migrateLegacyAutoStartSetting(HWHFuncs) {
+        try {
+            const legacy = JSON.parse(localStorage.getItem(LEGACY_SETTINGS_STORAGE_KEY) || '{}');
+            if (!legacy.autoStartOnLoad || isAutoStartEnabled(HWHFuncs)) {
+                return;
+            }
+            HWHFuncs.setSaveVal?.(AUTO_START_CHECKBOX, true);
+            const checkbox = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX]?.cbox;
+            if (checkbox) {
+                checkbox.checked = true;
+            }
+            localStorage.removeItem(LEGACY_SETTINGS_STORAGE_KEY);
+            console.log('[Arena Training] Migrated legacy auto-start setting to HWH settings');
+        } catch (error) {
+            console.warn('[Arena Training] Legacy settings migration failed:', error);
+        }
+    }
+
+    function bindAutoStartCheckbox(training, HWHFuncs) {
+        const checkbox = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX]?.cbox;
+        if (!checkbox || checkbox.dataset.arenaTrainingBound === '1') {
+            return;
+        }
+        checkbox.dataset.arenaTrainingBound = '1';
+        checkbox.addEventListener('change', () => {
+            scheduleAutoStart(training, HWHFuncs);
+        });
     }
 
     const CONSTANTS = {
@@ -122,13 +137,8 @@
             color: 'purple',
         });
 
-        HWHClasses.ScriptMenu.getInst().addButton({
-            name: 'Arena Settings',
-            title: 'Arena Training options — auto-start loop 1 minute after game load',
-            onClick: () => openSettingsPopup(training, HWHFuncs),
-            color: 'violet',
-        });
-
+        migrateLegacyAutoStartSetting(HWHFuncs);
+        bindAutoStartCheckbox(training, HWHFuncs);
         scheduleAutoStart(training, HWHFuncs);
 
         console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} ready`);
@@ -1679,56 +1689,6 @@
                 }
             },
         };
-    }
-
-    async function openSettingsPopup(training, HWHFuncs) {
-        try {
-            const settings = loadSettings();
-            const content = document.createElement('div');
-            content.style.cssText = 'padding: 16px; color: #fce1ac; max-width: 640px; line-height: 1.6;';
-            content.innerHTML = `
-                <h3 style="margin-top:0;color:#ffd700;">Arena Training Settings</h3>
-                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin:12px 0;">
-                    <input type="checkbox" id="arena-train-auto-start" style="margin-top:4px;" ${settings.autoStartOnLoad ? 'checked' : ''}>
-                    <span>
-                        <b>Auto-start training on game load</b><br>
-                        <span style="color:#c8b080;font-size:0.92em;">
-                            Starts the arena training loop 1 minute after HWH loads.
-                            Same as the Arena Train button: top opponents, then meta teams, demo battles only.
-                        </span>
-                    </span>
-                </label>
-                <p style="margin:0;color:#a89878;font-size:0.9em;">Requires bridge at ${BRIDGE_URL} with PostgreSQL for saving results.</p>
-            `;
-
-            const popupPromise = HWHFuncs.popup.confirm('', [
-                { msg: 'Save', result: true, color: 'green' },
-                { msg: 'Cancel', result: false, isClose: true },
-            ]);
-            await new Promise((resolve) => setTimeout(resolve, 0));
-            const popupBody = document.querySelector('.PopUp_Container');
-            if (popupBody) {
-                popupBody.innerHTML = '';
-                popupBody.appendChild(content);
-            }
-
-            const choice = await popupPromise;
-            if (!choice) {
-                return;
-            }
-
-            const autoStartOnLoad = !!content.querySelector('#arena-train-auto-start')?.checked;
-            saveSettings({ autoStartOnLoad });
-            scheduleAutoStart(training, HWHFuncs);
-            HWHFuncs.setProgress(
-                autoStartOnLoad
-                    ? 'Arena Training auto-start enabled (1 min after load)'
-                    : 'Arena Training auto-start disabled',
-                true
-            );
-        } catch (error) {
-            HWHFuncs.setProgress(`Arena Training settings error: ${error.message}`, true);
-        }
     }
 
     async function openTrainingPopup(training, HWHFuncs) {
