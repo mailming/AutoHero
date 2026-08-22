@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.16
+// @version      1.17
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.16';
+    const EXTENSION_VERSION = '1.17';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -694,7 +694,7 @@
 
             return entries
                 .map((entry, index) => parseTopGetArenaEntry(entry, userMap, index))
-                .filter((entry) => entry && entry.heroes.length > 0);
+                .filter((entry) => entry && extractOpponentConfig(entry).hasValidTeam);
         }
 
         function extractTopGetResult(response) {
@@ -816,19 +816,23 @@
             let pet = CONSTANTS.DEFAULT_PET_ID;
             let banner = 1;
 
-            for (const item of opponent.heroes || []) {
+            for (const item of opponent?.heroes || []) {
                 const id = typeof item === 'number' ? item : item?.id;
                 if (!id) continue;
                 if (id >= 6000 && id < 7000) {
                     pet = id;
-                } else if (heroes.length < 5) {
+                } else if (id < 6000 && heroes.length < 5) {
                     heroes.push(id);
                 }
             }
 
-            if (opponent.banner != null) {
+            if (opponent?.pet != null && opponent.pet >= 6000) {
+                pet = Number(opponent.pet);
+            }
+
+            if (opponent?.banner != null) {
                 banner = Number(opponent.banner);
-            } else if (opponent.banners?.[0]) {
+            } else if (opponent?.banners?.[0]) {
                 const b = opponent.banners[0];
                 banner = typeof b === 'number' ? b : (b?.id || 1);
             }
@@ -840,6 +844,44 @@
                 banner,
                 favor: {},
             };
+        }
+
+        function describeOpponentTeam(opponent) {
+            const team = extractOpponentConfig(opponent || {});
+            return {
+                userId: opponent?.userId ?? null,
+                name: opponent?.user?.name || opponent?.name || null,
+                place: opponent?.place ?? null,
+                source: opponent?.source ?? null,
+                heroCount: team.heroes.length,
+                heroes: team.heroes,
+                pet: team.pet,
+                banner: team.banner,
+            };
+        }
+
+        function recordInvalidOpponentRound(loopSession, roundNum, opponentMeta, opponentRaw) {
+            const teamInfo = describeOpponentTeam(opponentRaw || opponentMeta);
+            console.warn(
+                `[Arena Training] Round ${roundNum} skipped — incomplete opponent team (${teamInfo.heroCount}/5 heroes)`,
+                teamInfo
+            );
+            loopSession.rounds.push({
+                round: roundNum,
+                skipped: true,
+                skipReason: 'invalid_opponent_team',
+                opponent: {
+                    index: opponentMeta?.index,
+                    userId: teamInfo.userId,
+                    name: teamInfo.name,
+                    place: teamInfo.place,
+                    source: teamInfo.source,
+                    metaComboKey: opponentMeta?.metaComboKey,
+                },
+                heroCount: teamInfo.heroCount,
+                heroes: teamInfo.heroes,
+                completedAt: new Date().toISOString(),
+            });
         }
 
         function buildMyTeamConfig(heroIds, pet, banner, arenaFavor) {
@@ -1199,16 +1241,32 @@
         }
 
         function pickOpponent(opponents, options) {
-            if (!opponents?.length) {
-                throw new Error('No arena opponents available');
+            const validOpponents = (opponents || []).filter((opponent) => extractOpponentConfig(opponent).hasValidTeam);
+            if (!validOpponents.length) {
+                throw new Error('No arena opponents with complete 5-hero teams available');
             }
             if (options.opponentUserId != null) {
-                const found = opponents.find((o) => String(o.userId) === String(options.opponentUserId));
-                if (!found) throw new Error(`Opponent ${options.opponentUserId} not found`);
+                const found = validOpponents.find((o) => String(o.userId) === String(options.opponentUserId));
+                if (!found) {
+                    throw new Error(`Opponent ${options.opponentUserId} not found or has incomplete team data`);
+                }
                 return found;
             }
-            const index = Math.max(0, Math.min(opponents.length - 1, Number(options.opponentIndex) || 0));
-            return opponents[index];
+            const index = Math.max(0, Math.min(validOpponents.length - 1, Number(options.opponentIndex) || 0));
+            return validOpponents[index];
+        }
+
+        function resolveOpponentRaw(opponents, options) {
+            if (options.opponentOverride) {
+                return options.opponentOverride;
+            }
+            if (options.opponentUserId != null) {
+                const found = (opponents || []).find((o) => String(o.userId) === String(options.opponentUserId));
+                if (found) {
+                    return found;
+                }
+            }
+            return pickOpponent(opponents, options);
         }
 
         return {
@@ -1235,9 +1293,10 @@
                         heroNames: (opp.heroes || [])
                             .filter((h) => (h?.id || h) < 6000)
                             .map((h) => heroName(h?.id || h)),
-                        pet: (opp.heroes || []).map((h) => h?.id || h).find((id) => id >= 6000),
-                        banner: opp.banners?.[0]?.id ?? opp.banners?.[0] ?? null,
+                        pet: (opp.heroes || []).map((h) => h?.id || h).find((id) => id >= 6000) ?? opp.pet,
+                        banner: opp.banners?.[0]?.id ?? opp.banners?.[0] ?? opp.banner ?? null,
                         source,
+                        raw: opp,
                     })),
                 };
                 return opponentsCache.list;
@@ -1342,6 +1401,12 @@
                         status.message = `${phaseLabel} round ${roundNum} — ${opponentMeta?.name || opponentMeta?.userId || 'opponent'}`;
 
                         try {
+                            const opponentRaw = runOptions.opponentOverride ?? opponentMeta.raw ?? null;
+                            if (opponentRaw && !extractOpponentConfig(opponentRaw).hasValidTeam) {
+                                recordInvalidOpponentRound(loopSession, roundNum, opponentMeta, opponentRaw);
+                                return true;
+                            }
+
                             if (
                                 trainOptions.skipCachedOpponents !== false
                                 && opponentMeta?.heroes?.length === 5
@@ -1384,8 +1449,9 @@
                             const result = await this.runSingle({
                                 ...trainOptions,
                                 skipCachedOpponents: false,
+                                opponentUserId: opponentMeta.userId,
                                 opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
-                                opponentOverride: runOptions.opponentOverride ?? opponentMeta.raw ?? null,
+                                opponentOverride: opponentRaw,
                                 label: `${trainOptions.label}-r${roundNum}`,
                             });
                             loopSession.rounds.push(result);
@@ -1446,6 +1512,7 @@
                                 const shouldContinue = await runOpponentRound.call(this, opponentMeta, {
                                     phaseLabel: 'Arena',
                                     opponentIndex: idx,
+                                    opponentOverride: opponentMeta.raw,
                                 });
                                 if (!shouldContinue) break;
                             }
@@ -1528,10 +1595,13 @@
                 try {
                     HWHFuncs.setProgress('Arena Training: loading opponents and heroes...', true);
                     const data = await loadGameData(options);
-                    const opponentRaw = options.opponentOverride || pickOpponent(data.opponents, options);
+                    const opponentRaw = resolveOpponentRaw(data.opponents, options);
                     const opponentTeam = extractOpponentConfig(opponentRaw);
                     if (!opponentTeam.hasValidTeam) {
-                        throw new Error('Selected opponent has invalid team data');
+                        const teamInfo = describeOpponentTeam(opponentRaw);
+                        throw new Error(
+                            `Selected opponent has invalid team data (${teamInfo.heroCount}/5 heroes, user ${teamInfo.userId || teamInfo.name || 'unknown'})`
+                        );
                     }
 
                     const opponentComboKey = buildComboKey(
