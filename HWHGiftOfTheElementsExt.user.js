@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         3.9.9
+// @version         4.0.1
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -35,6 +35,7 @@
 	const POWER_LEVEL = [22, 22, 22, 22, 22, 66, 66, 66, 66, 66, 110, 110, 110, 110, 110, 154,
 		154, 154, 154, 154, 198, 198, 198, 198, 198, 242, 242, 242, 242, 242];
 	const MAX_TITAN_GIFT_LEVEL = 30;
+	const TARGET_GIFT_LEVEL_GET_POWER = 29;
 	const MIN_USER_LEVEL = 30;
 	const CONSUMABLE_ID_TITAN_GIFT = 24;
 	const AUTO_EXECUTION_TIMEOUT = 100;
@@ -77,9 +78,10 @@
 		GOE_EXTREME_RESULT_RESET_GIFTS:
 			'<br> <span style="color: green;"> {counter30} </span> of them are level <span style="color:green;">30</span>',
 		GOE_GET_POWER: 'Get power',
-		GOE_GET_POWER_TITLE: 'Increase the overall power of heroes by the specified amount',
+		GOE_GET_POWER_TITLE: 'Increase hero power by upgrading highest-power heroes\' Gifts of the Elements to level 29',
 		GOE_GET_POWER_MESSAGE:
-			`By spending sparks of power and gold you can get а maximum <span style="color: green;"> {maxHeroPawer} </span> units of hero power
+			`Upgrades the highest power hero's Gift of the Elements to level <span style="color: green;">29</span> first, then the next highest.
+            <br> Maximum achievable hero power: <span style="color: green;"> {maxHeroPawer} </span>
             <br> Specify how much hero power you want to get`,
 		GOE_GOT_POWER: '<br> Received <span style="color: green;"> {gotPower} </span> hero power',
 		GOE_NOT_ENOUGH_GOLD:
@@ -130,9 +132,10 @@
 		GOE_EXTREME_RESULT_RESET_GIFTS:
 			'<br> <span style="color: green;"> {counter30} </span> из них <span style="color:green;">30</span> уровня',
 		GOE_GET_POWER: 'Увеличить мощь',
-		GOE_GET_POWER_TITLE: 'Увеличить общую мощи героев на указанное количество',
+		GOE_GET_POWER_TITLE: 'Увеличить мощь героев, улучшая дары стихий самых сильных героев до 29 уровня',
 		GOE_GET_POWER_MESSAGE:
-			`Потратив искры мощи и золото, вы можете получить максимум <span style="color: green;"> {maxHeroPawer} </span> единиц мощи героев
+			`Сначала улучшает дар стихий самого сильного героя до <span style="color: green;">29</span> уровня, затем следующего по силе.
+            <br> Максимально доступная мощь героев: <span style="color: green;"> {maxHeroPawer} </span>
             <br> Укажите, сколько мощи героев необходимо получить`,
 		GOE_GOT_POWER: '<br> Получили мощи героев: <span style="color: green;"> {gotPower} </span>',
 		GOE_NOT_ENOUGH_GOLD:
@@ -298,32 +301,38 @@
 		return true;
 	}
 
-	// Helper: Calculate maximum possible power
-	function findMaximumPossiblePower(heroes, titanGift, titanGiftLib) {
+	// Helper: Sort heroes by power descending (highest power first)
+	function sortHeroesByPowerDesc(heroes) {
+		return [...heroes].sort((a, b) => b.power - a.power);
+	}
+
+	// Helper: Calculate maximum possible power (highest-power hero first, up to level 29)
+	function findMaximumPossiblePowerHighestFirst(heroes, titanGift, gold, titanGiftLib) {
 		const result = { maximumPowerWeCanGet: 0, needGoldToGetMaxPower: 0 };
 		let remainingTitanGift = titanGift;
+		let remainingGold = gold;
 
-		for (let tGiftLvl = heroes[0].titanGiftLevel; tGiftLvl < MAX_TITAN_GIFT_LEVEL; tGiftLvl++) {
-			for (const hero of heroes) {
-				if (hero.titanGiftLevel > tGiftLvl) {
-					continue;
-				}
-				const nextLevelCost = titanGiftLib[tGiftLvl + 1].cost;
-				if (remainingTitanGift < nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT]) {
+		for (const hero of sortHeroesByPowerDesc(heroes)) {
+			let level = hero.titanGiftLevel;
+			while (level < TARGET_GIFT_LEVEL_GET_POWER) {
+				const nextLevelCost = titanGiftLib[level + 1].cost;
+				const costTitanGift = nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT];
+				if (remainingTitanGift < costTitanGift || remainingGold < nextLevelCost.gold) {
 					return result;
 				}
-				remainingTitanGift -= nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT];
-				result.maximumPowerWeCanGet += POWER_LEVEL[tGiftLvl];
+				remainingTitanGift -= costTitanGift;
+				remainingGold -= nextLevelCost.gold;
+				result.maximumPowerWeCanGet += POWER_LEVEL[level];
 				result.needGoldToGetMaxPower += nextLevelCost.gold;
+				level++;
 			}
 		}
 		return result;
 	}
 
-	// Core upgrade logic (shared between getPower and spendSparksPower)
+	// Core upgrade logic (used by spendSparksPower)
 	async function upgradeTitanGifts(options) {
 		const {
-			targetPower = null,
 			targetTitanGift = null,
 			isAutoMode = false,
 			showProgress = true,
@@ -343,20 +352,8 @@
 			return;
 		}
 
-		// Determine target (power or titan gift amount)
 		let targetTitanGiftAmount = null;
-		let targetHeroPower = null;
-
-		if (targetPower !== null) {
-			targetHeroPower = targetPower;
-			const result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
-			if (targetHeroPower > result.maximumPowerWeCanGet) {
-				if (!isAutoMode) {
-					confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
-				}
-				return;
-			}
-		} else if (targetTitanGift !== null) {
+		if (targetTitanGift !== null) {
 			targetTitanGiftAmount = targetTitanGift;
 			if (targetTitanGiftAmount > titanGiftMax || targetTitanGiftAmount < 0) {
 				if (!isAutoMode) {
@@ -371,7 +368,6 @@
 		let titanGiftLevel = minTitanGiftLevel;
 		let titanGiftUpgradeCounter = 0;
 		let message = '';
-		let gotHeroPower = 0;
 
 		if (showProgress) {
 			setProgress(I18N('GOE_IMPROVING_START'), false);
@@ -408,20 +404,10 @@
 					break;
 				}
 
-				// Check if we've reached our target
-				if (targetHeroPower !== null) {
-					gotHeroPower += POWER_LEVEL[hero.titanGiftLevel];
-					if (gotHeroPower >= targetHeroPower) {
-						cycle = false;
-						break;
-					}
-				}
-
 				calls.push({ name: 'heroTitanGiftLevelUp', args: { heroId: hero.id } });
 				titanGift -= costTitanGift;
 				gold -= nextLevelCost.gold;
 
-				// Check if we've spent enough titan gift
 				if (targetTitanGiftAmount !== null && titanGift <= 0) {
 					cycle = false;
 					break;
@@ -453,57 +439,217 @@
 		}
 	}
 
-	// Get power (with target power amount)
-	async function getPower(targetPower = null) {
-		const [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
-		const heroes = Object.values(heroGetAll).sort((a, b) => a.titanGiftLevel - b.titanGiftLevel);
+	// Get power: upgrade highest-power heroes to level 29
+	async function upgradeTitanGiftsHighestPowerFirst(options = {}) {
+		const { targetPower = null, isAutoMode = false, showProgress = true } = options;
+
+		let [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+		let heroes = sortHeroesByPowerDesc(Object.values(heroGetAll));
+		const heroSumPowerStart = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
 		const titanGiftLib = lib.getData('titanGift');
-		const titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT];
-		const gold = user.gold;
+		let titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT];
+		let gold = user.gold;
+		const userLevel = user.level;
+		const minTitanGiftLevel = Math.min(...heroes.map((hero) => hero.titanGiftLevel));
+
+		if (!validateUpgradeConditions(userLevel, minTitanGiftLevel, isAutoMode)) {
+			return;
+		}
+
+		if (!heroes.some((hero) => hero.titanGiftLevel < TARGET_GIFT_LEVEL_GET_POWER)) {
+			if (!isAutoMode) {
+				confShow(`${I18N('GOE_NOTHING_TO_IMPROVE')}`);
+			}
+			return;
+		}
+
+		const result = findMaximumPossiblePowerHighestFirst(heroes, titanGift, gold, titanGiftLib);
+		if (result.maximumPowerWeCanGet === 0) {
+			if (!isAutoMode) {
+				confShow(`${I18N('GOE_NOT_ENOUGH_RESOURCES')}`);
+			}
+			return;
+		}
+
+		let calls = [];
+		let titanGiftUpgradeCounter = 0;
+		let gotHeroPower = 0;
+		let targetReached = false;
+		let message = '';
+
+		if (showProgress) {
+			setProgress(I18N('GOE_IMPROVING_START'), false);
+		}
+
+		const sendCalls = async () => {
+			if (calls.length === 0) {
+				return;
+			}
+			await Caller.send(calls);
+			titanGiftUpgradeCounter += calls.length;
+			heroGetAll = await new Caller('heroGetAll').execute();
+			heroes = sortHeroesByPowerDesc(Object.values(heroGetAll));
+			calls = [];
+			if (showProgress) {
+				const topHero = heroes.find((hero) => hero.titanGiftLevel < TARGET_GIFT_LEVEL_GET_POWER) || heroes[0];
+				setProgress(
+					I18N('GOE_PROGRESS_OF_IMPROVEMENT_MESSAGE', { titanGiftLevel: topHero?.titanGiftLevel ?? 0 }),
+					false
+				);
+			}
+		};
+
+		const heroIdsByPower = heroes.map((hero) => hero.id);
+
+		for (const heroId of heroIdsByPower) {
+			if (targetReached) {
+				break;
+			}
+
+			let hero = heroes.find((entry) => entry.id === heroId);
+			if (!hero || hero.titanGiftLevel >= TARGET_GIFT_LEVEL_GET_POWER) {
+				continue;
+			}
+
+			while (hero.titanGiftLevel < TARGET_GIFT_LEVEL_GET_POWER) {
+				const nextLevelCost = titanGiftLib[hero.titanGiftLevel + 1].cost;
+				const costTitanGift = nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT];
+
+				if (titanGift < costTitanGift || gold < nextLevelCost.gold) {
+					break;
+				}
+
+				if (targetPower !== null) {
+					gotHeroPower += POWER_LEVEL[hero.titanGiftLevel];
+					if (gotHeroPower >= targetPower) {
+						targetReached = true;
+						break;
+					}
+				}
+
+				calls.push({ name: 'heroTitanGiftLevelUp', args: { heroId: hero.id } });
+				titanGift -= costTitanGift;
+				gold -= nextLevelCost.gold;
+				hero.titanGiftLevel++;
+
+				if (calls.length >= 50) {
+					await sendCalls();
+					if (targetReached) {
+						break;
+					}
+					hero = heroes.find((entry) => entry.id === heroId);
+					if (!hero || hero.titanGiftLevel >= TARGET_GIFT_LEVEL_GET_POWER) {
+						break;
+					}
+				}
+			}
+		}
+
+		await sendCalls();
+
+		if (titanGiftUpgradeCounter === 0) {
+			if (!isAutoMode) {
+				confShow(`${I18N('GOE_NOT_ENOUGH_RESOURCES')}`);
+			}
+			if (showProgress) {
+				setProgress('', true);
+			}
+			return;
+		}
+
+		if (heroes.every((hero) => hero.titanGiftLevel >= TARGET_GIFT_LEVEL_GET_POWER)) {
+			message += I18N('GOE_ALL_HEROES_HAVE_30LVL');
+		} else if (gold <= 0 || titanGift <= 0) {
+			message += I18N('GOE_GOLD_IS_GONE');
+		}
+
+		const heroSumPowerFinish = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
+		message += I18N('GOE_GOT_POWER', { gotPower: (heroSumPowerFinish - heroSumPowerStart).toLocaleString() });
+
+		if (showProgress) {
+			setProgress('', true);
+		}
+
+		if (!isAutoMode) {
+			confShow(`${I18N('GOE_RESULT_OF_IMPROVEMENT', { counter: titanGiftUpgradeCounter })} ${message}`);
+		}
+	}
+
+	// Get power (highest-power hero first, up to level 29, with optional target amount)
+	async function getPower(targetPower = null) {
 		const isAutoMode = targetPower !== null;
 
 		if (isAutoMode) {
-			const result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
+			const [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+			const heroes = Object.values(heroGetAll);
+			const titanGiftLib = lib.getData('titanGift');
+			const titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT];
+			const gold = user.gold;
+			const result = findMaximumPossiblePowerHighestFirst(heroes, titanGift, gold, titanGiftLib);
 
 			if (targetPower === 0 || targetPower > result.maximumPowerWeCanGet) {
 				return;
 			}
 
-			await upgradeTitanGifts({
+			await upgradeTitanGiftsHighestPowerFirst({
 				targetPower,
 				isAutoMode: true,
 				showProgress: false,
 			});
-		} else {
-			const result = findMaximumPossiblePower(heroes, titanGift, titanGiftLib);
-			const notEnoughGold = result.needGoldToGetMaxPower > gold
-				? I18N('GOE_NOT_ENOUGH_GOLD', {
-					haveGold: gold.toLocaleString(),
-					goldIsNeeded: result.needGoldToGetMaxPower.toLocaleString()
-				})
-				: '';
-
-			const needHeroPower = +(await popup.confirm(
-				`${I18N('GOE_GET_POWER_MESSAGE', { maxHeroPawer: result.maximumPowerWeCanGet.toLocaleString() })} ${notEnoughGold}`,
-				[
-					{ result: 0, isClose: true },
-					{ msg: `${I18N('GOE_GET_POWER')}`, isInput: true, default: result.maximumPowerWeCanGet, color: 'green' },
-				]
-			));
-
-			if (needHeroPower === 0 || !needHeroPower || needHeroPower < 0 || needHeroPower > result.maximumPowerWeCanGet) {
-				if (needHeroPower !== 0) {
-					confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
-				}
-				return;
-			}
-
-			await upgradeTitanGifts({
-				targetPower: needHeroPower,
-				isAutoMode: false,
-				showProgress: true,
-			});
+			return;
 		}
+
+		const [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+		const heroes = Object.values(heroGetAll);
+		const titanGiftLib = lib.getData('titanGift');
+		const titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT];
+		const gold = user.gold;
+		const userLevel = user.level;
+		const minTitanGiftLevel = Math.min(...heroes.map((hero) => hero.titanGiftLevel));
+
+		if (!validateUpgradeConditions(userLevel, minTitanGiftLevel, false)) {
+			return;
+		}
+
+		if (!heroes.some((hero) => hero.titanGiftLevel < TARGET_GIFT_LEVEL_GET_POWER)) {
+			confShow(`${I18N('GOE_NOTHING_TO_IMPROVE')}`);
+			return;
+		}
+
+		const result = findMaximumPossiblePowerHighestFirst(heroes, titanGift, gold, titanGiftLib);
+		if (result.maximumPowerWeCanGet === 0) {
+			confShow(`${I18N('GOE_NOT_ENOUGH_RESOURCES')}`);
+			return;
+		}
+
+		const notEnoughGold = result.needGoldToGetMaxPower > gold
+			? I18N('GOE_NOT_ENOUGH_GOLD', {
+				haveGold: gold.toLocaleString(),
+				goldIsNeeded: result.needGoldToGetMaxPower.toLocaleString()
+			})
+			: '';
+
+		const confirmed = await popup.confirm(
+			`${I18N('GOE_GET_POWER_MESSAGE', { maxHeroPawer: result.maximumPowerWeCanGet.toLocaleString() })} ${notEnoughGold}`,
+			[
+				{ result: 0, isClose: true },
+				{ msg: `${I18N('GOE_GET_POWER')}`, isInput: true, default: result.maximumPowerWeCanGet, color: 'green' },
+			]
+		);
+
+		const needHeroPower = +confirmed;
+		if (needHeroPower === 0 || !needHeroPower || needHeroPower < 0 || needHeroPower > result.maximumPowerWeCanGet) {
+			if (needHeroPower !== 0) {
+				confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+			}
+			return;
+		}
+
+		await upgradeTitanGiftsHighestPowerFirst({
+			targetPower: needHeroPower,
+			isAutoMode: false,
+			showProgress: true,
+		});
 	}
 
 	// Spend sparks of power
