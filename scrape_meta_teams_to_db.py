@@ -7,6 +7,9 @@ Each run creates:
   - one row in meta_team_snapshots (capture time + scrape metadata)
   - many rows in meta_teams (team combos with popularity counts)
 
+After saving, deletes entire snapshots older than 30 days; all meta_teams rows
+for those snapshots are removed automatically (FK ON DELETE CASCADE).
+
 Usage:
   pip install -r requirements.txt
   npm run db:init
@@ -18,7 +21,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -331,6 +334,27 @@ def save_snapshot_to_db(
         conn.close()
 
 
+def prune_old_snapshots(retention_days: int = 30) -> int:
+    """Remove whole snapshots older than retention_days (not individual teams)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                # One delete per snapshot; meta_teams rows cascade via FK.
+                cur.execute(
+                    '''
+                    DELETE FROM meta_team_snapshots
+                    WHERE captured_at < %s
+                    ''',
+                    (cutoff,),
+                )
+                return cur.rowcount
+    finally:
+        conn.close()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Scrape hw-recruit arena teams into PostgreSQL meta snapshots')
     parser.add_argument('--position', type=int, default=10, help='Max arena position filter')
@@ -341,6 +365,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--base-url', default=DEFAULT_BASE_URL, help='hw-recruit arena base URL')
     parser.add_argument('--notes', default='', help='Optional note stored on the snapshot row')
     parser.add_argument('--dry-run', action='store_true', help='Scrape only; do not write to PostgreSQL')
+    parser.add_argument(
+        '--retention-days',
+        type=int,
+        default=30,
+        help='Delete entire snapshots older than this many days after saving (0 = keep all)',
+    )
     return parser.parse_args()
 
 
@@ -408,6 +438,14 @@ def main() -> None:
 
     print()
     print(f'[SUCCESS] Saved snapshot {snapshot_id} with {len(teams)} meta teams')
+
+    if args.retention_days > 0:
+        deleted = prune_old_snapshots(args.retention_days)
+        print(
+            f'[INFO] Removed {deleted} snapshot(s) older than {args.retention_days} days '
+            f'(all teams in those snapshots deleted via cascade)'
+        )
+
     print('[INFO] View snapshots: GET http://127.0.0.1:9876/training/meta-snapshots')
     print(f'[INFO] View teams: GET http://127.0.0.1:9876/training/meta-teams?snapshotId={snapshot_id}')
 
