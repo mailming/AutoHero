@@ -27,6 +27,7 @@ import {
     getTrainingResultStats,
     getTrainingTesters,
     getOpponentSkipCheck,
+    getUserCounterSkipCheck,
     getMetaTeamSnapshots,
     getMetaTeamSnapshotById,
     getMetaTeamCountForSnapshot,
@@ -247,8 +248,24 @@ const server = http.createServer(async (req, res) => {
             if (!comboKey) {
                 return sendJson(res, 400, { ok: false, error: 'comboKey query param is required' });
             }
-            const minWinRate = Number(url.searchParams.get('minWinRate')) || 90;
             const maxAgeDays = Number(url.searchParams.get('maxAgeDays')) || 30;
+            const mode = url.searchParams.get('mode') || 'max';
+
+            if (mode === 'user') {
+                const testerUserId = url.searchParams.get('testerUserId');
+                const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
+                const myPet = Number(url.searchParams.get('myPet')) || undefined;
+                const skip = await getUserCounterSkipCheck({
+                    comboKey,
+                    testerUserId,
+                    myHeroIds,
+                    myPet,
+                    maxAgeDays,
+                });
+                return sendJson(res, 200, { ok: true, ...skip });
+            }
+
+            const minWinRate = Number(url.searchParams.get('minWinRate')) || 90;
             const skip = await getOpponentSkipCheck({ comboKey, minWinRate, maxAgeDays });
             return sendJson(res, 200, { ok: true, ...skip });
         }

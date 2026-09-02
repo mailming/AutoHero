@@ -854,6 +854,89 @@ export async function getOpponentSkipCheck({
     };
 }
 
+export async function getUserCounterSkipCheck({
+    comboKey,
+    testerUserId,
+    myHeroIds,
+    myPet,
+    maxAgeDays = 30,
+} = {}) {
+    if (!comboKey) {
+        return { shouldSkip: false, reason: 'missing_combo_key' };
+    }
+    if (!testerUserId) {
+        return { shouldSkip: false, reason: 'missing_tester_user_id' };
+    }
+
+    const heroIds = (Array.isArray(myHeroIds) ? myHeroIds : [])
+        .map(Number)
+        .filter((id) => id > 0 && id < 6000);
+    const pet = myPet != null ? Number(myPet) : null;
+
+    if (heroIds.length !== 5 || !pet) {
+        return { shouldSkip: false, reason: 'missing_counter_lineup' };
+    }
+
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const result = await pool.query(
+        `SELECT
+            mt.my_hero_ids,
+            mt.my_hero_names,
+            mt.my_pet,
+            mt.win_rate,
+            mt.wins,
+            mt.losses,
+            mt.tested_at,
+            mt.tester_user_id,
+            mt.tester_name
+         FROM matchup_tests mt
+         JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
+         WHERE oc.combo_key = $1
+           AND mt.tester_user_id = $2
+           AND COALESCE(mt.max_upgrade, TRUE) = FALSE
+           AND mt.my_hero_ids = $3::int[]
+           AND mt.my_pet = $4
+           AND mt.tested_at >= NOW() - ($5::text || ' days')::interval
+         ORDER BY mt.tested_at DESC, mt.id DESC
+         LIMIT 1`,
+        [comboKey, String(testerUserId), heroIds, pet, String(maxAgeDays)]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+        return {
+            shouldSkip: false,
+            comboKey,
+            testerUserId: String(testerUserId),
+            maxAgeDays,
+        };
+    }
+
+    return {
+        shouldSkip: true,
+        comboKey,
+        testerUserId: row.tester_user_id,
+        testerName: row.tester_name,
+        cachedWinRate: row.win_rate != null ? Number(row.win_rate) : null,
+        cachedWins: row.wins != null ? Number(row.wins) : null,
+        cachedLosses: row.losses != null ? Number(row.losses) : null,
+        lastTestedAt: row.tested_at,
+        cachedMatch: {
+            myHeroIds: row.my_hero_ids,
+            myHeroNames: row.my_hero_names,
+            myPet: row.my_pet,
+            winRate: row.win_rate != null ? Number(row.win_rate) : null,
+            wins: row.wins != null ? Number(row.wins) : null,
+            losses: row.losses != null ? Number(row.losses) : null,
+            testedAt: row.tested_at,
+        },
+        maxAgeDays,
+    };
+}
+
 export async function getMatchups({ comboKey, limit = 50 } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });

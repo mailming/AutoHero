@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.19
+// @version      1.20
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.19';
+    const EXTENSION_VERSION = '1.20';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -461,6 +461,47 @@
                 .map(Number)
                 .filter((id) => id > 0 && id < 6000);
             return `${heroes.join(',')}|${Number(pet) || 0}|${Number(banner) || 0}`;
+        }
+
+        async function fetchUserCounterSkipCheck(comboKey, counterLineup, testerUserId, options = {}) {
+            const maxAgeDays = Number(options.skipCacheMaxAgeDays ?? CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS);
+            const params = new URLSearchParams({
+                comboKey,
+                mode: 'user',
+                testerUserId: String(testerUserId),
+                myPet: String(counterLineup?.pet ?? ''),
+                maxAgeDays: String(maxAgeDays),
+            });
+            for (const heroId of counterLineup?.heroes || []) {
+                params.append('myHero', String(heroId));
+            }
+
+            try {
+                const res = await fetch(`${BRIDGE_URL}/training/skip-check?${params}`);
+                if (!res.ok) {
+                    console.warn('[Arena Training] Bridge user skip-check failed:', res.status);
+                    return { shouldSkip: false, reason: 'bridge_error' };
+                }
+                const data = await res.json();
+                return data.ok ? data : { shouldSkip: false, reason: 'invalid_response' };
+            } catch (e) {
+                console.warn('[Arena Training] Bridge user skip-check error:', e.message);
+                return { shouldSkip: false, reason: 'bridge_unreachable' };
+            }
+        }
+
+        async function resolveCurrentTesterUserId() {
+            try {
+                const response = await Send({
+                    calls: [{ name: 'userGetInfo', args: {}, ident: 'userGetInfo' }],
+                });
+                const userInfo = response.results?.find((r) => r.ident === 'userGetInfo')?.result?.response || {};
+                const userId = userInfo?.userId ?? userInfo?.id ?? null;
+                return userId != null ? String(userId) : null;
+            } catch (e) {
+                console.warn('[Arena Training] Could not resolve tester user id:', e.message);
+                return null;
+            }
         }
 
         async function fetchOpponentSkipCheck(comboKey, options = {}) {
@@ -1410,6 +1451,7 @@
                 const comboKey = opponentMeta?.heroes?.length === 5
                     ? buildComboKey(opponentMeta.heroes, opponentMeta.pet, opponentMeta.banner)
                     : null;
+                let workflowTesterUserId;
 
                 while (!stopRequested && (!loopSession || loopRunning)) {
                     attempt++;
@@ -1503,38 +1545,103 @@
                         );
                     }
 
-                    status.message = `Round ${roundNum} attempt ${attempt} — user test same lineup`;
-                    const userResult = await this.runSingle({
-                        ...trainOptions,
-                        maxUpgrade: false,
-                        counterLineup,
-                        counterLineupOnly: true,
-                        skipCachedOpponents: false,
-                        opponentUserId: opponentMeta.userId,
-                        opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
-                        opponentOverride: opponentRaw,
-                        label: `${trainOptions.label}-r${roundNum}-user-a${attempt}`,
-                    });
-                    finalUserResult = userResult;
-                    pairAttempts.push({ attempt, type: 'user-counter', result: userResult, counterLineup });
-                    if (loopSession) loopSession.rounds.push(userResult);
-                    lastResults = userResult;
+                    let userWinRate = null;
+                    let userResult = null;
 
-                    if (trainOptions.saveToBridge !== false) {
-                        const userSaved = await saveRoundToBridge(userResult);
-                        if (userSaved && loopSession) {
-                            loopSession.lastSavedAt = new Date().toISOString();
+                    if (
+                        trainOptions.skipCachedOpponents !== false
+                        && comboKey
+                        && counterLineup
+                    ) {
+                        if (workflowTesterUserId === undefined) {
+                            workflowTesterUserId = await resolveCurrentTesterUserId();
+                        }
+                        if (workflowTesterUserId) {
+                            const userSkip = await fetchUserCounterSkipCheck(
+                                comboKey,
+                                counterLineup,
+                                workflowTesterUserId,
+                                trainOptions
+                            );
+                            if (userSkip.shouldSkip) {
+                                userWinRate = userSkip.cachedWinRate ?? 0;
+                                userResult = {
+                                    skipped: true,
+                                    skipReason: 'cached_user_counter',
+                                    attempt,
+                                    opponentComboKey: comboKey,
+                                    cachedWinRate: userSkip.cachedWinRate,
+                                    cachedMatch: userSkip.cachedMatch,
+                                    cachedLastTestedAt: userSkip.lastTestedAt,
+                                    tester: {
+                                        userId: workflowTesterUserId,
+                                        name: userSkip.testerName,
+                                        maxUpgrade: false,
+                                    },
+                                    counterLineup,
+                                    best: {
+                                        heroes: counterLineup.heroes,
+                                        heroNames: counterLineup.heroNames
+                                            || counterLineup.heroes.map(heroName),
+                                        pet: counterLineup.pet,
+                                        winRate: userWinRate,
+                                        wins: userSkip.cachedWins,
+                                        losses: userSkip.cachedLosses,
+                                    },
+                                    completedAt: new Date().toISOString(),
+                                };
+                                pairAttempts.push({
+                                    attempt,
+                                    type: 'user-cache',
+                                    result: userResult,
+                                    counterLineup,
+                                });
+                                if (loopSession) loopSession.rounds.push(userResult);
+                                console.log(
+                                    `[Arena Training] Round ${roundNum} attempt ${attempt} user skipped — cached ${userWinRate.toFixed(1)}% within ${trainOptions.skipCacheMaxAgeDays ?? CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days`
+                                );
+                            }
                         }
                     }
 
-                    const userWinRate = userResult.best?.winRate ?? 0;
+                    if (!userResult) {
+                        status.message = `Round ${roundNum} attempt ${attempt} — user test same lineup`;
+                        userResult = await this.runSingle({
+                            ...trainOptions,
+                            maxUpgrade: false,
+                            counterLineup,
+                            counterLineupOnly: true,
+                            skipCachedOpponents: false,
+                            opponentUserId: opponentMeta.userId,
+                            opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
+                            opponentOverride: opponentRaw,
+                            label: `${trainOptions.label}-r${roundNum}-user-a${attempt}`,
+                        });
+                        pairAttempts.push({ attempt, type: 'user-counter', result: userResult, counterLineup });
+                        if (loopSession) loopSession.rounds.push(userResult);
+
+                        if (trainOptions.saveToBridge !== false) {
+                            const userSaved = await saveRoundToBridge(userResult);
+                            if (userSaved && loopSession) {
+                                loopSession.lastSavedAt = new Date().toISOString();
+                            }
+                        }
+
+                        userWinRate = userResult.best?.winRate ?? 0;
+                    }
+
+                    finalUserResult = userResult;
+                    lastResults = userResult;
+
                     const userHeroNames = userResult.best?.heroNames?.join(', ')
                         || counterLineup.heroNames?.join(', ')
                         || counterLineup.heroes.map(heroName).join(', ');
-                    console.log(
-                        `[Arena Training] Round ${roundNum} attempt ${attempt} user — ${userWinRate.toFixed(1)}%:`,
-                        userHeroNames
-                    );
+                    if (!userResult.skipped) {
+                        console.log(
+                            `[Arena Training] Round ${roundNum} attempt ${attempt} user — ${userWinRate.toFixed(1)}%:`,
+                            userHeroNames
+                        );
+                    }
 
                     if (userWinRate >= userTargetWinRate) {
                         userTargetMet = true;
@@ -2134,7 +2241,7 @@
                 <h3 style="margin-top:0;color:#ffd700;">Arena Training</h3>
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code>, then tests vs <b>meta team</b> opponents from the bridge DB.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
-                <p>Skips opponents already solved in PostgreSQL: <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+</b> counter found within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b> (via bridge).</p>
+                <p>Skips opponents already solved in PostgreSQL: <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+</b> max counter within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b>. User-team tests for the same lineup are also skipped within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b>.</p>
                 <p>Per opponent: find a <b>${CONSTANTS.DEFAULT_TARGET_WIN_RATE}%+</b> max counter (or use cache), test the <b>same lineup</b> with your real heroes, and re-search if user win rate is below <b>${CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE}%</b>.</p>
                 <p>Max search phases: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> → generated.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
