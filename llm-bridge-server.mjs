@@ -25,6 +25,7 @@ import {
     getTrainingResults,
     getTrainingResultCount,
     getTrainingResultStats,
+    getTrainingTesters,
     getOpponentSkipCheck,
     getMetaTeamSnapshots,
     getMetaTeamSnapshotById,
@@ -159,20 +160,23 @@ const server = http.createServer(async (req, res) => {
             const comboKey = url.searchParams.get('comboKey') || undefined;
             const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
             const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
+            const testerUserId = url.searchParams.get('tester')
+                || url.searchParams.get('testerUserId')
+                || undefined;
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const limitParam = url.searchParams.get('limit');
             const pageSize = limitParam == null ? 500 : Math.max(0, Number(limitParam) || 0);
-            const [rows, summary, total, stats] = await Promise.all([
+            const filterArgs = { comboKey, opponentHeroIds, myHeroIds, testerUserId };
+            const [rows, summary, total, stats, testers] = await Promise.all([
                 getTrainingResults({
-                    comboKey,
-                    opponentHeroIds,
-                    myHeroIds,
+                    ...filterArgs,
                     offset,
                     limit: pageSize > 0 ? pageSize : undefined,
                 }),
                 getTrainingSummary(),
-                getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds }),
-                getTrainingResultStats({ comboKey, opponentHeroIds, myHeroIds }),
+                getTrainingResultCount(filterArgs),
+                getTrainingResultStats(filterArgs),
+                getTrainingTesters(),
             ]);
             const results = rows.map(formatTrainingResultRow);
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -183,6 +187,8 @@ const server = http.createServer(async (req, res) => {
                 comboKey,
                 opponentHeroIds,
                 myHeroIds,
+                testerUserId,
+                testers,
                 stats,
             }));
         }
@@ -198,18 +204,20 @@ const server = http.createServer(async (req, res) => {
             const comboKey = url.searchParams.get('comboKey') || undefined;
             const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
             const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
+            const testerUserId = url.searchParams.get('tester')
+                || url.searchParams.get('testerUserId')
+                || undefined;
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const limitParam = url.searchParams.get('limit');
             const limit = limitParam == null ? 100 : Math.max(0, Number(limitParam) || 0);
+            const filterArgs = { comboKey, opponentHeroIds, myHeroIds, testerUserId };
             const [rows, total] = await Promise.all([
                 getTrainingResults({
-                    comboKey,
-                    opponentHeroIds,
-                    myHeroIds,
+                    ...filterArgs,
                     offset,
                     limit: limit > 0 ? limit : undefined,
                 }),
-                getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds }),
+                getTrainingResultCount(filterArgs),
             ]);
             const results = rows.map(formatTrainingResultRow);
             return sendJson(res, 200, {
@@ -221,6 +229,7 @@ const server = http.createServer(async (req, res) => {
                 filters: {
                     opponentHeroIds,
                     myHeroIds,
+                    testerUserId,
                 },
                 results,
             });

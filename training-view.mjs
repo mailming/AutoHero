@@ -33,6 +33,9 @@ function buildTrainingQueryBase(paging = {}) {
     if (paging.comboKey) {
         parts.push(`comboKey=${encodeURIComponent(paging.comboKey)}`);
     }
+    if (paging.testerUserId) {
+        parts.push(`tester=${encodeURIComponent(paging.testerUserId)}`);
+    }
     for (const id of paging.opponentHeroIds || []) {
         parts.push(`opponentHero=${encodeURIComponent(id)}`);
     }
@@ -40,6 +43,41 @@ function buildTrainingQueryBase(paging = {}) {
         parts.push(`myHero=${encodeURIComponent(id)}`);
     }
     return parts.length ? `${parts.join('&')}&` : '';
+}
+
+function formatTesterLabel(tester) {
+    if (!tester) return '—';
+    const name = tester.testerName
+        || (tester.maxUpgrade !== false ? 'maxHeros' : null)
+        || (tester.testerUserId ? `User ${tester.testerUserId}` : '—');
+    if (tester.maxUpgrade !== false && name === 'maxHeros') {
+        return 'maxHeros';
+    }
+    return name;
+}
+
+function renderTesterFilter(paging = {}, testers = []) {
+    const selected = paging.testerUserId ? String(paging.testerUserId) : '';
+    const options = testers.map((tester) => {
+        const value = String(tester.testerUserId ?? '');
+        const label = formatTesterLabel(tester);
+        const mode = tester.maxUpgrade !== false ? 'max upgrade' : 'user team';
+        const selectedAttr = selected === value ? ' selected' : '';
+        return `<option value="${escapeHtml(value)}"${selectedAttr}>${escapeHtml(label)} (${mode}) · ${tester.testCount ?? 0} tests</option>`;
+    }).join('');
+
+    return `
+      <div class="filter-group filter-group-tester">
+        <div class="filter-title">Tester account</div>
+        <p class="filter-help muted">Show only tests from a specific account — <strong>maxHeros</strong> for max-upgrade sims, or a player name for real-team tests.</p>
+        <div class="filter-row">
+          <select id="tester-select" class="tester-select" aria-label="Filter by tester account">
+            <option value=""${!selected ? ' selected' : ''}>All testers</option>
+            ${options}
+          </select>
+          ${selected ? '<button type="button" class="ghost" onclick="applyTesterFilter(\'\')">Clear</button>' : ''}
+        </div>
+      </div>`;
 }
 
 function renderHeroFilterChips(side, heroIds) {
@@ -86,15 +124,17 @@ function renderHeroFilterSelect(side, heroIds) {
 function renderHeroFilters(paging = {}) {
     const opponentHeroIds = paging.opponentHeroIds || [];
     const myHeroIds = paging.myHeroIds || [];
-    const hasFilters = opponentHeroIds.length > 0 || myHeroIds.length > 0;
+    const testers = paging.testers || [];
+    const hasFilters = opponentHeroIds.length > 0 || myHeroIds.length > 0 || !!paging.testerUserId;
 
     return `
   <section class="section" id="filters">
     <div class="section-head">
       <h2>Filter results</h2>
-      <p class="section-lead">Pick heroes or pets to narrow what you see, or type a name in the search box. Everything below updates to match.</p>
+      <p class="section-lead">Pick a tester account and/or heroes to narrow what you see. Everything below updates to match.</p>
     </div>
     <div class="filters card">
+      ${renderTesterFilter(paging, testers)}
       <div class="filter-group">
         <div class="filter-title">Opponent team includes</div>
         <p class="filter-help muted">Show opponents whose lineup has <em>all</em> of these heroes or pets.</p>
@@ -389,11 +429,13 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     const rows = results.map((row) => {
         const opponentLabel = row.opponentPlayer || 'Unknown';
         const source = row.opponentPlace ? `#${row.opponentPlace}` : '—';
+        const testerLabel = formatTesterLabel(row);
         return `
         <tr>
             <td class="muted">${escapeHtml(source)}</td>
             <td>${renderComboLabelHtml(row.opponentCombo.heroIds, row.opponentCombo.pet, row.opponentCombo.heroNames)}</td>
             <td class="muted">${escapeHtml(opponentLabel)}</td>
+            <td class="muted">${escapeHtml(testerLabel)}</td>
             <td>${renderComboLabelHtml(row.myCombo.heroIds, row.myCombo.pet, row.myCombo.heroNames)}</td>
             <td>${renderWinRateCell(row.winRate, minWinRate)}</td>
             <td class="muted">${escapeHtml(formatRecord(row.wins, row.losses))}</td>
@@ -498,6 +540,28 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     .filter-title { font-size: 0.95rem; font-weight: 600; color: #e7ecf3; }
     .filter-help { margin: 0; font-size: 0.82rem; }
     .filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .tester-select {
+      min-width: 280px;
+      flex: 1;
+      min-height: 40px;
+      color: #e7ecf3;
+      background: #1a2433;
+      border: 1px solid #2f3f57;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 0.9rem;
+    }
+    .tester-select:hover, .tester-select:focus {
+      background: #243044;
+      border-color: #3a5a8a;
+      outline: none;
+    }
+    .filter-group-tester {
+      grid-column: 1 / -1;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #243044;
+      margin-bottom: 4px;
+    }
     .filter-picker {
       position: relative;
       min-width: 240px;
@@ -716,6 +780,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
               <th>List #</th>
               <th>Opponent team</th>
               <th>Label</th>
+              <th>Tester</th>
               <th>Your team</th>
               <th>Win rate</th>
               <th>Sim record</th>
@@ -723,7 +788,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
             </tr>
           </thead>
           <tbody>
-            ${rows || '<tr><td colspan="7" class="muted">Nothing here yet — run Arena Training in HWH to start collecting results.</td></tr>'}
+            ${rows || '<tr><td colspan="8" class="muted">Nothing here yet — run Arena Training in HWH to start collecting results.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -763,6 +828,17 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     function clearHeroFilter(side) {
       const url = currentParams();
       url.searchParams.delete(heroFilterKey(side));
+      url.searchParams.delete('offset');
+      window.location.href = url.toString();
+    }
+    function applyTesterFilter(value) {
+      const url = currentParams();
+      if (value) {
+        url.searchParams.set('tester', value);
+      } else {
+        url.searchParams.delete('tester');
+        url.searchParams.delete('testerUserId');
+      }
       url.searchParams.delete('offset');
       window.location.href = url.toString();
     }
@@ -940,6 +1016,10 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       });
     }
     initFilterPickers();
+    const testerSelect = document.getElementById('tester-select');
+    if (testerSelect) {
+      testerSelect.addEventListener('change', () => applyTesterFilter(testerSelect.value));
+    }
   </script>
 </body>
 </html>`;
@@ -1095,6 +1175,9 @@ export function formatTrainingResultRow(row) {
         rank: row.rank != null ? Number(row.rank) : null,
         testedAt: row.tested_at,
         sessionId: row.session_id,
+        testerUserId: row.tester_user_id != null ? String(row.tester_user_id) : null,
+        testerName: row.tester_name || null,
+        maxUpgrade: row.max_upgrade !== false,
     };
 }
 

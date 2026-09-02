@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.17
+// @version      1.19
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.17';
+    const EXTENSION_VERSION = '1.19';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -197,6 +197,7 @@
         DEFAULT_MAX_COMBOS: 40,
         DEFAULT_POOL_SIZE: 12,
         DEFAULT_TARGET_WIN_RATE: 90,
+        DEFAULT_USER_TEAM_TARGET_WIN_RATE: 70,
         DEFAULT_SKIP_CACHE_MIN_WIN_RATE: 90,
         DEFAULT_SKIP_CACHE_MAX_AGE_DAYS: 30,
         DEFAULT_META_TEAMS_LIMIT: 0,
@@ -565,6 +566,51 @@
             return favor;
         }
 
+        function resolveTesterInfo(userInfo, maxUpgrade = true) {
+            if (maxUpgrade !== false) {
+                return { userId: '0', name: 'maxHeros', maxUpgrade: true };
+            }
+            const userId = userInfo?.userId ?? userInfo?.id ?? null;
+            const name = userInfo?.name ?? userInfo?.nickname ?? null;
+            return {
+                userId: userId != null ? String(userId) : null,
+                name: name != null ? String(name) : null,
+                maxUpgrade: false,
+            };
+        }
+
+        function counterLineupFromBest(best, arenaFavor = {}) {
+            const heroes = (best?.heroes || []).map(Number);
+            return {
+                heroes,
+                pet: Number(best?.pet) || CONSTANTS.DEFAULT_PET_ID,
+                banner: best?.banner,
+                favor: best?.favor || pickFavor(heroes, arenaFavor),
+                source: best?.source || 'max-counter',
+                heroNames: best?.heroNames,
+            };
+        }
+
+        function counterLineupFromCache(cachedMatch, arenaFavor = {}, defaultBanner = 1) {
+            const heroes = (cachedMatch?.myHeroIds || []).map(Number).filter((id) => id > 0 && id < 6000);
+            const pet = Number(cachedMatch?.myPet) || CONSTANTS.DEFAULT_PET_ID;
+            return {
+                heroes,
+                pet,
+                banner: defaultBanner,
+                favor: pickFavor(heroes, arenaFavor),
+                source: 'cached-counter',
+                heroNames: cachedMatch?.myHeroNames,
+                cachedWinRate: cachedMatch?.winRate != null ? Number(cachedMatch.winRate) : null,
+            };
+        }
+
+        function normalizeExcludeKeys(keys = []) {
+            return new Set(
+                keys.map((entry) => (typeof entry === 'string' ? entry : candidateKey(entry)))
+            );
+        }
+
         function buildRatingStashEvents(meta = {}) {
             const actionTs = meta.actionTs || getActionTs();
             const timestamp = meta.timestamp || Math.floor(Date.now() / 1000);
@@ -928,11 +974,12 @@
             };
         }
 
-        async function runSingleDemoBattle(myTeam, opponentTeam, parentId = 0) {
+        async function runSingleDemoBattle(myTeam, opponentTeam, parentId = 0, battleOptions = {}) {
+            const maxUpgrade = battleOptions.maxUpgrade !== false;
             const args = {
                 mechanic: 'arena',
                 defenceMaxUpgrade: true,
-                maxUpgrade: true,
+                maxUpgrade,
                 defenceBuffs: {},
                 buffs: {},
                 parentId,
@@ -994,14 +1041,19 @@
             };
         }
 
-        async function simulateTeam(myTeam, opponentTeam, simulationCount) {
+        async function simulateTeam(myTeam, opponentTeam, simulationCount, battleOptions = {}) {
             const simulations = [];
             let parentId = 0;
             let firstBattleId = null;
 
             for (let i = 0; i < simulationCount; i++) {
                 if (stopRequested) break;
-                const result = await runSingleDemoBattle(myTeam, opponentTeam, i === 0 ? 0 : (firstBattleId || parentId));
+                const result = await runSingleDemoBattle(
+                    myTeam,
+                    opponentTeam,
+                    i === 0 ? 0 : (firstBattleId || parentId),
+                    battleOptions
+                );
                 simulations.push(result);
                 if (i === 0 && result.parentId) {
                     firstBattleId = result.parentId;
@@ -1342,6 +1394,184 @@
                 };
             },
 
+            async runCounterPairWorkflow(opponentMeta, runOptions = {}, trainOptions = {}, roundNum = 1) {
+                const opponentRaw = runOptions.opponentOverride ?? opponentMeta.raw ?? null;
+                const maxTargetWinRate = Number(trainOptions.targetWinRate ?? CONSTANTS.DEFAULT_TARGET_WIN_RATE);
+                const userTargetWinRate = Number(
+                    trainOptions.userTeamTargetWinRate ?? CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE
+                );
+                const excludeKeys = normalizeExcludeKeys(trainOptions.excludeCandidateKeys);
+                const pairAttempts = [];
+                let attempt = 0;
+                let finalMaxResult = null;
+                let finalUserResult = null;
+                let userTargetMet = false;
+
+                const comboKey = opponentMeta?.heroes?.length === 5
+                    ? buildComboKey(opponentMeta.heroes, opponentMeta.pet, opponentMeta.banner)
+                    : null;
+
+                while (!stopRequested && (!loopSession || loopRunning)) {
+                    attempt++;
+                    let counterLineup = null;
+                    let maxResult = null;
+                    let usedCache = false;
+
+                    if (
+                        attempt === 1
+                        && trainOptions.skipCachedOpponents !== false
+                        && comboKey
+                    ) {
+                        const skipInfo = await fetchOpponentSkipCheck(comboKey, trainOptions);
+                        if (skipInfo.shouldSkip && skipInfo.bestMatch?.myHeroIds?.length === 5) {
+                            const cachedLineup = counterLineupFromCache(skipInfo.bestMatch);
+                            const cachedKey = candidateKey(cachedLineup);
+                            if (!excludeKeys.has(cachedKey)) {
+                                counterLineup = cachedLineup;
+                                usedCache = true;
+                                const skippedResult = {
+                                    skipped: true,
+                                    skipReason: 'cached_counter',
+                                    attempt,
+                                    opponentComboKey: comboKey,
+                                    cachedBestWinRate: skipInfo.bestWinRate,
+                                    cachedBestMatch: skipInfo.bestMatch,
+                                    cachedLastTestedAt: skipInfo.lastTestedAt,
+                                    counterLineup,
+                                    opponent: {
+                                        index: opponentMeta.index,
+                                        userId: opponentMeta.userId,
+                                        name: opponentMeta.name,
+                                        place: opponentMeta.place,
+                                        power: opponentMeta.power,
+                                        source: opponentMeta.source,
+                                        metaComboKey: opponentMeta.metaComboKey,
+                                        metaPopularity: opponentMeta.metaPopularity,
+                                        metaRank: opponentMeta.metaRank,
+                                    },
+                                    completedAt: new Date().toISOString(),
+                                };
+                                pairAttempts.push({ attempt, type: 'max-cache', result: skippedResult });
+                                if (loopSession) loopSession.rounds.push(skippedResult);
+                                console.log(
+                                    `[Arena Training] Round ${roundNum} attempt ${attempt} — using cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter`
+                                );
+                            }
+                        }
+                    }
+
+                    if (!counterLineup) {
+                        status.message = `Round ${roundNum} attempt ${attempt} — max search (${excludeKeys.size} excluded)`;
+                        maxResult = await this.runSingle({
+                            ...trainOptions,
+                            maxUpgrade: true,
+                            skipCachedOpponents: false,
+                            excludeCandidateKeys: [...excludeKeys],
+                            searchUntilTarget: true,
+                            opponentUserId: opponentMeta.userId,
+                            opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
+                            opponentOverride: opponentRaw,
+                            label: `${trainOptions.label}-r${roundNum}-max-a${attempt}`,
+                        });
+                        finalMaxResult = maxResult;
+                        pairAttempts.push({ attempt, type: 'max-search', result: maxResult });
+                        if (loopSession) loopSession.rounds.push(maxResult);
+
+                        if (trainOptions.saveToBridge !== false) {
+                            const saved = await saveRoundToBridge(maxResult);
+                            if (saved && loopSession) {
+                                loopSession.lastSavedAt = new Date().toISOString();
+                            }
+                        }
+
+                        if (!maxResult.best || maxResult.best.winRate < maxTargetWinRate) {
+                            console.log(
+                                `[Arena Training] Round ${roundNum} — no further ${maxTargetWinRate}%+ max counter found after ${attempt} attempt(s)`
+                            );
+                            break;
+                        }
+
+                        counterLineup = counterLineupFromBest(maxResult.best);
+                        console.log(
+                            `[Arena Training] Round ${roundNum} attempt ${attempt} max — ${maxResult.best.winRate.toFixed(1)}%:`,
+                            maxResult.best.heroNames.join(', ')
+                        );
+                    } else if (usedCache) {
+                        console.log(
+                            `[Arena Training] Round ${roundNum} attempt ${attempt} max — cached ${counterLineup.cachedWinRate?.toFixed?.(1) ?? '?'}%:`,
+                            (counterLineup.heroNames || counterLineup.heroes.map(heroName)).join(', ')
+                        );
+                    }
+
+                    status.message = `Round ${roundNum} attempt ${attempt} — user test same lineup`;
+                    const userResult = await this.runSingle({
+                        ...trainOptions,
+                        maxUpgrade: false,
+                        counterLineup,
+                        counterLineupOnly: true,
+                        skipCachedOpponents: false,
+                        opponentUserId: opponentMeta.userId,
+                        opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
+                        opponentOverride: opponentRaw,
+                        label: `${trainOptions.label}-r${roundNum}-user-a${attempt}`,
+                    });
+                    finalUserResult = userResult;
+                    pairAttempts.push({ attempt, type: 'user-counter', result: userResult, counterLineup });
+                    if (loopSession) loopSession.rounds.push(userResult);
+                    lastResults = userResult;
+
+                    if (trainOptions.saveToBridge !== false) {
+                        const userSaved = await saveRoundToBridge(userResult);
+                        if (userSaved && loopSession) {
+                            loopSession.lastSavedAt = new Date().toISOString();
+                        }
+                    }
+
+                    const userWinRate = userResult.best?.winRate ?? 0;
+                    const userHeroNames = userResult.best?.heroNames?.join(', ')
+                        || counterLineup.heroNames?.join(', ')
+                        || counterLineup.heroes.map(heroName).join(', ');
+                    console.log(
+                        `[Arena Training] Round ${roundNum} attempt ${attempt} user — ${userWinRate.toFixed(1)}%:`,
+                        userHeroNames
+                    );
+
+                    if (userWinRate >= userTargetWinRate) {
+                        userTargetMet = true;
+                        console.log(
+                            `[Arena Training] Round ${roundNum} — user team reached ${userTargetWinRate}%+ with counter lineup`
+                        );
+                        break;
+                    }
+
+                    excludeKeys.add(candidateKey(counterLineup));
+                    console.log(
+                        `[Arena Training] Round ${roundNum} — user ${userWinRate.toFixed(1)}% < ${userTargetWinRate}%, searching another ${maxTargetWinRate}%+ max counter`
+                    );
+
+                    const maxAttempts = Number(trainOptions.maxCounterAttempts);
+                    if (Number.isFinite(maxAttempts) && maxAttempts > 0 && attempt >= maxAttempts) {
+                        console.warn(`[Arena Training] Round ${roundNum} — stopped after ${maxAttempts} counter attempts`);
+                        break;
+                    }
+                }
+
+                const summary = {
+                    round: roundNum,
+                    attempts: attempt,
+                    userTargetWinRate,
+                    maxTargetWinRate,
+                    userTargetMet,
+                    excludeCount: excludeKeys.size,
+                    pairAttempts,
+                    maxResult: finalMaxResult,
+                    userResult: finalUserResult,
+                    completedAt: new Date().toISOString(),
+                };
+                lastResults = summary;
+                return summary;
+            },
+
             startLoop(options = {}) {
                 if (loopRunning) {
                     return { started: false, ...this.getLoopStatus(), message: 'Loop already running' };
@@ -1355,6 +1585,7 @@
                     maxCombinations: 20,
                     simulationsPerCombo: 10,
                     targetWinRate: CONSTANTS.DEFAULT_TARGET_WIN_RATE,
+                    userTeamTargetWinRate: CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE,
                     searchUntilTarget: true,
                     skipCachedOpponents: true,
                     skipCacheMinWinRate: CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE,
@@ -1364,6 +1595,7 @@
                     useMetaTeams: true,
                     useMetaTeamsAsOpponents: true,
                     metaTeamsLimit: CONSTANTS.DEFAULT_META_TEAMS_LIMIT,
+                    includeUserTeamTest: true,
                     saveToBridge: true,
                     delayBetweenRoundsMs: 2000,
                     repeatCycle: true,
@@ -1407,73 +1639,28 @@
                                 return true;
                             }
 
-                            if (
-                                trainOptions.skipCachedOpponents !== false
-                                && opponentMeta?.heroes?.length === 5
-                            ) {
-                                const comboKey = buildComboKey(
-                                    opponentMeta.heroes,
-                                    opponentMeta.pet,
-                                    opponentMeta.banner
-                                );
-                                const skipInfo = await fetchOpponentSkipCheck(comboKey, trainOptions);
-                                if (skipInfo.shouldSkip) {
-                                    const skippedResult = {
-                                        skipped: true,
-                                        skipReason: 'cached_counter',
-                                        opponentComboKey: comboKey,
-                                        cachedBestWinRate: skipInfo.bestWinRate,
-                                        cachedBestMatch: skipInfo.bestMatch,
-                                        cachedLastTestedAt: skipInfo.lastTestedAt,
-                                        opponent: {
-                                            index: opponentMeta.index,
-                                            userId: opponentMeta.userId,
-                                            name: opponentMeta.name,
-                                            place: opponentMeta.place,
-                                            power: opponentMeta.power,
-                                            source: opponentMeta.source,
-                                            metaComboKey: opponentMeta.metaComboKey,
-                                            metaPopularity: opponentMeta.metaPopularity,
-                                            metaRank: opponentMeta.metaRank,
-                                        },
-                                        completedAt: new Date().toISOString(),
-                                    };
-                                    loopSession.rounds.push(skippedResult);
-                                    console.log(
-                                        `[Arena Training] Round ${roundNum} skipped — cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter for ${comboKey}`
-                                    );
-                                    return true;
+                            if (trainOptions.includeUserTeamTest === false) {
+                                const result = await this.runSingle({
+                                    ...trainOptions,
+                                    maxUpgrade: true,
+                                    skipCachedOpponents: false,
+                                    opponentUserId: opponentMeta.userId,
+                                    opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
+                                    opponentOverride: opponentRaw,
+                                    label: `${trainOptions.label}-r${roundNum}-max`,
+                                });
+                                loopSession.rounds.push(result);
+                                lastResults = result;
+                                if (trainOptions.saveToBridge !== false) {
+                                    const saved = await saveRoundToBridge(result);
+                                    if (saved) loopSession.lastSavedAt = new Date().toISOString();
                                 }
-                            }
-
-                            const result = await this.runSingle({
-                                ...trainOptions,
-                                skipCachedOpponents: false,
-                                opponentUserId: opponentMeta.userId,
-                                opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
-                                opponentOverride: opponentRaw,
-                                label: `${trainOptions.label}-r${roundNum}`,
-                            });
-                            loopSession.rounds.push(result);
-                            lastResults = result;
-
-                            if (trainOptions.saveToBridge !== false) {
-                                const saved = await saveRoundToBridge(result);
-                                if (saved) {
-                                    loopSession.lastSavedAt = new Date().toISOString();
-                                }
-                            }
-
-                            const best = result.best;
-                            if (best) {
-                                const targetNote = result.targetMet
-                                    ? `target ${result.targetWinRate}%+ met`
-                                    : (result.config?.searchUntilTarget
-                                        ? `no ${result.targetWinRate}%+ in ${result.testedCombos}/${result.plannedCombos}`
-                                        : 'search complete');
-                                console.log(
-                                    `[Arena Training] Round ${roundNum} saved — best ${best.winRate.toFixed(1)}% (${targetNote}):`,
-                                    best.heroNames.join(', ')
+                            } else {
+                                await this.runCounterPairWorkflow(
+                                    opponentMeta,
+                                    runOptions,
+                                    trainOptions,
+                                    roundNum
                                 );
                             }
                         } catch (err) {
@@ -1564,7 +1751,42 @@
             },
 
             async run(options = {}) {
-                return this.runSingle(options);
+                options = applyTrainingOptions(options);
+
+                if (options.includeUserTeamTest === false) {
+                    return this.runSingle({
+                        ...options,
+                        maxUpgrade: true,
+                        label: `${options.label || 'arena-training'}-max`,
+                    });
+                }
+
+                const opponents = await this.getOpponents(false, options);
+                const opponentRaw = resolveOpponentRaw(opponents, options);
+                const opponentMeta = opponents.find((o) => o.raw === opponentRaw)
+                    || opponents[options.opponentIndex ?? 0]
+                    || {
+                        index: options.opponentIndex ?? 0,
+                        userId: opponentRaw?.userId,
+                        name: opponentRaw?.user?.name,
+                        place: opponentRaw?.place,
+                        power: opponentRaw?.power,
+                        heroes: extractOpponentConfig(opponentRaw).heroes,
+                        pet: extractOpponentConfig(opponentRaw).pet,
+                        banner: extractOpponentConfig(opponentRaw).banner,
+                        source: opponentRaw?.source || options.opponentSource,
+                        raw: opponentRaw,
+                    };
+
+                return this.runCounterPairWorkflow(
+                    opponentMeta,
+                    {
+                        opponentOverride: opponentRaw,
+                        opponentIndex: options.opponentIndex ?? opponentMeta.index ?? 0,
+                    },
+                    options,
+                    1
+                );
             },
 
             async runSingle(options = {}) {
@@ -1575,7 +1797,12 @@
                 options = applyTrainingOptions(options);
                 running = true;
                 stopRequested = false;
-                const sessionId = `arena_train_${Date.now()}`;
+                const maxUpgrade = options.maxUpgrade !== false;
+                const userTeamOnly = options.userTeamOnly === true;
+                const counterLineupOnly = options.counterLineupOnly === true && !!options.counterLineup;
+                const externalExcludeKeys = normalizeExcludeKeys(options.excludeCandidateKeys);
+                const sessionSuffix = maxUpgrade ? 'max' : 'user';
+                const sessionId = `arena_train_${Date.now()}_${sessionSuffix}`;
                 const startedAt = new Date().toISOString();
                 const simulationsPerCombo = options.simulationsPerCombo || CONSTANTS.DEFAULT_SIMULATIONS;
                 const targetWinRate = Number(options.targetWinRate ?? CONSTANTS.DEFAULT_TARGET_WIN_RATE);
@@ -1595,6 +1822,7 @@
                 try {
                     HWHFuncs.setProgress('Arena Training: loading opponents and heroes...', true);
                     const data = await loadGameData(options);
+                    const tester = resolveTesterInfo(data.userInfo, maxUpgrade);
                     const opponentRaw = resolveOpponentRaw(data.opponents, options);
                     const opponentTeam = extractOpponentConfig(opponentRaw);
                     if (!opponentTeam.hasValidTeam) {
@@ -1610,7 +1838,7 @@
                         opponentTeam.banner
                     );
 
-                    if (options.skipCachedOpponents !== false) {
+                    if (options.skipCachedOpponents !== false && maxUpgrade) {
                         const skipInfo = await fetchOpponentSkipCheck(opponentComboKey, options);
                         if (skipInfo.shouldSkip) {
                             const skippedResult = {
@@ -1660,7 +1888,7 @@
 
                     let metaTeamCandidates = [];
                     let metaTeamsSnapshotId = null;
-                    if (options.useMetaTeams !== false) {
+                    if (!userTeamOnly && options.useMetaTeams !== false) {
                         const meta = await fetchMetaTeamCandidates(options);
                         metaTeamsSnapshotId = meta.snapshotId;
                         metaTeamCandidates = buildMetaTeamCandidates(meta.candidates, data, options, banner);
@@ -1678,6 +1906,7 @@
                     let plannedGenerated = 0;
                     let plannedMeta = metaTeamCandidates.length;
 
+                    const battleOptions = { maxUpgrade };
                     const testCandidateBatch = async (candidates, phaseLabel) => {
                         for (let i = 0; i < candidates.length; i++) {
                             if (stopRequested) {
@@ -1687,7 +1916,7 @@
 
                             const candidate = candidates[i];
                             const key = candidateKey(candidate);
-                            if (testedKeys.has(key)) continue;
+                            if (externalExcludeKeys.has(key) || testedKeys.has(key)) continue;
                             testedKeys.add(key);
 
                             status.currentCombo = rankings.length + 1;
@@ -1706,7 +1935,12 @@
                                 candidate.favor
                             );
 
-                            const simulation = await simulateTeam(myTeam, opponentTeam, simulationsPerCombo);
+                            const simulation = await simulateTeam(
+                                myTeam,
+                                opponentTeam,
+                                simulationsPerCombo,
+                                battleOptions
+                            );
                             rankings.push({
                                 rank: 0,
                                 heroes: candidate.heroes,
@@ -1733,40 +1967,62 @@
                     };
 
                     status.totalCombos = arenaCandidates.length + grandArenaCandidates.length + plannedMeta;
-                    status.message = `Phase 1: arena team vs ${opponentRaw.user?.name || opponentRaw.userId}`;
 
-                    if (await testCandidateBatch(arenaCandidates, 'arena')) {
-                        // target met or user stopped
+                    if (counterLineupOnly) {
+                        const arenaFavor = data.favor?.arena || {};
+                        const candidate = {
+                            ...options.counterLineup,
+                            banner: options.counterLineup.banner ?? banner,
+                            favor: options.counterLineup.favor || pickFavor(options.counterLineup.heroes, arenaFavor),
+                        };
+                        if (!candidate.heroNames?.length) {
+                            candidate.heroNames = candidate.heroes.map(heroName);
+                        }
+                        status.totalCombos = 1;
+                        status.message = `${maxUpgrade ? 'Max' : 'User'} counter lineup vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                        await testCandidateBatch([candidate], maxUpgrade ? 'counter max' : 'counter user');
+                    } else if (userTeamOnly) {
+                        status.totalCombos = arenaCandidates.length + grandArenaCandidates.length;
+                        status.message = `User team test vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                        if (!(await testCandidateBatch(arenaCandidates, 'user arena'))) {
+                            await testCandidateBatch(grandArenaCandidates, 'user grand arena');
+                        }
                     } else {
-                        status.message = `Phase 2: grand arena teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
-                        status.totalCombos += grandArenaCandidates.length;
-                        if (!(await testCandidateBatch(grandArenaCandidates, 'grand arena'))) {
-                            const runGeneratedPhase = async (phaseNumber) => {
-                                const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
-                                const generatedCandidates = searchUntilTarget
-                                    ? buildGeneratedCandidates(plan, { excludeKeys: testedKeys })
-                                    : buildGeneratedCandidates(plan, {
-                                        maxHeroCombos: maxCombinations,
-                                        excludeKeys: testedKeys,
-                                    }).slice(0, maxCombinations);
+                        status.message = `Phase 1: arena team vs ${opponentRaw.user?.name || opponentRaw.userId}`;
 
-                                if (generatedCandidates.length > 0) {
-                                    plannedGenerated = generatedCandidates.length;
-                                    status.totalCombos += plannedGenerated;
-                                    status.message = `Phase ${phaseNumber}: testing ${plannedGenerated} generated combos`;
-                                    await testCandidateBatch(generatedCandidates, 'generated');
-                                } else if (!searchUntilTarget) {
-                                    stoppedBecause = 'max_combos';
-                                }
-                            };
+                        if (await testCandidateBatch(arenaCandidates, 'arena')) {
+                            // target met or user stopped
+                        } else {
+                            status.message = `Phase 2: grand arena teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                            status.totalCombos += grandArenaCandidates.length;
+                            if (!(await testCandidateBatch(grandArenaCandidates, 'grand arena'))) {
+                                const runGeneratedPhase = async (phaseNumber) => {
+                                    const maxCombinations = options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS;
+                                    const generatedCandidates = searchUntilTarget
+                                        ? buildGeneratedCandidates(plan, { excludeKeys: testedKeys })
+                                        : buildGeneratedCandidates(plan, {
+                                            maxHeroCombos: maxCombinations,
+                                            excludeKeys: testedKeys,
+                                        }).slice(0, maxCombinations);
 
-                            if (metaTeamCandidates.length > 0) {
-                                status.message = `Phase 3: ${metaTeamCandidates.length} meta teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
-                                if (!(await testCandidateBatch(metaTeamCandidates, 'meta'))) {
-                                    await runGeneratedPhase(4);
+                                    if (generatedCandidates.length > 0) {
+                                        plannedGenerated = generatedCandidates.length;
+                                        status.totalCombos += plannedGenerated;
+                                        status.message = `Phase ${phaseNumber}: testing ${plannedGenerated} generated combos`;
+                                        await testCandidateBatch(generatedCandidates, 'generated');
+                                    } else if (!searchUntilTarget) {
+                                        stoppedBecause = 'max_combos';
+                                    }
+                                };
+
+                                if (metaTeamCandidates.length > 0) {
+                                    status.message = `Phase 3: ${metaTeamCandidates.length} meta teams vs ${opponentRaw.user?.name || opponentRaw.userId}`;
+                                    if (!(await testCandidateBatch(metaTeamCandidates, 'meta'))) {
+                                        await runGeneratedPhase(4);
+                                    }
+                                } else {
+                                    await runGeneratedPhase(3);
                                 }
-                            } else {
-                                await runGeneratedPhase(3);
                             }
                         }
                     }
@@ -1793,6 +2049,7 @@
                         stoppedBecause,
                         targetWinRate,
                         targetMet,
+                        tester,
                         searchPhases: {
                             arena: arenaCandidates.length,
                             grandArena: grandArenaCandidates.length,
@@ -1819,6 +2076,13 @@
                             simulationsPerCombo,
                             targetWinRate,
                             searchUntilTarget,
+                            maxUpgrade: tester.maxUpgrade,
+                            userTeamOnly,
+                            counterLineupOnly,
+                            userTeamTargetWinRate: Number(
+                                options.userTeamTargetWinRate ?? CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE
+                            ),
+                            excludeCandidateCount: externalExcludeKeys.size,
                             maxCombinations: options.maxCombinations || CONSTANTS.DEFAULT_MAX_COMBOS,
                             includeCurrentTeam: options.includeCurrentTeam !== false,
                             includeGrandArenaTeams: options.includeGrandArenaTeams !== false,
@@ -1871,7 +2135,8 @@
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code>, then tests vs <b>meta team</b> opponents from the bridge DB.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
                 <p>Skips opponents already solved in PostgreSQL: <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+</b> counter found within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b> (via bridge).</p>
-                <p>Per opponent: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> (your combos) → generated. Stops at <b>${CONSTANTS.DEFAULT_TARGET_WIN_RATE}%+</b>.</p>
+                <p>Per opponent: find a <b>${CONSTANTS.DEFAULT_TARGET_WIN_RATE}%+</b> max counter (or use cache), test the <b>same lineup</b> with your real heroes, and re-search if user win rate is below <b>${CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE}%</b>.</p>
+                <p>Max search phases: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> → generated.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
 

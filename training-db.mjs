@@ -150,6 +150,21 @@ ALTER TABLE training_rounds ALTER COLUMN payload DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_training_rounds_opponent_combo_key
     ON training_rounds (opponent_combo_key);
+
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS tester_user_id TEXT;
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS tester_name TEXT;
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS max_upgrade BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE matchup_tests ADD COLUMN IF NOT EXISTS tester_user_id TEXT;
+ALTER TABLE matchup_tests ADD COLUMN IF NOT EXISTS tester_name TEXT;
+ALTER TABLE matchup_tests ADD COLUMN IF NOT EXISTS max_upgrade BOOLEAN NOT NULL DEFAULT TRUE;
+
+DROP INDEX IF EXISTS idx_matchup_tests_unique_session;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_matchup_tests_unique_session
+    ON matchup_tests (opponent_combo_id, session_id, my_hero_ids, my_pet, max_upgrade);
+
+CREATE INDEX IF NOT EXISTS idx_matchup_tests_max_upgrade
+    ON matchup_tests (max_upgrade);
 `;
 
 function parseTimestamp(value) {
@@ -190,9 +205,32 @@ function extractOpponentTeam(body) {
     };
 }
 
+function extractTesterInfo(body) {
+    const tester = body?.tester || {};
+    const maxUpgrade = body?.config?.maxUpgrade ?? tester.maxUpgrade ?? body?.maxUpgrade;
+    const isMaxUpgrade = maxUpgrade !== false;
+
+    if (isMaxUpgrade) {
+        return {
+            userId: '0',
+            name: 'maxHeros',
+            maxUpgrade: true,
+        };
+    }
+
+    const userId = tester.userId ?? body?.testerUserId ?? null;
+    const name = tester.name ?? body?.testerName ?? null;
+    return {
+        userId: userId != null ? String(userId) : null,
+        name: name != null ? String(name) : null,
+        maxUpgrade: false,
+    };
+}
+
 function extractRoundFields(body) {
     const best = body?.best || null;
     const opponent = extractOpponentTeam(body);
+    const tester = extractTesterInfo(body);
     return {
         sessionId: body?.sessionId || `round_${Date.now()}`,
         label: body?.label || null,
@@ -200,6 +238,7 @@ function extractRoundFields(body) {
         completedAt: parseTimestamp(body?.completedAt),
         stoppedEarly: !!body?.stoppedEarly,
         opponent,
+        tester,
         testedCombos: Number.isFinite(Number(body?.testedCombos)) ? Number(body.testedCombos) : null,
         bestWinRate: best?.winRate != null ? Number(best.winRate) : null,
         bestHeroIds: Array.isArray(best?.heroes) ? best.heroes.map(Number) : null,
@@ -238,8 +277,9 @@ async function upsertOpponentCombo(client, opponent, testedAt) {
     return result.rows[0];
 }
 
-async function saveMatchupTests(client, opponentComboId, sessionId, rankings, testedAt) {
+async function saveMatchupTests(client, opponentComboId, sessionId, rankings, testedAt, tester = {}) {
     let saved = 0;
+    const maxUpgrade = tester.maxUpgrade !== false;
     for (const ranking of rankings) {
         const myHeroIds = Array.isArray(ranking.heroes) ? ranking.heroes.map(Number) : [];
         if (!myHeroIds.length) continue;
@@ -247,15 +287,18 @@ async function saveMatchupTests(client, opponentComboId, sessionId, rankings, te
         await client.query(
             `INSERT INTO matchup_tests (
                 opponent_combo_id, session_id, my_hero_ids, my_hero_names, my_pet,
-                wins, losses, win_rate, rank, tested_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (opponent_combo_id, session_id, my_hero_ids, my_pet) DO UPDATE SET
+                wins, losses, win_rate, rank, tested_at,
+                tester_user_id, tester_name, max_upgrade
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (opponent_combo_id, session_id, my_hero_ids, my_pet, max_upgrade) DO UPDATE SET
                 my_hero_names = EXCLUDED.my_hero_names,
                 wins = EXCLUDED.wins,
                 losses = EXCLUDED.losses,
                 win_rate = EXCLUDED.win_rate,
                 rank = EXCLUDED.rank,
-                tested_at = EXCLUDED.tested_at`,
+                tested_at = EXCLUDED.tested_at,
+                tester_user_id = EXCLUDED.tester_user_id,
+                tester_name = EXCLUDED.tester_name`,
             [
                 opponentComboId,
                 sessionId,
@@ -267,6 +310,9 @@ async function saveMatchupTests(client, opponentComboId, sessionId, rankings, te
                 ranking.winRate != null ? Number(ranking.winRate) : 0,
                 ranking.rank != null ? Number(ranking.rank) : null,
                 testedAt,
+                tester.userId ?? null,
+                tester.name ?? null,
+                maxUpgrade,
             ]
         );
         saved++;
@@ -316,18 +362,21 @@ export async function saveTrainingRound(body) {
             opponentRow.id,
             fields.sessionId,
             fields.rankings,
-            testedAt
+            testedAt,
+            fields.tester
         );
 
         const roundResult = await client.query(
             `INSERT INTO training_rounds (
                 session_id, label, started_at, completed_at, stopped_early,
                 opponent_combo_key, opponent_user_id, opponent_name, opponent_place, opponent_power,
-                tested_combos, best_win_rate, best_hero_ids, best_hero_names, best_pet, payload
+                tested_combos, best_win_rate, best_hero_ids, best_hero_names, best_pet, payload,
+                tester_user_id, tester_name, max_upgrade
             ) VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15, NULL
+                $11, $12, $13, $14, $15, NULL,
+                $16, $17, $18
             )
             ON CONFLICT (session_id) DO UPDATE SET
                 label = EXCLUDED.label,
@@ -343,7 +392,10 @@ export async function saveTrainingRound(body) {
                 best_win_rate = EXCLUDED.best_win_rate,
                 best_hero_ids = EXCLUDED.best_hero_ids,
                 best_hero_names = EXCLUDED.best_hero_names,
-                best_pet = EXCLUDED.best_pet
+                best_pet = EXCLUDED.best_pet,
+                tester_user_id = EXCLUDED.tester_user_id,
+                tester_name = EXCLUDED.tester_name,
+                max_upgrade = EXCLUDED.max_upgrade
             RETURNING id, session_id, completed_at`,
             [
                 fields.sessionId,
@@ -361,6 +413,9 @@ export async function saveTrainingRound(body) {
                 fields.bestHeroIds,
                 fields.bestHeroNames,
                 fields.bestPet,
+                fields.tester.userId,
+                fields.tester.name,
+                fields.tester.maxUpgrade !== false,
             ]
         );
 
@@ -476,11 +531,19 @@ function appendComboHeroFilterClauses({ heroIds, heroColumn, petColumn, params }
     return clauses;
 }
 
-function buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params }) {
+function buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, testerUserId, params }) {
     const clauses = [];
     if (comboKey) {
         params.push(comboKey);
         clauses.push(`oc.combo_key = $${params.length}`);
+    }
+    if (testerUserId != null && testerUserId !== '') {
+        if (String(testerUserId) === '0') {
+            clauses.push(`COALESCE(mt.tester_user_id, '0') = '0' AND COALESCE(mt.max_upgrade, TRUE) = TRUE`);
+        } else {
+            params.push(String(testerUserId));
+            clauses.push(`mt.tester_user_id = $${params.length}`);
+        }
     }
     clauses.push(...appendComboHeroFilterClauses({
         heroIds: opponentHeroIds,
@@ -497,13 +560,42 @@ function buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params
     return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
-async function queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinRate, limit } = {}) {
+export async function getTrainingTesters() {
+    if (!pool) {
+        pool = new Pool({ connectionString: getDatabaseUrl() });
+    }
+
+    const result = await pool.query(
+        `SELECT
+            COALESCE(tester_user_id, '0') AS tester_user_id,
+            COALESCE(
+                NULLIF(tester_name, ''),
+                CASE WHEN COALESCE(max_upgrade, TRUE) THEN 'maxHeros' ELSE 'Unknown user' END
+            ) AS tester_name,
+            COALESCE(max_upgrade, TRUE) AS max_upgrade,
+            COUNT(*)::int AS test_count,
+            MAX(tested_at) AS last_tested_at
+         FROM matchup_tests
+         GROUP BY 1, 2, 3
+         ORDER BY max_upgrade DESC, test_count DESC, tester_name ASC`
+    );
+
+    return result.rows.map((row) => ({
+        testerUserId: row.tester_user_id,
+        testerName: row.tester_name,
+        maxUpgrade: row.max_upgrade,
+        testCount: row.test_count,
+        lastTestedAt: row.last_tested_at,
+    }));
+}
+
+async function queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, testerUserId, minWinRate, limit } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
 
     const params = [];
-    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
+    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, testerUserId, params });
     params.push(minWinRate);
     const minWinRateParam = `$${params.length}`;
 
@@ -542,13 +634,13 @@ async function queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinR
     }));
 }
 
-export async function getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds } = {}) {
+export async function getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds, testerUserId } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
 
     const params = [];
-    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
+    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, testerUserId, params });
 
     const result = await pool.query(
         `SELECT COUNT(*)::int AS count
@@ -567,13 +659,14 @@ export async function getTrainingResults({
     comboKey,
     opponentHeroIds,
     myHeroIds,
+    testerUserId,
 } = {}) {
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
 
     const params = [];
-    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
+    const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, testerUserId, params });
 
     let paging = '';
     if (offset > 0) {
@@ -601,7 +694,10 @@ export async function getTrainingResults({
             mt.losses,
             mt.rank,
             mt.tested_at,
-            mt.session_id
+            mt.session_id,
+            mt.tester_user_id,
+            mt.tester_name,
+            mt.max_upgrade
          FROM matchup_tests mt
          JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
          ${where}
@@ -617,20 +713,21 @@ export async function getTrainingResultStats({
     comboKey,
     opponentHeroIds,
     myHeroIds,
+    testerUserId,
     topN = 10,
     minWinRate = 90,
     grandArenaMaxResults = 5,
 } = {}) {
     const [allCombos, topMyCombos, topHeroesResult] = await Promise.all([
-        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds: [], minWinRate }),
-        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, minWinRate, limit: topN }),
+        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds: [], testerUserId, minWinRate }),
+        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, testerUserId, minWinRate, limit: topN }),
         (async () => {
             if (!pool) {
                 pool = new Pool({ connectionString: getDatabaseUrl() });
             }
 
             const params = [];
-            const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, params });
+            const where = buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, testerUserId, params });
             params.push(topN);
             const topLimit = `$${params.length}`;
             params.push(minWinRate);
@@ -721,6 +818,7 @@ export async function getOpponentSkipCheck({
                 WHERE best.opponent_combo_id = oc.id
                   AND best.win_rate >= $2
                   AND best.tested_at >= NOW() - ($3::text || ' days')::interval
+                  AND COALESCE(best.max_upgrade, TRUE) = TRUE
                 ORDER BY best.win_rate DESC, best.tested_at DESC
                 LIMIT 1
             ) AS best_match
@@ -729,6 +827,7 @@ export async function getOpponentSkipCheck({
          WHERE oc.combo_key = $1
            AND mt.win_rate >= $2
            AND mt.tested_at >= NOW() - ($3::text || ' days')::interval
+           AND COALESCE(mt.max_upgrade, TRUE) = TRUE
          GROUP BY oc.id, oc.combo_key, oc.opponent_name`,
         [comboKey, minWinRate, String(maxAgeDays)]
     );
