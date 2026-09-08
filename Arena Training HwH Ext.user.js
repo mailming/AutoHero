@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.20
+// @version      1.21
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.20';
+    const EXTENSION_VERSION = '1.21';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -459,8 +459,28 @@
         function buildComboKey(heroIds, pet, banner = 0) {
             const heroes = (Array.isArray(heroIds) ? heroIds : [])
                 .map(Number)
-                .filter((id) => id > 0 && id < 6000);
+                .filter((id) => id > 0 && id < 6000)
+                .slice(0, 5);
             return `${heroes.join(',')}|${Number(pet) || 0}|${Number(banner) || 0}`;
+        }
+
+        function resolveOpponentComboContext(opponentRaw, opponentMeta = {}) {
+            const team = extractOpponentConfig(opponentRaw || opponentMeta.raw || opponentMeta);
+            const heroes = team.hasValidTeam
+                ? team.heroes
+                : (Array.isArray(opponentMeta.heroes) ? opponentMeta.heroes : []).slice(0, 5);
+            const pet = team.pet ?? opponentMeta.pet;
+            const banner = team.banner ?? opponentMeta.banner;
+            const comboKey = heroes.length === 5
+                ? buildComboKey(heroes, pet, banner)
+                : null;
+            return {
+                heroes,
+                pet,
+                banner,
+                comboKey,
+                hasValidTeam: team.hasValidTeam || heroes.length === 5,
+            };
         }
 
         async function fetchUserCounterSkipCheck(comboKey, counterLineup, testerUserId, options = {}) {
@@ -512,6 +532,12 @@
                 minWinRate: String(minWinRate),
                 maxAgeDays: String(maxAgeDays),
             });
+            const opponentHeroIds = options.opponentHeroIds || options.opponentHeroes;
+            if (Array.isArray(opponentHeroIds)) {
+                for (const heroId of opponentHeroIds) {
+                    params.append('opponentHero', String(heroId));
+                }
+            }
 
             try {
                 const res = await fetch(`${BRIDGE_URL}/training/skip-check?${params}`);
@@ -1374,23 +1400,22 @@
                     source,
                     myPlace: opponentsMeta.myPlace,
                     serverId: opponentsMeta.serverId,
-                    list: opponents.map((opp, index) => ({
-                        index,
-                        userId: opp.userId,
-                        name: opp.user?.name || `Opponent ${opp.userId}`,
-                        place: opp.place,
-                        power: opp.power,
-                        heroes: (opp.heroes || [])
-                            .filter((h) => (h?.id || h) < 6000)
-                            .map((h) => h?.id || h),
-                        heroNames: (opp.heroes || [])
-                            .filter((h) => (h?.id || h) < 6000)
-                            .map((h) => heroName(h?.id || h)),
-                        pet: (opp.heroes || []).map((h) => h?.id || h).find((id) => id >= 6000) ?? opp.pet,
-                        banner: opp.banners?.[0]?.id ?? opp.banners?.[0] ?? opp.banner ?? null,
-                        source,
-                        raw: opp,
-                    })),
+                    list: opponents.map((opp, index) => {
+                        const team = extractOpponentConfig(opp);
+                        return {
+                            index,
+                            userId: opp.userId,
+                            name: opp.user?.name || `Opponent ${opp.userId}`,
+                            place: opp.place,
+                            power: opp.power,
+                            heroes: team.heroes,
+                            heroNames: team.heroes.map(heroName),
+                            pet: team.pet,
+                            banner: team.banner,
+                            source,
+                            raw: opp,
+                        };
+                    }),
                 };
                 return opponentsCache.list;
             },
@@ -1448,10 +1473,65 @@
                 let finalUserResult = null;
                 let userTargetMet = false;
 
-                const comboKey = opponentMeta?.heroes?.length === 5
-                    ? buildComboKey(opponentMeta.heroes, opponentMeta.pet, opponentMeta.banner)
-                    : null;
+                const opponentCombo = resolveOpponentComboContext(opponentRaw, opponentMeta);
+                const comboKey = opponentCombo.comboKey;
                 let workflowTesterUserId;
+
+                const tryApplyCachedMaxSkip = (skipInfo, attemptNum) => {
+                    const bestMatch = skipInfo?.bestMatch || skipInfo?.cachedBestMatch;
+                    const shouldSkip = skipInfo?.shouldSkip || skipInfo?.skipped;
+                    if (!shouldSkip || bestMatch?.myHeroIds?.length !== 5) {
+                        if (shouldSkip) {
+                            console.warn(
+                                `[Arena Training] Round ${roundNum} skip-check returned shouldSkip without a valid 5-hero counter`,
+                                skipInfo
+                            );
+                        } else if (comboKey) {
+                            console.log(
+                                `[Arena Training] Round ${roundNum} skip-check — no cached ${trainOptions.skipCacheMinWinRate ?? CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+ max counter for ${comboKey}`
+                            );
+                        }
+                        return null;
+                    }
+
+                    const cachedLineup = counterLineupFromCache(bestMatch);
+                    const cachedKey = candidateKey(cachedLineup);
+                    if (excludeKeys.has(cachedKey)) {
+                        console.log(
+                            `[Arena Training] Round ${roundNum} cached counter excluded (${cachedKey}), searching another max counter`
+                        );
+                        return null;
+                    }
+
+                    const skippedResult = {
+                        skipped: true,
+                        skipReason: 'cached_counter',
+                        attempt: attemptNum,
+                        opponentComboKey: comboKey,
+                        cachedBestWinRate: skipInfo.bestWinRate ?? skipInfo.cachedBestWinRate,
+                        cachedBestMatch: bestMatch,
+                        cachedLastTestedAt: skipInfo.lastTestedAt ?? skipInfo.cachedLastTestedAt,
+                        counterLineup: cachedLineup,
+                        opponent: {
+                            index: opponentMeta.index,
+                            userId: opponentMeta.userId,
+                            name: opponentMeta.name,
+                            place: opponentMeta.place,
+                            power: opponentMeta.power,
+                            source: opponentMeta.source,
+                            metaComboKey: opponentMeta.metaComboKey,
+                            metaPopularity: opponentMeta.metaPopularity,
+                            metaRank: opponentMeta.metaRank,
+                        },
+                        completedAt: new Date().toISOString(),
+                    };
+                    pairAttempts.push({ attempt: attemptNum, type: 'max-cache', result: skippedResult });
+                    if (loopSession) loopSession.rounds.push(skippedResult);
+                    console.log(
+                        `[Arena Training] Round ${roundNum} attempt ${attemptNum} — using cached ${(skipInfo.bestWinRate ?? skipInfo.cachedBestWinRate)?.toFixed?.(1) ?? skipInfo.bestWinRate ?? skipInfo.cachedBestWinRate}% counter`
+                    );
+                    return cachedLineup;
+                };
 
                 while (!stopRequested && (!loopSession || loopRunning)) {
                     attempt++;
@@ -1464,42 +1544,12 @@
                         && trainOptions.skipCachedOpponents !== false
                         && comboKey
                     ) {
-                        const skipInfo = await fetchOpponentSkipCheck(comboKey, trainOptions);
-                        if (skipInfo.shouldSkip && skipInfo.bestMatch?.myHeroIds?.length === 5) {
-                            const cachedLineup = counterLineupFromCache(skipInfo.bestMatch);
-                            const cachedKey = candidateKey(cachedLineup);
-                            if (!excludeKeys.has(cachedKey)) {
-                                counterLineup = cachedLineup;
-                                usedCache = true;
-                                const skippedResult = {
-                                    skipped: true,
-                                    skipReason: 'cached_counter',
-                                    attempt,
-                                    opponentComboKey: comboKey,
-                                    cachedBestWinRate: skipInfo.bestWinRate,
-                                    cachedBestMatch: skipInfo.bestMatch,
-                                    cachedLastTestedAt: skipInfo.lastTestedAt,
-                                    counterLineup,
-                                    opponent: {
-                                        index: opponentMeta.index,
-                                        userId: opponentMeta.userId,
-                                        name: opponentMeta.name,
-                                        place: opponentMeta.place,
-                                        power: opponentMeta.power,
-                                        source: opponentMeta.source,
-                                        metaComboKey: opponentMeta.metaComboKey,
-                                        metaPopularity: opponentMeta.metaPopularity,
-                                        metaRank: opponentMeta.metaRank,
-                                    },
-                                    completedAt: new Date().toISOString(),
-                                };
-                                pairAttempts.push({ attempt, type: 'max-cache', result: skippedResult });
-                                if (loopSession) loopSession.rounds.push(skippedResult);
-                                console.log(
-                                    `[Arena Training] Round ${roundNum} attempt ${attempt} — using cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter`
-                                );
-                            }
-                        }
+                        const skipInfo = await fetchOpponentSkipCheck(comboKey, {
+                            ...trainOptions,
+                            opponentHeroIds: opponentCombo.heroes,
+                        });
+                        counterLineup = tryApplyCachedMaxSkip(skipInfo, attempt);
+                        usedCache = !!counterLineup;
                     }
 
                     if (!counterLineup) {
@@ -1507,7 +1557,10 @@
                         maxResult = await this.runSingle({
                             ...trainOptions,
                             maxUpgrade: true,
-                            skipCachedOpponents: false,
+                            skipCachedOpponents: attempt === 1
+                                ? trainOptions.skipCachedOpponents !== false
+                                : false,
+                            opponentHeroIds: opponentCombo.heroes,
                             excludeCandidateKeys: [...excludeKeys],
                             searchUntilTarget: true,
                             opponentUserId: opponentMeta.userId,
@@ -1519,25 +1572,32 @@
                         pairAttempts.push({ attempt, type: 'max-search', result: maxResult });
                         if (loopSession) loopSession.rounds.push(maxResult);
 
-                        if (trainOptions.saveToBridge !== false) {
-                            const saved = await saveRoundToBridge(maxResult);
-                            if (saved && loopSession) {
-                                loopSession.lastSavedAt = new Date().toISOString();
+                        if (maxResult?.skipped && maxResult.cachedBestMatch?.myHeroIds?.length === 5) {
+                            counterLineup = tryApplyCachedMaxSkip(maxResult, attempt);
+                            usedCache = !!counterLineup;
+                        }
+
+                        if (!counterLineup) {
+                            if (trainOptions.saveToBridge !== false) {
+                                const saved = await saveRoundToBridge(maxResult);
+                                if (saved && loopSession) {
+                                    loopSession.lastSavedAt = new Date().toISOString();
+                                }
                             }
-                        }
 
-                        if (!maxResult.best || maxResult.best.winRate < maxTargetWinRate) {
+                            if (!maxResult.best || maxResult.best.winRate < maxTargetWinRate) {
+                                console.log(
+                                    `[Arena Training] Round ${roundNum} — no further ${maxTargetWinRate}%+ max counter found after ${attempt} attempt(s)`
+                                );
+                                break;
+                            }
+
+                            counterLineup = counterLineupFromBest(maxResult.best);
                             console.log(
-                                `[Arena Training] Round ${roundNum} — no further ${maxTargetWinRate}%+ max counter found after ${attempt} attempt(s)`
+                                `[Arena Training] Round ${roundNum} attempt ${attempt} max — ${maxResult.best.winRate.toFixed(1)}%:`,
+                                maxResult.best.heroNames.join(', ')
                             );
-                            break;
                         }
-
-                        counterLineup = counterLineupFromBest(maxResult.best);
-                        console.log(
-                            `[Arena Training] Round ${roundNum} attempt ${attempt} max — ${maxResult.best.winRate.toFixed(1)}%:`,
-                            maxResult.best.heroNames.join(', ')
-                        );
                     } else if (usedCache) {
                         console.log(
                             `[Arena Training] Round ${roundNum} attempt ${attempt} max — cached ${counterLineup.cachedWinRate?.toFixed?.(1) ?? '?'}%:`,
@@ -1872,18 +1932,21 @@
                 const opponentRaw = resolveOpponentRaw(opponents, options);
                 const opponentMeta = opponents.find((o) => o.raw === opponentRaw)
                     || opponents[options.opponentIndex ?? 0]
-                    || {
-                        index: options.opponentIndex ?? 0,
-                        userId: opponentRaw?.userId,
-                        name: opponentRaw?.user?.name,
-                        place: opponentRaw?.place,
-                        power: opponentRaw?.power,
-                        heroes: extractOpponentConfig(opponentRaw).heroes,
-                        pet: extractOpponentConfig(opponentRaw).pet,
-                        banner: extractOpponentConfig(opponentRaw).banner,
-                        source: opponentRaw?.source || options.opponentSource,
-                        raw: opponentRaw,
-                    };
+                    || (() => {
+                        const team = extractOpponentConfig(opponentRaw);
+                        return {
+                            index: options.opponentIndex ?? 0,
+                            userId: opponentRaw?.userId,
+                            name: opponentRaw?.user?.name,
+                            place: opponentRaw?.place,
+                            power: opponentRaw?.power,
+                            heroes: team.heroes,
+                            pet: team.pet,
+                            banner: team.banner,
+                            source: opponentRaw?.source || options.opponentSource,
+                            raw: opponentRaw,
+                        };
+                    })();
 
                 return this.runCounterPairWorkflow(
                     opponentMeta,
@@ -1946,7 +2009,10 @@
                     );
 
                     if (options.skipCachedOpponents !== false && maxUpgrade) {
-                        const skipInfo = await fetchOpponentSkipCheck(opponentComboKey, options);
+                        const skipInfo = await fetchOpponentSkipCheck(opponentComboKey, {
+                            ...options,
+                            opponentHeroIds: opponentTeam.heroes,
+                        });
                         if (skipInfo.shouldSkip) {
                             const skippedResult = {
                                 sessionId,

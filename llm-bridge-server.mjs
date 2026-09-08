@@ -266,7 +266,13 @@ const server = http.createServer(async (req, res) => {
             }
 
             const minWinRate = Number(url.searchParams.get('minWinRate')) || 90;
-            const skip = await getOpponentSkipCheck({ comboKey, minWinRate, maxAgeDays });
+            const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
+            const skip = await getOpponentSkipCheck({
+                comboKey,
+                opponentHeroIds,
+                minWinRate,
+                maxAgeDays,
+            });
             return sendJson(res, 200, { ok: true, ...skip });
         }
 

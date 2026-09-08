@@ -510,6 +510,48 @@ function normalizeHeroFilterIds(heroIds) {
     )];
 }
 
+function parseComboKey(comboKey) {
+    if (!comboKey || typeof comboKey !== 'string') {
+        return { heroIds: [], pet: 0, banner: 0 };
+    }
+    const [heroesPart = '', petPart = '0', bannerPart = '0'] = comboKey.split('|');
+    const heroIds = heroesPart
+        .split(',')
+        .map((id) => Number(id))
+        .filter((id) => id > 0 && id < 6000);
+    return {
+        heroIds,
+        pet: Number(petPart) || 0,
+        banner: Number(bannerPart) || 0,
+    };
+}
+
+function buildOpponentSetMatchClauses({ heroIds, pet, banner, params, alias = 'oc' }) {
+    const heroes = normalizeHeroFilterIds(heroIds).filter((id) => id < 6000);
+    if (heroes.length !== 5) {
+        return { clauses: [], valid: false };
+    }
+
+    const clauses = [];
+    params.push(heroes);
+    clauses.push(`${alias}.hero_ids @> $${params.length}::int[]`);
+    clauses.push(`cardinality(${alias}.hero_ids) = 5`);
+
+    const petValue = Number(pet) || 0;
+    if (petValue > 0) {
+        params.push(petValue);
+        clauses.push(`${alias}.pet = $${params.length}`);
+    }
+
+    const bannerValue = Number(banner) || 0;
+    if (bannerValue > 0) {
+        params.push(bannerValue);
+        clauses.push(`${alias}.banner = $${params.length}`);
+    }
+
+    return { clauses, valid: true };
+}
+
 function appendComboHeroFilterClauses({ heroIds, heroColumn, petColumn, params }) {
     const ids = normalizeHeroFilterIds(heroIds);
     if (!ids.length) {
@@ -789,6 +831,7 @@ export async function getTrainingResultStats({
 
 export async function getOpponentSkipCheck({
     comboKey,
+    opponentHeroIds,
     minWinRate = 90,
     maxAgeDays = 30,
 } = {}) {
@@ -799,6 +842,28 @@ export async function getOpponentSkipCheck({
     if (!pool) {
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
+
+    const parsed = parseComboKey(comboKey);
+    const explicitHeroIds = normalizeHeroFilterIds(opponentHeroIds).filter((id) => id < 6000);
+    const matchHeroIds = explicitHeroIds.length === 5 ? explicitHeroIds : parsed.heroIds;
+    const params = [];
+    const { clauses, valid } = buildOpponentSetMatchClauses({
+        heroIds: matchHeroIds,
+        pet: parsed.pet,
+        banner: parsed.banner,
+        params,
+    });
+    const opponentWhere = valid
+        ? clauses.join(' AND ')
+        : (() => {
+            params.push(comboKey);
+            return `oc.combo_key = $${params.length}`;
+        })();
+
+    params.push(minWinRate);
+    const minWinRateParam = `$${params.length}`;
+    params.push(String(maxAgeDays));
+    const maxAgeParam = `$${params.length}`;
 
     const result = await pool.query(
         `SELECT
@@ -816,20 +881,20 @@ export async function getOpponentSkipCheck({
                 )
                 FROM matchup_tests best
                 WHERE best.opponent_combo_id = oc.id
-                  AND best.win_rate >= $2
-                  AND best.tested_at >= NOW() - ($3::text || ' days')::interval
+                  AND best.win_rate >= ${minWinRateParam}
+                  AND best.tested_at >= NOW() - (${maxAgeParam}::text || ' days')::interval
                   AND COALESCE(best.max_upgrade, TRUE) = TRUE
                 ORDER BY best.win_rate DESC, best.tested_at DESC
                 LIMIT 1
             ) AS best_match
          FROM opponent_combos oc
          JOIN matchup_tests mt ON mt.opponent_combo_id = oc.id
-         WHERE oc.combo_key = $1
-           AND mt.win_rate >= $2
-           AND mt.tested_at >= NOW() - ($3::text || ' days')::interval
+         WHERE ${opponentWhere}
+           AND mt.win_rate >= ${minWinRateParam}
+           AND mt.tested_at >= NOW() - (${maxAgeParam}::text || ' days')::interval
            AND COALESCE(mt.max_upgrade, TRUE) = TRUE
          GROUP BY oc.id, oc.combo_key, oc.opponent_name`,
-        [comboKey, minWinRate, String(maxAgeDays)]
+        params
     );
 
     const row = result.rows[0];
@@ -881,6 +946,30 @@ export async function getUserCounterSkipCheck({
         pool = new Pool({ connectionString: getDatabaseUrl() });
     }
 
+    const parsed = parseComboKey(comboKey);
+    const params = [];
+    const { clauses, valid } = buildOpponentSetMatchClauses({
+        heroIds: parsed.heroIds,
+        pet: parsed.pet,
+        banner: parsed.banner,
+        params,
+    });
+    const opponentWhere = valid
+        ? clauses.join(' AND ')
+        : (() => {
+            params.push(comboKey);
+            return `oc.combo_key = $${params.length}`;
+        })();
+
+    params.push(String(testerUserId));
+    const testerParam = `$${params.length}`;
+    params.push(heroIds);
+    const myHeroesParam = `$${params.length}`;
+    params.push(pet);
+    const myPetParam = `$${params.length}`;
+    params.push(String(maxAgeDays));
+    const maxAgeParam = `$${params.length}`;
+
     const result = await pool.query(
         `SELECT
             mt.my_hero_ids,
@@ -894,15 +983,15 @@ export async function getUserCounterSkipCheck({
             mt.tester_name
          FROM matchup_tests mt
          JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
-         WHERE oc.combo_key = $1
-           AND mt.tester_user_id = $2
+         WHERE ${opponentWhere}
+           AND mt.tester_user_id = ${testerParam}
            AND COALESCE(mt.max_upgrade, TRUE) = FALSE
-           AND mt.my_hero_ids = $3::int[]
-           AND mt.my_pet = $4
-           AND mt.tested_at >= NOW() - ($5::text || ' days')::interval
+           AND mt.my_hero_ids = ${myHeroesParam}::int[]
+           AND mt.my_pet = ${myPetParam}
+           AND mt.tested_at >= NOW() - (${maxAgeParam}::text || ' days')::interval
          ORDER BY mt.tested_at DESC, mt.id DESC
          LIMIT 1`,
-        [comboKey, String(testerUserId), heroIds, pet, String(maxAgeDays)]
+        params
     );
 
     const row = result.rows[0];
