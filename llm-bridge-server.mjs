@@ -167,7 +167,9 @@ const server = http.createServer(async (req, res) => {
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const limitParam = url.searchParams.get('limit');
             const pageSize = limitParam == null ? 500 : Math.max(0, Number(limitParam) || 0);
-            const filterArgs = { comboKey, opponentHeroIds, myHeroIds, testerUserId };
+            const sort = url.searchParams.get('sort') || 'when';
+            const order = url.searchParams.get('order') || 'desc';
+            const filterArgs = { comboKey, opponentHeroIds, myHeroIds, testerUserId, sort, order };
             const [rows, summary, total, stats, testers] = await Promise.all([
                 getTrainingResults({
                     ...filterArgs,
@@ -191,6 +193,8 @@ const server = http.createServer(async (req, res) => {
                 testerUserId,
                 testers,
                 stats,
+                sort,
+                order,
             }));
         }
 

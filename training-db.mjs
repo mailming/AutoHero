@@ -13,6 +13,15 @@ function getDatabaseUrl() {
     return process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
 }
 
+function createPool() {
+    return new Pool({
+        connectionString: getDatabaseUrl(),
+        max: Number(process.env.PG_POOL_MAX || 20),
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 10_000,
+    });
+}
+
 function maskDatabaseUrl(url) {
     try {
         const parsed = new URL(url);
@@ -322,7 +331,7 @@ async function saveMatchupTests(client, opponentComboId, sessionId, rankings, te
 
 export async function initDatabase() {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const client = await pool.connect();
@@ -342,7 +351,7 @@ export async function initDatabase() {
 
 export async function saveTrainingRound(body) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const fields = extractRoundFields(body);
@@ -454,7 +463,7 @@ export async function saveTrainingRound(body) {
 
 export async function getTrainingSummary() {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const [roundCount, opponentCount, matchupCount, latestMatchup] = await Promise.all([
@@ -573,6 +582,40 @@ function appendComboHeroFilterClauses({ heroIds, heroColumn, petColumn, params }
     return clauses;
 }
 
+const TRAINING_RESULT_SORTS = {
+    list: 'oc.opponent_place',
+    opponent: 'oc.combo_key',
+    label: 'oc.opponent_name',
+    tester: 'COALESCE(mt.tester_name, mt.tester_user_id::text, \'\')',
+    team: "array_to_string(mt.my_hero_ids, ',') || '|' || COALESCE(mt.my_pet::text, '0')",
+    winRate: 'mt.win_rate',
+    record: 'mt.wins',
+    when: 'mt.tested_at',
+};
+
+export function normalizeTrainingResultSort(sort, order) {
+    const sortKey = TRAINING_RESULT_SORTS[sort] ? sort : 'when';
+    const sortOrder = order === 'asc' ? 'asc' : 'desc';
+    return { sort: sortKey, order: sortOrder };
+}
+
+function buildTrainingResultOrderBy(sort = 'when', order = 'desc') {
+    const { sort: sortKey, order: sortOrder } = normalizeTrainingResultSort(sort, order);
+    const column = TRAINING_RESULT_SORTS[sortKey];
+    const direction = sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const nulls = sortOrder === 'asc' ? 'NULLS FIRST' : 'NULLS LAST';
+    const parts = [`${column} ${direction} ${nulls}`];
+
+    if (sortKey === 'record') {
+        parts.push(`mt.losses ${direction} ${nulls}`);
+    }
+    if (sortKey !== 'when') {
+        parts.push('mt.tested_at DESC NULLS LAST');
+    }
+    parts.push('mt.id DESC');
+    return parts.join(', ');
+}
+
 function buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, testerUserId, params }) {
     const clauses = [];
     if (comboKey) {
@@ -604,7 +647,7 @@ function buildTrainingResultWhere({ comboKey, opponentHeroIds, myHeroIds, tester
 
 export async function getTrainingTesters() {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const result = await pool.query(
@@ -633,7 +676,7 @@ export async function getTrainingTesters() {
 
 async function queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, testerUserId, minWinRate, limit } = {}) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const params = [];
@@ -678,7 +721,7 @@ async function queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, testerU
 
 export async function getTrainingResultCount({ comboKey, opponentHeroIds, myHeroIds, testerUserId } = {}) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const params = [];
@@ -702,9 +745,11 @@ export async function getTrainingResults({
     opponentHeroIds,
     myHeroIds,
     testerUserId,
+    sort,
+    order,
 } = {}) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const params = [];
@@ -743,7 +788,7 @@ export async function getTrainingResults({
          FROM matchup_tests mt
          JOIN opponent_combos oc ON oc.id = mt.opponent_combo_id
          ${where}
-         ORDER BY mt.tested_at DESC NULLS LAST, mt.id DESC
+         ORDER BY ${buildTrainingResultOrderBy(sort, order)}
          ${paging}`,
         params
     );
@@ -765,7 +810,7 @@ export async function getTrainingResultStats({
         queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, testerUserId, minWinRate, limit: topN }),
         (async () => {
             if (!pool) {
-                pool = new Pool({ connectionString: getDatabaseUrl() });
+                pool = createPool();
             }
 
             const params = [];
@@ -840,7 +885,7 @@ export async function getOpponentSkipCheck({
     }
 
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const parsed = parseComboKey(comboKey);
@@ -943,7 +988,7 @@ export async function getUserCounterSkipCheck({
     }
 
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const parsed = parseComboKey(comboKey);
@@ -1028,7 +1073,7 @@ export async function getUserCounterSkipCheck({
 
 export async function getMatchups({ comboKey, limit = 50 } = {}) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     if (comboKey) {
@@ -1106,7 +1151,7 @@ export async function getMatchups({ comboKey, limit = 50 } = {}) {
 
 export async function getMetaTeamSnapshots({ limit = 20 } = {}) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const result = await pool.query(
@@ -1141,7 +1186,7 @@ export async function getMetaTeamSnapshots({ limit = 20 } = {}) {
 
 export async function getMetaTeamSnapshotById(snapshotId) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const result = await pool.query(
@@ -1178,7 +1223,7 @@ export async function getMetaTeamSnapshotById(snapshotId) {
 
 export async function getMetaTeamCountForSnapshot(snapshotId) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const result = await pool.query(
@@ -1190,7 +1235,7 @@ export async function getMetaTeamCountForSnapshot(snapshotId) {
 
 export async function getMetaTeamsForSnapshot(snapshotId, { limit, offset = 0 } = {}) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const params = [snapshotId];
@@ -1237,7 +1282,7 @@ export async function getMetaTeamsForSnapshot(snapshotId, { limit, offset = 0 } 
 
 export async function getMetaTeamCandidates({ snapshotId, limit } = {}) {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     let resolvedSnapshotId = snapshotId;
@@ -1308,7 +1353,7 @@ export async function getMetaTeamCandidates({ snapshotId, limit } = {}) {
 
 export async function backfillMatchupsFromRounds() {
     if (!pool) {
-        pool = new Pool({ connectionString: getDatabaseUrl() });
+        pool = createPool();
     }
 
     const legacy = await pool.query(

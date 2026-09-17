@@ -42,7 +42,50 @@ function buildTrainingQueryBase(paging = {}) {
     for (const id of paging.myHeroIds || []) {
         parts.push(`myHero=${encodeURIComponent(id)}`);
     }
+    const sort = paging.sort || 'when';
+    const order = paging.order || 'desc';
+    parts.push(`sort=${encodeURIComponent(sort)}`);
+    parts.push(`order=${encodeURIComponent(order)}`);
     return parts.length ? `${parts.join('&')}&` : '';
+}
+
+const TRAINING_SORT_LABELS = {
+    list: 'arena list rank',
+    opponent: 'opponent team',
+    label: 'label',
+    tester: 'tester',
+    team: 'your team',
+    winRate: 'win rate',
+    record: 'sim record',
+    when: 'date tested',
+};
+
+function buildSortLink(columnKey, paging) {
+    const currentSort = paging.sort || 'when';
+    const currentOrder = paging.order || 'desc';
+    const nextOrder = currentSort === columnKey && currentOrder === 'desc' ? 'asc' : 'desc';
+    const queryBase = buildTrainingQueryBase({ ...paging, sort: columnKey, order: nextOrder });
+    return `/?${queryBase}`;
+}
+
+function renderSortableTh(label, columnKey, paging) {
+    const currentSort = paging.sort || 'when';
+    const currentOrder = paging.order || 'desc';
+    const isActive = currentSort === columnKey;
+    const indicator = isActive ? (currentOrder === 'asc' ? ' ▲' : ' ▼') : '';
+    const ariaSort = isActive ? (currentOrder === 'asc' ? 'ascending' : 'descending') : 'none';
+    return `<th aria-sort="${ariaSort}"><a class="sort-link" href="${buildSortLink(columnKey, paging)}">${escapeHtml(label)}${indicator}</a></th>`;
+}
+
+function renderTestLogLead(paging = {}) {
+    const sort = paging.sort || 'when';
+    const order = paging.order || 'desc';
+    if (sort === 'when' && order === 'desc') {
+        return 'Every saved simulation — one row per opponent and the team you tested against them. Newest first. Click a column header to sort.';
+    }
+    const label = TRAINING_SORT_LABELS[sort] || sort;
+    const direction = order === 'asc' ? 'low to high' : 'high to low';
+    return `Every saved simulation — one row per opponent and the team you tested against them. Sorted by ${label} (${direction}). Click a column header to change sort.`;
 }
 
 function formatTesterLabel(tester) {
@@ -726,6 +769,9 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #243044; vertical-align: top; }
     th { color: #9fb3d1; font-weight: 600; position: sticky; top: 0; background: #151d28; z-index: 1; }
+    th .sort-link { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 2px; }
+    th .sort-link:hover { color: #fff; }
+    th[aria-sort]:not([aria-sort="none"]) .sort-link { color: #9fc5ff; }
     tr:hover td { background: #1a2433; }
     .muted { color: #8b9bb4; font-size: 0.85rem; }
     .win { font-weight: 600; }
@@ -765,7 +811,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     <section class="section" id="results">
       <div class="section-head">
         <h2>Full test log</h2>
-        <p class="section-lead">Every saved simulation — one row per opponent and the team you tested against them. Newest first.</p>
+        <p class="section-lead">${renderTestLogLead(paging)}</p>
       </div>
       <div class="toolbar">
         <span class="status">Rows ${shownFrom}–${shownTo} of ${total}</span>
@@ -777,14 +823,14 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
         <table>
           <thead>
             <tr>
-              <th>List #</th>
-              <th>Opponent team</th>
-              <th>Label</th>
-              <th>Tester</th>
-              <th>Your team</th>
-              <th>Win rate</th>
-              <th>Sim record</th>
-              <th>When</th>
+              ${renderSortableTh('List #', 'list', paging)}
+              ${renderSortableTh('Opponent team', 'opponent', paging)}
+              ${renderSortableTh('Label', 'label', paging)}
+              ${renderSortableTh('Tester', 'tester', paging)}
+              ${renderSortableTh('Your team', 'team', paging)}
+              ${renderSortableTh('Win rate', 'winRate', paging)}
+              ${renderSortableTh('Sim record', 'record', paging)}
+              ${renderSortableTh('When', 'when', paging)}
             </tr>
           </thead>
           <tbody>
