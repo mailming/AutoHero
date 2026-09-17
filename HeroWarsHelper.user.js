@@ -3,7 +3,7 @@
 // @name:en			HeroWarsHelper
 // @name:ru			HeroWarsHelper
 // @namespace		HeroWarsHelper
-// @version			2.376
+// @version			2.454
 // @description		Automation of actions for the game Hero Wars
 // @description:en	Automation of actions for the game Hero Wars
 // @description:ru	Автоматизация действий для игры Хроники Хаоса
@@ -90,6 +90,7 @@
 	function getUserInfo() {
 		return userInfo;
 	}
+	
 	/**
 	 * Original methods for working with AJAX
 	 *
@@ -186,7 +187,11 @@
 	 * Простой расчет боя доступный через консоль
 	 */
 	this.Calc = function (data) {
-		const type = getBattleType(data?.type);
+		const battleType = data?.effects?.battleConfig ?? data?.type;
+		if (data?.effects?.battleConfig) {
+			console.log('config:', battleType, 'type:', data.type);
+		}
+		const type = getBattleType(battleType);
 		return new Promise((resolve, reject) => {
 			try {
 				BattleCalc(data, type, resolve);
@@ -225,6 +230,8 @@
 			ENDLESS_CARDS_TITLE: 'Disable Divination Cards wasting',
 			AUTO_EXPEDITION: 'Auto Expedition',
 			AUTO_EXPEDITION_TITLE: 'Auto-sending expeditions',
+			AUTO_ARENA_TRAINING: 'Auto Arena Training',
+			AUTO_ARENA_TRAINING_TITLE: 'Auto-start arena training loop 1 minute after game load (demo battles, no attempts)',
 			CANCEL_FIGHT: 'Cancel battle',
 			CANCEL_FIGHT_TITLE: 'Ability to cancel manual combat on GW, CoW and Asgard',
 			GIFTS: 'Gifts',
@@ -263,18 +270,11 @@
 			SEER_TITLE: 'Roll the Seer',
 			TOWER: 'Tower',
 			TOWER_TITLE: 'Pass the tower',
-			ARENA: 'Arena',
-			ARENA_TITLE: 'Automatically battle in Arena',
-			GRAND_ARENA: 'Grand Arena',
-			GRAND_ARENA_TITLE: 'Automatically battle in Grand Arena',
-			AUTO_ARENAS: 'Auto Arena & Grand Arena',
-			AUTO_ARENAS_TITLE: 'Automatically battle in both Arena and Grand Arena',
 			EXPEDITIONS: 'Expeditions',
 			EXPEDITIONS_TITLE: 'Sending and collecting expeditions',
 			SYNC: 'Sync',
 			SYNC_TITLE: 'Partial synchronization of game data without reloading the page',
 			ARCHDEMON: 'Archdemon',
-			FURNACE_OF_SOULS: 'Furnace of souls',
 			ARCHDEMON_TITLE: 'Hitting kills and collecting rewards',
 			ESTER_EGGS: 'Easter eggs',
 			ESTER_EGGS_TITLE: 'Collect all Easter eggs or rewards',
@@ -581,7 +581,6 @@
 			SELL_HERO_SOULS: 'Sell ​​souls',
 			SELL_HERO_SOULS_TITLE: 'Exchanges all absolute star hero souls for gold',
 			GOLD_RECEIVED: 'Gold received: {gold}',
-			OPEN_ALL_EQUIP_BOXES: 'Open all Equipment Fragment Box?',
 			SERVER_NOT_ACCEPT: 'The server did not accept the result',
 			INVASION_BOSS_BUFF: 'For {bossLvl} boss need buff {needBuff} you have {haveBuff}',
 			HERO_POWER: 'Hero Power',
@@ -592,6 +591,42 @@
 			BEST_RESULT: 'Best result: {value}%',
 			GUILD_ISLAND_TITLE: 'Fast travel to Guild Island',
 			TITAN_VALLEY_TITLE: 'Fast travel to Titan Valley',
+			EXTENSIONS: 'Extensions',
+			EXTENSIONS_TITLE: 'Extensions for the script',
+			EXTENSIONS_LIST_TITLE: 'Extensions for the script',
+			EVENT_IS_OVER: 'Event is over',
+			SET_COUNT_KILLS: 'Set the number of enemies that need to be killed today:',
+			MORE_ENEMIES_KILLED: 'Already killed more than {countKills} enemies',
+			RESTART_TRY_AGAIN_LATER: 'Restart the game and try again later',
+			ENEMIES_KILLED_AND_HEROES_USED: 'Number of enemies killed: {score}<br>Used {count} heroes',
+			FURNACE_OF_SOULS: 'Furnace',
+			PUMPKINS: 'Pumps',
+			PUMPKINS_TITLE: 'Exchange all Ghost Energy for Spirit Festival Coins',
+			PUMPKINS_RUN: 'Exchange all Ghost Energy for Spirit Festival Coins?',
+			TIDY_INVENTORY: 'Tidy Inventory',
+			TIDY_INVENTORY_TITLE: 'Tidy Inventory',
+			EQUIPMENT_FRAGMENT_CRATES: 'Equipment Fragment Crates',
+			EQUIPMENT_FRAGMENT_CRATES_TITLE: 'Open all equipment fragment crates',
+			RAND_NUGGETS_AND_REGAL: 'Random Crystals and Insignia',
+			RAND_NUGGETS_AND_REGAL_TITLE: 'Open random Crystals and Insignia',
+			ARTIFACT_RESOURCES: 'Artifact Resources',
+			ARTIFACT_RESOURCES_TITLE: 'Open chests with artifact essences, scrolls, metals',
+			USE_KEYBOARD: 'Enter the value using the keyboard',
+			SEERGAME: 'Seer Game',
+			SEERGAME_TITLE: 'Completes main quests for the "Seer Game" event',
+			SEERGAME_MSG:
+				'This script does not allow you to win the game. It only completes the quest of winning 30 times in automatic mode by repeatedly playing the first 6 rounds until it achieves 30 consecutive wins. The probability of completing the quest this way is very high, but not 100%. If you are very unlucky, you may lose coins and fail the quest. Good luck!',
+			SEERGAME_NOT_ENOUGH_COINS_CONTINUE: 'Not enough coins to continue the game in case of a mistake. You can continue playing manually.',
+			SEERGAME_NOT_ENOUGH_COINS_START: 'Not enough coins to start the game',
+			SEERGAME_SUCCESS: 'Success! Continuing the game...',
+			SEERGAME_FAILURE: 'Failure!',
+			SEERGAME_CONTINUE: 'Continuing the game for {cost} coins',
+			SEERGAME_NEW: 'Starting! Coins: {coins}',
+			SEERGAME_START: 'Starting a new game for {cost} coins',
+			SEERGAME_END: 'Ending the game and claiming rewards',
+			SEERGAME_FINISH: 'SeerGame completed, spent {spentCoins} coins',
+			SEERGAME_RESTART: 'Restarting the game...',
+			SEERGAME_PROGRESS: 'Round {round}, Consecutive wins: {streak}',
 		},
 		ru: {
 			/* Чекбоксы */
@@ -601,6 +636,8 @@
 			ENDLESS_CARDS_TITLE: 'Отключить трату карт предсказаний',
 			AUTO_EXPEDITION: 'АвтоЭкспедиции',
 			AUTO_EXPEDITION_TITLE: 'Автоотправка экспедиций',
+			AUTO_ARENA_TRAINING: 'Авто-тренировка арены',
+			AUTO_ARENA_TRAINING_TITLE: 'Автозапуск цикла тренировки арены через 1 минуту после загрузки (демо-бои, без попыток)',
 			CANCEL_FIGHT: 'Отмена боя',
 			CANCEL_FIGHT_TITLE: 'Возможность отмены ручного боя на ВГ, СМ и в Асгарде',
 			GIFTS: 'Подарки',
@@ -639,18 +676,11 @@
 			SEER_TITLE: 'Покрутить Провидца',
 			TOWER: 'Башня',
 			TOWER_TITLE: 'Автопрохождение башни',
-			ARENA: 'Арена',
-			ARENA_TITLE: 'Автоматические бои в Арене',
-			GRAND_ARENA: 'Великая Арена',
-			GRAND_ARENA_TITLE: 'Автоматические бои в Великой Арене',
-			AUTO_ARENAS: 'Авто Арена и Великая Арена',
-			AUTO_ARENAS_TITLE: 'Автоматические бои в обеих аренах',
 			EXPEDITIONS: 'Экспедиции',
 			EXPEDITIONS_TITLE: 'Отправка и сбор экспедиций',
 			SYNC: 'Синхронизация',
 			SYNC_TITLE: 'Частичная синхронизация данных игры без перезагрузки сатраницы',
 			ARCHDEMON: 'Архидемон',
-			FURNACE_OF_SOULS: 'Горнило душ',
 			ARCHDEMON_TITLE: 'Набивает килы и собирает награду',
 			ESTER_EGGS: 'Пасхалки',
 			ESTER_EGGS_TITLE: 'Собрать все пасхалки или награды',
@@ -956,7 +986,6 @@
 			SELL_HERO_SOULS: 'Продать души',
 			SELL_HERO_SOULS_TITLE: 'Обменивает все души героев с абсолютной звездой на золото',
 			GOLD_RECEIVED: 'Получено золота: {gold}',
-			OPEN_ALL_EQUIP_BOXES: 'Открыть все ящики фрагментов экипировки?',
 			SERVER_NOT_ACCEPT: 'Сервер не принял результат',
 			INVASION_BOSS_BUFF: 'Для {bossLvl} босса нужен баф {needBuff} у вас {haveBuff}',
 			HERO_POWER: 'Сила героев',
@@ -967,6 +996,42 @@
 			BEST_RESULT: 'Лучший результат: {value}%',
 			GUILD_ISLAND_TITLE: 'Перейти к Острову гильдии',
 			TITAN_VALLEY_TITLE: 'Перейти к Долине титанов',
+			EXTENSIONS: 'Расширения',
+			EXTENSIONS_TITLE: 'Расширения для скрипта',
+			EXTENSIONS_LIST_TITLE: 'Расширения для скрипта',
+			EVENT_IS_OVER: 'Эвент завершен',
+			SET_COUNT_KILLS: 'Задайте колличество врагов которых необходимо убить сегодня:',
+			MORE_ENEMIES_KILLED: 'Уже убито больше {countKills} врагов',
+			RESTART_TRY_AGAIN_LATER: 'Перезагрузите игру и попробуйте позже',
+			ENEMIES_KILLED_AND_HEROES_USED: 'Количество убитых врагов: {score}<br>Использовано {count} героев',
+			FURNACE_OF_SOULS: 'Горнило',
+			PUMPKINS: 'Тыквы!',
+			PUMPKINS_TITLE: 'Обмен всей Призрачной энергии на Монеты Фестиваля Духов',
+			PUMPKINS_RUN: 'Обменять всю Призрачную энергию на Монеты Фестиваля Духов?',
+			TIDY_INVENTORY: 'Прибрать инвентарь',
+			TIDY_INVENTORY_TITLE: 'Прибрать инвентарь',
+			EQUIPMENT_FRAGMENT_CRATES: 'Ящики фрагментов экипировки',
+			EQUIPMENT_FRAGMENT_CRATES_TITLE: 'Открыть все ящики фрагментов экипировки',
+			RAND_NUGGETS_AND_REGAL: 'Случайные самородки и регалии',
+			RAND_NUGGETS_AND_REGAL_TITLE: 'Открыть случайные самородки и регалии',
+			ARTIFACT_RESOURCES: 'Артефактные ресы',
+			ARTIFACT_RESOURCES_TITLE: 'Открыть сундуки с артефактными эссенсиями, свитакми, металлами',
+			USE_KEYBOARD: 'Введите значение с помощью клавиатуры',
+			SEERGAME: 'Игра Провидицы',
+			SEERGAME_TITLE: 'Выполяет основные квесты для ивента "Игра Провидицы"',
+			SEERGAME_MSG:
+				'Этот скрипт не позволяет выйграть игру, он всего лиш проходит квест победить 30 раз в автоматическом режиме, для этого он проходит первые 6 раундов снова и снова пока не наберет 30 побед подряд. Вероятность выполнить квест таким образом очень высокая, но она не 100%. Если вам сильно не повезет вы можете потерять монеты и не выполнить квест. Удачи!',
+			SEERGAME_NOT_ENOUGH_COINS_CONTINUE: 'Недостаточно монет для продолжения игры в случае ошибки. Вы можете продолжить игру вручную.',
+			SEERGAME_NOT_ENOUGH_COINS_START: 'Недостаточно монет для старта игры',
+			SEERGAME_SUCCESS: 'Успех! Продолжаем игру...',
+			SEERGAME_FAILURE: 'Неудача!',
+			SEERGAME_CONTINUE: 'Продолжаем игру за {cost} монет',
+			SEERGAME_NEW: 'Стартуем! Монеты: {coins}',
+			SEERGAME_START: 'Стартуем новую игру за {cost} монет',
+			SEERGAME_END: 'Завершаем игру и забираем награды',
+			SEERGAME_FINISH: 'SeerGame завершена, потрачено {spentCoins} монет',
+			SEERGAME_RESTART: 'Перезапуск игры...',
+			SEERGAME_PROGRESS: 'Раунд {round}, Побед подряд: {streak}',
 		},
 	};
 	
@@ -997,7 +1062,7 @@
 		}
 		console.warn('Language constant not found', {constant, replace});
 		if (i18nLangData['en'][constant]) {
-			const result = i18nLangData[selectLang][constant];
+			const result = i18nLangData['en'][constant];
 			if (replace) {
 				return result.sprintf(replace);
 			}
@@ -1041,6 +1106,12 @@
 			get label() { return I18N('AUTO_EXPEDITION'); },
 			cbox: null,
 			get title() { return I18N('AUTO_EXPEDITION_TITLE'); },
+			default: false,
+		},
+		autoArenaTraining: {
+			get label() { return I18N('AUTO_ARENA_TRAINING'); },
+			cbox: null,
+			get title() { return I18N('AUTO_ARENA_TRAINING_TITLE'); },
 			default: false,
 		},
 		cancelBattle: {
@@ -1225,13 +1296,21 @@
 	 */
 	const buttons = {
 		getOutland: {
-			get name() { return I18N('TO_DO_EVERYTHING'); },
-			get title() { return I18N('TO_DO_EVERYTHING_TITLE'); },
+			get name() {
+				return I18N('TO_DO_EVERYTHING');
+			},
+			get title() {
+				return I18N('TO_DO_EVERYTHING_TITLE');
+			},
 			onClick: testDoYourBest,
 		},
 		doActions: {
-			get name() { return I18N('ACTIONS'); },
-			get title() { return I18N('ACTIONS_TITLE'); },
+			get name() {
+				return I18N('ACTIONS');
+			},
+			get title() {
+				return I18N('ACTIONS_TITLE');
+			},
 			onClick: async function () {
 				const { actionsPopupButtons } = HWHData;
 				actionsPopupButtons.push({ result: false, isClose: true });
@@ -1242,8 +1321,12 @@
 			},
 		},
 		doOthers: {
-			get name() { return I18N('OTHERS'); },
-			get title() { return I18N('OTHERS_TITLE'); },
+			get name() {
+				return I18N('OTHERS');
+			},
+			get title() {
+				return I18N('OTHERS_TITLE');
+			},
 			onClick: async function () {
 				const { othersPopupButtons } = HWHData;
 				othersPopupButtons.push({ result: false, isClose: true });
@@ -1257,8 +1340,12 @@
 			isCombine: true,
 			combineList: [
 				{
-					get name() { return I18N('TITAN_ARENA'); },
-					get title() { return I18N('TITAN_ARENA_TITLE'); },
+					get name() {
+						return I18N('TITAN_ARENA');
+					},
+					get title() {
+						return I18N('TITAN_ARENA_TITLE');
+					},
 					onClick: function () {
 						confShow(`${I18N('RUN_SCRIPT')} ${I18N('TITAN_ARENA')}?`, testTitanArena);
 					},
@@ -1266,46 +1353,33 @@
 				{
 					name: '>>',
 					onClick: cheats.goTitanValley,
-					get title() { return I18N('TITAN_VALLEY_TITLE'); },
+					get title() {
+						return I18N('TITAN_VALLEY_TITLE');
+					},
 					color: 'green',
 				},
 			],
-		},
-		testArena: {
-			get name() { return I18N('ARENA'); },
-			get title() { return I18N('ARENA_TITLE'); },
-			onClick: function () {
-				confShow(`${I18N('RUN_SCRIPT')} ${I18N('ARENA')}?`, testArena);
-			},
-		},
-		testGrandArena: {
-			get name() { return I18N('GRAND_ARENA'); },
-			get title() { return I18N('GRAND_ARENA_TITLE'); },
-			onClick: function () {
-				confShow(`${I18N('RUN_SCRIPT')} ${I18N('GRAND_ARENA')}?`, testGrandArena);
-			},
-		},
-		testBothArenas: {
-			get name() { return I18N('AUTO_ARENAS'); },
-			get title() { return I18N('AUTO_ARENAS_TITLE'); },
-			onClick: function () {
-				confShow(`${I18N('RUN_SCRIPT')} ${I18N('AUTO_ARENAS')}?`, testBothArenas);
-			},
 		},
 		testDungeon: {
 			isCombine: true,
 			combineList: [
 				{
-					get name() { return I18N('DUNGEON'); },
+					get name() {
+						return I18N('DUNGEON');
+					},
 					onClick: function () {
 						confShow(`${I18N('RUN_SCRIPT')} ${I18N('DUNGEON')}?`, testDungeon);
 					},
-					get title() { return I18N('DUNGEON_TITLE'); },
+					get title() {
+						return I18N('DUNGEON_TITLE');
+					},
 				},
 				{
 					name: '>>',
 					onClick: cheats.goClanIsland,
-					get title() { return I18N('GUILD_ISLAND_TITLE'); },
+					get title() {
+						return I18N('GUILD_ISLAND_TITLE');
+					},
 					color: 'green',
 				},
 			],
@@ -1314,61 +1388,94 @@
 			isCombine: true,
 			combineList: [
 				{
-					get name() { return I18N('ADVENTURE'); },
+					get name() {
+						return I18N('ADVENTURE');
+					},
 					onClick: () => {
 						testAdventure();
 					},
-					get title() { return I18N('ADVENTURE_TITLE'); },
+					get title() {
+						return I18N('ADVENTURE_TITLE');
+					},
 				},
 				{
-					get name() { return I18N('AUTO_RAID_ADVENTURE'); },
-					onClick: autoRaidAdventure,
-					get title() { return I18N('AUTO_RAID_ADVENTURE_TITLE'); },
+					get name() {
+						return I18N('AUTO_RAID_ADVENTURE');
+					},
+					onClick: () => {
+						autoRaidAdventure();
+					},
+					get title() {
+						return I18N('AUTO_RAID_ADVENTURE_TITLE');
+					},
+					color: 'red',
 				},
 				{
 					name: '>>',
 					onClick: cheats.goSanctuary,
-					get title() { return I18N('SANCTUARY_TITLE'); },
+					get title() {
+						return I18N('SANCTUARY_TITLE');
+					},
 					color: 'green',
 				},
 			],
 		},
 		rewardsAndMailFarm: {
-			get name() { return I18N('REWARDS_AND_MAIL'); },
-			get title() { return I18N('REWARDS_AND_MAIL_TITLE'); },
+			get name() {
+				return I18N('REWARDS_AND_MAIL');
+			},
+			get title() {
+				return I18N('REWARDS_AND_MAIL_TITLE');
+			},
 			onClick: function () {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('REWARDS_AND_MAIL')}?`, rewardsAndMailFarm);
 			},
 		},
 		goToClanWar: {
-			get name() { return I18N('GUILD_WAR'); },
-			get title() { return I18N('GUILD_WAR_TITLE'); },
+			get name() {
+				return I18N('GUILD_WAR');
+			},
+			get title() {
+				return I18N('GUILD_WAR_TITLE');
+			},
 			onClick: cheats.goClanWar,
 			dot: true,
 		},
 		dailyQuests: {
-			get name() { return I18N('DAILY_QUESTS'); },
-			get title() { return I18N('DAILY_QUESTS_TITLE'); },
+			get name() {
+				return I18N('DAILY_QUESTS');
+			},
+			get title() {
+				return I18N('DAILY_QUESTS_TITLE');
+			},
 			onClick: async function () {
 				const quests = new dailyQuests(
 					() => {},
 					() => {}
 				);
-				await quests.autoInit(true);
+				await quests.autoInit();
 				quests.start();
 			},
 		},
 		newDay: {
-			get name() { return I18N('SYNC'); },
-			get title() { return I18N('SYNC_TITLE'); },
+			get name() {
+				return I18N('SYNC');
+			},
+			get title() {
+				return I18N('SYNC_TITLE');
+			},
 			onClick: function () {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('SYNC')}?`, cheats.refreshGame);
 			},
 		},
 		// Архидемон
 		bossRatingEventDemon: {
-			get name() { return I18N('ARCHDEMON'); },
-			get title() { return I18N('ARCHDEMON_TITLE'); },
+			get name() {
+				return I18N('ARCHDEMON');
+			},
+			get title() {
+				return I18N('ARCHDEMON_TITLE');
+			},
 			onClick: function () {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('ARCHDEMON')}?`, bossRatingEvent);
 			},
@@ -1377,12 +1484,76 @@
 		},
 		// Горнило душ
 		bossRatingEventSouls: {
-			get name() { return I18N('FURNACE_OF_SOULS'); },
-			get title() { return I18N('ARCHDEMON_TITLE'); },
-			onClick: function () {
-				confShow(`${I18N('RUN_SCRIPT')} ${I18N('FURNACE_OF_SOULS')}?`, bossRatingEventSouls);
-			},
+			isCombine: true,
 			hide: true,
+			combineList: [
+				{
+					get name() {
+						return I18N('FURNACE_OF_SOULS');
+					},
+					get title() {
+						return I18N('ARCHDEMON_TITLE');
+					},
+					onClick: function () {
+						bossRatingEventSouls();
+					},
+					color: 'orange',
+				},
+				{
+					get name() {
+						return I18N('PUMPKINS');
+					},
+					get title() {
+						return I18N('PUMPKINS_TITLE');
+					},
+					onClick: function () {
+						confShow(I18N('PUMPKINS_RUN'), async () => {
+							const coins = (
+								await Caller.send(
+									[...Array(Math.floor((await Caller.send('inventoryGet').then((e) => e.coin[22])) / 250))].map(() => ({
+										name: 'lootBoxBuy',
+										args: { box: 'boxHalloween2025', offerId: 2035, price: 'openCoin' },
+									}))
+								).then((e) => e.map((n) => n[0]).filter((r) => r?.coin && r.coin[23]))
+							).length;
+							confShow(`${I18N('RECEIVED')} ${coins} ${cheats.translate('LIB_COIN_NAME_23')}`);
+							cheats.refreshInventory();
+						});
+					},
+					color: 'green',
+				},
+			],
+		},
+		extensions: {
+			get name() {
+				return I18N('EXTENSIONS');
+			},
+			get title() {
+				return I18N('EXTENSIONS_TITLE');
+			},
+			onClick: function () {
+				popup.customPopup(async (complete) => {
+					const selectLang = getLang();
+					const response = await fetch(`https://zingery.ru/heroes/ext.php?lang=${selectLang}`);
+					const html = await response.text();
+					const blob = new Blob([html], { type: 'text/html' });
+					const url = URL.createObjectURL(blob);
+					popup.custom.insertAdjacentHTML(
+						'beforeend',
+						`<iframe src="${url}" 
+								width="500px" 
+								height="500px" 
+								frameborder="0">
+						</iframe>`
+					);
+					popup.setMsgText(I18N('EXTENSIONS_LIST_TITLE'));
+					popup.addButton({ isClose: true }, () => {
+						complete(false);
+						popup.hide();
+					});
+					popup.show();
+				});
+			},
 			color: 'red',
 		},
 	};
@@ -1395,109 +1566,135 @@
 	const actionsPopupButtons = [
 		{
 			get msg() {
-				return I18N('OUTLAND')
+				return I18N('TIDY_INVENTORY');
 			},
-			result: function () {
+			async result() {
+				const { InventoryTidier } = HWHClasses;
+				await new InventoryTidier().run();
+			},
+			get title() {
+				return I18N('TIDY_INVENTORY_TITLE');
+			},
+			color: 'orange',
+		},
+		{
+			get msg() {
+				return I18N('OUTLAND');
+			},
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('OUTLAND')}?`, getOutland);
 			},
 			get title() {
 				return I18N('OUTLAND_TITLE');
 			},
+			color: 'green',
+			isOneSocket: true,
 		},
 		{
 			get msg() {
-				return I18N('TOWER')
+				return I18N('TOWER');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('TOWER')}?`, testTower);
 			},
 			get title() {
 				return I18N('TOWER_TITLE');
 			},
+			color: 'graphite',
 		},
 		{
 			get msg() {
-				return I18N('EXPEDITIONS')
+				return I18N('EXPEDITIONS');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('EXPEDITIONS')}?`, checkExpedition);
 			},
 			get title() {
 				return I18N('EXPEDITIONS_TITLE');
 			},
+			color: 'blue',
 		},
 		{
 			get msg() {
-				return I18N('MINIONS')
+				return I18N('MINIONS');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('MINIONS')}?`, testRaidNodes);
 			},
 			get title() {
 				return I18N('MINIONS_TITLE');
 			},
+			color: 'red',
 		},
 		{
 			get msg() {
-				return I18N('ESTER_EGGS')
+				return I18N('ESTER_EGGS');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('ESTER_EGGS')}?`, offerFarmAllReward);
 			},
 			get title() {
 				return I18N('ESTER_EGGS_TITLE');
 			},
+			color: 'yellow',
 		},
 		{
 			get msg() {
-				return I18N('STORM')
+				return I18N('STORM');
 			},
-			result: function () {
+			result() {
 				testAdventure('solo');
 			},
 			get title() {
 				return I18N('STORM_TITLE');
 			},
+			color: 'indigo',
 		},
 		{
 			get msg() {
-				return I18N('REWARDS')
+				return I18N('REWARDS');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('REWARDS')}?`, questAllFarm);
 			},
 			get title() {
 				return I18N('REWARDS_TITLE');
 			},
+			color: 'orange',
 		},
 		{
 			get msg() {
-				return I18N('MAIL')
+				return I18N('MAIL');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('MAIL')}?`, mailGetAll);
 			},
 			get title() {
 				return I18N('MAIL_TITLE');
 			},
+			color: 'beige',
 		},
 		{
 			get msg() {
-				return I18N('SEER')
+				return I18N('SEER');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('SEER')}?`, rollAscension);
 			},
 			get title() {
 				return I18N('SEER_TITLE');
 			},
+			color: 'violet',
 		},
 		// {
 		// 	get msg() {
-		// 		return I18N('NY_GIFTS')
+		// 		return I18N('NY_GIFTS');
 		// 	},
 		// 	result: getGiftNewYear,
-		// 	get title() { return I18N('NY_GIFTS_TITLE'); },
+		// 	get title() {
+		// 		return I18N('NY_GIFTS_TITLE');
+		// 	},
+		// 	color: 'pink',
 		// },
 	];
 	
@@ -1509,65 +1706,72 @@
 	const othersPopupButtons = [
 		{
 			get msg() {
-				return I18N('GET_ENERGY')
+				return I18N('GET_ENERGY');
 			},
 			result: farmStamina,
 			get title() {
 				return I18N('GET_ENERGY_TITLE');
 			},
+			color: 'green',
+			isOneSocket: true,
 		},
 		{
 			get msg() {
-				return I18N('ITEM_EXCHANGE')
+				return I18N('ITEM_EXCHANGE');
 			},
 			result: fillActive,
 			get title() {
 				return I18N('ITEM_EXCHANGE_TITLE');
 			},
+			color: 'beige',
 		},
 		{
 			get msg() {
-				return I18N('BUY_SOULS')
+				return I18N('BUY_SOULS');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('BUY_SOULS')}?`, buyHeroFragments);
 			},
 			get title() {
 				return I18N('BUY_SOULS_TITLE');
 			},
+			color: 'violet',
 		},
 		{
 			get msg() {
-				return I18N('BUY_FOR_GOLD')
+				return I18N('BUY_FOR_GOLD');
 			},
-			result: function () {
+			result() {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('BUY_FOR_GOLD')}?`, buyInStoreForGold);
 			},
 			get title() {
 				return I18N('BUY_FOR_GOLD_TITLE');
 			},
+			color: 'yellow',
 		},
 		{
 			get msg() {
-				return I18N('BUY_OUTLAND')
+				return I18N('BUY_OUTLAND');
 			},
 			result: bossOpenChestPay,
 			get title() {
 				return I18N('BUY_OUTLAND_TITLE');
 			},
+			color: 'orange',
 		},
 		{
 			get msg() {
-				return I18N('CLAN_STAT')
+				return I18N('CLAN_STAT');
 			},
 			result: clanStatistic,
 			get title() {
 				return I18N('CLAN_STAT_TITLE');
 			},
+			color: 'blue',
 		},
 		{
 			get msg() {
-				return I18N('EPIC_BRAWL')
+				return I18N('EPIC_BRAWL');
 			},
 			result: async function () {
 				confShow(`${I18N('RUN_SCRIPT')} ${I18N('EPIC_BRAWL')}?`, () => {
@@ -1578,78 +1782,87 @@
 			get title() {
 				return I18N('EPIC_BRAWL_TITLE');
 			},
+			color: 'red',
 		},
 		{
 			get msg() {
-				return I18N('ARTIFACTS_UPGRADE')
+				return I18N('ARTIFACTS_UPGRADE');
 			},
 			result: updateArtifacts,
 			get title() {
 				return I18N('ARTIFACTS_UPGRADE_TITLE');
 			},
+			color: 'indigo',
 		},
 		{
 			get msg() {
-				return I18N('SKINS_UPGRADE')
+				return I18N('SKINS_UPGRADE');
 			},
 			result: updateSkins,
 			get title() {
 				return I18N('SKINS_UPGRADE_TITLE');
 			},
+			color: 'pink',
 		},
 		{
 			get msg() {
-				return I18N('SEASON_REWARD')
+				return I18N('SEASON_REWARD');
 			},
 			result: farmBattlePass,
 			get title() {
 				return I18N('SEASON_REWARD_TITLE');
 			},
+			color: 'graphite',
 		},
 		{
 			get msg() {
-				return I18N('SELL_HERO_SOULS')
+				return I18N('SELL_HERO_SOULS');
 			},
 			result: sellHeroSoulsForGold,
 			get title() {
 				return I18N('SELL_HERO_SOULS_TITLE');
 			},
+			color: 'brown',
 		},
 		{
 			get msg() {
-				return I18N('CHANGE_MAP')
+				return I18N('CHANGE_MAP');
 			},
 			result: async function () {
 				const maps = Object.values(lib.data.seasonAdventure.list)
-					.filter((e) => e.map.cells.length > 3)
+					.filter((e) => e.startCondition.time.value + e.duration > Date.now() / 1000)
 					.map((i) => ({
 						msg: I18N('MAP_NUM', { num: i.id }),
 						result: i.id,
 					}));
 	
+				maps.push({
+					msg: I18N('MAP_NUM', { num: 'online' }),
+					result: 'online',
+				});
+	
 				const result = await popup.confirm(I18N('SELECT_ISLAND_MAP'), [...maps, { result: false, isClose: true }]);
 				if (result) {
-					cheats.changeIslandMap(result);
+					if (result === 'online') {
+						window.open('https://hwmap.online/', '_blank');
+					} else {
+						cheats.changeIslandMap(result);
+					}
 				}
 			},
 			get title() {
 				return I18N('CHANGE_MAP_TITLE');
 			},
+			color: 'blue',
 		},
 		{
 			get msg() {
-				return I18N('HERO_POWER')
+				return I18N('HERO_POWER');
 			},
 			result: async () => {
-				const calls = ['userGetInfo', 'heroGetAll'].map((name) => ({
-					name,
-					args: {},
-					ident: name,
-				}));
-				const [maxHeroSumPower, heroSumPower] = await Send({ calls }).then((e) => [
-					e.results[0].result.response.maxSumPower.heroes,
-					Object.values(e.results[1].result.response).reduce((a, e) => a + e.power, 0),
-				]);
+				const [userGetInfo, heroGetAll] = await Caller.send(['userGetInfo', 'heroGetAll']);
+				const maxHeroSumPower = userGetInfo.maxSumPower.heroes;
+				const heroSumPower = Object.values(heroGetAll).reduce((a, e) => a + e.power, 0);
 				const power = maxHeroSumPower - heroSumPower;
 				let msg =
 					I18N('MAX_POWER_REACHED', { power: maxHeroSumPower.toLocaleString() }) +
@@ -1657,11 +1870,32 @@
 					I18N('CURRENT_POWER', { power: heroSumPower.toLocaleString() }) +
 					'<br>' +
 					I18N('POWER_TO_MAX', { power: power.toLocaleString(), color: power >= 4000 ? 'green' : 'red' });
-				await popup.confirm(msg, [{ msg: I18N('BTN_OK'), result: 0 }]);
+				await popup.confirm(msg, [{ msg: I18N('BTN_OK'), result: 0, color: 'green' }]);
 			},
 			get title() {
 				return I18N('HERO_POWER_TITLE');
 			},
+			color: 'green',
+		},
+		{
+			get msg() {
+				return I18N('SEERGAME');
+			},
+			result: async () => {
+				const message = I18N('SEERGAME_MSG');
+				const result = await popup.confirm(message, [
+					{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red' },
+					{ msg: I18N('BTN_DO_IT'), result: true, color: 'green' },
+				]);
+				if (result) {
+					const { SeerGame } = this.HWHClasses;
+					new SeerGame().start();
+				}
+			},
+			get title() {
+				return I18N('SEERGAME_TITLE');
+			},
+			color: 'violet',
 		},
 	];
 	/**
@@ -1760,6 +1994,31 @@
 		300: { buff: 35, pet: 6005, heroes: [55, 58, 63, 43, 51], favor: { 43: 6006, 51: 6006, 55: 6005, 58: 6005, 63: 6000 }, timer: 40.13671886177282 },
 		//300: { buff: 70, pet: 6005, heroes: [55, 58, 63, 48, 51], favor: {48: 6005, 51: 6006, 55: 6007, 58: 6008, 63: 6009}, timer: 54.755859550678494 }
 	};
+	this.getInvasionBosses = (() => {
+		let cache = null;
+	
+		return function () {
+			if (cache) {
+				return cache;
+			}
+			const libInvasion = lib.data.invasion;
+			const now = Date.now() / 1000;
+			const phase = Object.values(libInvasion.phase).find((e) => e.startDate < now && e.endDate > now);
+			const invasionId = phase.invasionId;
+	
+			const chapterIds = new Set(
+				Object.values(libInvasion.chapter)
+					.filter((c) => c.invasionId === invasionId)
+					.map((c) => c.id)
+			);
+			const result = Object.values(libInvasion.phase)
+				.filter((p) => chapterIds.has(p.chapterId))
+				.reduce((acc, p) => Object.assign(acc, p.phaseData.boss), {});
+	
+			cache = result;
+			return result;
+		};
+	})();
 	/**
 	 * The name of the function of the beginning of the battle
 	 *
@@ -1814,18 +2073,7 @@
 	 * Ответ на последний вопрос викторины
 	 */
 	let lastAnswer = null;
-	/**
-	 * Flag for opening keys or titan artifact spheres
-	 *
-	 * Флаг открытия ключей или сфер артефактов титанов
-	 */
-	let artifactChestOpen = false;
-	/**
-	 * The name of the function to open keys or orbs of titan artifacts
-	 *
-	 * Имя функции открытия ключей или сфер артефактов титанов
-	 */
-	let artifactChestOpenCallName = '';
+	
 	let correctShowOpenArtifact = 0;
 	/**
 	 * Data for the last battle in the dungeon
@@ -1921,14 +2169,12 @@
 		noCallback = noCallback || (() => {});
 		if (yesCallback) {
 			buts = [
-				{ msg: I18N('BTN_RUN'), result: true},
-				{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true},
+				{ msg: I18N('BTN_RUN'), result: true, color: 'green'},
+				{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red'},
 			]
 		} else {
 			yesCallback = () => {};
-			buts = [
-				{ msg: I18N('BTN_OK'), result: true},
-			];
+			buts = [{ msg: I18N('BTN_OK'), result: true, color: 'green' }];
 		}
 		popup.confirm(message, buts).then((e) => {
 			// dialogPromice = null;
@@ -1948,15 +2194,28 @@
 		if (!this.isSetOnMessage) {
 			const oldOnmessage = this.onmessage;
 			this.onmessage = function (event) {
+				let parsedData = null;
+				let messageType = null;
+	
 				try {
-					const data = JSON.parse(event.data);
-					if (!this.isWebSocketLogin && data.result.type == "iframeEvent.login") {
+					parsedData = JSON.parse(event.data);
+					messageType = parsedData?.result?.type;
+				} catch (e) {}
+	
+				if (parsedData) {
+					if (!this.isWebSocketLogin && messageType === 'iframeEvent.login') {
 						this.isWebSocketLogin = true;
-					} else if (data.result.type == "iframeEvent.login") {
+					} else if (messageType === 'iframeEvent.login') {
 						return;
 					}
-				} catch (e) { }
-				return oldOnmessage.apply(this, arguments);
+				}
+	
+				// Вызов обработчиков
+				Events.emit('WSMessage', messageType, parsedData?.result, event);
+	
+				if (typeof oldOnmessage === 'function') {
+					return oldOnmessage.apply(this, arguments);
+				}
 			}
 			this.isSetOnMessage = true;
 		}
@@ -2059,13 +2318,12 @@
 				if (isChecked('dailyQuests')) {
 					testDailyQuests();
 				}
-
-				// Auto run Do All function with all tasks checked
-				testDoYourBest();
-
+	
 				if (isChecked('buyForGold')) {
 					buyInStoreForGold();
 				}
+	
+				Events.emit('startGame', this);
 			}
 			/**
 			 * Outgoing request data processing
@@ -2178,8 +2436,8 @@
 			const showMsg = async function (msg, ansF, ansS) {
 				if (typeof popup == 'object') {
 					return await popup.confirm(msg, [
-						{msg: ansF, result: false},
-						{msg: ansS, result: true},
+						{ msg: ansF, result: false, color: 'green' },
+						{ msg: ansS, result: true, color: 'red' },
 					]);
 				} else {
 					return !confirm(`${msg}\n ${ansF} (${I18N('BTN_OK')})\n ${ansS} (${I18N('BTN_CANCEL')})`);
@@ -2192,48 +2450,48 @@
 			 */
 			const showMsgs = async function (msg, ansF, ansS, ansT) {
 				return await popup.confirm(msg, [
-					{msg: ansF, result: 0},
-					{msg: ansS, result: 1},
-					{msg: ansT, result: 2},
+					{ msg: ansF, result: 0, color: 'green' },
+					{ msg: ansS, result: 1, color: 'red' },
+					{ msg: ansT, result: 2 },
 				]);
 			}
 	
-			let changeRequest = false;
+			this._isChangeRequest = false;
 			const testData = JSON.parse(tempData);
 			for (const call of testData.calls) {
-				if (!artifactChestOpen) {
-					requestHistory[this.uniqid].calls[call.name] = call.ident;
-				}
+				requestHistory[this.uniqid].calls[call.name] = call.ident;
 				/**
 				 * Cancellation of the battle in adventures, on VG and with minions of Asgard
 				 * Отмена боя в приключениях, на ВГ и с прислужниками Асгарда
 				 */
-				if ((call.name == 'adventure_endBattle' ||
-					call.name == 'adventureSolo_endBattle' ||
-					call.name == 'clanWarEndBattle' &&
-					isChecked('cancelBattle') ||
-					call.name == 'crossClanWar_endBattle' &&
-					isChecked('cancelBattle') ||
-					call.name == 'brawl_endBattle' ||
-					call.name == 'towerEndBattle' ||
-					call.name == 'invasion_bossEnd' ||
-					call.name == 'titanArenaEndBattle' ||
-					call.name == 'bossEndBattle' ||
-					call.name == 'clanRaid_endNodeBattle') &&
-					isCancalBattle) {
+				if (
+					(call.name == 'adventure_endBattle' ||
+						call.name == 'adventureSolo_endBattle' ||
+						(call.name == 'clanWarEndBattle' && isChecked('cancelBattle')) ||
+						(call.name == 'crossClanWar_endBattle' && isChecked('cancelBattle')) ||
+						call.name == 'brawl_endBattle' ||
+						call.name == 'towerEndBattle' ||
+						call.name == 'invasion_bossEnd' ||
+						call.name == 'titanArenaEndBattle' ||
+						call.name == 'bossEndBattle' ||
+						call.name == 'clanRaid_endNodeBattle') &&
+					isCancalBattle
+				) {
 					nameFuncEndBattle = call.name;
 	
-					if (isChecked('tryFixIt_v2') &&
+					if (
+						isChecked('tryFixIt_v2') &&
 						!call.args.result.win &&
 						(call.name == 'brawl_endBattle' ||
-						//call.name == 'crossClanWar_endBattle' ||
-						call.name == 'epicBrawl_endBattle' ||
-						//call.name == 'clanWarEndBattle' ||
-						call.name == 'adventure_endBattle' ||
-						// call.name == 'titanArenaEndBattle' ||
-						call.name == 'bossEndBattle' ||
-						call.name == 'adventureSolo_endBattle') &&
-						lastBattleInfo) {
+							//call.name == 'crossClanWar_endBattle' ||
+							call.name == 'epicBrawl_endBattle' ||
+							//call.name == 'clanWarEndBattle' ||
+							call.name == 'adventure_endBattle' ||
+							// call.name == 'titanArenaEndBattle' ||
+							call.name == 'bossEndBattle' ||
+							call.name == 'adventureSolo_endBattle') &&
+						lastBattleInfo
+					) {
 						const noFixWin = call.name == 'clanWarEndBattle' || call.name == 'crossClanWar_endBattle';
 						const cloneBattle = structuredClone(lastBattleInfo);
 						lastBattleInfo = null;
@@ -2250,17 +2508,17 @@
 							if (result.result?.win) {
 								call.args.result = result.result;
 								call.args.progress = result.progress;
-								changeRequest = true;
+								this._isChangeRequest = true;
 							} else if (result.value > 0) {
 								if (
 									await popup.confirm(I18N('DEFEAT') + '<br>' + I18N('BEST_RESULT', { value: result.value }), [
-										{ msg: I18N('BTN_CANCEL'), result: 0 },
-										{ msg: I18N('BTN_ACCEPT'), result: 1 },
+										{ msg: I18N('BTN_CANCEL'), result: 0, color: 'red' },
+										{ msg: I18N('BTN_ACCEPT'), result: 1, color: 'geeen' },
 									])
 								) {
 									call.args.result = result.result;
 									call.args.progress = result.progress;
-									changeRequest = true;
+									this._isChangeRequest = true;
 								}
 							}
 						} catch (error) {
@@ -2268,21 +2526,29 @@
 						}
 					}
 	
-					if (isChecked('tryFixIt_v2') && !call.args.result.win && call.name == 'invasion_bossEnd' && lastBattleInfo) {
-						setProgress(I18N('LETS_FIX'), false);
+					if (call.name == 'invasion_bossEnd' && lastBattleInfo) {
 						const cloneBattle = structuredClone(lastBattleInfo);
-						const bFix = new WinFixBattle(cloneBattle);
-						const result = await bFix.start(cloneBattle.endTime, 500);
-						console.log(result);
-						let msgResult = I18N('DEFEAT');
-						if (result.result?.win) {
-							call.args.result = result.result;
-							call.args.progress = result.progress;
-							msgResult = I18N('VICTORY');
-							changeRequest = true;
+						let result = null;
+						const defId = cloneBattle?.defenders?.[0]?.[1]?.id;
+						if (!call.args.result.win && isChecked('tryFixIt_v2') && defId != 2010) {
+							setProgress(I18N('LETS_FIX'), false);
+							const bFix = new WinFixBattle(cloneBattle);
+							result = await bFix.start(cloneBattle.endTime, 500);
+							console.log(result);
+							let msgResult = I18N('DEFEAT');
+							if (result.result?.win) {
+								call.args.result = result.result;
+								call.args.progress = result.progress;
+								msgResult = I18N('VICTORY');
+								this._isChangeRequest = true;
+							}
+							setProgress(msgResult, false, hideProgress);
 						}
-						setProgress(msgResult, false, hideProgress);
-						if (lastBattleInfo.seed === 8888) {
+						const bosses = getInvasionBosses();
+						if (bosses[call.args.id]?.isMainBoss) {
+							if (!result) {
+								result = await Calc(cloneBattle);
+							}
 							let timer = result.battleTimer;
 							const period = Math.ceil((Date.now() - lastBossBattleStart) / 1000);
 							console.log(timer, period);
@@ -2306,7 +2572,7 @@
 							resultPopup = await showMsgs(I18N('MSG_HAVE_BEEN_DEFEATED'), I18N('BTN_OK'), I18N('BTN_CANCEL'), I18N('BTN_AUTO'));
 						} else if (call.name == 'clanWarEndBattle' || call.name == 'crossClanWar_endBattle') {
 							resultPopup = await showMsg(I18N('MSG_HAVE_BEEN_DEFEATED'), I18N('BTN_OK'), I18N('BTN_AUTO_F5'));
-						} else if (call.name !== 'epicBrawl_endBattle' && call.name !== 'titanArenaEndBattle') {
+						} else if (call.name !== 'epicBrawl_endBattle' && call.name !== 'invasion_bossEnd' && call.name !== 'titanArenaEndBattle') {
 							resultPopup = await showMsg(I18N('MSG_HAVE_BEEN_DEFEATED'), I18N('BTN_OK'), I18N('BTN_CANCEL'));
 						}
 						if (resultPopup) {
@@ -2315,7 +2581,7 @@
 							}
 							fixBattle(call.args.progress[0].attackers.heroes);
 							fixBattle(call.args.progress[0].defenders.heroes);
-							changeRequest = true;
+							this._isChangeRequest = true;
 							if (resultPopup > 1) {
 								this.onReadySuccess = testAutoBattle;
 								// setTimeout(bossBattle, 1000);
@@ -2326,7 +2592,7 @@
 						if (resultPopup) {
 							fixBattle(call.args.progress[0].attackers.heroes);
 							fixBattle(call.args.progress[0].defenders.heroes);
-							changeRequest = true;
+							this._isChangeRequest = true;
 							if (resultPopup > 1) {
 								this.onReadySuccess = testAutoBattle;
 							}
@@ -2336,9 +2602,9 @@
 					if (isChecked('autoBrawls') && !HWHClasses.executeBrawls.isBrawlsAutoStart && call.name == 'brawl_endBattle') {
 					}
 				}
-				/** 
+				/**
 				 * Save pack for Brawls
-				 * 
+				 *
 				 * Сохраняем пачку для потасовок
 				 */
 				if (isChecked('autoBrawls') && !HWHClasses.executeBrawls.isBrawlsAutoStart && call.name == 'brawl_startBattle') {
@@ -2348,8 +2614,8 @@
 						await popup.confirm(
 							I18N('START_AUTO_BRAWLS'),
 							[
-								{ msg: I18N('BTN_NO'), result: false },
-								{ msg: I18N('BTN_YES'), result: true },
+								{ msg: I18N('BTN_NO'), result: false, color: 'red' },
+								{ msg: I18N('BTN_YES'), result: true, color: 'green' },
 							],
 							[
 								{
@@ -2386,7 +2652,7 @@
 					const resultPopup = await popup.confirm(
 						`${I18N('MSG_YOU_APPLIED')} ${lastDamage.toLocaleString()} ${I18N('MSG_DAMAGE')}.`,
 						[
-							{ msg: I18N('BTN_OK'), result: false },
+							{ msg: I18N('BTN_OK'), result: false, color: 'green' },
 							{ msg: I18N('BTN_AUTO_F5'), result: 1 },
 							//{ msg: I18N('BTN_TRY_FIX_IT'), result: 2 },
 							...testFunc,
@@ -2394,7 +2660,9 @@
 						[
 							{
 								name: 'isStat',
-								get label() { return I18N('CALC_STAT'); },
+								get label() {
+									return I18N('CALC_STAT');
+								},
 								checked: false,
 							},
 						]
@@ -2458,7 +2726,7 @@
 							fixBattle(call.args.progress[0].attackers.heroes);
 							fixBattle(call.args.progress[0].defenders.heroes);
 						}
-						changeRequest = true;
+						this._isChangeRequest = true;
 					}
 					const isStat = popup.getCheckBoxes().find((e) => e.name === 'isStat');
 					if (isStat.checked) {
@@ -2474,7 +2742,7 @@
 				}
 				/**
 				 * Saving the request to start the last battle
-				 * Сохранение запроса начала последнего боя 
+				 * Сохранение запроса начала последнего боя
 				 */
 				if (
 					call.name == 'clanWarAttack' ||
@@ -2490,13 +2758,16 @@
 	
 					if (call.name == 'invasion_bossStart') {
 						const { invasionInfo } = HWHData;
-						console.log(invasionInfo.bossLvl, JSON.stringify({
-							buff: invasionInfo.buff,
-							pet: lastBattleArg.pet,
-							heroes: lastBattleArg.heroes,
-							favor: lastBattleArg.favor,
-							timer: 0,
-						}));
+						console.log(
+							invasionInfo.bossLvl,
+							JSON.stringify({
+								buff: invasionInfo.buff,
+								pet: lastBattleArg.pet,
+								heroes: lastBattleArg.heroes,
+								favor: lastBattleArg.favor,
+								timer: 0,
+							})
+						);
 						const timePassed = Date.now() - lastBossBattleStart;
 						if (timePassed < invasionTimer) {
 							await new Promise((e) => setTimeout(e, invasionTimer - timePassed));
@@ -2504,22 +2775,6 @@
 						invasionTimer -= 1;
 					}
 					lastBossBattleStart = Date.now();
-				}
-				if (call.name == 'invasion_bossEnd') {
-					const lastBattle = lastBattleInfo;
-					if (lastBattle && call.args.result.win) {
-						if (lastBattle.seed === 8008) {
-							lastBattle.progress = call.args.progress;
-							const result = await Calc(lastBattle);
-							let timer = getTimer(result.battleTime, 1) + addBattleTimer;
-							const period = Math.ceil((Date.now() - lastBossBattleStart) / 1000);
-							console.log(timer, period);
-							if (period < timer) {
-								timer = timer - period;
-								await countdownTimer(timer);
-							}
-						}
-					}
 				}
 				/**
 				 * Disable spending divination cards
@@ -2529,7 +2784,7 @@
 					if (call.args.isRaid) {
 						if (HWHData.countPredictionCard <= 0) {
 							delete call.args.isRaid;
-							changeRequest = true;
+							this._isChangeRequest = true;
 						} else if (HWHData.countPredictionCard > 0) {
 							HWHData.countPredictionCard--;
 						}
@@ -2541,18 +2796,18 @@
 					 */
 					const lastBattle = lastDungeonBattleData;
 					if (lastBattle && !call.args.isRaid) {
-						if (changeRequest) {
-							lastBattle.progress = [{ attackers: { input: ["auto", 0, 0, "auto", 0, 0] } }];
+						if (this._isChangeRequest) {
+							lastBattle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
 						} else {
 							lastBattle.progress = call.args.progress;
 						}
 						const result = await Calc(lastBattle);
 	
-						if (changeRequest) {
+						if (this._isChangeRequest) {
 							call.args.progress = result.progress;
 							call.args.result = result.result;
 						}
-							
+	
 						let timer = result.battleTimer + addBattleTimer;
 						const period = Math.ceil((Date.now() - lastDungeonBattleStart) / 1000);
 						console.log(timer, period);
@@ -2574,7 +2829,7 @@
 					if (lastAnswer && isChecked('getAnswer')) {
 						call.args.answerId = lastAnswer;
 						lastAnswer = null;
-						changeRequest = true;
+						this._isChangeRequest = true;
 					}
 				}
 				/**
@@ -2589,8 +2844,8 @@
 					let startTimer = false;
 					if (!call.args.result.win) {
 						startTimer = await popup.confirm(I18N('DEFEAT_TURN_TIMER'), [
-							{ msg: I18N('BTN_NO'), result: false },
-							{ msg: I18N('BTN_YES'), result: true },
+							{ msg: I18N('BTN_NO'), result: false, color: 'red' },
+							{ msg: I18N('BTN_YES'), result: true, color: 'green' },
 						]);
 					}
 	
@@ -2614,19 +2869,21 @@
 				 * Getting mission data for auto-repeat
 				 * Получение данных миссии для автоповтора
 				 */
-				if (isChecked('repeatMission') &&
-					call.name == 'missionEnd') {
+				if (isChecked('repeatMission') && call.name == 'missionEnd') {
 					let missionInfo = {
 						id: call.args.id,
 						result: call.args.result,
 						heroes: call.args.progress[0].attackers.heroes,
 						count: 0,
-					}
+					};
 					setTimeout(async () => {
-						if (!isSendsMission && await popup.confirm(I18N('MSG_REPEAT_MISSION'), [
-								{ msg: I18N('BTN_REPEAT'), result: true},
-								{ msg: I18N('BTN_NO'), result: false},
-							])) {
+						if (
+							!isSendsMission &&
+							(await popup.confirm(I18N('MSG_REPEAT_MISSION'), [
+								{ msg: I18N('BTN_REPEAT'), result: true, color: 'green' },
+								{ msg: I18N('BTN_NO'), result: false, color: 'red' },
+							]))
+						) {
 							isStopSendMission = false;
 							isSendsMission = true;
 							sendsMission(missionInfo);
@@ -2642,74 +2899,50 @@
 					lastMissionStart = call.args;
 					lastMissionBattleStart = Date.now();
 				}
-				
+	
 				/**
 				 * Specify the quantity for Titan Orbs and Pet Eggs
 				 * Указать количество для сфер титанов и яиц петов
 				 */
-				if (isChecked('countControl') &&
+				if (
+					isChecked('countControl') &&
 					(call.name == 'pet_chestOpen' ||
-					call.name == 'titanUseSummonCircle') &&
-					call.args.amount > 1) {
+						call.name == 'titanUseSummonCircle' ||
+						call.name == 'artifactChestOpen' ||
+						call.name == 'titanArtifactChestOpen') &&
+					call.args.amount > 1
+				) {
 					const startAmount = call.args.amount;
-					const result = await popup.confirm(I18N('MSG_SPECIFY_QUANT'), [
-						{ msg: I18N('BTN_OPEN'), isInput: true, default: 1},
-						]);
+					const result = await popup.confirm(I18N('MSG_SPECIFY_QUANT'), [{ msg: I18N('BTN_OPEN'), isInput: true, default: 1, color: 'green' }]);
 					if (result) {
-						const item = call.name == 'pet_chestOpen' ? { id: 90, type: 'consumable' } : { id: 13, type: 'coin' };
+						let item = { id: 0, type: 'consumable' };
+						switch (call.name) {
+							case 'titanUseSummonCircle':
+								item.id = 13;
+								item.type = 'coin';
+								break;
+							case 'pet_chestOpen':
+								item.id = 90;
+								break;
+							case 'artifactChestOpen':
+								item.id = 45;
+								break;
+							case 'titanArtifactChestOpen':
+								item.id = 55;
+								break;
+						}
 						cheats.updateInventory({
 							[item.type]: {
 								[item.id]: -(result - startAmount),
 							},
 						});
 						call.args.amount = result;
-						changeRequest = true;
-					}
-				}
-				/**
-				 * Specify the amount for keys and spheres of titan artifacts
-				 * Указать колличество для ключей и сфер артефактов титанов
-				 */
-				if (isChecked('countControl') &&
-					(call.name == 'artifactChestOpen' ||
-					call.name == 'titanArtifactChestOpen') &&
-					call.args.amount > 1 &&
-					call.args.free &&
-					!changeRequest) {
-					artifactChestOpenCallName = call.name;
-					const startAmount = call.args.amount;
-					let result = await popup.confirm(I18N('MSG_SPECIFY_QUANT'), [
-						{ msg: I18N('BTN_OPEN'), isInput: true, default: 1 },
-					]);
-					if (result) {
-						const openChests = result;
-						let sphere = result < 10 ? 1 : 10;
-						call.args.amount = sphere;
-						for (let count = openChests - sphere; count > 0; count -= sphere) {
-							if (count < 10) sphere = 1;
-							const ident = artifactChestOpenCallName + "_" + count;
-							testData.calls.push({
-								name: artifactChestOpenCallName,
-								args: {
-									amount: sphere,
-									free: true,
-								},
-								ident: ident
-							});
-							if (!Array.isArray(requestHistory[this.uniqid].calls[call.name])) {
-								requestHistory[this.uniqid].calls[call.name] = [requestHistory[this.uniqid].calls[call.name]];
-							}
-							requestHistory[this.uniqid].calls[call.name].push(ident);
-						}
+						this._isChangeRequest = true;
 	
-						const consumableId = call.name == 'artifactChestOpen' ? 45 : 55;
-						cheats.updateInventory({
-							consumable: {
-								[consumableId]: -(openChests - startAmount),
-							},
-						});
-						artifactChestOpen = true;
-						changeRequest = true;
+						correctShowOpenArtifact = 0;
+						if ((call.name == 'artifactChestOpen' || call.name == 'titanArtifactChestOpen') && call.args.amount > 20) {
+							correctShowOpenArtifact = 3;
+						}
 					}
 				}
 				if (call.name == 'consumableUseLootBox') {
@@ -2720,16 +2953,12 @@
 					 */
 					const lootBoxInfo = lib.data.inventoryItem.consumable[call.args.libId];
 					const playerChoiceType = lootBoxInfo?.effectDescription?.playerChoiceType;
-					if (isChecked('countControl') && 
-						((call.args.libId == 148 && call.args.amount > 1) || playerChoiceType === 'hero')) {
+					if (isChecked('countControl') && ((call.args.libId == 148 && call.args.amount > 1) || playerChoiceType === 'hero')) {
 						const result = await popup.confirm(I18N('MSG_SPECIFY_QUANT'), [
-							{ msg: I18N('BTN_OPEN'), isInput: true, default: call.args.amount },
+							{ msg: I18N('BTN_OPEN'), isInput: true, default: call.args.amount, color: 'green' },
 						]);
 						call.args.amount = result;
-						changeRequest = true;
-					}
-					if (isChecked('countControl') && call.args.libId >= 362 && call.args.libId <= 389) {
-						this.massOpen = call.args.libId;
+						this._isChangeRequest = true;
 					}
 				}
 				if (call.name == 'invasion_bossStart' && isChecked('tryFixIt_v2')) {
@@ -2750,7 +2979,7 @@
 								call.args.pet = pack.pet;
 								call.args.heroes = pack.heroes;
 								call.args.favor = pack.favor;
-								changeRequest = true;
+								this._isChangeRequest = true;
 							}
 						}
 					}
@@ -2788,13 +3017,15 @@
 				// 			{ msg: I18N('BTN_RUN'), isInput: true, default: call.args.times },
 				// 		]));
 				// 		call.args.times = result > call.args.times ? call.args.times : result;
-				// 		changeRequest = true;
+				// 		this._isChangeRequest = true;
 				// 	}
 				// }
+	
+				Events.emit('checkChangeSend', this, call);
 			}
 	
 			let headers = requestHistory[this.uniqid].headers;
-			if (changeRequest) {
+			if (this._isChangeRequest) {
 				sourceData = JSON.stringify(testData);
 				headers['X-Auth-Signature'] = getSignature(headers, sourceData);
 			}
@@ -2815,8 +3046,7 @@
 	 */
 	async function checkChangeResponse(response) {
 		try {
-			isChange = false;
-			let nowTime = Math.round(Date.now() / 1000);
+			this._isChangeResponse = false;
 			callsIdent = requestHistory[this.uniqid].calls;
 			respond = JSON.parse(response);
 			/**
@@ -2824,7 +3054,7 @@
 			 * Если запрос вернул ошибку удаляет ошибку (убирает ошибки синхронизации)
 			 */
 			if (respond.error) {
-				isChange = true;
+				this._isChangeResponse = true;
 				console.error(respond.error);
 				if (isChecked('showErrors')) {
 					popup.confirm(I18N('ERROR_MSG', {
@@ -2837,12 +3067,10 @@
 					respond.results = [];
 				}
 			}
-			let mainReward = null;
 			const allReward = {};
-			let countTypeReward = 0;
 			let readQuestInfo = false;
 			for (const call of respond.results) {
-				/** 
+				/**
 				 * Obtaining initial data for completing quests
 				 * Получение исходных данных для выполнения квестов
 				 */
@@ -2872,22 +3100,20 @@
 					if (billings && bundle) {
 						call.result.response.billings = call.result.response.billings.filter((e) => ['repeatableOffer'].includes(e.type));
 						call.result.response.bundle = [];
-						isChange = true;
+						this._isChangeResponse = true;
 					}
 				}
 				/**
 				 * Hiding donation offers 2
 				 * Скрываем предложения доната 2
 				 */
-				if (getSaveVal('noOfferDonat') &&
-					(call.ident == callsIdent['offerGetAll'] ||
-						call.ident == callsIdent['specialOffer_getAll'])) {
+				if (getSaveVal('noOfferDonat') && (call.ident == callsIdent['offerGetAll'] || call.ident == callsIdent['specialOffer_getAll'])) {
 					let offers = call.result.response;
 					if (offers) {
 						call.result.response = offers.filter(
-							(e) => !['addBilling', 'bundleCarousel'].includes(e.type) || ['idleResource', 'stagesOffer'].includes(e.offerType)
+							(e) => !['addBilling', 'bundleCarousel'].includes(e.type) || ['idleResource', 'stagesOffer'].includes(e.offerType),
 						);
-						isChange = true;
+						this._isChangeResponse = true;
 					}
 				}
 				/**
@@ -2896,18 +3122,18 @@
 				 */
 				if (getSaveVal('noOfferDonat') && call.result?.bundleUpdate) {
 					delete call.result.bundleUpdate;
-					isChange = true;
+					this._isChangeResponse = true;
 				}
 				/**
 				 * Hiding donation offers 4
-				 * Скрываем предложения доната 4 
+				 * Скрываем предложения доната 4
 				 */
 				if (call.result?.specialOffers) {
 					const offers = call.result.specialOffers;
 					call.result.specialOffers = offers.filter(
-						(e) => !['addBilling', 'bundleCarousel'].includes(e.type) || ['idleResource', 'stagesOffer'].includes(e.offerType)
+						(e) => !['addBilling', 'bundleCarousel'].includes(e.type) || ['idleResource', 'stagesOffer'].includes(e.offerType),
 					);
-					isChange = true;
+					this._isChangeResponse = true;
 				}
 				/**
 				 * Copies a quiz question to the clipboard
@@ -2917,21 +3143,27 @@
 					let quest = call.result.response;
 					console.log(quest.question);
 					copyText(quest.question);
-					setProgress(I18N('QUESTION_COPY'), true);
+					//setProgress(I18N('QUESTION_COPY'), true);
 					quest.lang = null;
 					if (typeof NXFlashVars !== 'undefined') {
 						quest.lang = NXFlashVars.interface_lang;
 					}
 					lastQuestion = quest;
 					if (isChecked('getAnswer')) {
-						const answer = await getAnswer(lastQuestion);
-						let showText = '';
-						if (answer) {
-							lastAnswer = answer;
-							console.log(answer);
-							showText = `${I18N('ANSWER_KNOWN')}: ${answer}`;
-						} else {
-							showText = I18N('ANSWER_NOT_KNOWN');
+						let showText = I18N('QUESTION_COPY') + '<br>';
+						try {
+							const answer = await getAnswer(lastQuestion);
+							if (answer) {
+								lastAnswer = answer;
+								console.log(answer);
+								showText += `${I18N('ANSWER_KNOWN')}: ${answer}`;
+							} else {
+								lastAnswer = null;
+								showText += I18N('ANSWER_NOT_KNOWN');
+							}
+						} catch (error) {
+							lastAnswer = null;
+							showText += error == 'Access denied' ? error : 'Error';
 						}
 	
 						try {
@@ -2941,7 +3173,7 @@
 							}
 						} catch (e) {}
 	
-						setProgress(showText, true);
+						setProgress(showText, false, hideProgress);
 					}
 				}
 				/**
@@ -2977,69 +3209,79 @@
 					}
 				}
 				/**
+				 * Access to Prestige rewards and quests on a non-prestige day
+				 * Доступ к наградам и квестам престижа в день без престижа
+				 */
+				if (call.ident == callsIdent['clan_prestigeGetInfo']) {
+					if (!call.result.response.prestigeId) {
+						call.result.response.prestigeId = 2;
+						call.result.response.endTime = call.result.response.nextTime;
+						this._isChangeResponse = true;
+					}
+				}
+				/**
 				 * Start of the battle for recalculation
 				 * Начало боя для прерасчета
 				 */
-				if (call.ident == callsIdent['clanWarAttack'] ||
+				if (
+					call.ident == callsIdent['clanWarAttack'] ||
 					call.ident == callsIdent['crossClanWar_startBattle'] ||
 					call.ident == callsIdent['bossAttack'] ||
-					call.ident == callsIdent['battleGetReplay'] ||
 					call.ident == callsIdent['brawl_startBattle'] ||
 					call.ident == callsIdent['adventureSolo_turnStartBattle'] ||
 					call.ident == callsIdent['invasion_bossStart'] ||
 					call.ident == callsIdent['titanArenaStartBattle'] ||
 					call.ident == callsIdent['towerStartBattle'] ||
 					call.ident == callsIdent['epicBrawl_startBattle'] ||
-					call.ident == callsIdent['adventure_turnStartBattle']) {
+					call.ident == callsIdent['adventure_turnStartBattle'] ||
+					(call.ident == callsIdent['battleGetReplay'] && call.result?.response?.replay?.type !== 'clan_raid')
+				) {
 					let battle = call.result.response.battle || call.result.response.replay;
-					if (call.ident == callsIdent['brawl_startBattle'] ||
+					if (
+						call.ident == callsIdent['brawl_startBattle'] ||
 						call.ident == callsIdent['bossAttack'] ||
 						call.ident == callsIdent['towerStartBattle'] ||
-						call.ident == callsIdent['invasion_bossStart']) {
+						call.ident == callsIdent['invasion_bossStart']
+					) {
 						battle = call.result.response;
 					}
 					lastBattleInfo = battle;
-					if (call.ident == callsIdent['battleGetReplay'] && call.result.response.replay.type ===	"clan_raid") {
-						if (call?.result?.response?.replay?.result?.damage) {
-							const damages = Object.values(call.result.response.replay.result.damage);
-							const bossDamage = damages.reduce((a, v) => a + v, 0);
-							setProgress(I18N('BOSS_DAMAGE') + bossDamage.toLocaleString(), false, hideProgress);
-							continue;
-						}
-					}
-					if (!isChecked('preCalcBattle')) {
-						continue;
-					}
-					const preCalcBattle = structuredClone(battle);
-					setProgress(I18N('BEING_RECALC'));
-					let battleDuration = 120;
-					try {
-						const typeBattle = getBattleType(preCalcBattle.type);
-						battleDuration = +lib.data.battleConfig[typeBattle.split('_')[1]].config.battleDuration;
-					} catch (e) { }
-					//console.log(battle.type);
-					function getBattleInfo(battle, isRandSeed) {
-						return new Promise(function (resolve) {
-							if (isRandSeed) {
-								battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
+					const defId = battle?.defenders?.[0]?.[1]?.id
+					if (isChecked('preCalcBattle') && defId != 2010) {
+						const preCalcBattle = structuredClone(battle);
+						setProgress(I18N('BEING_RECALC'));
+						let battleDuration = 120;
+						try {
+							const battleType = preCalcBattle?.effects?.battleConfig ?? preCalcBattle.type;
+							if (preCalcBattle?.effects?.battleConfig) {
+								console.log('config:', battleType, 'type:', preCalcBattle.type);
 							}
-							BattleCalc(battle, getBattleType(battle.type), e => resolve(e));
-						});
-					}
-					let actions = [getBattleInfo(preCalcBattle, false)];
-					let countTestBattle = getInput('countTestBattle');
-					if (call.ident == callsIdent['invasion_bossStart'] && preCalcBattle.seed === 8008) {
-						countTestBattle = 0;
-					}
-					if (call.ident == callsIdent['battleGetReplay']) {
-						preCalcBattle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
-					}
-					for (let i = 0; i < countTestBattle; i++) {
-						actions.push(getBattleInfo(preCalcBattle, true));
-					}
-					Promise.all(actions)
-						.then(e => {
-							e = e.map(n => ({win: n.result.win, time: n.battleTime}));
+							const typeBattle = getBattleType(battleType);
+							battleDuration = +lib.data.battleConfig[typeBattle.split('_')[1]].config.battleDuration;
+						} catch (e) {}
+						//console.log(battle.type);
+						function getBattleInfo(battle, isRandSeed) {
+							return new Promise(function (resolve) {
+								if (isRandSeed) {
+									battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
+								}
+								const battleType = battle?.effects?.battleConfig ?? battle.type;
+								BattleCalc(battle, getBattleType(battleType), (e) => resolve(e));
+							});
+						}
+						let actions = [getBattleInfo(preCalcBattle, false)];
+						let countTestBattle = getInput('countTestBattle');
+						if (call.ident == callsIdent['invasion_bossStart'] && preCalcBattle.seed === 8008) {
+							countTestBattle = 0;
+						}
+						if (call.ident == callsIdent['battleGetReplay']) {
+							preCalcBattle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
+						}
+						for (let i = 0; i < countTestBattle; i++) {
+							actions.push(getBattleInfo(preCalcBattle, true));
+						}
+						Promise.all(actions).then((e) => {
+							e = e.map((n) => ({ win: n.result.win, time: n.battleTime }));
 							let firstBattle = e.shift();
 							const timer = Math.floor(battleDuration - firstBattle.time);
 							const min = ('00' + Math.floor(timer / 60)).slice(-2);
@@ -3049,9 +3291,18 @@
 								const countWin = e.reduce((w, s) => w + s.win, 0);
 								msg += ` ${I18N('CHANCE_TO_WIN')}: ${Math.floor((countWin / e.length) * 100)}% (${e.length})`;
 							}
-							msg += `, ${min}:${sec}`
-							setProgress(msg, false, hideProgress)
+							msg += `, ${min}:${sec}`;
+							setProgress(msg, false, hideProgress);
 						});
+					}
+				}
+	
+				if (call.ident == callsIdent['battleGetReplay'] && call.result.response.replay.type === 'clan_raid') {
+					if (call?.result?.response?.replay?.result?.damage) {
+						const damages = Object.values(call.result.response.replay.result.damage);
+						const bossDamage = damages.reduce((a, v) => a + v, 0);
+						setProgress(I18N('BOSS_DAMAGE') + bossDamage.toLocaleString(), false, hideProgress);
+					}
 				}
 				/**
 				 * Start of the Asgard boss fight
@@ -3061,7 +3312,7 @@
 					lastBossBattle = call.result.response.battle;
 					lastBossBattle.endTime = Date.now() + 160 * 1000;
 					if (isChecked('preCalcBattle')) {
-						const result = await Calc(lastBossBattle).then(e => e.progress[0].defenders.heroes[1].extra);
+						const result = await Calc(lastBossBattle).then((e) => e.progress[0].defenders.heroes[1].extra);
 						const bossDamage = result.damageTaken + result.damageTakenNextLevel;
 						setProgress(I18N('BOSS_DAMAGE') + bossDamage.toLocaleString(), false, hideProgress);
 					}
@@ -3075,46 +3326,10 @@
 					for (let n in chains) {
 						chains[n] = 9999;
 					}
-					isChange = true;
+					this._isChangeResponse = true;
 				}
 				/**
-				 * Opening keys and spheres of titan artifacts
-				 * Открытие ключей и сфер артефактов титанов
-				 */
-				if (artifactChestOpen &&
-					(call.ident == callsIdent[artifactChestOpenCallName] ||
-						(callsIdent[artifactChestOpenCallName] && callsIdent[artifactChestOpenCallName].includes(call.ident)))) {
-					let reward = call.result.response[artifactChestOpenCallName == 'artifactChestOpen' ? 'chestReward' : 'reward'];
-	
-					reward.forEach(e => {
-						for (let f in e) {
-							if (!allReward[f]) {
-								allReward[f] = {};
-							}
-							for (let o in e[f]) {
-								if (!allReward[f][o]) {
-									allReward[f][o] = e[f][o];
-									countTypeReward++;
-								} else {
-									allReward[f][o] += e[f][o];
-								}
-							}
-						}
-					});
-	
-					if (!call.ident.includes(artifactChestOpenCallName)) {
-						mainReward = call.result.response;
-					}
-				}
-	
-				if (countTypeReward > 20) {
-					correctShowOpenArtifact = 3;
-				} else {
-					correctShowOpenArtifact = 0;
-				}
-				
-				/** 
-				 * Sum the result of opening Pet Eggs 
+				 * Sum the result of opening Pet Eggs
 				 * Суммирование результата открытия яиц питомцев
 				 */
 				if (isChecked('countControl') && call.ident == callsIdent['pet_chestOpen']) {
@@ -3130,7 +3345,7 @@
 							}
 						}
 					}
-					rewards.forEach(e => {
+					rewards.forEach((e) => {
 						for (let f in e) {
 							if (!allReward[f]) {
 								allReward[f] = {};
@@ -3145,7 +3360,7 @@
 						}
 					});
 					call.result.response.rewards = [allReward];
-					isChange = true;
+					this._isChangeResponse = true;
 				}
 				/**
 				 * Removing titan cards
@@ -3158,7 +3373,7 @@
 								delete reward.titanCard;
 							}
 						}
-						isChange = true;
+						this._isChangeResponse = true;
 					}
 				}
 				/**
@@ -3176,56 +3391,17 @@
 					if (
 						newCount &&
 						(await popup.confirm(`${I18N('BTN_OPEN')} ${newCount} ${I18N('OPEN_DOLLS')}?`, [
-							{ msg: I18N('BTN_OPEN'), result: true },
-							{ msg: I18N('BTN_NO'), result: false, isClose: true },
+							{ msg: I18N('BTN_OPEN'), result: true, color: 'green' },
+							{ msg: I18N('BTN_NO'), result: false, isClose: true, color: 'red' },
 						]))
 					) {
 						const [count, recursionResult] = await openRussianDolls(lastRussianDollId, newCount);
 						countLootBox += +count;
 						mergeItemsObj(lootBox, recursionResult);
-						isChange = true;
+						this._isChangeResponse = true;
 					}
 	
-					if (this.massOpen) {
-						if (
-							await popup.confirm(I18N('OPEN_ALL_EQUIP_BOXES'), [
-								{ msg: I18N('BTN_OPEN'), result: true },
-								{ msg: I18N('BTN_NO'), result: false, isClose: true },
-							])
-						) {
-							const consumable = await Send({ calls: [{ name: 'inventoryGet', args: {}, ident: 'inventoryGet' }] }).then((e) =>
-								Object.entries(e.results[0].result.response.consumable)
-							);
-							const calls = [];
-							const deleteItems = {};
-							for (const [libId, amount] of consumable) {
-								if (libId != this.massOpen && libId >= 362 && libId <= 389) {
-									calls.push({
-										name: 'consumableUseLootBox',
-										args: { libId, amount },
-										ident: 'consumableUseLootBox_' + libId,
-									});
-									deleteItems[libId] = -amount;
-								}
-							}
-							const responses = await Send({ calls }).then((e) => e.results.map((r) => r.result.response).flat());
-	
-							for (const loot of responses) {
-								const [count, result] = Object.entries(loot).pop();
-								countLootBox += +count;
-	
-								mergeItemsObj(lootBox, result);
-							}
-							isChange = true;
-	
-							this.onReadySuccess = () => {
-								cheats.updateInventory({ consumable: deleteItems });
-								cheats.refreshInventory();
-							};
-						}
-					}
-	
-					if (isChange) {
+					if (this._isChangeResponse) {
 						call.result.response = {
 							[countLootBox]: lootBox,
 						};
@@ -3239,7 +3415,7 @@
 					lastDungeonBattleData = call.result.response;
 					lastDungeonBattleStart = Date.now();
 				}
-				/** 
+				/**
 				 * Getting the number of prediction cards
 				 * Получение количества карт предсказаний
 				 */
@@ -3272,9 +3448,9 @@
 				 * Скрытие лишних серверов
 				 */
 				if (call.ident == callsIdent['serverGetAll'] && isChecked('hideServers')) {
-					let servers = call.result.response.users.map(s => s.serverId)
-					call.result.response.servers = call.result.response.servers.filter(s => servers.includes(s.id));
-					isChange = true;
+					let servers = call.result.response.users.map((s) => s.serverId);
+					call.result.response.servers = call.result.response.servers.filter((s) => servers.includes(s.id));
+					this._isChangeResponse = true;
 				}
 				/**
 				 * Displays player positions in the adventure
@@ -3289,7 +3465,7 @@
 						adv_valley_3pl_hell: 10,
 						adv_ghirwil_3pl_hell: 11,
 						adv_angels_3pl_hell: 12,
-					}
+					};
 					let msg = I18N('MAP') + (mapIdent in maps ? maps[mapIdent] : adventureId);
 					msg += '<br>' + I18N('PLAYER_POS');
 					for (const user of users) {
@@ -3302,13 +3478,13 @@
 				 * Автоматический запуск рейда при окончании приключения
 				 */
 				if (call.ident == callsIdent['adventure_end']) {
-					autoRaidAdventure()
+					autoRaidAdventure();
 				}
 				/** Удаление лавки редкостей */
 				if (call.ident == callsIdent['missionRaid']) {
 					if (call.result?.heroesMerchant) {
 						delete call.result.heroesMerchant;
-						isChange = true;
+						this._isChangeResponse = true;
 					}
 				}
 				/** missionTimer */
@@ -3325,48 +3501,44 @@
 							calls.push({
 								name: 'hallOfFameFarmTrophyReward',
 								args: { trophyId: week, rewardType: 'champion' },
-								ident: 'body_champion_' + week,
 							});
 						}
 						if (Object.keys(trophy.clanReward).length && !trophy.clanRewardFarmed) {
 							calls.push({
 								name: 'hallOfFameFarmTrophyReward',
 								args: { trophyId: week, rewardType: 'clan' },
-								ident: 'body_clan_' + week,
 							});
 						}
 					}
 					if (calls.length) {
-						Send({ calls })
-							.then((e) => e.results.map((e) => e.result.response))
-							.then(async results => {
-								let coin18 = 0,
-									coin19 = 0,
-									gold = 0,
-									starmoney = 0;
-								for (const r of results) {
-									coin18 += r?.coin ? +r.coin[18] : 0;
-									coin19 += r?.coin ? +r.coin[19] : 0;
-									gold += r?.gold ? +r.gold : 0;
-									starmoney += r?.starmoney ? +r.starmoney : 0;
-								}
+						Caller.send(calls).then((results) => {
+							let coin18 = 0,
+								coin19 = 0,
+								gold = 0,
+								starmoney = 0;
+							for (const r of results) {
+								coin18 += r?.coin ? +r.coin[18] : 0;
+								coin19 += r?.coin ? +r.coin[19] : 0;
+								gold += r?.gold ? +r.gold : 0;
+								starmoney += r?.starmoney ? +r.starmoney : 0;
+							}
 	
-								let msg = I18N('ELEMENT_TOURNAMENT_REWARD') + '<br>';
-								if (coin18) {
-									msg += cheats.translate('LIB_COIN_NAME_18') + `: ${coin18}<br>`;
-								}
-								if (coin19) {
-									msg += cheats.translate('LIB_COIN_NAME_19') + `: ${coin19}<br>`;
-								}
-								if (gold) {
-									msg += cheats.translate('LIB_PSEUDO_COIN') + `: ${gold}<br>`;
-								}
-								if (starmoney) {
-									msg += cheats.translate('LIB_PSEUDO_STARMONEY') + `: ${starmoney}<br>`;
-								}
+							let msg = I18N('ELEMENT_TOURNAMENT_REWARD') + '<br>';
+							if (coin18) {
+								msg += cheats.translate('LIB_COIN_NAME_18') + `: ${coin18}<br>`;
+							}
+							if (coin19) {
+								msg += cheats.translate('LIB_COIN_NAME_19') + `: ${coin19}<br>`;
+							}
+							if (gold) {
+								msg += cheats.translate('LIB_PSEUDO_COIN') + `: ${gold}<br>`;
+							}
+							if (starmoney) {
+								msg += cheats.translate('LIB_PSEUDO_STARMONEY') + `: ${starmoney}<br>`;
+							}
 	
-								await popup.confirm(msg, [{ msg: I18N('BTN_OK'), result: 0 }]);
-							});
+							return popup.confirm(msg, [{ msg: I18N('BTN_OK'), result: 0, color: 'green' }]);
+						});
 					}
 				}
 				if (call.ident == callsIdent['clanDomination_getInfo']) {
@@ -3397,7 +3569,7 @@
 											needBuff: pack.buff,
 											haveBuff: invasionInfo.buff,
 										}),
-										false
+										false,
 									);
 								}
 							}
@@ -3418,7 +3590,7 @@
 										needBuff: pack.buff,
 										haveBuff: invasionInfo.buff,
 									}),
-									false
+									false,
 								);
 							}
 						}
@@ -3508,25 +3680,18 @@
 							userPositions[townPos.userId] = townPos.position;
 						}
 					}
-					isChange = true;
+					this._isChangeResponse = true;
 				}
 				*/
-			}
-	
-			if (mainReward && artifactChestOpen) {
-				console.log(allReward);
-				mainReward[artifactChestOpenCallName == 'artifactChestOpen' ? 'chestReward' : 'reward'] = [allReward];
-				artifactChestOpen = false;
-				artifactChestOpenCallName = '';
-				isChange = true;
+				Events.emit('checkChangeResponse', this, call, callsIdent);
 			}
 		} catch(err) {
 			console.log("Request(response, " + this.uniqid + "):\n", "Error:\n", response, err);
 		}
 	
-		if (isChange) {
+		if (this._isChangeResponse) {
 			Object.defineProperty(this, 'responseText', {
-				writable: true
+				writable: true,
 			});
 			this.responseText = JSON.stringify(respond);
 		}
@@ -3538,20 +3703,24 @@
 	 * Запрос ответа на вопрос
 	 */
 	async function getAnswer(question) {
-		// c29tZSBzdHJhbmdlIHN5bWJvbHM=
+		// eW91dHUuYmUvZFF3NHc5V2dYY1E=
 		const quizAPI = new ZingerYWebsiteAPI('getAnswer.php', arguments, { question });
-			return new Promise((resolve, reject) => {
-				quizAPI.request().then((data) => {
+		return new Promise((resolve, reject) => {
+			quizAPI
+				.request()
+				.then((data) => {
 					if (data.result) {
 						resolve(data.result);
 					} else {
 						resolve(false);
 					}
-				}).catch((error) => {
-					console.error(error);
-					resolve(false);
+				})
+				.catch((error) => {
+					//console.error(error);
+					const reason = error.message == 'Access denied' ? error.message : 'Error';
+					reject(reason);
 				});
-			})
+		});
 	}
 	
 	/**
@@ -3560,13 +3729,19 @@
 	 * Отправка вопроса и ответа в базу данных
 	 */
 	function sendAnswerInfo(answerInfo) {
-		// c29tZSBub25zZW5zZQ==
+		// MTIzNDU2Nzg5MA==
 		const quizAPI = new ZingerYWebsiteAPI('setAnswer.php', arguments, { answerInfo });
-		quizAPI.request().then((data) => {
-			if (data.result) {
-				console.log(I18N('SENT_QUESTION'));
-			}
-		});
+		quizAPI
+			.request()
+			.then((data) => {
+				if (data.result) {
+					console.log(I18N('SENT_QUESTION'));
+				}
+			})
+			.catch((error) => {
+				console.error(error);
+				const reason = error.message == 'Access denied' ? error.message : 'Error';
+			});
 	}
 	
 	/**
@@ -3588,6 +3763,7 @@
 			case 'brawl_titan':
 			case 'challenge_titan':
 			case 'titan_mission':
+			case 'epic_brawl_titan':
 				return 'get_titanPvpManual';
 			case 'clan_raid': // Asgard Boss // Босс асгарда
 			case 'adventure': // Adventures // Приключения
@@ -3618,6 +3794,9 @@
 				return 'get_core';
 			default: {
 				if (strBattleType.includes('invasion')) {
+					if (strBattleType.includes('titan')) {
+						return 'get_invasionTitan';
+					}
 					return 'get_invasion';
 				}
 				if (strBattleType.includes('boss')) {
@@ -3664,6 +3843,9 @@
 		sign.add(':');
 		sign.add('LIBRARY-VERSION=1');
 		sign.add('UNIQUE-SESSION-ID=' + headers["X-Env-Unique-Session-Id"]);
+		if (headers['X-Env-Unique-Session-Uuid']) {
+			sign.add('UNIQUE-SESSION-UUID=' + headers['X-Env-Unique-Session-Uuid']);
+		}
 	
 		return md5(sign.signature);
 	}
@@ -3798,7 +3980,7 @@
 		}
 	}
 	
-	let extintionsList = [];
+	const extentionsList = [];
 	/**
 	 * Creates an interface
 	 *
@@ -3811,14 +3993,15 @@
 		scriptMenu.init();
 		scriptMenu.addHeader(GM_info.script.name, justInfo);
 		const versionHeader = scriptMenu.addHeader('v' + GM_info.script.version);
-		if (extintionsList.length) {
+		const { extentionsList } = HWHData;
+		if (extentionsList.length) {
 			versionHeader.title = '';
 			versionHeader.style.color = 'red';
-			for (const extintion of extintionsList) {
-				const { name, ver, author } = extintion;
+			for (const extention of extentionsList) {
+				const { name, ver, author } = extention;
 				versionHeader.title += name + ', v' + ver + ' by ' + author + '\n';
 			}
-			versionHeader.innerText += ` [${extintionsList.length}]`;
+			versionHeader.innerText += ` [${extentionsList.length}]`;
 		}
 		// AutoClicker
 		const hkm = new HotkeyManager();
@@ -3845,7 +4028,8 @@
 	}
 	
 	function addExtentionName(name, ver, author) {
-		extintionsList.push({
+		const { extentionsList } = HWHData;
+		extentionsList.push({
 			name,
 			ver,
 			author,
@@ -4013,7 +4197,6 @@
 	function hideProgress(timeout) {
 		const { ScriptMenu } = HWHClasses;
 		const scriptMenu = ScriptMenu.getInst();
-		timeout = timeout || 0;
 		clearTimeout(hideTimeoutProgress);
 		hideTimeoutProgress = setTimeout(function () {
 			scriptMenu.setStatus('');
@@ -4030,7 +4213,10 @@
 		scriptMenu.setStatus(text, onclick);
 		hide = hide || false;
 		if (hide) {
-			hideProgress(3000);
+			if (typeof hide != 'number') {
+				hide = 3000;
+			}
+			hideProgress(hide);
 		}
 	}
 	
@@ -4046,13 +4232,22 @@
 	}
 	
 	/** 
+	 * Check Valkyrie's Blessing subscription activity
+	 * 
+	 * Проверяет активность подписки на Благославление валькирии 
+	 */
+	function isSubActive() {
+		return subEndTime > Date.now();
+	}
+	
+	/** 
 	 * Returns the timer value depending on the subscription
 	 * 
 	 * Возвращает значение таймера в зависимости от подписки
 	 */
 	function getTimer(time, div) {
 		let speedDiv = 5;
-		if (subEndTime < Date.now()) {
+		if (!isSubActive()) {
 			speedDiv = div || 1.5;
 		}
 		return Math.max(Math.ceil(time / speedDiv + 1.5), 4);
@@ -4082,6 +4277,7 @@
 		hideProgress,
 		setProgress,
 		addProgress,
+		isSubActive,
 		getTimer,
 		addExtentionName,
 		getUserInfo,
@@ -4104,1361 +4300,13 @@
 		countPredictionCard,
 		actionsPopupButtons,
 		othersPopupButtons,
+		/**
+		 * @deprecated Use extentionsList
+		 * @see extentionsList
+		 */
+		extintionsList: extentionsList,
+		extentionsList,
 	};
-	
-	/**
-	 * Calculates HASH MD5 from string
-	 *
-	 * Расчитывает HASH MD5 из строки
-	 * 
-	 * [js-md5]{@link https://github.com/emn178/js-md5}
-	 *
-	 * @namespace md5
-	 * @version 0.7.3
-	 * @author Chen, Yi-Cyuan [emn178@gmail.com]
-	 * @copyright Chen, Yi-Cyuan 2014-2017
-	 * @license MIT
-	 */
-	!function(){"use strict";function t(t){if(t)d[0]=d[16]=d[1]=d[2]=d[3]=d[4]=d[5]=d[6]=d[7]=d[8]=d[9]=d[10]=d[11]=d[12]=d[13]=d[14]=d[15]=0,this.blocks=d,this.buffer8=l;else if(a){var r=new ArrayBuffer(68);this.buffer8=new Uint8Array(r),this.blocks=new Uint32Array(r)}else this.blocks=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];this.h0=this.h1=this.h2=this.h3=this.start=this.bytes=this.hBytes=0,this.finalized=this.hashed=!1,this.first=!0}var r="input is invalid type",e="object"==typeof window,i=e?window:{};i.JS_MD5_NO_WINDOW&&(e=!1);var s=!e&&"object"==typeof self,h=!i.JS_MD5_NO_NODE_JS&&"object"==typeof process&&process.versions&&process.versions.node;h?i=global:s&&(i=self);var f=!i.JS_MD5_NO_COMMON_JS&&"object"==typeof module&&module.exports,o="function"==typeof define&&define.amd,a=!i.JS_MD5_NO_ARRAY_BUFFER&&"undefined"!=typeof ArrayBuffer,n="0123456789abcdef".split(""),u=[128,32768,8388608,-2147483648],y=[0,8,16,24],c=["hex","array","digest","buffer","arrayBuffer","base64"],p="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".split(""),d=[],l;if(a){var A=new ArrayBuffer(68);l=new Uint8Array(A),d=new Uint32Array(A)}!i.JS_MD5_NO_NODE_JS&&Array.isArray||(Array.isArray=function(t){return"[object Array]"===Object.prototype.toString.call(t)}),!a||!i.JS_MD5_NO_ARRAY_BUFFER_IS_VIEW&&ArrayBuffer.isView||(ArrayBuffer.isView=function(t){return"object"==typeof t&&t.buffer&&t.buffer.constructor===ArrayBuffer});var b=function(r){return function(e){return new t(!0).update(e)[r]()}},v=function(){var r=b("hex");h&&(r=w(r)),r.create=function(){return new t},r.update=function(t){return r.create().update(t)};for(var e=0;e<c.length;++e){var i=c[e];r[i]=b(i)}return r},w=function(t){var e=eval("require('crypto')"),i=eval("require('buffer').Buffer"),s=function(s){if("string"==typeof s)return e.createHash("md5").update(s,"utf8").digest("hex");if(null===s||void 0===s)throw r;return s.constructor===ArrayBuffer&&(s=new Uint8Array(s)),Array.isArray(s)||ArrayBuffer.isView(s)||s.constructor===i?e.createHash("md5").update(new i(s)).digest("hex"):t(s)};return s};t.prototype.update=function(t){if(!this.finalized){var e,i=typeof t;if("string"!==i){if("object"!==i)throw r;if(null===t)throw r;if(a&&t.constructor===ArrayBuffer)t=new Uint8Array(t);else if(!(Array.isArray(t)||a&&ArrayBuffer.isView(t)))throw r;e=!0}for(var s,h,f=0,o=t.length,n=this.blocks,u=this.buffer8;f<o;){if(this.hashed&&(this.hashed=!1,n[0]=n[16],n[16]=n[1]=n[2]=n[3]=n[4]=n[5]=n[6]=n[7]=n[8]=n[9]=n[10]=n[11]=n[12]=n[13]=n[14]=n[15]=0),e)if(a)for(h=this.start;f<o&&h<64;++f)u[h++]=t[f];else for(h=this.start;f<o&&h<64;++f)n[h>>2]|=t[f]<<y[3&h++];else if(a)for(h=this.start;f<o&&h<64;++f)(s=t.charCodeAt(f))<128?u[h++]=s:s<2048?(u[h++]=192|s>>6,u[h++]=128|63&s):s<55296||s>=57344?(u[h++]=224|s>>12,u[h++]=128|s>>6&63,u[h++]=128|63&s):(s=65536+((1023&s)<<10|1023&t.charCodeAt(++f)),u[h++]=240|s>>18,u[h++]=128|s>>12&63,u[h++]=128|s>>6&63,u[h++]=128|63&s);else for(h=this.start;f<o&&h<64;++f)(s=t.charCodeAt(f))<128?n[h>>2]|=s<<y[3&h++]:s<2048?(n[h>>2]|=(192|s>>6)<<y[3&h++],n[h>>2]|=(128|63&s)<<y[3&h++]):s<55296||s>=57344?(n[h>>2]|=(224|s>>12)<<y[3&h++],n[h>>2]|=(128|s>>6&63)<<y[3&h++],n[h>>2]|=(128|63&s)<<y[3&h++]):(s=65536+((1023&s)<<10|1023&t.charCodeAt(++f)),n[h>>2]|=(240|s>>18)<<y[3&h++],n[h>>2]|=(128|s>>12&63)<<y[3&h++],n[h>>2]|=(128|s>>6&63)<<y[3&h++],n[h>>2]|=(128|63&s)<<y[3&h++]);this.lastByteIndex=h,this.bytes+=h-this.start,h>=64?(this.start=h-64,this.hash(),this.hashed=!0):this.start=h}return this.bytes>4294967295&&(this.hBytes+=this.bytes/4294967296<<0,this.bytes=this.bytes%4294967296),this}},t.prototype.finalize=function(){if(!this.finalized){this.finalized=!0;var t=this.blocks,r=this.lastByteIndex;t[r>>2]|=u[3&r],r>=56&&(this.hashed||this.hash(),t[0]=t[16],t[16]=t[1]=t[2]=t[3]=t[4]=t[5]=t[6]=t[7]=t[8]=t[9]=t[10]=t[11]=t[12]=t[13]=t[14]=t[15]=0),t[14]=this.bytes<<3,t[15]=this.hBytes<<3|this.bytes>>>29,this.hash()}},t.prototype.hash=function(){var t,r,e,i,s,h,f=this.blocks;this.first?r=((r=((t=((t=f[0]-680876937)<<7|t>>>25)-271733879<<0)^(e=((e=(-271733879^(i=((i=(-1732584194^2004318071&t)+f[1]-117830708)<<12|i>>>20)+t<<0)&(-271733879^t))+f[2]-1126478375)<<17|e>>>15)+i<<0)&(i^t))+f[3]-1316259209)<<22|r>>>10)+e<<0:(t=this.h0,r=this.h1,e=this.h2,r=((r+=((t=((t+=((i=this.h3)^r&(e^i))+f[0]-680876936)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[1]-389564586)<<12|i>>>20)+t<<0)&(t^r))+f[2]+606105819)<<17|e>>>15)+i<<0)&(i^t))+f[3]-1044525330)<<22|r>>>10)+e<<0),r=((r+=((t=((t+=(i^r&(e^i))+f[4]-176418897)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[5]+1200080426)<<12|i>>>20)+t<<0)&(t^r))+f[6]-1473231341)<<17|e>>>15)+i<<0)&(i^t))+f[7]-45705983)<<22|r>>>10)+e<<0,r=((r+=((t=((t+=(i^r&(e^i))+f[8]+1770035416)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[9]-1958414417)<<12|i>>>20)+t<<0)&(t^r))+f[10]-42063)<<17|e>>>15)+i<<0)&(i^t))+f[11]-1990404162)<<22|r>>>10)+e<<0,r=((r+=((t=((t+=(i^r&(e^i))+f[12]+1804603682)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[13]-40341101)<<12|i>>>20)+t<<0)&(t^r))+f[14]-1502002290)<<17|e>>>15)+i<<0)&(i^t))+f[15]+1236535329)<<22|r>>>10)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[1]-165796510)<<5|t>>>27)+r<<0)^r))+f[6]-1069501632)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[11]+643717713)<<14|e>>>18)+i<<0)^i))+f[0]-373897302)<<20|r>>>12)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[5]-701558691)<<5|t>>>27)+r<<0)^r))+f[10]+38016083)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[15]-660478335)<<14|e>>>18)+i<<0)^i))+f[4]-405537848)<<20|r>>>12)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[9]+568446438)<<5|t>>>27)+r<<0)^r))+f[14]-1019803690)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[3]-187363961)<<14|e>>>18)+i<<0)^i))+f[8]+1163531501)<<20|r>>>12)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[13]-1444681467)<<5|t>>>27)+r<<0)^r))+f[2]-51403784)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[7]+1735328473)<<14|e>>>18)+i<<0)^i))+f[12]-1926607734)<<20|r>>>12)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[5]-378558)<<4|t>>>28)+r<<0))+f[8]-2022574463)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[11]+1839030562)<<16|e>>>16)+i<<0))+f[14]-35309556)<<23|r>>>9)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[1]-1530992060)<<4|t>>>28)+r<<0))+f[4]+1272893353)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[7]-155497632)<<16|e>>>16)+i<<0))+f[10]-1094730640)<<23|r>>>9)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[13]+681279174)<<4|t>>>28)+r<<0))+f[0]-358537222)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[3]-722521979)<<16|e>>>16)+i<<0))+f[6]+76029189)<<23|r>>>9)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[9]-640364487)<<4|t>>>28)+r<<0))+f[12]-421815835)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[15]+530742520)<<16|e>>>16)+i<<0))+f[2]-995338651)<<23|r>>>9)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[0]-198630844)<<6|t>>>26)+r<<0)|~e))+f[7]+1126891415)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[14]-1416354905)<<15|e>>>17)+i<<0)|~t))+f[5]-57434055)<<21|r>>>11)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[12]+1700485571)<<6|t>>>26)+r<<0)|~e))+f[3]-1894986606)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[10]-1051523)<<15|e>>>17)+i<<0)|~t))+f[1]-2054922799)<<21|r>>>11)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[8]+1873313359)<<6|t>>>26)+r<<0)|~e))+f[15]-30611744)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[6]-1560198380)<<15|e>>>17)+i<<0)|~t))+f[13]+1309151649)<<21|r>>>11)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[4]-145523070)<<6|t>>>26)+r<<0)|~e))+f[11]-1120210379)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[2]+718787259)<<15|e>>>17)+i<<0)|~t))+f[9]-343485551)<<21|r>>>11)+e<<0,this.first?(this.h0=t+1732584193<<0,this.h1=r-271733879<<0,this.h2=e-1732584194<<0,this.h3=i+271733878<<0,this.first=!1):(this.h0=this.h0+t<<0,this.h1=this.h1+r<<0,this.h2=this.h2+e<<0,this.h3=this.h3+i<<0)},t.prototype.hex=function(){this.finalize();var t=this.h0,r=this.h1,e=this.h2,i=this.h3;return n[t>>4&15]+n[15&t]+n[t>>12&15]+n[t>>8&15]+n[t>>20&15]+n[t>>16&15]+n[t>>28&15]+n[t>>24&15]+n[r>>4&15]+n[15&r]+n[r>>12&15]+n[r>>8&15]+n[r>>20&15]+n[r>>16&15]+n[r>>28&15]+n[r>>24&15]+n[e>>4&15]+n[15&e]+n[e>>12&15]+n[e>>8&15]+n[e>>20&15]+n[e>>16&15]+n[e>>28&15]+n[e>>24&15]+n[i>>4&15]+n[15&i]+n[i>>12&15]+n[i>>8&15]+n[i>>20&15]+n[i>>16&15]+n[i>>28&15]+n[i>>24&15]},t.prototype.toString=t.prototype.hex,t.prototype.digest=function(){this.finalize();var t=this.h0,r=this.h1,e=this.h2,i=this.h3;return[255&t,t>>8&255,t>>16&255,t>>24&255,255&r,r>>8&255,r>>16&255,r>>24&255,255&e,e>>8&255,e>>16&255,e>>24&255,255&i,i>>8&255,i>>16&255,i>>24&255]},t.prototype.array=t.prototype.digest,t.prototype.arrayBuffer=function(){this.finalize();var t=new ArrayBuffer(16),r=new Uint32Array(t);return r[0]=this.h0,r[1]=this.h1,r[2]=this.h2,r[3]=this.h3,t},t.prototype.buffer=t.prototype.arrayBuffer,t.prototype.base64=function(){for(var t,r,e,i="",s=this.array(),h=0;h<15;)t=s[h++],r=s[h++],e=s[h++],i+=p[t>>>2]+p[63&(t<<4|r>>>4)]+p[63&(r<<2|e>>>6)]+p[63&e];return t=s[h],i+=p[t>>>2]+p[t<<4&63]+"=="};var _=v();f?module.exports=_:(i.md5=_,o&&define(function(){return _}))}();
-	
-	class Caller {
-		static globalHooks = {
-			onError: null,
-		};
-	
-		constructor(calls = null) {
-			this.calls = [];
-			this.results = {};
-			this.sideResults = {};
-			if (calls) {
-				this.add(calls);
-			}
-		}
-	
-		static setGlobalHook(event, callback) {
-			if (this.globalHooks[event] !== undefined) {
-				this.globalHooks[event] = callback;
-			} else {
-				throw new Error(`Unknown event: ${event}`);
-			}
-		}
-	
-		addCall(call) {
-			const { name = call, args = {} } = typeof call === 'object' ? call : { name: call };
-			this.calls.push({ name, args });
-			return this;
-		}
-	
-		add(name) {
-			if (Array.isArray(name)) {
-				name.forEach((call) => this.addCall(call));
-			} else {
-				this.addCall(name);
-			}
-			return this;
-		}
-	
-		handleError(error) {
-			const errorName = error.name;
-			const errorDescription = error.description;
-	
-			if (Caller.globalHooks.onError) {
-				const shouldThrow = Caller.globalHooks.onError(error);
-				if (shouldThrow === false) {
-					return;
-				}
-			}
-	
-			if (error.call) {
-				const callInfo = error.call;
-				throw new Error(`${errorName} in ${callInfo.name}: ${errorDescription}\n` + `Args: ${JSON.stringify(callInfo.args)}\n`);
-			} else if (errorName === 'common\\rpc\\exception\\InvalidRequest') {
-				throw new Error(`Invalid request: ${errorDescription}`);
-			} else {
-				throw new Error(`Unknown error: ${errorName} - ${errorDescription}`);
-			}
-		}
-	
-		async send() {
-			if (!this.calls.length) {
-				throw new Error('No calls to send.');
-			}
-	
-			const identToNameMap = {};
-			const callsWithIdent = this.calls.map((call, index) => {
-				const ident = this.calls.length === 1 ? 'body' : `group_${index}_body`;
-				identToNameMap[ident] = call.name;
-				return { ...call, ident };
-			});
-	
-			try {
-				const response = await Send({ calls: callsWithIdent });
-	
-				if (response.error) {
-					this.handleError(response.error);
-				}
-	
-				if (!response.results) {
-					throw new Error('Invalid response format: missing "results" field');
-				}
-	
-				response.results.forEach((result) => {
-					const name = identToNameMap[result.ident];
-					if (!this.results[name]) {
-						this.results[name] = [];
-						this.sideResults[name] = [];
-					}
-					this.results[name].push(result.result.response);
-					const sideResults = {};
-					for (const key of Object.keys(result.result)) {
-						if (key === 'response') continue;
-						sideResults[key] = result.result[key];
-					}
-					this.sideResults[name].push(sideResults);
-				});
-			} catch (error) {
-				throw error;
-			}
-			return this;
-		}
-	
-		result(name, forceArray = false) {
-			const results = name ? this.results[name] || [] : Object.values(this.results).flat();
-			return forceArray || results.length !== 1 ? results : results[0];
-		}
-	
-		sideResult(name, forceArray = false) {
-			const results = name ? this.sideResults[name] || [] : Object.values(this.sideResults).flat();
-			return forceArray || results.length !== 1 ? results : results[0];
-		}
-	
-		async execute(name) {
-			try {
-				await this.send();
-				return this.result(name);
-			} catch (error) {
-				throw error;
-			}
-		}
-	
-		clear() {
-			this.calls = [];
-			this.results = {};
-			return this;
-		}
-	
-		isEmpty() {
-			return this.calls.length === 0 && Object.keys(this.results).length === 0;
-		}
-	
-		static async send(calls) {
-			return new Caller(calls).execute();
-		}
-	}
-	
-	this.Caller = Caller;
-	
-	/*
-	// Примеры использования
-	(async () => {
-		// Короткий вызов
-		await new Caller('inventoryGet').execute();
-		// Простой вызов
-		let result = await new Caller().add('inventoryGet').execute();
-		console.log('Inventory Get Result:', result);
-	
-		// Сложный вызов
-		let caller = new Caller();
-		await caller
-			.add([
-				{
-					name: 'inventoryGet',
-					args: {},
-				},
-				{
-					name: 'heroGetAll',
-					args: {},
-				},
-			])
-			.send();
-		console.log('Inventory Get Result:', caller.result('inventoryGet'));
-		console.log('Hero Get All Result:', caller.result('heroGetAll'));
-	
-		// Очистка всех данных
-		caller.clear();
-	})();
-	*/
-	
-	/**
-	 * Script for beautiful dialog boxes
-	 *
-	 * Скрипт для красивых диалоговых окошек
-	 */
-	const popup = new (function () {
-		this.popUp, this.downer, this.custom, this.middle, this.msgText, (this.buttons = []);
-		this.checkboxes = [];
-		this.dialogPromice = null;
-		this.isInit = false;
-	
-		this.init = function () {
-			if (this.isInit) {
-				return;
-			} 
-			addStyle();
-			addBlocks();
-			addEventListeners();
-			this.isInit = true;
-		}
-	
-		const addEventListeners = () => {
-			document.addEventListener('keyup', (e) => {
-				if (e.key == 'Escape') {
-					if (this.dialogPromice) {
-						const { func, result } = this.dialogPromice;
-						this.dialogPromice = null;
-						popup.hide();
-						func(result);
-					}
-				}
-			});
-		}
-	
-		const addStyle = () => {
-			let style = document.createElement('style');
-			style.innerText = `
-		.PopUp_ {
-			 position: fixed;
-			left: 50%;
-			top: 50%;
-			transform: translate(-50%, -50%);
-			min-width: 300px;
-			max-width: 80%;
-			max-height: 80%;
-			background-color: #190e08e6;
-			z-index: 10001;
-			border: 3px #ce9767 solid;
-			border-radius: 10px;
-			display: flex;
-			flex-direction: column;
-			justify-content: space-around;
-			padding: 15px 9px;
-			box-sizing: border-box;
-		}
-	
-		.PopUp_back {
-			position: absolute;
-			background-color: #00000066;
-			width: 100%;
-			height: 100%;
-			z-index: 10000;
-			top: 0;
-			left: 0;
-		}
-	
-		.PopUp_close {
-			width: 40px;
-			height: 40px;
-			position: absolute;
-			right: -18px;
-			top: -18px;
-			border: 3px solid #c18550;
-			border-radius: 20px;
-			background: radial-gradient(circle, rgba(190,30,35,1) 0%, rgba(0,0,0,1) 100%);
-			background-position-y: 3px;
-			box-shadow: -1px 1px 3px black;
-			cursor: pointer;
-			box-sizing: border-box;
-		}
-	
-		.PopUp_close:hover {
-			filter: brightness(1.2);
-		}
-	
-		.PopUp_crossClose {
-			width: 100%;
-			height: 100%;
-			background-size: 65%;
-			background-position: center;
-			background-repeat: no-repeat;
-			background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='%23f4cd73' d='M 0.826 12.559 C 0.431 12.963 3.346 15.374 3.74 14.97 C 4.215 15.173 8.167 10.457 7.804 10.302 C 7.893 10.376 11.454 14.64 11.525 14.372 C 12.134 15.042 15.118 12.086 14.638 11.689 C 14.416 11.21 10.263 7.477 10.402 7.832 C 10.358 7.815 11.731 7.101 14.872 3.114 C 14.698 2.145 13.024 1.074 12.093 1.019 C 11.438 0.861 8.014 5.259 8.035 5.531 C 7.86 5.082 3.61 1.186 3.522 1.59 C 2.973 1.027 0.916 4.611 1.17 4.873 C 0.728 4.914 5.088 7.961 5.61 7.995 C 5.225 7.532 0.622 12.315 0.826 12.559 Z'/%3e%3c/svg%3e")
-		}
-	
-		.PopUp_blocks {
-			width: 100%;
-			height: 50%;
-			display: flex;
-			justify-content: space-evenly;
-			align-items: center;
-			flex-wrap: wrap;
-			justify-content: center;
-		}
-	
-		.PopUp_blocks:last-child {
-			margin-top: 25px;
-		}
-	
-		.PopUp_buttons {
-			display: flex;
-			margin: 7px 10px;
-			flex-direction: column;
-		}
-	
-		.PopUp_button {
-			background-color: #52A81C;
-			border-radius: 5px;
-			box-shadow: inset 0px -4px 10px, inset 0px 3px 2px #99fe20, 0px 0px 4px, 0px -3px 1px #d7b275, 0px 0px 0px 3px #ce9767;
-			cursor: pointer;
-			padding: 4px 12px 6px;
-		}
-	
-		.PopUp_input {
-			text-align: center;
-			font-size: 16px;
-			height: 27px;
-			border: 1px solid #cf9250;
-			border-radius: 9px 9px 0px 0px;
-			background: transparent;
-			color: #fce1ac;
-			padding: 1px 10px;
-			box-sizing: border-box;
-			box-shadow: 0px 0px 4px, 0px 0px 0px 3px #ce9767;
-		}
-	
-		.PopUp_checkboxes {
-			display: flex;
-			flex-direction: column;
-			margin: 15px 15px -5px 15px;
-			align-items: flex-start;
-		}
-	
-		.PopUp_ContCheckbox {
-			margin: 2px 0px;
-		}
-	
-		.PopUp_checkbox {
-			position: absolute;
-			z-index: -1;
-			opacity: 0;
-		}
-		.PopUp_checkbox+label {
-			display: inline-flex;
-			align-items: center;
-			user-select: none;
-	
-			font-size: 15px;
-			font-family: sans-serif;
-			font-weight: 600;
-			font-stretch: condensed;
-			letter-spacing: 1px;
-			color: #fce1ac;
-			text-shadow: 0px 0px 1px;
-		}
-		.PopUp_checkbox+label::before {
-			content: '';
-			display: inline-block;
-			width: 20px;
-			height: 20px;
-			border: 1px solid #cf9250;
-			border-radius: 7px;
-			margin-right: 7px;
-		}
-		.PopUp_checkbox:checked+label::before {
-			background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3e%3cpath fill='%2388cb13' d='M6.564.75l-3.59 3.612-1.538-1.55L0 4.26 2.974 7.25 8 2.193z'/%3e%3c/svg%3e");
-		}
-	
-		.PopUp_input::placeholder {
-			color: #fce1ac75;
-		}
-	
-		.PopUp_input:focus {
-			outline: 0;
-		}
-	
-		.PopUp_input + .PopUp_button {
-			border-radius: 0px 0px 5px 5px;
-			padding: 2px 18px 5px;
-		}
-	
-		.PopUp_button:hover {
-			filter: brightness(1.2);
-		}
-	
-		.PopUp_button:active {
-			box-shadow: inset 0px 5px 10px, inset 0px 1px 2px #99fe20, 0px 0px 4px, 0px -3px 1px #d7b275, 0px 0px 0px 3px #ce9767;
-		}
-	
-		.PopUp_text {
-			font-size: 22px;
-			font-family: sans-serif;
-			font-weight: 600;
-			font-stretch: condensed;
-			letter-spacing: 1px;
-			text-align: center;
-		}
-	
-		.PopUp_buttonText {
-			color: #E4FF4C;
-			text-shadow: 0px 1px 2px black;
-		}
-	
-		.PopUp_msgText {
-			color: #FDE5B6;
-			text-shadow: 0px 0px 2px;
-		}
-	
-		.PopUp_hideBlock {
-			display: none;
-		}
-	
-		.PopUp_Container {
-			max-height: 80vh;
-			overflow-y: auto;
-			overflow-x: hidden;
-			scrollbar-width: thin;
-			scrollbar-color: #774d10 #05040300;
-			padding: 0 1rem;
-		}
-		`;
-			document.head.appendChild(style);
-		}
-	
-		const addBlocks = () => {
-			this.back = document.createElement('div');
-			this.back.classList.add('PopUp_back');
-			this.back.classList.add('PopUp_hideBlock');
-			document.body.append(this.back);
-	
-			this.popUp = document.createElement('div');
-			this.popUp.classList.add('PopUp_');
-			this.back.append(this.popUp);
-	
-			let upper = document.createElement('div')
-			upper.classList.add('PopUp_blocks');
-			this.popUp.append(upper);
-	
-			this.middle = document.createElement('div')
-			this.middle.classList.add('PopUp_blocks');
-			this.middle.classList.add('PopUp_checkboxes');
-			this.popUp.append(this.middle);
-	
-			this.custom = document.createElement('div');
-			this.custom.classList.add('PopUp_Container');
-			this.popUp.append(this.custom);
-	
-			this.downer = document.createElement('div')
-			this.downer.classList.add('PopUp_blocks');
-			this.popUp.append(this.downer);
-	
-			this.msgText = document.createElement('div');
-			this.msgText.classList.add('PopUp_text', 'PopUp_msgText');
-			upper.append(this.msgText);
-		}
-	
-		this.showBack = function () {
-			this.back.classList.remove('PopUp_hideBlock');
-		}
-	
-		this.hideBack = function () {
-			this.back.classList.add('PopUp_hideBlock');
-		}
-	
-		this.show = function () {
-			if (this.checkboxes.length) {
-				this.middle.classList.remove('PopUp_hideBlock');
-			}
-			this.showBack();
-			this.popUp.classList.remove('PopUp_hideBlock');
-		}
-	
-		this.hide = function () {
-			this.hideBack();
-			this.popUp.classList.add('PopUp_hideBlock');
-		}
-	
-		this.addAnyButton = (option) => {
-			const contButton = document.createElement('div');
-			contButton.classList.add('PopUp_buttons');
-			this.downer.append(contButton);
-	
-			let inputField = {
-				value: option.result || option.default
-			}
-			if (option.isInput) {
-				inputField = document.createElement('input');
-				inputField.type = 'text';
-				if (option.placeholder) {
-					inputField.placeholder = option.placeholder;
-				}
-				if (option.default) {
-					inputField.value = option.default;
-				}
-				inputField.classList.add('PopUp_input');
-				contButton.append(inputField);
-			}
-	
-			const button = document.createElement('div');
-			button.classList.add('PopUp_button');
-			button.title = option.title || '';
-			contButton.append(button);
-	
-			const buttonText = document.createElement('div');
-			buttonText.classList.add('PopUp_text', 'PopUp_buttonText');
-			buttonText.innerHTML = option.msg;
-			button.append(buttonText);
-	
-			return { button, contButton, inputField };
-		}
-	
-		this.addCloseButton = () => {
-			let button = document.createElement('div')
-			button.classList.add('PopUp_close');
-			this.popUp.append(button);
-	
-			let crossClose = document.createElement('div')
-			crossClose.classList.add('PopUp_crossClose');
-			button.append(crossClose);
-	
-			return { button, contButton: button };
-		}
-	
-		this.addButton = (option, buttonClick) => {
-	
-			const { button, contButton, inputField } = option.isClose ? this.addCloseButton() : this.addAnyButton(option);
-			if (option.isClose) {
-				this.dialogPromice = { func: buttonClick, result: option.result };
-			}
-			button.addEventListener('click', () => {
-				let result = '';
-				if (option.isInput) {
-					result = inputField.value;
-				}
-				if (option.isClose || option.isCancel) {
-					this.dialogPromice = null;
-				}
-				buttonClick(result);
-			});
-	
-			this.buttons.push(contButton);
-		}
-	
-		this.clearButtons = () => {
-			while (this.buttons.length) {
-				this.buttons.pop().remove();
-			}
-		}
-	
-		this.addCheckBox = (checkBox) => {
-			const contCheckbox = document.createElement('div');
-			contCheckbox.classList.add('PopUp_ContCheckbox');
-			this.middle.append(contCheckbox);
-	
-			const checkbox = document.createElement('input');
-			checkbox.type = 'checkbox';
-			checkbox.id = 'PopUpCheckbox' + this.checkboxes.length;
-			checkbox.dataset.name = checkBox.name;
-			checkbox.checked = checkBox.checked;
-			checkbox.label = checkBox.label;
-			checkbox.title = checkBox.title || '';
-			checkbox.classList.add('PopUp_checkbox');
-			contCheckbox.appendChild(checkbox)
-	
-			const checkboxLabel = document.createElement('label');
-			checkboxLabel.innerText = checkBox.label;
-			checkboxLabel.title = checkBox.title || '';
-			checkboxLabel.setAttribute('for', checkbox.id);
-			contCheckbox.appendChild(checkboxLabel);
-	
-			this.checkboxes.push(checkbox);
-		}
-	
-		this.clearCheckBox = () => {
-			this.middle.classList.add('PopUp_hideBlock');
-			while (this.checkboxes.length) {
-				this.checkboxes.pop().parentNode.remove();
-			}
-		}
-	
-		this.clearCustomBlock = () => {
-			this.custom.innerHTML = '';
-		};
-	
-		this.setMsgText = (text) => {
-			this.msgText.innerHTML = text;
-		}
-	
-		this.getCheckBoxes = () => {
-			const checkBoxes = [];
-	
-			for (const checkBox of this.checkboxes) {
-				checkBoxes.push({
-					name: checkBox.dataset.name,
-					label: checkBox.label,
-					checked: checkBox.checked
-				});
-			}
-	
-			return checkBoxes;
-		}
-	
-		this.confirm = async (msg, buttOpt, checkBoxes = []) => {
-			if (!this.isInit) {
-				this.init();
-			}
-			this.clearButtons();
-			this.clearCheckBox();
-			this.clearCustomBlock();
-			return new Promise((complete, failed) => {
-				this.setMsgText(msg);
-				if (!buttOpt) {
-					buttOpt = [{ msg: 'Ok', result: true, isInput: false }];
-				}
-				for (const checkBox of checkBoxes) {
-					this.addCheckBox(checkBox);
-				}
-				for (let butt of buttOpt) {
-					this.addButton(butt, (result) => {
-						result = result || butt.result;
-						complete(result);
-						popup.hide();
-					});
-					if (butt.isCancel) {
-						this.dialogPromice = { func: complete, result: butt.result };
-					}
-				}
-				this.show();
-			});
-		}
-	
-		this.customPopup = async (customFunc) => {
-			if (!this.isInit) {
-				this.init();
-			}
-			this.clearButtons();
-			this.clearCheckBox();
-			this.clearCustomBlock();
-			return new Promise((complete, failed) => {
-				customFunc(complete);
-			});
-		};
-	});
-	
-	this.HWHFuncs.popup = popup;
-	
-	/**
-	 * Миксин EventEmitter
-	 * @param {Class} BaseClass Базовый класс (по умолчанию Object)
-	 * @returns {Class} Класс с методами EventEmitter
-	 */
-	const EventEmitterMixin = (BaseClass = Object) =>
-		class EventEmitter extends BaseClass {
-			constructor(...args) {
-				super(...args);
-				this._events = new Map();
-			}
-	
-			/**
-			 * Подписаться на событие
-			 * @param {string} event Имя события
-			 * @param {function} listener Функция-обработчик
-			 * @returns {this} Возвращает экземпляр для чейнинга
-			 */
-			on(event, listener) {
-				if (typeof listener !== 'function') {
-					throw new TypeError('Listener must be a function');
-				}
-	
-				if (!this._events.has(event)) {
-					this._events.set(event, new Set());
-				}
-				this._events.get(event).add(listener);
-				return this;
-			}
-	
-			/**
-			 * Отписаться от события
-			 * @param {string} event Имя события
-			 * @param {function} listener Функция-обработчик
-			 * @returns {this} Возвращает экземпляр для чейнинга
-			 */
-			off(event, listener) {
-				if (this._events.has(event)) {
-					const listeners = this._events.get(event);
-					listeners.delete(listener);
-					if (listeners.size === 0) {
-						this._events.delete(event);
-					}
-				}
-				return this;
-			}
-	
-			/**
-			 * Вызвать событие
-			 * @param {string} event Имя события
-			 * @param {...any} args Аргументы для обработчиков
-			 * @returns {boolean} Было ли событие обработано
-			 */
-			emit(event, ...args) {
-				if (!this._events.has(event)) return false;
-				const listeners = new Set(this._events.get(event));
-				listeners.forEach((listener) => {
-					try {
-						listener.apply(this, args);
-					} catch (e) {
-						console.error(`Error in event handler for "${event}":`, e);
-					}
-				});
-	
-				return true;
-			}
-	
-			/**
-			 * Подписаться на событие один раз
-			 * @param {string} event Имя события
-			 * @param {function} listener Функция-обработчик
-			 * @returns {this} Возвращает экземпляр для чейнинга
-			 */
-			once(event, listener) {
-				const onceWrapper = (...args) => {
-					this.off(event, onceWrapper);
-					listener.apply(this, args);
-				};
-				return this.on(event, onceWrapper);
-			}
-	
-			/**
-			 * Удалить все обработчики для события
-			 * @param {string} [event] Имя события (если не указано - очистить все)
-			 * @returns {this} Возвращает экземпляр для чейнинга
-			 */
-			removeAllListeners(event) {
-				if (event) {
-					this._events.delete(event);
-				} else {
-					this._events.clear();
-				}
-				return this;
-			}
-	
-			/**
-			 * Получить количество обработчиков для события
-			 * @param {string} event Имя события
-			 * @returns {number} Количество обработчиков
-			 */
-			listenerCount(event) {
-				return this._events.has(event) ? this._events.get(event).size : 0;
-			}
-		};
-	
-	this.HWHFuncs.EventEmitterMixin = EventEmitterMixin;
-	
-	/**
-	 * Script control panel
-	 *
-	 * Панель управления скриптом
-	 */
-	class ScriptMenu extends EventEmitterMixin() {
-		constructor() {
-			if (ScriptMenu.instance) {
-				return ScriptMenu.instance;
-			}
-			super();
-			this.mainMenu = null;
-			this.buttons = [];
-			this.checkboxes = [];
-			this.option = {
-				showMenu: true,
-				showDetails: {},
-			};
-			ScriptMenu.instance = this;
-			return this;
-		}
-	
-		static getInst() {
-			if (!ScriptMenu.instance) {
-				new ScriptMenu();
-			}
-			return ScriptMenu.instance;
-		}
-	
-		init(option = {}) {
-			this.emit('beforeInit', option);
-			this.option = Object.assign(this.option, option);
-			const saveOption = this.loadSaveOption();
-			this.option = Object.assign(this.option, saveOption);
-			this.addStyle();
-			this.addBlocks();
-			this.emit('afterInit', option);
-		}
-	
-		addStyle() {
-			const style = document.createElement('style');
-			style.innerText = `
-				.scriptMenu_status {
-					position: absolute;
-					z-index: 10001;
-					top: -1px;
-					left: 30%;
-					cursor: pointer;
-					border-radius: 0px 0px 10px 10px;
-					background: #190e08e6;
-					border: 1px #ce9767 solid;
-					font-size: 18px;
-					font-family: sans-serif;
-					font-weight: 600;
-					font-stretch: condensed;
-					letter-spacing: 1px;
-					color: #fce1ac;
-					text-shadow: 0px 0px 1px;
-					transition: 0.5s;
-					padding: 2px 10px 3px;
-				}
-				.scriptMenu_statusHide {
-					top: -35px;
-					height: 30px;
-					overflow: hidden;
-				}
-				.scriptMenu_label {
-					position: absolute;
-					top: 30%;
-					left: -4px;
-					z-index: 9999;
-					cursor: pointer;
-					width: 30px;
-					height: 30px;
-					background: radial-gradient(circle, #47a41b 0%, #1a2f04 100%);
-					border: 1px solid #1a2f04;
-					border-radius: 5px;
-					box-shadow:
-					inset 0px 2px 4px #83ce26,
-					inset 0px -4px 6px #1a2f04,
-					0px 0px 2px black,
-					0px 0px 0px 2px	#ce9767;
-				}
-				.scriptMenu_label:hover {
-					filter: brightness(1.2);
-				}
-				.scriptMenu_arrowLabel {
-					width: 100%;
-					height: 100%;
-					background-size: 75%;
-					background-position: center;
-					background-repeat: no-repeat;
-					background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='%2388cb13' d='M7.596 7.304a.802.802 0 0 1 0 1.392l-6.363 3.692C.713 12.69 0 12.345 0 11.692V4.308c0-.653.713-.998 1.233-.696l6.363 3.692Z'/%3e%3cpath fill='%2388cb13' d='M15.596 7.304a.802.802 0 0 1 0 1.392l-6.363 3.692C8.713 12.69 8 12.345 8 11.692V4.308c0-.653.713-.998 1.233-.696l6.363 3.692Z'/%3e%3c/svg%3e");
-					box-shadow: 0px 1px 2px #000;
-					border-radius: 5px;
-					filter: drop-shadow(0px 1px 2px #000D);
-				}
-				.scriptMenu_main {
-					position: absolute;
-					max-width: 285px;
-					z-index: 9999;
-					top: 50%;
-					transform: translateY(-40%);
-					background: #190e08e6;
-					border: 1px #ce9767 solid;
-					border-radius: 0px 10px 10px 0px;
-					border-left: none;
-					box-sizing: border-box;
-					font-size: 15px;
-					font-family: sans-serif;
-					font-weight: 600;
-					font-stretch: condensed;
-					letter-spacing: 1px;
-					color: #fce1ac;
-					text-shadow: 0px 0px 1px;
-					transition: 1s;
-				}
-				.scriptMenu_conteiner {
-					max-height: 80vh;
-					overflow: scroll;
-					scrollbar-width: none; /* Для Firefox */
-					-ms-overflow-style: none; /* Для Internet Explorer и Edge */
-					display: flex;
-					flex-direction: column;
-					flex-wrap: nowrap;
-					padding: 5px 10px 5px 5px;
-				}
-				.scriptMenu_conteiner::-webkit-scrollbar {
-					display: none; /* Для Chrome, Safari и Opera */
-				}
-				.scriptMenu_showMenu {
-					display: none;
-				}
-				.scriptMenu_showMenu:checked~.scriptMenu_main {
-					left: 0px;
-				}
-				.scriptMenu_showMenu:not(:checked)~.scriptMenu_main {
-					left: -300px;
-				}
-				.scriptMenu_divInput {
-					margin: 2px;
-				}
-				.scriptMenu_divInputText {
-					margin: 2px;
-					align-self: center;
-					display: flex;
-				}
-				.scriptMenu_checkbox {
-					position: absolute;
-					z-index: -1;
-					opacity: 0;
-				}
-				.scriptMenu_checkbox+label {
-					display: inline-flex;
-					align-items: center;
-					user-select: none;
-				}
-				.scriptMenu_checkbox+label::before {
-					content: '';
-					display: inline-block;
-					width: 20px;
-					height: 20px;
-					border: 1px solid #cf9250;
-					border-radius: 7px;
-					margin-right: 7px;
-				}
-				.scriptMenu_checkbox:checked+label::before {
-					background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3e%3cpath fill='%2388cb13' d='M6.564.75l-3.59 3.612-1.538-1.55L0 4.26 2.974 7.25 8 2.193z'/%3e%3c/svg%3e");
-				}
-				.scriptMenu_close {
-					width: 40px;
-					height: 40px;
-					position: absolute;
-					right: -18px;
-					top: -18px;
-					border: 3px solid #c18550;
-					border-radius: 20px;
-					background: radial-gradient(circle, rgba(190,30,35,1) 0%, rgba(0,0,0,1) 100%);
-					background-position-y: 3px;
-					box-shadow: -1px 1px 3px black;
-					cursor: pointer;
-					box-sizing: border-box;
-				}
-				.scriptMenu_close:hover {
-					filter: brightness(1.2);
-				}
-				.scriptMenu_crossClose {
-					width: 100%;
-					height: 100%;
-					background-size: 65%;
-					background-position: center;
-					background-repeat: no-repeat;
-					background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='%23f4cd73' d='M 0.826 12.559 C 0.431 12.963 3.346 15.374 3.74 14.97 C 4.215 15.173 8.167 10.457 7.804 10.302 C 7.893 10.376 11.454 14.64 11.525 14.372 C 12.134 15.042 15.118 12.086 14.638 11.689 C 14.416 11.21 10.263 7.477 10.402 7.832 C 10.358 7.815 11.731 7.101 14.872 3.114 C 14.698 2.145 13.024 1.074 12.093 1.019 C 11.438 0.861 8.014 5.259 8.035 5.531 C 7.86 5.082 3.61 1.186 3.522 1.59 C 2.973 1.027 0.916 4.611 1.17 4.873 C 0.728 4.914 5.088 7.961 5.61 7.995 C 5.225 7.532 0.622 12.315 0.826 12.559 Z'/%3e%3c/svg%3e")
-				}
-				.scriptMenu_button {
-					user-select: none;
-					cursor: pointer;
-					padding: 5px 14px 8px;
-				}
-				.scriptMenu_button:hover {
-					filter: brightness(1.2);
-				}
-				.scriptMenu_buttonText {
-					color: #fce5b7;
-					text-shadow: 0px 1px 2px black;
-					text-align: center;
-				}
-				.scriptMenu_header {
-					text-align: center;
-					align-self: center;
-					font-size: 15px;
-					margin: 0px 15px;
-				}
-				.scriptMenu_header a {
-					color: #fce5b7;
-					text-decoration: none;
-				}
-				.scriptMenu_InputText {
-					text-align: center;
-					width: 130px;
-					height: 24px;
-					border: 1px solid #cf9250;
-					border-radius: 9px;
-					background: transparent;
-					color: #fce1ac;
-					padding: 0px 10px;
-					box-sizing: border-box;
-				}
-				.scriptMenu_InputText:focus {
-					filter: brightness(1.2);
-					outline: 0;
-				}
-				.scriptMenu_InputText::placeholder {
-					color: #fce1ac75;
-				}
-				.scriptMenu_Summary {
-					cursor: pointer;
-					margin-left: 7px;
-				}
-				.scriptMenu_Details {
-					align-self: center;
-				}
-				.scriptMenu_buttonGroup {
-					display: flex;
-					justify-content: center;
-					user-select: none;
-					cursor: pointer;
-					padding: 0;
-					margin: 3px 0;
-				}
-				.scriptMenu_buttonGroup .scriptMenu_button {
-					width: 100%;
-					padding: 5px 8px 8px;
-				}
-				.scriptMenu_mainButton {
-					border-radius: 5px;
-					margin: 3px 0;
-				}
-				.scriptMenu_combineButtonLeft {
-					border-top-left-radius: 5px;
-					border-bottom-left-radius: 5px;
-					margin-right: 2px;
-				}
-				.scriptMenu_combineButtonCenter {
-					border-radius: 0px;
-					margin-right: 2px;
-				}
-				.scriptMenu_combineButtonRight {
-					border-top-right-radius: 5px;
-					border-bottom-right-radius: 5px;
-				}
-				.scriptMenu_beigeButton {
-					border: 1px solid #442901;
-					background: radial-gradient(circle, rgba(165,120,56,1) 80%, rgba(0,0,0,1) 110%);
-					box-shadow: inset 0px 2px 4px #e9b282, inset 0px -4px 6px #442901, inset 0px 1px 6px #442901, inset 0px 0px 6px, 0px 0px 2px black, 0px 0px 0px 1px #ce9767;
-				}
-				.scriptMenu_beigeButton:active {
-					box-shadow: inset 0px 4px 6px #442901, inset 0px 4px 6px #442901, inset 0px 0px 6px, 0px 0px 4px, 0px 0px 0px 1px #ce9767;
-				}
-				.scriptMenu_greenButton {
-					border: 1px solid #1a2f04;
-					background: radial-gradient(circle, #47a41b 0%, #1a2f04 150%);
-					box-shadow: inset 0px 2px 4px #83ce26, inset 0px -4px 6px #1a2f04, 0px 0px 2px black, 0px 0px 0px 1px #ce9767;
-				}
-				.scriptMenu_greenButton:active {
-					box-shadow: inset 0px 4px 6px #1a2f04, inset 0px 4px 6px #1a2f04, inset 0px 0px 6px, 0px 0px 4px, 0px 0px 0px 1px #ce9767;
-				}
-				.scriptMenu_redButton {
-					border: 1px solid #440101;
-					background: radial-gradient(circle, rgb(198, 34, 34) 80%, rgb(0, 0, 0) 110%);
-					box-shadow: inset 0px 2px 4px #e98282, inset 0px -4px 6px #440101, inset 0px 1px 6px #440101, inset 0px 0px 6px, 0px 0px 2px black, 0px 0px 0px 1px #ce9767;
-				}
-				.scriptMenu_redButton:active {
-					box-shadow: inset 0px 4px 6px #440101, inset 0px 4px 6px #440101, inset 0px 0px 6px, 0px 0px 4px, 0px 0px 0px 1px #ce9767;
-				}
-				.scriptMenu_attention {
-					position: relative;
-				}
-				.scriptMenu_attention .scriptMenu_dot {
-					display: flex;
-					justify-content: center;
-					align-items: center;
-				}
-				.scriptMenu_dot {
-					position: absolute;
-					top: -7px;
-					right: -7px;
-					width: 20px;
-					height: 20px;
-					border-radius: 50%;
-					border: 1px solid #c18550;
-					background: radial-gradient(circle, #f000 25%, black 100%);
-					box-shadow: 0px 0px 2px black;
-					background-position: 0px -1px;
-					font-size: 10px;
-					text-align: center;
-					color: white;
-					text-shadow: 1px 1px 1px black;
-					box-sizing: border-box;
-					display: none;
-				}
-			`;
-			document.head.appendChild(style);
-		}
-	
-		addBlocks() {
-			const main = document.createElement('div');
-			document.body.appendChild(main);
-	
-			this.status = document.createElement('div');
-			this.status.classList.add('scriptMenu_status');
-			this.setStatus('');
-			main.appendChild(this.status);
-	
-			const label = document.createElement('label');
-			label.classList.add('scriptMenu_label');
-			label.setAttribute('for', 'checkbox_showMenu');
-			main.appendChild(label);
-	
-			const arrowLabel = document.createElement('div');
-			arrowLabel.classList.add('scriptMenu_arrowLabel');
-			label.appendChild(arrowLabel);
-	
-			const checkbox = document.createElement('input');
-			checkbox.type = 'checkbox';
-			checkbox.id = 'checkbox_showMenu';
-			checkbox.checked = this.option.showMenu;
-			checkbox.classList.add('scriptMenu_showMenu');
-			checkbox.addEventListener('change', () => {
-				this.option.showMenu = checkbox.checked;
-				this.saveSaveOption();
-			});
-			main.appendChild(checkbox);
-	
-			const mainMenu = document.createElement('div');
-			mainMenu.classList.add('scriptMenu_main');
-			main.appendChild(mainMenu);
-	
-			this.mainMenu = document.createElement('div');
-			this.mainMenu.classList.add('scriptMenu_conteiner');
-			mainMenu.appendChild(this.mainMenu);
-	
-			const closeButton = document.createElement('label');
-			closeButton.classList.add('scriptMenu_close');
-			closeButton.setAttribute('for', 'checkbox_showMenu');
-			this.mainMenu.appendChild(closeButton);
-	
-			const crossClose = document.createElement('div');
-			crossClose.classList.add('scriptMenu_crossClose');
-			closeButton.appendChild(crossClose);
-		}
-	
-		getButtonColor(color) {
-			const buttonColors = {
-				green: 'scriptMenu_greenButton',
-				red: 'scriptMenu_redButton',
-				beige: 'scriptMenu_beigeButton',
-			};
-			return buttonColors[color] || buttonColors['beige'];
-		}
-	
-		setStatus(text, onclick) {
-			if (this._currentStatusClickHandler) {
-				this.status.removeEventListener('click', this._currentStatusClickHandler);
-				this._currentStatusClickHandler = null;
-			}
-	
-			if (!text) {
-				this.status.classList.add('scriptMenu_statusHide');
-				this.status.innerHTML = '';
-			} else {
-				this.status.classList.remove('scriptMenu_statusHide');
-				this.status.innerHTML = text;
-			}
-	
-			if (typeof onclick === 'function') {
-				this.status.addEventListener('click', onclick, { once: true });
-				this._currentStatusClickHandler = onclick;
-			}
-		}
-	
-		addStatus(text) {
-			if (!this.status.innerHTML) {
-				this.status.classList.remove('scriptMenu_statusHide');
-			}
-			this.status.innerHTML += text;
-		}
-	
-		addHeader(text, onClick, main = this.mainMenu) {
-			this.emit('beforeAddHeader', text, onClick, main);
-			const header = document.createElement('div');
-			header.classList.add('scriptMenu_header');
-			header.innerHTML = text;
-			if (typeof onClick === 'function') {
-				header.addEventListener('click', onClick);
-			}
-			main.appendChild(header);
-			this.emit('afterAddHeader', text, onClick, main);
-			return header;
-		}
-	
-		addButton(btn, main = this.mainMenu) {
-			this.emit('beforeAddButton', btn, main);
-			const { name, onClick, title, color, dot, classes = [], isCombine } = btn;
-			const button = document.createElement('div');
-			if (!isCombine) {
-				classes.push('scriptMenu_mainButton');
-			}
-			button.classList.add('scriptMenu_button', this.getButtonColor(color), ...classes);
-			button.title = title;
-			button.addEventListener('click', onClick);
-			main.appendChild(button);
-	
-			const buttonText = document.createElement('div');
-			buttonText.classList.add('scriptMenu_buttonText');
-			buttonText.innerText = name;
-			button.appendChild(buttonText);
-	
-			if (dot) {
-				const dotAtention = document.createElement('div');
-				dotAtention.classList.add('scriptMenu_dot');
-				dotAtention.title = dot;
-				button.appendChild(dotAtention);
-			}
-	
-			this.buttons.push(button);
-			this.emit('afterAddButton', button, btn);
-			return button;
-		}
-	
-		addCombinedButton(buttonList, main = this.mainMenu) {
-			this.emit('beforeAddCombinedButton', buttonList, main);
-			const buttonGroup = document.createElement('div');
-			buttonGroup.classList.add('scriptMenu_buttonGroup');
-			let count = 0;
-	
-			for (const btn of buttonList) {
-				btn.isCombine = true;
-				btn.classes ??= [];
-				if (count === 0) {
-					btn.classes.push('scriptMenu_combineButtonLeft');
-				} else if (count === buttonList.length - 1) {
-					btn.classes.push('scriptMenu_combineButtonRight');
-				} else {
-					btn.classes.push('scriptMenu_combineButtonCenter');
-				}
-				this.addButton(btn, buttonGroup);
-				count++;
-			}
-	
-			const dotAtention = document.createElement('div');
-			dotAtention.classList.add('scriptMenu_dot');
-			buttonGroup.appendChild(dotAtention);
-	
-			main.appendChild(buttonGroup);
-			this.emit('afterAddCombinedButton', buttonGroup, buttonList);
-			return buttonGroup;
-		}
-	
-		addCheckbox(label, title, main = this.mainMenu) {
-			this.emit('beforeAddCheckbox', label, title, main);
-			const divCheckbox = document.createElement('div');
-			divCheckbox.classList.add('scriptMenu_divInput');
-			divCheckbox.title = title;
-			main.appendChild(divCheckbox);
-	
-			const checkbox = document.createElement('input');
-			checkbox.type = 'checkbox';
-			checkbox.id = 'scriptMenuCheckbox' + this.checkboxes.length;
-			checkbox.classList.add('scriptMenu_checkbox');
-			divCheckbox.appendChild(checkbox);
-	
-			const checkboxLabel = document.createElement('label');
-			checkboxLabel.innerText = label;
-			checkboxLabel.setAttribute('for', checkbox.id);
-			divCheckbox.appendChild(checkboxLabel);
-	
-			this.checkboxes.push(checkbox);
-			this.emit('afterAddCheckbox', label, title, main);
-			return checkbox;
-		}
-	
-		addInputText(title, placeholder, main = this.mainMenu) {
-			this.emit('beforeAddCheckbox', title, placeholder, main);
-			const divInputText = document.createElement('div');
-			divInputText.classList.add('scriptMenu_divInputText');
-			divInputText.title = title;
-			main.appendChild(divInputText);
-	
-			const newInputText = document.createElement('input');
-			newInputText.type = 'text';
-			if (placeholder) {
-				newInputText.placeholder = placeholder;
-			}
-			newInputText.classList.add('scriptMenu_InputText');
-			divInputText.appendChild(newInputText);
-			this.emit('afterAddCheckbox', title, placeholder, main);
-			return newInputText;
-		}
-	
-		addDetails(summaryText, name = null) {
-			this.emit('beforeAddDetails', summaryText, name);
-			const details = document.createElement('details');
-			details.classList.add('scriptMenu_Details');
-			this.mainMenu.appendChild(details);
-	
-			const summary = document.createElement('summary');
-			summary.classList.add('scriptMenu_Summary');
-			summary.innerText = summaryText;
-			if (name) {
-				details.open = this.option.showDetails[name] ?? false;
-				details.dataset.name = name;
-				details.addEventListener('toggle', () => {
-					this.option.showDetails[details.dataset.name] = details.open;
-					this.saveSaveOption();
-				});
-			}
-	
-			details.appendChild(summary);
-			this.emit('afterAddDetails', summaryText, name);
-			return details;
-		}
-	
-		saveSaveOption() {
-			try {
-				localStorage.setItem('scriptMenu_saveOption', JSON.stringify(this.option));
-			} catch (e) {
-				console.log('¯\\_(ツ)_/¯');
-			}
-		}
-	
-		loadSaveOption() {
-			let saveOption = null;
-			try {
-				saveOption = localStorage.getItem('scriptMenu_saveOption');
-			} catch (e) {
-				console.log('¯\\_(ツ)_/¯');
-			}
-	
-			if (!saveOption) {
-				return {};
-			}
-	
-			try {
-				saveOption = JSON.parse(saveOption);
-			} catch (e) {
-				return {};
-			}
-	
-			return saveOption;
-		}
-	}
-	
-	this.HWHClasses.ScriptMenu = ScriptMenu;
-	
-	//const scriptMenu = ScriptMenu.getInst();
-	
-	/**
-	 * Пример использования
-	const scriptMenu = ScriptMenu.getInst();
-	scriptMenu.init();
-	scriptMenu.addHeader('v1.508');
-	scriptMenu.addCheckbox('testHack', 'Тестовый взлом игры!');
-	scriptMenu.addButton({
-		text: 'Запуск!', 
-		onClick: () => console.log('click'), 
-		title: 'подсказака',
-	});
-	scriptMenu.addInputText('input подсказака');
-	scriptMenu.on('beforeInit', (option) => {
-		console.log('beforeInit', option);
-	})
-	scriptMenu.on('beforeAddHeader', (text, onClick, main) => {
-		console.log('beforeAddHeader', text, onClick, main);
-	});
-	scriptMenu.on('beforeAddButton', (btn, main) => {
-		console.log('beforeAddButton', btn, main);
-	});
-	scriptMenu.on('beforeAddCombinedButton', (buttonList, main) => {
-		console.log('beforeAddCombinedButton', buttonList, main);
-	});
-	scriptMenu.on('beforeAddCheckbox', (label, title, main) => {
-		console.log('beforeAddCheckbox', label, title, main);
-	});
-	scriptMenu.on('beforeAddDetails', (summaryText, name) => {
-		console.log('beforeAddDetails', summaryText, name);
-	});
-	 */
 	
 	/**
 	 * Game Library
@@ -5706,1943 +4554,334 @@
 		await db.set(userId, storage.values);
 	}
 	
-	class ZingerYWebsiteAPI {
-		/**
-		 * Class for interaction with the API of the zingery.ru website
-		 * Intended only for use with the HeroWarsHelper script:
-		 * https://greasyfork.org/ru/scripts/450693-herowarshelper
-		 * Copyright ZingerY
-		 */
-		url = 'https://zingery.ru/heroes/';
-		// YWJzb2x1dGVseSB1c2VsZXNzIGxpbmU=
-		constructor(urn, env, data = {}) {
-			this.urn = urn;
-			this.fd = {
-				now: Date.now(),
-				fp: this.constructor.toString().replaceAll(/\s/g, ''),
-				env: env.callee.toString().replaceAll(/\s/g, ''),
-				info: (({ name, version, author }) => [name, version, author])(GM_info.script),
-				...data,
-			};
-		}
-	
-		sign() {
-			return md5([...this.fd.info, ~(this.fd.now % 1e3), this.fd.fp].join('_'));
-		}
-	
-		encode(data) {
-			return btoa(encodeURIComponent(JSON.stringify(data)));
-		}
-	
-		decode(data) {
-			return JSON.parse(decodeURIComponent(atob(data)));
-		}
-	
-		headers() {
-			return {
-				'X-Request-Signature': this.sign(),
-				'X-Script-Name': GM_info.script.name,
-				'X-Script-Version': GM_info.script.version,
-				'X-Script-Author': GM_info.script.author,
-				'X-Script-ZingerY': 42,
-			};
-		}
-	
-		async request() {
-			try {
-				const response = await fetch(this.url + this.urn, {
-					method: 'POST',
-					headers: this.headers(),
-					body: this.encode(this.fd),
-				});
-				const text = await response.text();
-				return this.decode(text);
-			} catch (e) {
-				console.error(e);
-				return [];
-			}
-		}
-		/**
-		 * Класс для взаимодействия с API сайта zingery.ru
-		 * Предназначен только для использования со скриптом HeroWarsHelper:
-		 * https://greasyfork.org/ru/scripts/450693-herowarshelper
-		 * Copyright ZingerY
-		 */
-	}
-	
 	/**
-	 * Sending expeditions
-	 *
-	 * Отправка экспедиций
+	 * Миксин EventEmitter
+	 * @param {Class} BaseClass Базовый класс (по умолчанию Object)
+	 * @returns {Class} Класс с методами EventEmitter
 	 */
-	function checkExpedition() {
-		const { Expedition } = HWHClasses;
-		return new Promise((resolve, reject) => {
-			const expedition = new Expedition(resolve, reject);
-			expedition.start();
-		});
-	}
+	const EventEmitterMixin = (BaseClass = Object) =>
+		class EventEmitter extends BaseClass {
+			constructor(...args) {
+				super(...args);
+				this._events = new Map();
+			}
 	
-	class Expedition {
-		checkExpedInfo = {
-			calls: [
-				{
-					name: 'expeditionGet',
-					args: {},
-					ident: 'expeditionGet',
-				},
-				{
-					name: 'heroGetAll',
-					args: {},
-					ident: 'heroGetAll',
-				},
-			],
+			/**
+			 * Подписаться на событие
+			 * @param {string} event Имя события
+			 * @param {function} listener Функция-обработчик
+			 * @returns {this} Возвращает экземпляр для чейнинга
+			 */
+			on(event, listener) {
+				if (typeof listener !== 'function') {
+					throw new TypeError('Listener must be a function');
+				}
+	
+				if (!this._events.has(event)) {
+					this._events.set(event, new Set());
+				}
+				this._events.get(event).add(listener);
+				return this;
+			}
+	
+			/**
+			 * Отписаться от события
+			 * @param {string} event Имя события
+			 * @param {function} listener Функция-обработчик
+			 * @returns {this} Возвращает экземпляр для чейнинга
+			 */
+			off(event, listener) {
+				if (this._events.has(event)) {
+					const listeners = this._events.get(event);
+					listeners.delete(listener);
+					if (listeners.size === 0) {
+						this._events.delete(event);
+					}
+				}
+				return this;
+			}
+	
+			/**
+			 * Вызвать событие
+			 * @param {string} event Имя события
+			 * @param {...any} args Аргументы для обработчиков
+			 * @returns {boolean} Было ли событие обработано
+			 */
+			emit(event, ...args) {
+				if (!this._events.has(event)) return false;
+				const listeners = new Set(this._events.get(event));
+				listeners.forEach((listener) => {
+					try {
+						listener.apply(this, args);
+					} catch (e) {
+						console.error(`Error in event handler for "${event}":`, e);
+					}
+				});
+	
+				return true;
+			}
+	
+			/**
+			 * Подписаться на событие один раз
+			 * @param {string} event Имя события
+			 * @param {function} listener Функция-обработчик
+			 * @returns {this} Возвращает экземпляр для чейнинга
+			 */
+			once(event, listener) {
+				const onceWrapper = (...args) => {
+					this.off(event, onceWrapper);
+					listener.apply(this, args);
+				};
+				return this.on(event, onceWrapper);
+			}
+	
+			/**
+			 * Удалить все обработчики для события
+			 * @param {string} [event] Имя события (если не указано - очистить все)
+			 * @returns {this} Возвращает экземпляр для чейнинга
+			 */
+			removeAllListeners(event) {
+				if (event) {
+					this._events.delete(event);
+				} else {
+					this._events.clear();
+				}
+				return this;
+			}
+	
+			/**
+			 * Получить количество обработчиков для события
+			 * @param {string} event Имя события
+			 * @returns {number} Количество обработчиков
+			 */
+			listenerCount(event) {
+				return this._events.has(event) ? this._events.get(event).size : 0;
+			}
 		};
 	
-		constructor(resolve, reject) {
-			this.resolve = resolve;
-			this.reject = reject;
+	this.HWHFuncs.EventEmitterMixin = EventEmitterMixin;
+	
+	class GlobalEventHub extends EventEmitterMixin() {}
+	const Events = new GlobalEventHub();
+	this.HWHFuncs.Events = Events;
+	
+	class TaskManager {
+		isConsoleLog = false;
+		functionRegistry = {};
+	
+		constructor() {
+			if (!TaskManager.inst) {
+				console.log('intiTaskManager timeout: 1');
+				this.tasks = new Map();
+				this.setTimeout(1);
+				TaskManager.inst = this;
+			}
+	
+			return TaskManager.inst;
 		}
 	
-		async start() {
-			const data = await Send(JSON.stringify(this.checkExpedInfo));
-	
-			const expedInfo = data.results[0].result.response;
-			const dataHeroes = data.results[1].result.response;
-			const dataExped = { useHeroes: [], exped: [] };
-			const calls = [];
-	
-			/**
-			 * Adding expeditions to collect
-			 * Добавляем экспедиции для сбора
-			 */
-			let countGet = 0;
-			for (var n in expedInfo) {
-				const exped = expedInfo[n];
-				const dateNow = Date.now() / 1000;
-				if (exped.status == 2 && exped.endTime != 0 && dateNow > exped.endTime) {
-					countGet++;
-					calls.push({
-						name: 'expeditionFarm',
-						args: { expeditionId: exped.id },
-						ident: 'expeditionFarm_' + exped.id,
-					});
-				} else {
-					dataExped.useHeroes = dataExped.useHeroes.concat(exped.heroes);
-				}
-				if (exped.status == 1) {
-					dataExped.exped.push({ id: exped.id, power: exped.power });
-				}
+		async loop() {
+			if (this.isConsoleLog) {
+				console.log(new Date().toISOString(), this.tasks.size);
 			}
-			dataExped.exped = dataExped.exped.sort((a, b) => b.power - a.power);
-	
-			/**
-			 * Putting together a list of heroes
-			 * Собираем список героев
-			 */
-			const heroesArr = [];
-			for (let n in dataHeroes) {
-				const hero = dataHeroes[n];
-				if (hero.power > 0 && !dataExped.useHeroes.includes(hero.id)) {
-					let heroPower = hero.power;
-					// Лара Крофт * 3
-					if (hero.id == 63 && hero.color >= 16) {
-						heroPower *= 3;
+			const currentTime = new Date();
+			for (const [task, executionTime] of this.tasks) {
+				if (executionTime <= currentTime) {
+					if (this.isConsoleLog) {
+						console.log('executeTask', task);
 					}
-					heroesArr.push({ id: hero.id, power: heroPower });
-				}
-			}
-	
-			/**
-			 * Adding expeditions to send
-			 * Добавляем экспедиции для отправки
-			 */
-			let countSend = 0;
-			heroesArr.sort((a, b) => a.power - b.power);
-			for (const exped of dataExped.exped) {
-				let heroesIds = this.selectionHeroes(heroesArr, exped.power);
-				if (heroesIds && heroesIds.length > 4) {
-					for (let q in heroesArr) {
-						if (heroesIds.includes(heroesArr[q].id)) {
-							delete heroesArr[q];
+					try {
+						if (typeof task.execute === 'function') {
+							task.execute();
+						} else if (task.fnName && this.functionRegistry[task.fnName]) {
+							this.functionRegistry[task.fnName](...(task.args || []));
+							delete this.functionRegistry[task.fnName];
+						} else {
+							console.warn('Task has no executable function:', task);
 						}
+	
+						if (typeof task.onComplete === 'function') {
+							task.onComplete(task);
+						}
+					} catch (error) {
+						this.executeError(error, task);
 					}
-					countSend++;
-					calls.push({
-						name: 'expeditionSendHeroes',
-						args: {
-							expeditionId: exped.id,
-							heroes: heroesIds,
-						},
-						ident: 'expeditionSendHeroes_' + exped.id,
-					});
+	
+					this.tasks.delete(task);
+					if (task.repeat) {
+						this.addTask(task);
+					}
 				}
 			}
-	
-			if (calls.length) {
-				await Send({ calls });
-				this.end(I18N('EXPEDITIONS_SENT', {countGet, countSend}));
-				return;
-			}
-	
-			this.end(I18N('EXPEDITIONS_NOTHING'));
+			await this.sleep();
+			this.loop();
 		}
 	
-		/**
-		 * Selection of heroes for expeditions
-		 *
-		 * Подбор героев для экспедиций
-		 */
-		selectionHeroes(heroes, power) {
-			const resultHeroers = [];
-			const heroesIds = [];
-			for (let q = 0; q < 5; q++) {
-				for (let i in heroes) {
-					let hero = heroes[i];
-					if (heroesIds.includes(hero.id)) {
-						continue;
-					}
+		addTask(task) {
+			task.executeTime = task.executeAt instanceof Date ? task.executeAt : new Date(Date.now() + task.executeAt * 1e3);
+			if (this.isConsoleLog) {
+				console.log('addTask', task);
+			}
+			this.tasks.set(task, task.executeTime);
+		}
 	
-					const summ = resultHeroers.reduce((acc, hero) => acc + hero.power, 0);
-					const need = Math.round((power - summ) / (5 - resultHeroers.length));
-					if (hero.power > need) {
-						resultHeroers.push(hero);
-						heroesIds.push(hero.id);
-						break;
+		removeTaskById(id) {
+			for (const [task, _] of this.tasks) {
+				if (task.id === id) {
+					this.tasks.delete(task);
+					if (this.isConsoleLog) {
+						console.log('Removed task by ID:', id);
 					}
+					return true;
 				}
 			}
+			return false;
+		}
 	
-			const summ = resultHeroers.reduce((acc, hero) => acc + hero.power, 0);
-			if (summ < power) {
+		executeError(error, task) {
+			console.error('Task error:', error);
+			console.log('Faulty task:', task);
+		}
+	
+		setTimeout(timeout) {
+			this.timeout = timeout * 1000;
+			if (this.worker) {
+				this.worker.terminate();
+			}
+			this.worker = new Worker(
+				URL.createObjectURL(
+					new Blob([
+						`self.onmessage = function(e) {
+									const timeout = e.data;
+									setTimeout(() => {
+										self.postMessage(1);
+									}, timeout);
+								};`,
+					])
+				)
+			);
+			this.loop();
+		}
+	
+		registerFunction(name, fn) {
+			if (name in this.functionRegistry) {
+				console.log('Функция с таким именем уже есть');
 				return false;
 			}
-			return heroesIds;
+			this.functionRegistry[name] = fn;
+			return true;
 		}
 	
-		/**
-		 * Ends expedition script
-		 *
-		 * Завершает скрипт экспедиции
-		 */
-		end(msg) {
-			setProgress(msg, true);
-			this.resolve();
-		}
-	}
-	
-	this.HWHClasses.Expedition = Expedition;
-	
-	/**
-	 * Walkthrough of the dungeon
-	 *
-	 * Прохождение подземелья
-	 */
-	function testDungeon() {
-		const { executeDungeon } = HWHClasses;
-		return new Promise((resolve, reject) => {
-			const dung = new executeDungeon(resolve, reject);
-			const titanit = getInput('countTitanit');
-			dung.start(titanit);
-		});
-	}
-	
-	/**
-	 * Walkthrough of the dungeon
-	 *
-	 * Прохождение подземелья
-	 */
-	function executeDungeon(resolve, reject) {
-		dungeonActivity = 0;
-		let maxDungeonActivity = 150;
-	
-		titanGetAll = [];
-	
-		teams = {
-			heroes: [],
-			earth: [],
-			fire: [],
-			neutral: [],
-			water: [],
-		}
-	
-		titanStats = [];
-	
-		titansStates = {};
-	
-		let talentMsg = '';
-		let talentMsgReward = '';
-	
-		callsExecuteDungeon = {
-			calls: [{
-				name: "dungeonGetInfo",
-				args: {},
-				ident: "dungeonGetInfo"
-			}, {
-				name: "teamGetAll",
-				args: {},
-				ident: "teamGetAll"
-			}, {
-				name: "teamGetFavor",
-				args: {},
-				ident: "teamGetFavor"
-			}, {
-				name: "clanGetInfo",
-				args: {},
-				ident: "clanGetInfo"
-			}, {
-				name: "titanGetAll",
-				args: {},
-				ident: "titanGetAll"
-			}, {
-				name: "inventoryGet",
-				args: {},
-				ident: "inventoryGet"
-			}]
-		}
-	
-		this.start = function(titanit) {
-			maxDungeonActivity = titanit || getInput('countTitanit');
-			send(JSON.stringify(callsExecuteDungeon), startDungeon);
-		}
-	
-		/**
-		 * Getting data on the dungeon
-		 *
-		 * Получаем данные по подземелью
-		 */
-		function startDungeon(e) {
-			res = e.results;
-			dungeonGetInfo = res[0].result.response;
-			if (!dungeonGetInfo) {
-				endDungeon('noDungeon', res);
-				return;
-			}
-			teamGetAll = res[1].result.response;
-			teamGetFavor = res[2].result.response;
-			dungeonActivity = res[3].result.response.stat.todayDungeonActivity;
-			titanGetAll = Object.values(res[4].result.response);
-			HWHData.countPredictionCard = res[5].result.response.consumable[81];
-	
-			teams.hero = {
-				favor: teamGetFavor.dungeon_hero,
-				heroes: teamGetAll.dungeon_hero.filter(id => id < 6000),
-				teamNum: 0,
-			}
-			heroPet = teamGetAll.dungeon_hero.filter(id => id >= 6000).pop();
-			if (heroPet) {
-				teams.hero.pet = heroPet;
-			}
-	
-			teams.neutral = {
-				favor: {},
-				heroes: getTitanTeam(titanGetAll, 'neutral'),
-				teamNum: 0,
-			};
-			teams.water = {
-				favor: {},
-				heroes: getTitanTeam(titanGetAll, 'water'),
-				teamNum: 0,
-			};
-			teams.fire = {
-				favor: {},
-				heroes: getTitanTeam(titanGetAll, 'fire'),
-				teamNum: 0,
-			};
-			teams.earth = {
-				favor: {},
-				heroes: getTitanTeam(titanGetAll, 'earth'),
-				teamNum: 0,
-			};
-	
-	
-			checkFloor(dungeonGetInfo);
-		}
-	
-		function getTitanTeam(titans, type) {
-			switch (type) {
-				case 'neutral':
-					return titans.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
-				case 'water':
-					return titans.filter(e => e.id.toString().slice(2, 3) == '0').map(e => e.id);
-				case 'fire':
-					return titans.filter(e => e.id.toString().slice(2, 3) == '1').map(e => e.id);
-				case 'earth':
-					return titans.filter(e => e.id.toString().slice(2, 3) == '2').map(e => e.id);
-			}
-		}
-	
-		function getNeutralTeam() {
-			const titans = titanGetAll.filter(e => !titansStates[e.id]?.isDead)
-			return titans.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
-		}
-	
-		function fixTitanTeam(titans) {
-			titans.heroes = titans.heroes.filter(e => !titansStates[e]?.isDead);
-			return titans;
-		}
-	
-		/**
-		 * Checking the floor
-		 *
-		 * Проверяем этаж
-		 */
-		async function checkFloor(dungeonInfo) {
-			if (!('floor' in dungeonInfo) || dungeonInfo.floor?.state == 2) {
-				saveProgress();
-				return;
-			}
-			checkTalent(dungeonInfo);
-			// console.log(dungeonInfo, dungeonActivity);
-			maxDungeonActivity = +getInput('countTitanit');
-			setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
-			if (dungeonActivity >= maxDungeonActivity) {
-				endDungeon('endDungeon', 'maxActive ' + dungeonActivity + '/' + maxDungeonActivity);
-				return;
-			}
-			titansStates = dungeonInfo.states.titans;
-			titanStats = titanObjToArray(titansStates);
-			const floorChoices = dungeonInfo.floor.userData;
-			const floorType = dungeonInfo.floorType;
-			//const primeElement = dungeonInfo.elements.prime;
-			if (floorType == "battle") {
-				const calls = [];
-				for (let teamNum in floorChoices) {
-					attackerType = floorChoices[teamNum].attackerType;
-					const args = fixTitanTeam(teams[attackerType]);
-					if (attackerType == 'neutral') {
-						args.heroes = getNeutralTeam();
-					}
-					if (!args.heroes.length) {
-						continue;
-					}
-					args.teamNum = teamNum;
-					calls.push({
-						name: "dungeonStartBattle",
-						args,
-						ident: "body_" + teamNum
-					})
-				}
-				if (!calls.length) {
-					endDungeon('endDungeon', 'All Dead');
-					return;
-				}
-				const battleDatas = await Send(JSON.stringify({ calls }))
-					.then(e => e.results.map(n => n.result.response))
-				const battleResults = [];
-				for (n in battleDatas) {
-					battleData = battleDatas[n]
-					battleData.progress = [{ attackers: { input: ["auto", 0, 0, "auto", 0, 0] } }];
-					battleResults.push(await Calc(battleData).then(result => {
-						result.teamNum = n;
-						result.attackerType = floorChoices[n].attackerType;
-						return result;
-					}));
-				}
-				processingPromises(battleResults)
-			}
-		}
-	
-		async function checkTalent(dungeonInfo) {
-			const talent = dungeonInfo.talent;
-			if (!talent) {
-				return;
-			}
-			const dungeonFloor = +dungeonInfo.floorNumber;
-			const talentFloor = +talent.floorRandValue;
-			let doorsAmount = 3 - talent.conditions.doorsAmount;
-	
-			if (dungeonFloor === talentFloor && (!doorsAmount || !talent.conditions?.farmedDoors[dungeonFloor])) {
-				const reward = await Send({
-					calls: [
-						{ name: 'heroTalent_getReward', args: { talentType: 'tmntDungeonTalent', reroll: false }, ident: 'group_0_body' },
-						{ name: 'heroTalent_farmReward', args: { talentType: 'tmntDungeonTalent' }, ident: 'group_1_body' },
-					],
-				}).then((e) => e.results[0].result.response);
-				const type = Object.keys(reward).pop();
-				const itemId = Object.keys(reward[type]).pop();
-				const count = reward[type][itemId];
-				const itemName = cheats.translate(`LIB_${type.toUpperCase()}_NAME_${itemId}`);
-				talentMsgReward += `<br> ${count} ${itemName}`;
-				doorsAmount++;
-			}
-			talentMsg = `<br>TMNT Talent: ${doorsAmount}/3 ${talentMsgReward}<br>`;
-		}
-	
-		function processingPromises(results) {
-			let selectBattle = results[0];
-			if (results.length < 2) {
-				// console.log(selectBattle);
-				if (!selectBattle.result.win) {
-					endDungeon('dungeonEndBattle\n', selectBattle);
-					return;
-				}
-				endBattle(selectBattle);
-				return;
-			}
-	
-			selectBattle = false;
-			let bestState = -1000;
-			for (const result of results) {
-				const recovery = getState(result);
-				if (recovery > bestState) {
-					bestState = recovery;
-					selectBattle = result
-				}
-			}
-			// console.log(selectBattle.teamNum, results);
-			if (!selectBattle || bestState <= -1000) {
-				endDungeon('dungeonEndBattle\n', results);
-				return;
-			}
-	
-			startBattle(selectBattle.teamNum, selectBattle.attackerType)
-				.then(endBattle);
-		}
-	
-		/**
-		 * Let's start the fight
-		 *
-		 * Начинаем бой
-		 */
-		function startBattle(teamNum, attackerType) {
-			return new Promise(function (resolve, reject) {
-				args = fixTitanTeam(teams[attackerType]);
-				args.teamNum = teamNum;
-				if (attackerType == 'neutral') {
-					const titans = titanGetAll.filter(e => !titansStates[e.id]?.isDead)
-					args.heroes = titans.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
-				}
-				startBattleCall = {
-					calls: [{
-						name: "dungeonStartBattle",
-						args,
-						ident: "body"
-					}]
-				}
-				send(JSON.stringify(startBattleCall), resultBattle, {
-					resolve,
-					teamNum,
-					attackerType
-				});
+		async sleep() {
+			return new Promise((r) => {
+				this.worker.postMessage(this.timeout);
+				this.worker.onmessage = r;
 			});
 		}
-		/**
-		 * Returns the result of the battle in a promise
-		 *
-		 * Возращает резульат боя в промис
-		 */
-		function resultBattle(resultBattles, args) {
-			battleData = resultBattles.results[0].result.response;
-			battleType = "get_tower";
-			if (battleData.type == "dungeon_titan") {
-				battleType = "get_titan";
-			}
-			battleData.progress = [{ attackers: { input: ["auto", 0, 0, "auto", 0, 0] } }];
-			BattleCalc(battleData, battleType, function (result) {
-				result.teamNum = args.teamNum;
-				result.attackerType = args.attackerType;
-				args.resolve(result);
-			});
-		}
-		/**
-		 * Finishing the fight
-		 *
-		 * Заканчиваем бой
-		 */
-		async function endBattle(battleInfo) {
-			if (battleInfo.result.win) {
-				const args = {
-					result: battleInfo.result,
-					progress: battleInfo.progress,
-				}
-				if (HWHData.countPredictionCard > 0) {
-					args.isRaid = true;
-				} else {
-					const timer = getTimer(battleInfo.battleTime);
-					console.log(timer);
-					await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
-				}
-				const calls = [{
-					name: "dungeonEndBattle",
-					args,
-					ident: "body"
-				}];
-				lastDungeonBattleData = null;
-				send(JSON.stringify({ calls }), resultEndBattle);
-			} else {
-				endDungeon('dungeonEndBattle win: false\n', battleInfo);
-			}
-		}
 	
-		/**
-		 * Getting and processing battle results
-		 *
-		 * Получаем и обрабатываем результаты боя
-		 */
-		function resultEndBattle(e) {
-			if ('error' in e) {
-				popup.confirm(I18N('ERROR_MSG', {
-					name: e.error.name,
-					description: e.error.description,
-				}));
-				endDungeon('errorRequest', e);
-				return;
-			}
-			battleResult = e.results[0].result.response;
-			if ('error' in battleResult) {
-				endDungeon('errorBattleResult', battleResult);
-				return;
-			}
-			dungeonGetInfo = battleResult.dungeon ?? battleResult;
-			dungeonActivity += battleResult.reward.dungeonActivity ?? 0;
-			checkFloor(dungeonGetInfo);
-		}
-	
-		/**
-		 * Returns the coefficient of condition of the
-		 * difference in titanium before and after the battle
-		 * 
-		 * Возвращает коэффициент состояния титанов после боя
-		 */
-		function getState(result) {
-			if (!result.result.win) {
-				return -1000;
-			}
-	
-			let beforeSumFactor = 0;
-			const beforeTitans = result.battleData.attackers;
-			for (let titanId in beforeTitans) {
-				const titan = beforeTitans[titanId];
-				const state = titan.state;
-				let factor = 1;
-				if (state) {
-					const hp = state.hp / titan.hp;
-					const energy = state.energy / 1e3;
-					factor = hp + energy / 20
-				}
-				beforeSumFactor += factor;
-			}
-	
-			let afterSumFactor = 0;
-			const afterTitans = result.progress[0].attackers.heroes;
-			for (let titanId in afterTitans) {
-				const titan = afterTitans[titanId];
-				const hp = titan.hp / beforeTitans[titanId].hp;
-				const energy = titan.energy / 1e3;
-				const factor = hp + energy / 20;
-				afterSumFactor += factor;
-			}
-			return afterSumFactor - beforeSumFactor;
-		}
-	
-		/**
-		 * Converts an object with IDs to an array with IDs
-		 *
-		 * Преобразует объект с идетификаторами в массив с идетификаторами
-		 */
-		function titanObjToArray(obj) {
-			let titans = [];
-			for (let id in obj) {
-				obj[id].id = id;
-				titans.push(obj[id]);
-			}
-			return titans;
-		}
-	
-		function saveProgress() {
-			let saveProgressCall = {
-				calls: [{
-					name: "dungeonSaveProgress",
-					args: {},
-					ident: "body"
-				}]
-			}
-			send(JSON.stringify(saveProgressCall), resultEndBattle);
-		}
-	
-		function endDungeon(reason, info) {
-			console.warn(reason, info);
-			setProgress(`${I18N('DUNGEON')} ${I18N('COMPLETED')}`, true);
-			resolve();
+		static add(execute, executeAt, repeat) {
+			new TaskManager().addTask({ execute, executeAt, repeat });
+			return task;
 		}
 	}
 	
-	this.HWHClasses.executeDungeon = executeDungeon;
+	this.HWHClasses.TaskManager = TaskManager;
+	
 	
 	/**
-	 * Passing the tower
+	 * Calculates HASH MD5 from string
 	 *
-	 * Прохождение башни
-	 */
-	function testTower() {
-		const { executeTower } = HWHClasses;
-		return new Promise((resolve, reject) => {
-			tower = new executeTower(resolve, reject);
-			tower.start();
-		});
-	}
-	
-	/**
-	 * Passing the tower
+	 * Расчитывает HASH MD5 из строки
+	 * 
+	 * [js-md5]{@link https://github.com/emn178/js-md5}
 	 *
-	 * Прохождение башни
+	 * @namespace md5
+	 * @version 0.7.3
+	 * @author Chen, Yi-Cyuan [emn178@gmail.com]
+	 * @copyright Chen, Yi-Cyuan 2014-2017
+	 * @license MIT
 	 */
-	function executeTower(resolve, reject) {
-		lastTowerInfo = {};
+	!function(){"use strict";function t(t){if(t)d[0]=d[16]=d[1]=d[2]=d[3]=d[4]=d[5]=d[6]=d[7]=d[8]=d[9]=d[10]=d[11]=d[12]=d[13]=d[14]=d[15]=0,this.blocks=d,this.buffer8=l;else if(a){var r=new ArrayBuffer(68);this.buffer8=new Uint8Array(r),this.blocks=new Uint32Array(r)}else this.blocks=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];this.h0=this.h1=this.h2=this.h3=this.start=this.bytes=this.hBytes=0,this.finalized=this.hashed=!1,this.first=!0}var r="input is invalid type",e="object"==typeof window,i=e?window:{};i.JS_MD5_NO_WINDOW&&(e=!1);var s=!e&&"object"==typeof self,h=!i.JS_MD5_NO_NODE_JS&&"object"==typeof process&&process.versions&&process.versions.node;h?i=global:s&&(i=self);var f=!i.JS_MD5_NO_COMMON_JS&&"object"==typeof module&&module.exports,o="function"==typeof define&&define.amd,a=!i.JS_MD5_NO_ARRAY_BUFFER&&"undefined"!=typeof ArrayBuffer,n="0123456789abcdef".split(""),u=[128,32768,8388608,-2147483648],y=[0,8,16,24],c=["hex","array","digest","buffer","arrayBuffer","base64"],p="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".split(""),d=[],l;if(a){var A=new ArrayBuffer(68);l=new Uint8Array(A),d=new Uint32Array(A)}!i.JS_MD5_NO_NODE_JS&&Array.isArray||(Array.isArray=function(t){return"[object Array]"===Object.prototype.toString.call(t)}),!a||!i.JS_MD5_NO_ARRAY_BUFFER_IS_VIEW&&ArrayBuffer.isView||(ArrayBuffer.isView=function(t){return"object"==typeof t&&t.buffer&&t.buffer.constructor===ArrayBuffer});var b=function(r){return function(e){return new t(!0).update(e)[r]()}},v=function(){var r=b("hex");h&&(r=w(r)),r.create=function(){return new t},r.update=function(t){return r.create().update(t)};for(var e=0;e<c.length;++e){var i=c[e];r[i]=b(i)}return r},w=function(t){var e=eval("require('crypto')"),i=eval("require('buffer').Buffer"),s=function(s){if("string"==typeof s)return e.createHash("md5").update(s,"utf8").digest("hex");if(null===s||void 0===s)throw r;return s.constructor===ArrayBuffer&&(s=new Uint8Array(s)),Array.isArray(s)||ArrayBuffer.isView(s)||s.constructor===i?e.createHash("md5").update(new i(s)).digest("hex"):t(s)};return s};t.prototype.update=function(t){if(!this.finalized){var e,i=typeof t;if("string"!==i){if("object"!==i)throw r;if(null===t)throw r;if(a&&t.constructor===ArrayBuffer)t=new Uint8Array(t);else if(!(Array.isArray(t)||a&&ArrayBuffer.isView(t)))throw r;e=!0}for(var s,h,f=0,o=t.length,n=this.blocks,u=this.buffer8;f<o;){if(this.hashed&&(this.hashed=!1,n[0]=n[16],n[16]=n[1]=n[2]=n[3]=n[4]=n[5]=n[6]=n[7]=n[8]=n[9]=n[10]=n[11]=n[12]=n[13]=n[14]=n[15]=0),e)if(a)for(h=this.start;f<o&&h<64;++f)u[h++]=t[f];else for(h=this.start;f<o&&h<64;++f)n[h>>2]|=t[f]<<y[3&h++];else if(a)for(h=this.start;f<o&&h<64;++f)(s=t.charCodeAt(f))<128?u[h++]=s:s<2048?(u[h++]=192|s>>6,u[h++]=128|63&s):s<55296||s>=57344?(u[h++]=224|s>>12,u[h++]=128|s>>6&63,u[h++]=128|63&s):(s=65536+((1023&s)<<10|1023&t.charCodeAt(++f)),u[h++]=240|s>>18,u[h++]=128|s>>12&63,u[h++]=128|s>>6&63,u[h++]=128|63&s);else for(h=this.start;f<o&&h<64;++f)(s=t.charCodeAt(f))<128?n[h>>2]|=s<<y[3&h++]:s<2048?(n[h>>2]|=(192|s>>6)<<y[3&h++],n[h>>2]|=(128|63&s)<<y[3&h++]):s<55296||s>=57344?(n[h>>2]|=(224|s>>12)<<y[3&h++],n[h>>2]|=(128|s>>6&63)<<y[3&h++],n[h>>2]|=(128|63&s)<<y[3&h++]):(s=65536+((1023&s)<<10|1023&t.charCodeAt(++f)),n[h>>2]|=(240|s>>18)<<y[3&h++],n[h>>2]|=(128|s>>12&63)<<y[3&h++],n[h>>2]|=(128|s>>6&63)<<y[3&h++],n[h>>2]|=(128|63&s)<<y[3&h++]);this.lastByteIndex=h,this.bytes+=h-this.start,h>=64?(this.start=h-64,this.hash(),this.hashed=!0):this.start=h}return this.bytes>4294967295&&(this.hBytes+=this.bytes/4294967296<<0,this.bytes=this.bytes%4294967296),this}},t.prototype.finalize=function(){if(!this.finalized){this.finalized=!0;var t=this.blocks,r=this.lastByteIndex;t[r>>2]|=u[3&r],r>=56&&(this.hashed||this.hash(),t[0]=t[16],t[16]=t[1]=t[2]=t[3]=t[4]=t[5]=t[6]=t[7]=t[8]=t[9]=t[10]=t[11]=t[12]=t[13]=t[14]=t[15]=0),t[14]=this.bytes<<3,t[15]=this.hBytes<<3|this.bytes>>>29,this.hash()}},t.prototype.hash=function(){var t,r,e,i,s,h,f=this.blocks;this.first?r=((r=((t=((t=f[0]-680876937)<<7|t>>>25)-271733879<<0)^(e=((e=(-271733879^(i=((i=(-1732584194^2004318071&t)+f[1]-117830708)<<12|i>>>20)+t<<0)&(-271733879^t))+f[2]-1126478375)<<17|e>>>15)+i<<0)&(i^t))+f[3]-1316259209)<<22|r>>>10)+e<<0:(t=this.h0,r=this.h1,e=this.h2,r=((r+=((t=((t+=((i=this.h3)^r&(e^i))+f[0]-680876936)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[1]-389564586)<<12|i>>>20)+t<<0)&(t^r))+f[2]+606105819)<<17|e>>>15)+i<<0)&(i^t))+f[3]-1044525330)<<22|r>>>10)+e<<0),r=((r+=((t=((t+=(i^r&(e^i))+f[4]-176418897)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[5]+1200080426)<<12|i>>>20)+t<<0)&(t^r))+f[6]-1473231341)<<17|e>>>15)+i<<0)&(i^t))+f[7]-45705983)<<22|r>>>10)+e<<0,r=((r+=((t=((t+=(i^r&(e^i))+f[8]+1770035416)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[9]-1958414417)<<12|i>>>20)+t<<0)&(t^r))+f[10]-42063)<<17|e>>>15)+i<<0)&(i^t))+f[11]-1990404162)<<22|r>>>10)+e<<0,r=((r+=((t=((t+=(i^r&(e^i))+f[12]+1804603682)<<7|t>>>25)+r<<0)^(e=((e+=(r^(i=((i+=(e^t&(r^e))+f[13]-40341101)<<12|i>>>20)+t<<0)&(t^r))+f[14]-1502002290)<<17|e>>>15)+i<<0)&(i^t))+f[15]+1236535329)<<22|r>>>10)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[1]-165796510)<<5|t>>>27)+r<<0)^r))+f[6]-1069501632)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[11]+643717713)<<14|e>>>18)+i<<0)^i))+f[0]-373897302)<<20|r>>>12)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[5]-701558691)<<5|t>>>27)+r<<0)^r))+f[10]+38016083)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[15]-660478335)<<14|e>>>18)+i<<0)^i))+f[4]-405537848)<<20|r>>>12)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[9]+568446438)<<5|t>>>27)+r<<0)^r))+f[14]-1019803690)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[3]-187363961)<<14|e>>>18)+i<<0)^i))+f[8]+1163531501)<<20|r>>>12)+e<<0,r=((r+=((i=((i+=(r^e&((t=((t+=(e^i&(r^e))+f[13]-1444681467)<<5|t>>>27)+r<<0)^r))+f[2]-51403784)<<9|i>>>23)+t<<0)^t&((e=((e+=(t^r&(i^t))+f[7]+1735328473)<<14|e>>>18)+i<<0)^i))+f[12]-1926607734)<<20|r>>>12)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[5]-378558)<<4|t>>>28)+r<<0))+f[8]-2022574463)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[11]+1839030562)<<16|e>>>16)+i<<0))+f[14]-35309556)<<23|r>>>9)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[1]-1530992060)<<4|t>>>28)+r<<0))+f[4]+1272893353)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[7]-155497632)<<16|e>>>16)+i<<0))+f[10]-1094730640)<<23|r>>>9)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[13]+681279174)<<4|t>>>28)+r<<0))+f[0]-358537222)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[3]-722521979)<<16|e>>>16)+i<<0))+f[6]+76029189)<<23|r>>>9)+e<<0,r=((r+=((h=(i=((i+=((s=r^e)^(t=((t+=(s^i)+f[9]-640364487)<<4|t>>>28)+r<<0))+f[12]-421815835)<<11|i>>>21)+t<<0)^t)^(e=((e+=(h^r)+f[15]+530742520)<<16|e>>>16)+i<<0))+f[2]-995338651)<<23|r>>>9)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[0]-198630844)<<6|t>>>26)+r<<0)|~e))+f[7]+1126891415)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[14]-1416354905)<<15|e>>>17)+i<<0)|~t))+f[5]-57434055)<<21|r>>>11)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[12]+1700485571)<<6|t>>>26)+r<<0)|~e))+f[3]-1894986606)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[10]-1051523)<<15|e>>>17)+i<<0)|~t))+f[1]-2054922799)<<21|r>>>11)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[8]+1873313359)<<6|t>>>26)+r<<0)|~e))+f[15]-30611744)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[6]-1560198380)<<15|e>>>17)+i<<0)|~t))+f[13]+1309151649)<<21|r>>>11)+e<<0,r=((r+=((i=((i+=(r^((t=((t+=(e^(r|~i))+f[4]-145523070)<<6|t>>>26)+r<<0)|~e))+f[11]-1120210379)<<10|i>>>22)+t<<0)^((e=((e+=(t^(i|~r))+f[2]+718787259)<<15|e>>>17)+i<<0)|~t))+f[9]-343485551)<<21|r>>>11)+e<<0,this.first?(this.h0=t+1732584193<<0,this.h1=r-271733879<<0,this.h2=e-1732584194<<0,this.h3=i+271733878<<0,this.first=!1):(this.h0=this.h0+t<<0,this.h1=this.h1+r<<0,this.h2=this.h2+e<<0,this.h3=this.h3+i<<0)},t.prototype.hex=function(){this.finalize();var t=this.h0,r=this.h1,e=this.h2,i=this.h3;return n[t>>4&15]+n[15&t]+n[t>>12&15]+n[t>>8&15]+n[t>>20&15]+n[t>>16&15]+n[t>>28&15]+n[t>>24&15]+n[r>>4&15]+n[15&r]+n[r>>12&15]+n[r>>8&15]+n[r>>20&15]+n[r>>16&15]+n[r>>28&15]+n[r>>24&15]+n[e>>4&15]+n[15&e]+n[e>>12&15]+n[e>>8&15]+n[e>>20&15]+n[e>>16&15]+n[e>>28&15]+n[e>>24&15]+n[i>>4&15]+n[15&i]+n[i>>12&15]+n[i>>8&15]+n[i>>20&15]+n[i>>16&15]+n[i>>28&15]+n[i>>24&15]},t.prototype.toString=t.prototype.hex,t.prototype.digest=function(){this.finalize();var t=this.h0,r=this.h1,e=this.h2,i=this.h3;return[255&t,t>>8&255,t>>16&255,t>>24&255,255&r,r>>8&255,r>>16&255,r>>24&255,255&e,e>>8&255,e>>16&255,e>>24&255,255&i,i>>8&255,i>>16&255,i>>24&255]},t.prototype.array=t.prototype.digest,t.prototype.arrayBuffer=function(){this.finalize();var t=new ArrayBuffer(16),r=new Uint32Array(t);return r[0]=this.h0,r[1]=this.h1,r[2]=this.h2,r[3]=this.h3,t},t.prototype.buffer=t.prototype.arrayBuffer,t.prototype.base64=function(){for(var t,r,e,i="",s=this.array(),h=0;h<15;)t=s[h++],r=s[h++],e=s[h++],i+=p[t>>>2]+p[63&(t<<4|r>>>4)]+p[63&(r<<2|e>>>6)]+p[63&e];return t=s[h],i+=p[t>>>2]+p[t<<4&63]+"=="};var _=v();f?module.exports=_:(i.md5=_,o&&define(function(){return _}))}();
 	
-		scullCoin = 0;
+	class MinimalVirtualInput {
+		static #currentHandler = null;
+		static #getValue = null;
+		static #setValue = null;
 	
-		heroGetAll = [];
+		// Метод для установки обработчика с новыми колбэками
+		static addKeyEvent({ getValue, setValue }) {
+			// Сохраняем новые колбэки
+			MinimalVirtualInput.#getValue = getValue;
+			MinimalVirtualInput.#setValue = setValue;
 	
-		heroesStates = {};
+			// Удаляем старый обработчик если был
+			MinimalVirtualInput.removeKeyEvent();
 	
-		argsBattle = {
-			heroes: [],
-			favor: {},
-		};
-	
-		callsExecuteTower = {
-			calls: [{
-				name: "towerGetInfo",
-				args: {},
-				ident: "towerGetInfo"
-			}, {
-				name: "teamGetAll",
-				args: {},
-				ident: "teamGetAll"
-			}, {
-				name: "teamGetFavor",
-				args: {},
-				ident: "teamGetFavor"
-			}, {
-				name: "inventoryGet",
-				args: {},
-				ident: "inventoryGet"
-			}, {
-				name: "heroGetAll",
-				args: {},
-				ident: "heroGetAll"
-			}]
+			// Устанавливаем новый обработчик
+			MinimalVirtualInput.#currentHandler = MinimalVirtualInput.#handleKeyEvent.bind(MinimalVirtualInput);
+			document.addEventListener('keydown', MinimalVirtualInput.#currentHandler);
 		}
 	
-		buffIds = [
-			{id: 0, cost: 0, isBuy: false},   // plug // заглушка
-			{id: 1, cost: 1, isBuy: true},    // 3% attack // 3% атака
-			{id: 2, cost: 6, isBuy: true},    // 2% attack // 2% атака
-			{id: 3, cost: 16, isBuy: true},   // 4% attack // 4% атака
-			{id: 4, cost: 40, isBuy: true},   // 8% attack // 8% атака
-			{id: 5, cost: 1, isBuy: true},    // 10% armor // 10% броня
-			{id: 6, cost: 6, isBuy: true},    // 5% armor // 5% броня
-			{id: 7, cost: 16, isBuy: true},   // 10% armor // 10% броня
-			{id: 8, cost: 40, isBuy: true},   // 20% armor // 20% броня
-			{ id: 9, cost: 1, isBuy: true },    // 10% protection from magic // 10% защита от магии
-			{ id: 10, cost: 6, isBuy: true },   // 5% protection from magic // 5% защита от магии
-			{ id: 11, cost: 16, isBuy: true },  // 10% protection from magic // 10% защита от магии
-			{ id: 12, cost: 40, isBuy: true },  // 20% protection from magic // 20% защита от магии
-			{ id: 13, cost: 1, isBuy: false },  // 40% health hero // 40% здоровья герою
-			{ id: 14, cost: 6, isBuy: false },  // 40% health hero // 40% здоровья герою
-			{ id: 15, cost: 16, isBuy: false }, // 80% health hero // 80% здоровья герою
-			{ id: 16, cost: 40, isBuy: false }, // 40% health to all heroes // 40% здоровья всем героям
-			{ id: 17, cost: 1, isBuy: false },  // 40% energy to the hero // 40% энергии герою
-			{ id: 18, cost: 3, isBuy: false },  // 40% energy to the hero // 40% энергии герою
-			{ id: 19, cost: 8, isBuy: false },  // 80% energy to the hero // 80% энергии герою
-			{ id: 20, cost: 20, isBuy: false }, // 40% energy to all heroes // 40% энергии всем героям
-			{ id: 21, cost: 40, isBuy: false }, // Hero Resurrection // Воскрешение героя
-		]
-	
-		this.start = function () {
-			send(JSON.stringify(callsExecuteTower), startTower);
+		// Метод для удаления обработчика
+		static removeKeyEvent() {
+			if (MinimalVirtualInput.#currentHandler) {
+				document.removeEventListener('keydown', MinimalVirtualInput.#currentHandler);
+				MinimalVirtualInput.#currentHandler = null;
+			}
 		}
 	
-		/**
-		 * Getting data on the Tower
-		 *
-		 * Получаем данные по башне
-		 */
-		function startTower(e) {
-			res = e.results;
-			towerGetInfo = res[0].result.response;
-			if (!towerGetInfo) {
-				endTower('noTower', res);
-				return;
-			}
-			teamGetAll = res[1].result.response;
-			teamGetFavor = res[2].result.response;
-			inventoryGet = res[3].result.response;
-			heroGetAll = Object.values(res[4].result.response);
-	
-			scullCoin = inventoryGet.coin[7] ?? 0;
-	
-			argsBattle.favor = teamGetFavor.tower;
-			argsBattle.heroes = heroGetAll.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
-			pet = teamGetAll.tower.filter(id => id >= 6000).pop();
-			if (pet) {
-				argsBattle.pet = pet;
-			}
-	
-			checkFloor(towerGetInfo);
-		}
-	
-		function fixHeroesTeam(argsBattle) {
-			let fixHeroes = argsBattle.heroes.filter(e => !heroesStates[e]?.isDead);
-			if (fixHeroes.length < 5) {
-				heroGetAll = heroGetAll.filter(e => !heroesStates[e.id]?.isDead);
-				fixHeroes = heroGetAll.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
-				Object.keys(argsBattle.favor).forEach(e => {
-					if (!fixHeroes.includes(+e)) {
-						delete argsBattle.favor[e];
-					}
-				})
-			}
-			argsBattle.heroes = fixHeroes;
-			return argsBattle;
-		}
-	
-		/**
-		 * Check the floor
-		 *
-		 * Проверяем этаж
-		 */
-		function checkFloor(towerInfo) {
-			lastTowerInfo = towerInfo;
-			maySkipFloor = +towerInfo.maySkipFloor;
-			floorNumber = +towerInfo.floorNumber;
-			heroesStates = towerInfo.states.heroes;
-			floorInfo = towerInfo.floor;
-	
-			/**
-			 * Is there at least one chest open on the floor
-			 * Открыт ли на этаже хоть один сундук
-			 */
-			isOpenChest = false;
-			if (towerInfo.floorType == "chest") {
-				isOpenChest = towerInfo.floor.chests.reduce((n, e) => n + e.opened, 0);
-			}
-	
-			setProgress(`${I18N('TOWER')}: ${I18N('FLOOR')} ${floorNumber}`);
-			if (floorNumber > 49) {
-				if (isOpenChest) {
-					endTower('alreadyOpenChest 50 floor', floorNumber);
-					return;
-				}
-			}
-			/**
-			 * If the chest is open and you can skip floors, then move on
-			 * Если сундук открыт и можно скипать этажи, то переходим дальше
-			 */
-			if (towerInfo.mayFullSkip && +towerInfo.teamLevel == 130) {
-				if (floorNumber == 1) {
-					fullSkipTower();
-					return;
-				}
-				if (isOpenChest) {
-					nextOpenChest(floorNumber);
-				} else {
-					nextChestOpen(floorNumber);
-				}
+		static #handleKeyEvent(event) {
+			if (!MinimalVirtualInput.#getValue || !MinimalVirtualInput.#setValue) {
 				return;
 			}
 	
-			// console.log(towerInfo, scullCoin);
-			switch (towerInfo.floorType) {
-				case "battle":
-					if (floorNumber <= maySkipFloor) {
-						skipFloor();
+			const key = event.key;
+			// Преобразуем число в строку для работы с символами
+			const currentValue = MinimalVirtualInput.#getValue().toString();
+	
+			switch (key) {
+				case 'Backspace':
+					// Удаляем последний символ
+					if (currentValue.length > 0) {
+						const newValueString = currentValue.slice(0, -1);
+						// Преобразуем обратно в число, если строка не пустая
+						const newValueNumber = newValueString === '' ? 0 : Number(newValueString);
+						MinimalVirtualInput.#setValue(isNaN(newValueNumber) ? 0 : newValueNumber);
+					}
+					break;
+				case 'Delete':
+					// Очищаем значение
+					MinimalVirtualInput.#setValue(0);
+					MinimalVirtualInput.#setValue(0);
+					break;
+	
+				case 'v':
+					if (event.ctrlKey || event.metaKey) {
+						navigator.clipboard?.readText().then((text) => {
+							if (text) {
+								// Вставляем текст в конец и преобразуем в число
+								const newValueString = currentValue + text;
+								const newValueNumber = Number(newValueString);
+								MinimalVirtualInput.#setValue(isNaN(newValueNumber) ? 0 : newValueNumber);
+							}
+						});
+						event.preventDefault();
 						return;
 					}
-					if (floorInfo.state == 2) {
-						nextFloor();
-						return;
-					}
-					startBattle().then(endBattle);
-					return;
-				case "buff":
-					checkBuff(towerInfo);
-					return;
-				case "chest":
-					openChest(floorNumber);
-					return;
+				// Если не Ctrl+V, то обрабатываем как обычный символ
 				default:
-					console.log('!', towerInfo.floorType, towerInfo);
+					// Проверяем что символ - цифра
+					if (key.length === 1 && !event.ctrlKey && !event.metaKey && /^\d$/.test(key)) {
+						const newValueString = currentValue + key;
+						const newValueNumber = Number(newValueString);
+						MinimalVirtualInput.#setValue(isNaN(newValueNumber) ? 0 : newValueNumber);
+					}
 					break;
 			}
-		}
 	
-		/**
-		 * Let's start the fight
-		 *
-		 * Начинаем бой
-		 */
-		function startBattle() {
-			return new Promise(function (resolve, reject) {
-				towerStartBattle = {
-					calls: [{
-						name: "towerStartBattle",
-						args: fixHeroesTeam(argsBattle),
-						ident: "body"
-					}]
-				}
-				send(JSON.stringify(towerStartBattle), resultBattle, resolve);
-			});
-		}
-		/**
-		 * Returns the result of the battle in a promise
-		 *
-		 * Возращает резульат боя в промис
-		 */
-		function resultBattle(resultBattles, resolve) {
-			battleData = resultBattles.results[0].result.response;
-			battleType = "get_tower";
-			BattleCalc(battleData, battleType, function (result) {
-				resolve(result);
-			});
-		}
-		/**
-		 * Finishing the fight
-		 *
-		 * Заканчиваем бой
-		 */
-		function endBattle(battleInfo) {
-			if (battleInfo.result.stars >= 3) {
-				endBattleCall = {
-					calls: [{
-						name: "towerEndBattle",
-						args: {
-							result: battleInfo.result,
-							progress: battleInfo.progress,
-						},
-						ident: "body"
-					}]
-				}
-				send(JSON.stringify(endBattleCall), resultEndBattle);
-			} else {
-				endTower('towerEndBattle win: false\n', battleInfo);
-			}
-		}
-	
-		/**
-		 * Getting and processing battle results
-		 *
-		 * Получаем и обрабатываем результаты боя
-		 */
-		function resultEndBattle(e) {
-			battleResult = e.results[0].result.response;
-			if ('error' in battleResult) {
-				endTower('errorBattleResult', battleResult);
-				return;
-			}
-			if ('reward' in battleResult) {
-				scullCoin += battleResult.reward?.coin[7] ?? 0;
-			}
-			nextFloor();
-		}
-	
-		function nextFloor() {
-			nextFloorCall = {
-				calls: [{
-					name: "towerNextFloor",
-					args: {},
-					ident: "body"
-				}]
-			}
-			send(JSON.stringify(nextFloorCall), checkDataFloor);
-		}
-	
-		function openChest(floorNumber) {
-			floorNumber = floorNumber || 0;
-			openChestCall = {
-				calls: [{
-					name: "towerOpenChest",
-					args: {
-						num: 2
-					},
-					ident: "body"
-				}]
-			}
-			send(JSON.stringify(openChestCall), floorNumber < 50 ? nextFloor : lastChest);
-		}
-	
-		function lastChest() {
-			endTower('openChest 50 floor', floorNumber);
-		}
-	
-		function skipFloor() {
-			skipFloorCall = {
-				calls: [{
-					name: "towerSkipFloor",
-					args: {},
-					ident: "body"
-				}]
-			}
-			send(JSON.stringify(skipFloorCall), checkDataFloor);
-		}
-	
-		function checkBuff(towerInfo) {
-			buffArr = towerInfo.floor;
-			promises = [];
-			for (let buff of buffArr) {
-				buffInfo = buffIds[buff.id];
-				if (buffInfo.isBuy && buffInfo.cost <= scullCoin) {
-					scullCoin -= buffInfo.cost;
-					promises.push(buyBuff(buff.id));
-				}
-			}
-			Promise.all(promises).then(nextFloor);
-		}
-	
-		function buyBuff(buffId) {
-			return new Promise(function (resolve, reject) {
-				buyBuffCall = {
-					calls: [{
-						name: "towerBuyBuff",
-						args: {
-							buffId
-						},
-						ident: "body"
-					}]
-				}
-				send(JSON.stringify(buyBuffCall), resolve);
-			});
-		}
-	
-		function checkDataFloor(result) {
-			towerInfo = result.results[0].result.response;
-			if ('reward' in towerInfo && towerInfo.reward?.coin) {
-				scullCoin += towerInfo.reward?.coin[7] ?? 0;
-			}
-			if ('tower' in towerInfo) {
-				towerInfo = towerInfo.tower;
-			}
-			if ('skullReward' in towerInfo) {
-				scullCoin += towerInfo.skullReward?.coin[7] ?? 0;
-			}
-			checkFloor(towerInfo);
-		}
-		/**
-		 * Getting tower rewards
-		 *
-		 * Получаем награды башни
-		 */
-		function farmTowerRewards(reason) {
-			let { pointRewards, points } = lastTowerInfo;
-			let pointsAll = Object.getOwnPropertyNames(pointRewards);
-			let farmPoints = pointsAll.filter(e => +e <= +points && !pointRewards[e]);
-			if (!farmPoints.length) {
-				return;
-			}
-			let farmTowerRewardsCall = {
-				calls: [{
-					name: "tower_farmPointRewards",
-					args: {
-						points: farmPoints
-					},
-					ident: "tower_farmPointRewards"
-				}]
-			}
-	
-			if (scullCoin > 0) {
-				farmTowerRewardsCall.calls.push({
-					name: "tower_farmSkullReward",
-					args: {},
-					ident: "tower_farmSkullReward"
-				});
-			}
-	
-			send(JSON.stringify(farmTowerRewardsCall), () => { });
-		}
-	
-		function fullSkipTower() {
-			/**
-			 * Next chest
-			 *
-			 * Следующий сундук
-			 */
-			function nextChest(n) {
-				return {
-					name: "towerNextChest",
-					args: {},
-					ident: "group_" + n + "_body"
-				}
-			}
-			/**
-			 * Open chest
-			 *
-			 * Открыть сундук
-			 */
-			function openChest(n) {
-				return {
-					name: "towerOpenChest",
-					args: {
-						"num": 2
-					},
-					ident: "group_" + n + "_body"
-				}
-			}
-	
-			const fullSkipTowerCall = {
-				calls: []
-			}
-	
-			let n = 0;
-			for (let i = 0; i < 15; i++) {
-				// 15 сундуков
-				fullSkipTowerCall.calls.push(nextChest(++n));
-				fullSkipTowerCall.calls.push(openChest(++n));
-				// +5 сундуков, 250 изюма // towerOpenChest
-				// if (i < 5) {
-				// 	fullSkipTowerCall.calls.push(openChest(++n, 2));
-				// }
-			}
-	
-			fullSkipTowerCall.calls.push({
-				name: 'towerGetInfo',
-				args: {},
-				ident: 'group_' + ++n + '_body',
-			});
-	
-			send(JSON.stringify(fullSkipTowerCall), data => {
-				for (const r of data.results) {
-					const towerInfo = r?.result?.response;
-					if (towerInfo && 'skullReward' in towerInfo) {
-						scullCoin += towerInfo.skullReward?.coin[7] ?? 0;
-					}
-				}
-				data.results[0] = data.results[data.results.length - 1];
-				checkDataFloor(data);
-			});
-		}
-	
-		function nextChestOpen(floorNumber) {
-			const calls = [{
-				name: "towerOpenChest",
-				args: {
-					num: 2
-				},
-				ident: "towerOpenChest"
-			}];
-	
-			Send(JSON.stringify({ calls })).then(e => {
-				nextOpenChest(floorNumber);
-			});
-		}
-	
-		function nextOpenChest(floorNumber) {
-			if (floorNumber > 49) {
-				endTower('openChest 50 floor', floorNumber);
-				return;
-			}
-	
-			let nextOpenChestCall = {
-				calls: [{
-					name: "towerNextChest",
-					args: {},
-					ident: "towerNextChest"
-				}, {
-					name: "towerOpenChest",
-					args: {
-						num: 2
-					},
-					ident: "towerOpenChest"
-				}]
-			}
-			send(JSON.stringify(nextOpenChestCall), checkDataFloor);
-		}
-	
-		function endTower(reason, info) {
-			console.log(reason, info);
-			if (reason != 'noTower') {
-				farmTowerRewards(reason);
-			}
-			setProgress(`${I18N('TOWER')} ${I18N('COMPLETED')}!`, true);
-			resolve();
+			event.preventDefault();
 		}
 	}
-	
-	this.HWHClasses.executeTower = executeTower;
-	
-	/**
-	 * Passage of the arena of the titans
-	 *
-	 * Прохождение арены титанов
-	 */
-	function testTitanArena() {
-		const { executeTitanArena } = HWHClasses;
-		return new Promise((resolve, reject) => {
-			titAren = new executeTitanArena(resolve, reject);
-			titAren.start();
-		});
-	}
-	
-	/**
-	 * Passage of the arena of the titans
-	 *
-	 * Прохождение арены титанов
-	 */
-	function executeTitanArena(resolve, reject) {
-		let titan_arena = [];
-		let finishListBattle = [];
-		/**
-		 * ID of the current batch
-		 *
-		 * Идетификатор текущей пачки
-		 */
-		let currentRival = 0;
-		/**
-		 * Number of attempts to finish off the pack
-		 *
-		 * Количество попыток добития пачки
-		 */
-		let attempts = 0;
-		/**
-		 * Was there an attempt to finish off the current shooting range
-		 *
-		 * Была ли попытка добития текущего тира
-		 */
-		let isCheckCurrentTier = false;
-		/**
-		 * Current shooting range
-		 *
-		 * Текущий тир
-		 */
-		let currTier = 0;
-		/**
-		 * Number of battles on the current dash
-		 *
-		 * Количество битв на текущем тире
-		 */
-		let countRivalsTier = 0;
-	
-		let callsStart = {
-			calls: [{
-				name: "titanArenaGetStatus",
-				args: {},
-				ident: "titanArenaGetStatus"
-			}, {
-				name: "teamGetAll",
-				args: {},
-				ident: "teamGetAll"
-			}]
-		}
-	
-		this.start = function () {
-			send(JSON.stringify(callsStart), startTitanArena);
-		}
-	
-		function startTitanArena(data) {
-			let titanArena = data.results[0].result.response;
-			if (titanArena.status == 'disabled') {
-				endTitanArena('disabled', titanArena);
-				return;
-			}
-	
-			let teamGetAll = data.results[1].result.response;
-			titan_arena = teamGetAll.titan_arena;
-	
-			checkTier(titanArena)
-		}
-	
-		function checkTier(titanArena) {
-			if (titanArena.status == "peace_time") {
-				endTitanArena('Peace_time', titanArena);
-				return;
-			}
-			currTier = titanArena.tier;
-			if (currTier) {
-				setProgress(`${I18N('TITAN_ARENA')}: ${I18N('LEVEL')} ${currTier}`);
-			}
-	
-			if (titanArena.status == "completed_tier") {
-				titanArenaCompleteTier();
-				return;
-			}
-			/**
-			 * Checking for the possibility of a raid
-			 * Проверка на возможность рейда
-			 */
-			if (titanArena.canRaid) {
-				titanArenaStartRaid();
-				return;
-			}
-			/**
-			 * Check was an attempt to achieve the current shooting range
-			 * Проверка была ли попытка добития текущего тира
-			 */
-			if (!isCheckCurrentTier) {
-				checkRivals(titanArena.rivals);
-				return;
-			}
-	
-			endTitanArena('Done or not canRaid', titanArena);
-		}
-		/**
-		 * Submit dash information for verification
-		 *
-		 * Отправка информации о тире на проверку
-		 */
-		function checkResultInfo(data) {
-			let titanArena = data.results[0].result.response;
-			checkTier(titanArena);
-		}
-		/**
-		 * Finish the current tier
-		 *
-		 * Завершить текущий тир
-		 */
-		function titanArenaCompleteTier() {
-			isCheckCurrentTier = false;
-			let calls = [{
-				name: "titanArenaCompleteTier",
-				args: {},
-				ident: "body"
-			}];
-			send(JSON.stringify({calls}), checkResultInfo);
-		}
-		/**
-		 * Gathering points to be completed
-		 *
-		 * Собираем точки которые нужно добить
-		 */
-		function checkRivals(rivals) {
-			finishListBattle = [];
-			for (let n in rivals) {
-				if (rivals[n].attackScore < 250) {
-					finishListBattle.push(n);
-				}
-			}
-			console.log('checkRivals', finishListBattle);
-			countRivalsTier = finishListBattle.length;
-			roundRivals();
-		}
-		/**
-		 * Selecting the next point to finish off
-		 *
-		 * Выбор следующей точки для добития
-		 */
-		function roundRivals() {
-			let countRivals = finishListBattle.length;
-			if (!countRivals) {
-				/**
-				 * Whole range checked
-				 *
-				 * Весь тир проверен
-				 */
-				isCheckCurrentTier = true;
-				titanArenaGetStatus();
-				return;
-			}
-			// setProgress('TitanArena: Уровень ' + currTier + ' Бои: ' + (countRivalsTier - countRivals + 1) + '/' + countRivalsTier);
-			currentRival = finishListBattle.pop();
-			attempts = +currentRival;
-			// console.log('roundRivals', currentRival);
-			titanArenaStartBattle(currentRival);
-		}
-		/**
-		 * The start of a solo battle
-		 *
-		 * Начало одиночной битвы
-		 */
-		function titanArenaStartBattle(rivalId) {
-			let calls = [{
-				name: "titanArenaStartBattle",
-				args: {
-					rivalId: rivalId,
-					titans: titan_arena
-				},
-				ident: "body"
-			}];
-			send(JSON.stringify({calls}), calcResult);
-		}
-		/**
-		 * Calculation of the results of the battle
-		 *
-		 * Расчет результатов боя
-		 */
-		function calcResult(data) {
-			let battlesInfo = data.results[0].result.response.battle;
-			/**
-			 * If attempts are equal to the current battle number we make
-			 * Если попытки равны номеру текущего боя делаем прерасчет
-			 */
-			if (attempts == currentRival) {
-				preCalcBattle(battlesInfo);
-				return;
-			}
-			/**
-			 * If there are still attempts, we calculate a new battle
-			 * Если попытки еще есть делаем расчет нового боя
-			 */
-			if (attempts > 0) {
-				attempts--;
-				calcBattleResult(battlesInfo)
-					.then(resultCalcBattle);
-				return;
-			}
-			/**
-			 * Otherwise, go to the next opponent
-			 * Иначе переходим к следующему сопернику
-			 */
-			roundRivals();
-		}
-		/**
-		 * Processing the results of the battle calculation
-		 *
-		 * Обработка результатов расчета битвы
-		 */
-		async function resultCalcBattle(resultBattle) {
-			// console.log('resultCalcBattle', currentRival, attempts, resultBattle.result.win);
-			/**
-			 * If the current calculation of victory is not a chance or the attempt ended with the finish the battle
-			 * Если текущий расчет победа или шансов нет или попытки кончились завершаем бой
-			 */
-			if (resultBattle.result.win || !attempts) {
-				let { progress, result } = resultBattle;
-				/*
-				if (!resultBattle.result.win && isChecked('tryFixIt_v2')) {
-					const bFix = new BestOrWinFixBattle(resultBattle.battleData);
-					bFix.isGetTimer = false;
-					bFix.maxTimer = 100;
-					const resultFix = await bFix.start(Date.now() + 6e4, 500);
-					if (resultFix.value > 0) {
-						progress = resultFix.progress;
-						result = resultFix.result;
-					}
-				}
-				*/
-				titanArenaEndBattle({
-					progress,
-					result,
-					rivalId: resultBattle.battleData.typeId,
-				});
-				return;
-			}
-			/**
-			 * If not victory and there are attempts we start a new battle
-			 * Если не победа и есть попытки начинаем новый бой
-			 */
-			titanArenaStartBattle(resultBattle.battleData.typeId);
-		}
-		/**
-		 * Returns the promise of calculating the results of the battle
-		 *
-		 * Возращает промис расчета результатов битвы
-		 */
-		function getBattleInfo(battle, isRandSeed) {
-			return new Promise(function (resolve) {
-				battle = structuredClone(battle);
-				if (isRandSeed) {
-					battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
-				}
-				// console.log(battle.seed);
-				BattleCalc(battle, "get_titanClanPvp", e => resolve(e));
-			});
-		}
-		/**
-		 * Recalculate battles
-		 *
-		 * Прерасчтет битвы
-		 */
-		function preCalcBattle(battle) {
-			let actions = [getBattleInfo(battle, false)];
-			const countTestBattle = getInput('countTestBattle');
-			for (let i = 0; i < countTestBattle; i++) {
-				actions.push(getBattleInfo(battle, true));
-			}
-			Promise.all(actions)
-				.then(resultPreCalcBattle);
-		}
-		/**
-		 * Processing the results of the battle recalculation
-		 *
-		 * Обработка результатов прерасчета битвы
-		 */
-		function resultPreCalcBattle(e) {
-			let wins = e.map(n => n.result.win);
-			let firstBattle = e.shift();
-			let countWin = wins.reduce((w, s) => w + s);
-			const countTestBattle = getInput('countTestBattle');
-			console.log('resultPreCalcBattle', `${countWin}/${countTestBattle}`)
-			if (countWin > 0) {
-				attempts = getInput('countAutoBattle');
-			} else {
-				attempts = 0;
-			}
-			resultCalcBattle(firstBattle);
-		}
-	
-		/**
-		 * Complete an arena battle
-		 *
-		 * Завершить битву на арене
-		 */
-		function titanArenaEndBattle(args) {
-			let calls = [{
-				name: "titanArenaEndBattle",
-				args,
-				ident: "body"
-			}];
-			send(JSON.stringify({calls}), resultTitanArenaEndBattle);
-		}
-	
-		function resultTitanArenaEndBattle(e) {
-			let attackScore = e.results[0].result.response.attackScore;
-			let numReval = countRivalsTier - finishListBattle.length;
-			setProgress(`${I18N('TITAN_ARENA')}: ${I18N('LEVEL')} ${currTier} </br>${I18N('BATTLES')}: ${numReval}/${countRivalsTier} - ${attackScore}`);
-			// console.log('resultTitanArenaEndBattle', e)
-			console.log('resultTitanArenaEndBattle', numReval + '/' + countRivalsTier, attempts)
-			roundRivals();
-		}
-		/**
-		 * Arena State
-		 *
-		 * Состояние арены
-		 */
-		function titanArenaGetStatus() {
-			let calls = [{
-				name: "titanArenaGetStatus",
-				args: {},
-				ident: "body"
-			}];
-			send(JSON.stringify({calls}), checkResultInfo);
-		}
-		/**
-		 * Arena Raid Request
-		 *
-		 * Запрос рейда арены
-		 */
-		function titanArenaStartRaid() {
-			let calls = [{
-				name: "titanArenaStartRaid",
-				args: {
-					titans: titan_arena
-				},
-				ident: "body"
-			}];
-			send(JSON.stringify({calls}), calcResults);
-		}
-	
-		function calcResults(data) {
-			let battlesInfo = data.results[0].result.response;
-			let {attackers, rivals} = battlesInfo;
-	
-			let promises = [];
-			for (let n in rivals) {
-				rival = rivals[n];
-				promises.push(calcBattleResult({
-					attackers: attackers,
-					defenders: [rival.team],
-					seed: rival.seed,
-					typeId: n,
-				}));
-			}
-	
-			Promise.all(promises)
-				.then(results => {
-					const endResults = {};
-					for (let info of results) {
-						let id = info.battleData.typeId;
-						endResults[id] = {
-							progress: info.progress,
-							result: info.result,
-						}
-					}
-					titanArenaEndRaid(endResults);
-				});
-		}
-	
-		function calcBattleResult(battleData) {
-			return new Promise(function (resolve, reject) {
-				BattleCalc(battleData, "get_titanClanPvp", resolve);
-			});
-		}
-	
-		/**
-		 * Sending Raid Results
-		 *
-		 * Отправка результатов рейда
-		 */
-		function titanArenaEndRaid(results) {
-			titanArenaEndRaidCall = {
-				calls: [{
-					name: "titanArenaEndRaid",
-					args: {
-						results
-					},
-					ident: "body"
-				}]
-			}
-			send(JSON.stringify(titanArenaEndRaidCall), checkRaidResults);
-		}
-	
-		function checkRaidResults(data) {
-			results = data.results[0].result.response.results;
-			isSucsesRaid = true;
-			for (let i in results) {
-				isSucsesRaid &&= (results[i].attackScore >= 250);
-			}
-	
-			if (isSucsesRaid) {
-				titanArenaCompleteTier();
-			} else {
-				titanArenaGetStatus();
-			}
-		}
-	
-		function titanArenaFarmDailyReward() {
-			titanArenaFarmDailyRewardCall = {
-				calls: [{
-					name: "titanArenaFarmDailyReward",
-					args: {},
-					ident: "body"
-				}]
-			}
-			send(JSON.stringify(titanArenaFarmDailyRewardCall), () => {console.log('Done farm daily reward')});
-		}
-	
-		function endTitanArena(reason, info) {
-			if (!['Peace_time', 'disabled'].includes(reason)) {
-				titanArenaFarmDailyReward();
-			}
-			console.log(reason, info);
-			setProgress(`${I18N('TITAN_ARENA')} ${I18N('COMPLETED')}!`, true);
-			resolve();
-		}
-	}
-	
-	/**
-	 * Arena battle calculator helper functions
-	 *
-	 * Вспомогательные функции для расчета битв арены
-	 */
-	
-	/**
-	 * Calculate win rate for arena battle
-	 *
-	 * Расчет вероятности победы в битве арены
-	 */
-	async function calcArenaBattleWinRate(attackers, defenders, battleType = 'arena') {
-		return new Promise((resolve, reject) => {
-			const battleData = {
-				attackers: attackers,
-				defenders: defenders,
-				seed: Math.random(),
-				typeId: battleType
-			};
-			
-			BattleCalc(battleData, getBattleType(battleType), (result) => {
-				if (result && result.result) {
-					resolve(result.result.win ? 1 : 0);
-				} else {
-					resolve(0);
-				}
-			});
-		});
-	}
-	
-	/**
-	 * Select best team for opponent
-	 *
-	 * Выбор лучшей команды против соперника
-	 */
-	async function selectBestTeamForOpponent(availableTeams, opponentTeam, battleType = 'arena') {
-		let bestTeam = null;
-		let bestWinRate = 0;
-		
-		// Try current team first
-		if (availableTeams.current) {
-			const winRate = await calcArenaBattleWinRate(availableTeams.current, opponentTeam, battleType);
-			if (winRate > bestWinRate) {
-				bestTeam = availableTeams.current;
-				bestWinRate = winRate;
-			}
-		}
-		
-		// Try alternative teams if current team has low win rate
-		if (bestWinRate < 0.5 && availableTeams.alternatives) {
-			for (const team of availableTeams.alternatives) {
-				const winRate = await calcArenaBattleWinRate(team, opponentTeam, battleType);
-				if (winRate > bestWinRate) {
-					bestTeam = team;
-					bestWinRate = winRate;
-				}
-			}
-		}
-		
-		return { team: bestTeam, winRate: bestWinRate };
-	}
-	
-	/**
-	 * Evaluate opponent difficulty
-	 *
-	 * Оценка сложности соперника
-	 */
-	function evaluateOpponentDifficulty(opponent) {
-		// Calculate power ratio (opponent power / your power)
-		const powerRatio = opponent.power / (userInfo.power || 1);
-		
-		// Lower rank = easier opponent
-		const rankDifficulty = opponent.rank || 999999;
-		
-		// Return difficulty score (lower = easier)
-		return {
-			opponent: opponent,
-			difficulty: powerRatio + (rankDifficulty / 1000000),
-			powerRatio: powerRatio,
-			rank: rankDifficulty
-		};
-	}
-	
-	/**
-	 * Arena auto-attack execution
-	 *
-	 * Автоматическое прохождение арены
-	 */
-	function executeArena(resolve, reject) {
-		this.resolve = resolve;
-		this.reject = reject;
-		this.arenaType = 'arena';
-		this.attemptsRemaining = 0;
-		this.victories = 0;
-		this.arenaInfo = null;
-		this.teamInfo = null;
-		this.opponents = [];
-		
-		this.start = async function(arenaType = 'arena') {
-			this.arenaType = arenaType;
-			setProgress(`${I18N('ARENA')}: ${I18N('INITIALIZING')}...`);
-			
-			try {
-				// Get arena status and team data
-				await this.getArenaStatus();
-				await this.getAvailableTeams();
-				
-				if (this.attemptsRemaining <= 0) {
-					this.end('No attempts remaining');
-					return;
-				}
-				
-				// Find and sort opponents by difficulty
-				this.findEasiestOpponents();
-				
-				// Execute battles
-				await this.executeBattles();
-				
-			} catch (error) {
-				console.error('Arena execution error:', error);
-				this.end('Error: ' + error.message);
-			}
-		}
-		
-		this.getArenaStatus = async function() {
-			const apiName = this.arenaType === 'grand' ? 'grandGetInfo' : 'arenaGetInfo';
-			const calls = [{
-				name: apiName,
-				args: {},
-				ident: apiName
-			}];
-			
-			const response = await Send(JSON.stringify({calls}));
-			this.arenaInfo = response.results[0].result.response;
-			this.attemptsRemaining = this.arenaInfo.attempts || 0;
-			this.opponents = this.arenaInfo.rivals || [];
-			
-			setProgress(`${I18N('ARENA')}: ${I18N('ATTEMPTS')} ${this.attemptsRemaining}`);
-		}
-		
-		this.getAvailableTeams = async function() {
-			const calls = [{
-				name: "teamGetAll",
-				args: {},
-				ident: "teamGetAll"
-			}, {
-				name: "teamGetFavor",
-				args: {},
-				ident: "teamGetFavor"
-			}, {
-				name: "heroGetAll",
-				args: {},
-				ident: "heroGetAll"
-			}];
-			
-			const response = await Send(JSON.stringify({calls}));
-			this.teamInfo = {
-				teams: response.results[0].result.response,
-				favor: response.results[1].result.response,
-				heroes: Object.values(response.results[2].result.response)
-			};
-		}
-		
-		this.findEasiestOpponents = function() {
-			// Sort opponents by difficulty (easiest first)
-			this.opponents = this.opponents
-				.map(opponent => evaluateOpponentDifficulty(opponent))
-				.sort((a, b) => a.difficulty - b.difficulty);
-			
-			console.log('Sorted opponents by difficulty:', this.opponents.map(o => ({
-				rank: o.rank,
-				power: o.opponent.power,
-				difficulty: o.difficulty
-			})));
-		}
-		
-		this.executeBattles = async function() {
-			for (let i = 0; i < this.attemptsRemaining && this.opponents.length > 0; i++) {
-				const opponent = this.opponents.shift();
-				setProgress(`${I18N('ARENA')}: ${I18N('BATTLE')} ${i + 1}/${this.attemptsRemaining} - ${I18N('RANK')} ${opponent.rank}`);
-				
-				try {
-					const result = await this.executeBattle(opponent);
-					if (result.win) {
-						this.victories++;
-					}
-				} catch (error) {
-					console.error('Battle error:', error);
-				}
-			}
-			
-			this.end(`Completed ${this.victories}/${this.attemptsRemaining} victories`);
-		}
-		
-		this.executeBattle = async function(opponent) {
-			// Get available teams
-			const availableTeams = this.getAvailableTeamsForBattle();
-			
-			// Select best team
-			const teamSelection = await selectBestTeamForOpponent(
-				availableTeams, 
-				opponent.opponent.team, 
-				this.arenaType
-			);
-			
-			if (!teamSelection.team || teamSelection.winRate < 0.3) {
-				console.log('Skipping opponent - no winning team found');
-				return { win: false };
-			}
-			
-			// Start battle
-			const battleResult = await this.startArenaBattle(opponent.opponent.id, teamSelection.team);
-			
-			// End battle
-			await this.endArenaBattle(battleResult);
-			
-			return battleResult;
-		}
-		
-		this.getAvailableTeamsForBattle = function() {
-			const arenaTeamKey = this.arenaType === 'grand' ? 'grand' : 'arena';
-			const currentTeam = this.teamInfo.teams[arenaTeamKey];
-			const favor = this.teamInfo.favor[arenaTeamKey] || {};
-			
-			// Create current team structure
-			const currentTeamData = {
-				heroes: currentTeam.filter(id => id < 6000),
-				pet: currentTeam.filter(id => id >= 6000).pop(),
-				favor: favor
-			};
-			
-			// Create alternative teams (top 5 heroes by power)
-			const topHeroes = this.teamInfo.heroes
-				.sort((a, b) => b.power - a.power)
-				.slice(0, 5)
-				.map(h => h.id);
-			
-			const alternativeTeam = {
-				heroes: topHeroes,
-				pet: currentTeamData.pet,
-				favor: favor
-			};
-			
-			return {
-				current: currentTeamData,
-				alternatives: [alternativeTeam]
-			};
-		}
-		
-		this.startArenaBattle = async function(rivalId, team) {
-			const apiName = this.arenaType === 'grand' ? 'grandStartBattle' : 'arenaStartBattle';
-			const calls = [{
-				name: apiName,
-				args: {
-					rivalId: rivalId,
-					heroes: team.heroes,
-					pet: team.pet,
-					favor: team.favor
-				},
-				ident: apiName
-			}];
-			
-			const response = await Send(JSON.stringify({calls}));
-			const battleData = response.results[0].result.response.battle;
-			
-			// Calculate battle result
-			return new Promise((resolve) => {
-				BattleCalc(battleData, getBattleType(this.arenaType), (result) => {
-					resolve({
-						win: result.result.win,
-						progress: result.progress,
-						result: result.result
-					});
-				});
-			});
-		}
-		
-		this.endArenaBattle = async function(battleResult) {
-			const apiName = this.arenaType === 'grand' ? 'grandEndBattle' : 'arenaEndBattle';
-			const calls = [{
-				name: apiName,
-				args: {
-					progress: battleResult.progress,
-					result: battleResult.result
-				},
-				ident: apiName
-			}];
-			
-			await Send(JSON.stringify({calls}));
-		}
-		
-		this.end = function(message) {
-			console.log('Arena execution ended:', message);
-			setProgress(`${I18N('ARENA')}: ${message}`, true);
-			this.resolve();
-		}
-	}
-	
-	/**
-	 * Wrapper functions for arena battles
-	 *
-	 * Функции-обертки для битв арены
-	 */
-	
-	function testArena() {
-		const { executeArena } = HWHClasses;
-		return new Promise((resolve, reject) => {
-			const arena = new executeArena(resolve, reject);
-			arena.start('arena');
-		});
-	}
-	
-	function testGrandArena() {
-		const { executeArena } = HWHClasses;
-		return new Promise((resolve, reject) => {
-			const arena = new executeArena(resolve, reject);
-			arena.start('grand');
-		});
-	}
-	
-	function testBothArenas() {
-		return new Promise(async (resolve, reject) => {
-			try {
-				await testArena();
-				await testGrandArena();
-				resolve();
-			} catch (error) {
-				reject(error);
-			}
-		});
-	}
-	
-	this.HWHClasses.executeTitanArena = executeTitanArena;
-	this.HWHClasses.executeArena = executeArena;
 	
 	function hackGame() {
 		const self = this;
@@ -7902,7 +5141,7 @@
 							!1,
 							!0,
 							Game.DataStorage[getFn(Game.DataStorage, 24)][getProtoFn(Game.BattleConfigStorage, 20)](),
-							!1
+							!1,
 						);
 						a = new Game.BattleInstantPlay(c, a);
 						a[getProtoFn(Game.BattleInstantPlay, 9)].add(Game.bindFunc(this, this.P$h));
@@ -7979,31 +5218,31 @@
 						this[getProtoFn(Game.BattlePausePopup, 3)]();
 						this[getProtoFn(Game.DisplayObjectContainer, 3)](this.clip[getProtoFn(Game.GuiClipContainer, 2)]());
 						this.clip[getProtoFn(Game.BattlePausePopupClip, 1)][getProtoFn(Game.ClipLabelBase, 9)](
-							Game.Translate.translate('UI_POPUP_BATTLE_PAUSE')
+							Game.Translate.translate('UI_POPUP_BATTLE_PAUSE'),
 						);
 	
 						this.clip[getProtoFn(Game.BattlePausePopupClip, 2)][getProtoFn(Game.ClipButtonLabeledCentered, 2)](
 							Game.Translate.translate('UI_POPUP_BATTLE_RETREAT'),
-							((q = this[getProtoFn(Game.BattlePausePopup, 1)]), Game.bindFunc(q, q[getProtoFn(Game.BattlePausePopupMediator, 17)]))
+							((q = this[getProtoFn(Game.BattlePausePopup, 1)]), Game.bindFunc(q, q[getProtoFn(Game.BattlePausePopupMediator, 17)])),
 						);
 						this.clip[getProtoFn(Game.BattlePausePopupClip, 5)][getProtoFn(Game.ClipButtonLabeledCentered, 2)](
 							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 14)](),
 							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 13)]()
 								? ((q = this[getProtoFn(Game.BattlePausePopup, 1)]), Game.bindFunc(q, q[getProtoFn(Game.BattlePausePopupMediator, 18)]))
-								: ((q = this[getProtoFn(Game.BattlePausePopup, 1)]), Game.bindFunc(q, q[getProtoFn(Game.BattlePausePopupMediator, 18)]))
+								: ((q = this[getProtoFn(Game.BattlePausePopup, 1)]), Game.bindFunc(q, q[getProtoFn(Game.BattlePausePopupMediator, 18)])),
 						);
 	
 						this.clip[getProtoFn(Game.BattlePausePopupClip, 5)][getProtoFn(Game.ClipButtonLabeledCentered, 0)][
 							getProtoFn(Game.ClipLabelBase, 24)
 						]();
 						this.clip[getProtoFn(Game.BattlePausePopupClip, 3)][getProtoFn(Game.SettingToggleButton, 3)](
-							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 9)]()
+							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 9)](),
 						);
 						this.clip[getProtoFn(Game.BattlePausePopupClip, 4)][getProtoFn(Game.SettingToggleButton, 3)](
-							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 10)]()
+							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 10)](),
 						);
 						this.clip[getProtoFn(Game.BattlePausePopupClip, 6)][getProtoFn(Game.SettingToggleButton, 3)](
-							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 11)]()
+							this[getProtoFn(Game.BattlePausePopup, 1)][getProtoFn(Game.BattlePausePopupMediator, 11)](),
 						);
 					} catch (error) {
 						console.error('passBattle', error);
@@ -8086,9 +5325,9 @@
 			 * Кнопка ускорения без Покровительства Валькирий
 			 */
 			battleFastKey: function () {
-				const BGM_44 = getProtoFn(Game.BattleGuiMediator, 44);
-				const oldBattleFastKey = Game.BattleGuiMediator.prototype[BGM_44];
-				Game.BattleGuiMediator.prototype[BGM_44] = function () {
+				const BGM_45 = getProtoFn(Game.BattleGuiMediator, 45);
+				const oldBattleFastKey = Game.BattleGuiMediator.prototype[BGM_45];
+				Game.BattleGuiMediator.prototype[BGM_45] = function () {
 					let flag = true;
 					//console.log(flag)
 					if (!flag) {
@@ -8158,8 +5397,12 @@
 				};
 			},
 			BuyTitanArtifact: function () {
-				const BIP_4 = getProtoFn(selfGame['game.view.popup.shop.buy.BuyItemPopup'], 4);
+				const Slider = selfGame['feathers.controls.Slider'];
+				const set_minimum = getF(Slider, 'set_minimum', true);
+				const set_step = getF(Slider, 'set_step', true);
 				const BuyItemPopup = selfGame['game.view.popup.shop.buy.BuyItemPopup'];
+				const BIP_4 = getProtoFn(BuyItemPopup, 4);
+				const BIP_2 = getProtoFn(BuyItemPopup, 2);
 				const oldFunc = BuyItemPopup.prototype[BIP_4];
 				BuyItemPopup.prototype[BIP_4] = function () {
 					if (isChecked('countControl')) {
@@ -8169,15 +5412,38 @@
 							const BuyTitanArtifactPopupMediator = selfGame['game.mediator.gui.popup.shop.buy.BuyTitanArtifactItemPopupMediator'];
 							const BTAM_1 = getProtoFn(BuyTitanArtifactPopupMediator, 1);
 							const BuyItemPopupMediator = selfGame['game.mediator.gui.popup.shop.buy.BuyItemPopupMediator'];
-							const BIPM_5 = getProtoFn(BuyItemPopupMediator, 5);
-							const BIPM_7 = getProtoFn(BuyItemPopupMediator, 7);
-							const BIPM_9 = getProtoFn(BuyItemPopupMediator, 9);
+							const BIPM_6 = getProtoFn(BuyItemPopupMediator, 6);
+							const BIPM_8 = getProtoFn(BuyItemPopupMediator, 8);
+							const BIPM_10 = getProtoFn(BuyItemPopupMediator, 10);
 	
-							let need = Math.min(this[BTAP_0][BTAM_1](), this[BTAP_0][BIPM_7]);
+							let need = Math.min(this[BTAP_0][BTAM_1](), this[BTAP_0][BIPM_8]);
 							need = need ? need : 60;
-							this[BTAP_0][BIPM_9] = need;
-							this[BTAP_0][BIPM_5] = 10;
+							this[BTAP_0][BIPM_10] = need;
+							this[BTAP_0][BIPM_6] = 10;
+	
+							const set_amount = getF(BuyItemPopupMediator, 'set_amount');
+							MinimalVirtualInput.addKeyEvent({
+								getValue: () => this[BTAP_0][BIPM_10],
+								setValue: (value) => {
+									this[BIP_2].set_minimum(1);
+									this[BIP_2].set_step(1);
+									this[BTAP_0][set_amount](Math.min(value, this[BTAP_0][BIPM_8]));
+								},
+							});
+							setProgress(I18N('USE_KEYBOARD'), 3000);
 						}
+					}
+					oldFunc.call(this);
+				};
+			},
+			BuyTitanArtifactClose: function () {
+				const BuyTitanArtifactMediator = selfGame['game.mediator.gui.popup.shop.buy.BuyTitanArtifactItemPopupMediator'];
+				const PopupMediatorBase = selfGame['game.mediator.gui.popup.PopupMediatorBase'];
+				const oldFunc = PopupMediatorBase.prototype.close;
+				PopupMediatorBase.prototype.close = function () {
+					const BTAM_0 = getProtoFn(BuyTitanArtifactMediator, 0);
+					if (this[BTAM_0]) {
+						MinimalVirtualInput.removeKeyEvent();
 					}
 					oldFunc.call(this);
 				};
@@ -8292,7 +5558,7 @@
 			const P_24 = getProtoFn(selfGame['game.model.user.Player'], 24);
 			const Player = Game.GameModel[GM_INST]()[GM_0];
 			Player[P_24] = new selfGame['game.model.user.inventory.PlayerInventory']();
-			Player[P_24].init(await Send({ calls: [{ name: 'inventoryGet', args: {}, ident: 'body' }] }).then((e) => e.results[0].result.response));
+			Player[P_24].init(await Caller.send('inventoryGet'));
 		};
 		this.updateInventory = function (reward) {
 			const GM_INST = getFnP(Game.GameModel, 'get_instance');
@@ -8353,16 +5619,18 @@
 		 * Перейти к Войне Гильдий
 		 */
 		this.goClanWar = function () {
+			const GM_0 = getProtoFn(Game.GameModel, 0);
 			let instance = getFnP(Game.GameModel, 'get_instance');
-			let player = Game.GameModel[instance]().A;
+			let player = Game.GameModel[instance]()[GM_0];
 			let clanWarSelect = selfGame['game.mechanics.cross_clan_war.popup.selectMode.CrossClanWarSelectModeMediator'];
 			new clanWarSelect(player).open();
 		};
 	
 		/** Перейти к Острову гильдии */
 		this.goClanIsland = function () {
+			const GM_0 = getProtoFn(Game.GameModel, 0);
 			let instance = getFnP(Game.GameModel, 'get_instance');
-			let player = Game.GameModel[instance]().A;
+			let player = Game.GameModel[instance]()[GM_0];
 			let clanIslandSelect = selfGame['game.view.gui.ClanIslandPopupMediator'];
 			new clanIslandSelect(player).open();
 		};
@@ -8373,13 +5641,14 @@
 		 * Переместиться в BrawlShop
 		 */
 		this.goBrawlShop = () => {
+			const GM_0 = getProtoFn(Game.GameModel, 0);
 			const instance = getFnP(Game.GameModel, 'get_instance');
 			const P_36 = getProtoFn(selfGame['game.model.user.Player'], 36);
 			const PSD_0 = getProtoFn(selfGame['game.model.user.shop.PlayerShopData'], 0);
 			const IM_0 = getProtoFn(selfGame['haxe.ds.IntMap'], 0);
 			const PSDE_4 = getProtoFn(selfGame['game.model.user.shop.PlayerShopDataEntry'], 4);
 	
-			const player = Game.GameModel[instance]().A;
+			const player = Game.GameModel[instance]()[GM_0];
 			const shop = player[P_36][PSD_0][IM_0][1038][PSDE_4];
 			const shopPopup = new selfGame['game.mechanics.brawl.mediator.BrawlShopPopupMediator'](player, shop);
 			shopPopup.open(new selfGame['game.mediator.gui.popup.PopupStashEventParams']());
@@ -8391,12 +5660,13 @@
 		 * Возвращает все магазины из данных игры
 		 */
 		this.getShops = () => {
+			const GM_0 = getProtoFn(Game.GameModel, 0);
 			const instance = getFnP(Game.GameModel, 'get_instance');
 			const P_36 = getProtoFn(selfGame['game.model.user.Player'], 36);
 			const PSD_0 = getProtoFn(selfGame['game.model.user.shop.PlayerShopData'], 0);
 			const IM_0 = getProtoFn(selfGame['haxe.ds.IntMap'], 0);
 	
-			const player = Game.GameModel[instance]().A;
+			const player = Game.GameModel[instance]()[GM_0];
 			return player[P_36][PSD_0][IM_0];
 		};
 	
@@ -8464,6 +5734,19 @@
 					}
 					const adv = b.raw.seasonAdventure.list[1];
 					adv.clientData.asset = 'dialog_season_adventure_tiles';
+	
+					const mapData = b.raw.tiledMap.list[3];
+					const mapExtraData = mapData.map.mapExtraData;
+					const chestLevels = mapExtraData.chestLevels;
+					const tiledMapLevels = b.raw.tiledMap.level;
+	
+					for (const id in tiledMapLevels) {
+						const level = tiledMapLevels[id];
+						if (chestLevels.includes(level.level)) {
+							level.clientData.graphics.visible = ['hex_heal'];
+							level.clientData.graphics.fogged = ['fog', 'question'];
+						}
+					}
 				} catch (e) {
 					console.warn(e);
 				}
@@ -8498,7 +5781,7 @@
 	 * Автосбор подарков
 	 */
 	function getAutoGifts() {
-		// c3ltYm9scyB0aGF0IG1lYW4gbm90aGluZw==
+		// bmF0cmlidS5vcmc=
 		let valName = 'giftSendIds_' + userInfo.id;
 	
 		if (!localStorage['clearGift' + userInfo.id]) {
@@ -8516,44 +5799,52 @@
 		 *
 		 * Отправка запроса для получения кодов подарков
 		 */
-		giftsAPI.request().then((data) => {
-			let freebieCheckCalls = {
-				calls: [],
-			};
-			data.forEach((giftId, n) => {
-				if (localStorage[valName].includes(giftId)) return;
-				freebieCheckCalls.calls.push({
-					name: 'registration',
-					args: {
-						user: { referrer: {} },
-						giftId,
-					},
-					context: {
-						actionTs: Math.floor(performance.now()),
-						cookie: window?.NXAppInfo?.session_id || null,
-					},
-					ident: giftId,
+		giftsAPI
+			.request()
+			.then((data) => {
+				let freebieCheckCalls = {
+					calls: [],
+				};
+				data.forEach((giftId, n) => {
+					if (localStorage[valName].includes(giftId)) return;
+					freebieCheckCalls.calls.push({
+						name: 'registration',
+						args: {
+							user: { referrer: {} },
+							giftId,
+						},
+						context: {
+							actionTs: Math.floor(performance.now()),
+							cookie: window?.NXAppInfo?.session_id || null,
+						},
+						ident: giftId,
+					});
 				});
-			});
 	
-			if (!freebieCheckCalls.calls.length) {
-				return;
-			}
-	
-			send(JSON.stringify(freebieCheckCalls), (e) => {
-				let countGetGifts = 0;
-				const gifts = [];
-				for (check of e.results) {
-					gifts.push(check.ident);
-					if (check.result.response != null) {
-						countGetGifts++;
-					}
+				if (!freebieCheckCalls.calls.length) {
+					return;
 				}
-				const saveGifts = localStorage[valName].split(';');
-				localStorage[valName] = [...saveGifts, ...gifts].slice(-50).join(';');
-				console.log(`${I18N('GIFTS')}: ${countGetGifts}`);
+	
+				send(freebieCheckCalls, (e) => {
+					let countGetGifts = 0;
+					const gifts = [];
+					for (check of e.results) {
+						gifts.push(check.ident);
+						if (check.result.response != null) {
+							countGetGifts++;
+						}
+					}
+					const saveGifts = localStorage[valName].split(';');
+					localStorage[valName] = [...saveGifts, ...gifts].slice(-50).join(';');
+					console.log(`${I18N('GIFTS')}: ${countGetGifts}`);
+					setProgress(`${I18N('GIFTS')}: ${countGetGifts}`, true);
+				});
+			})
+			.catch((error) => {
+				console.error(error);
+				const reason = error.message == 'Access denied' ? error.message : 'Error';
+				setProgress(`${I18N('GIFTS')}: ${reason}`, true);
 			});
-		});
 	}
 	
 	/**
@@ -8562,29 +5853,30 @@
 	 * Набить килов в горниле душ
 	 */
 	async function bossRatingEvent() {
-		const topGet = await Send(JSON.stringify({ calls: [{ name: "topGet", args: { type: "bossRatingTop", extraId: 0 }, ident: "body" }] }));
-		if (!topGet || !topGet.results[0].result.response[0]) {
+		const topGet = await Caller.send({ name: 'topGet', args: { type: 'bossRatingTop', extraId: 0 } });
+		if (!topGet) {
 			setProgress(`${I18N('EVENT')} ${I18N('NOT_AVAILABLE')}`, true);
 			return;
 		}
-		const replayId = topGet.results[0].result.response[0].userData.replayId;
-		const result = await Send(JSON.stringify({
-			calls: [
-				{ name: "battleGetReplay", args: { id: replayId }, ident: "battleGetReplay" },
-				{ name: "heroGetAll", args: {}, ident: "heroGetAll" },
-				{ name: "pet_getAll", args: {}, ident: "pet_getAll" },
-				{ name: "offerGetAll", args: {}, ident: "offerGetAll" }
-			]
-		}));
-		const bossEventInfo = result.results[3].result.response.find(e => e.offerType == "bossEvent");
+		const replayId = topGet.userData.replayId;
+	
+		const [battleGetReplay, heroGetAll, pet_getAll, offerGetAll] = await Caller.send([
+			{ name: 'battleGetReplay', args: { id: replayId } },
+			'heroGetAll',
+			'pet_getAll',
+			'offerGetAll',
+		]);
+	
+		const bossEventInfo = offerGetAll.find((e) => e.offerType == 'bossEvent');
 		if (!bossEventInfo) {
 			setProgress(`${I18N('EVENT')} ${I18N('NOT_AVAILABLE')}`, true);
 			return;
 		}
 		const usedHeroes = bossEventInfo.progress.usedHeroes;
-		const party = Object.values(result.results[0].result.response.replay.attackers);
-		const availableHeroes = Object.values(result.results[1].result.response).map(e => e.id);
-		const availablePets = Object.values(result.results[2].result.response).map(e => e.id);
+		const party = Object.values(battleGetReplay.replay.attackers);
+		const availableHeroes = Object.values(heroGetAll).map((e) => e.id);
+		const availablePets = Object.values(pet_getAll).map((e) => e.id);
+	
 		const calls = [];
 		/**
 		 * First pack
@@ -8593,8 +5885,8 @@
 		 */
 		const args = {
 			heroes: [],
-			favor: {}
-		}
+			favor: {},
+		};
 		for (let hero of party) {
 			if (hero.id >= 6000 && availablePets.includes(hero.id)) {
 				args.pet = hero.id;
@@ -8612,7 +5904,6 @@
 			calls.push({
 				name: 'bossRating_startBattle',
 				args,
-				ident: 'body_0',
 			});
 		}
 		/**
@@ -8622,7 +5913,7 @@
 		 */
 		let heroes = [];
 		let count = 1;
-		while (heroId = availableHeroes.pop()) {
+		while ((heroId = availableHeroes.pop())) {
 			if (args.heroes.includes(heroId) || usedHeroes.includes(heroId)) {
 				continue;
 			}
@@ -8634,7 +5925,6 @@
 						heroes: [...heroes],
 						pet: availablePets[Math.floor(Math.random() * availablePets.length)],
 					},
-					ident: 'body_' + count,
 				});
 				heroes = [];
 				count++;
@@ -8646,11 +5936,9 @@
 			return;
 		}
 	
-		const resultBattles = await Send(JSON.stringify({ calls }));
-		console.log(resultBattles);
+		console.log(await Caller.send(calls));
 		rewardBossRatingEvent();
 	}
-	
 	/**
 	 * Collecting Rewards from the Forge of Souls
 	 *
@@ -8696,7 +5984,7 @@
 				return;
 			}
 	
-			send(JSON.stringify(getRewardCall), e => {
+			send(getRewardCall, e => {
 				console.log(e);
 				setProgress(`${I18N('COLLECTED')} ${e?.results?.length} ${I18N('REWARD')}`, true);
 			});
@@ -8708,33 +5996,21 @@
 	 *
 	 * Собрать пасхалки и награды событий
 	 */
-	function offerFarmAllReward() {
-		const offerGetAllCall = '{"calls":[{"name":"offerGetAll","args":{},"ident":"offerGetAll"}]}';
-		return Send(offerGetAllCall).then((data) => {
-			const offerGetAll = data.results[0].result.response.filter(e => e.type == "reward" && !e?.freeRewardObtained && e.reward);
-			if (!offerGetAll.length) {
-				setProgress(`${I18N('NOTHING_TO_COLLECT')}`, true);
-				return;
-			}
+	async function offerFarmAllReward() {
+		const offerGetAll = await Caller.send('offerGetAll');
+		const rewards = offerGetAll.filter((e) => e.type == 'reward' && !e?.freeRewardObtained && e.reward);
+		if (!rewards.length) {
+			setProgress(`${I18N('NOTHING_TO_COLLECT')}`, true);
+			return;
+		}
 	
-			const calls = [];
-			for (let reward of offerGetAll) {
-				calls.push({
-					name: "offerFarmReward",
-					args: {
-						offerId: reward.id
-					},
-					ident: "offerFarmReward_" + reward.id
-				});
-			}
-	
-			return Send(JSON.stringify({ calls })).then(e => {
-				console.log(e);
-				setProgress(`${I18N('COLLECTED')} ${e?.results?.length} ${I18N('REWARD')}`, true);
-			});
-		});
+		const results = await Caller.send(rewards.map((reward) => ({
+			name: 'offerFarmReward',
+			args: { offerId: reward.id },
+		})));
+		console.log(results);
+		setProgress(`${I18N('COLLECTED')} ${results.length} ${I18N('REWARD')}`, true);
 	}
-	
 	/**
 	 * Assemble Outland
 	 *
@@ -8743,7 +6019,7 @@
 	function getOutland() {
 		return new Promise(function (resolve, reject) {
 			send('{"calls":[{"name":"bossGetAll","args":{},"ident":"bossGetAll"}]}', e => {
-				let bosses = e.results[0].result.response;
+				let bosses = e.results[0].result.response.bosses;
 	
 				let bossRaidOpenChestCall = {
 					calls: []
@@ -8786,7 +6062,7 @@
 					return;
 				}
 	
-				send(JSON.stringify(bossRaidOpenChestCall), e => {
+				send(bossRaidOpenChestCall, e => {
 					setProgress(`${I18N('OUTLAND')} ${I18N('COLLECTED')}`, true);
 					resolve();
 				});
@@ -8808,7 +6084,7 @@
 					ident: "body"
 				}]
 			}
-			send(JSON.stringify(questGetAllCall), function (data) {
+			send(questGetAllCall, function (data) {
 				let questGetAll = data.results[0].result.response;
 				const questAllFarmCall = {
 					calls: []
@@ -8833,7 +6109,7 @@
 					return;
 				}
 	
-				send(JSON.stringify(questAllFarmCall), function (res) {
+				send(questAllFarmCall, function (res) {
 					console.log(res);
 					setProgress(`${I18N('COLLECTED')} ${number} ${I18N('REWARD')}`, true);
 					resolve();
@@ -8854,106 +6130,82 @@
 			isSendsMission = false;
 			console.log(I18N('STOPPED'));
 			setProgress('');
-			await popup.confirm(`${I18N('STOPPED')}<br>${I18N('REPETITIONS')}: ${param.count}`, [{
-				msg: 'Ok',
-				result: true
-			}, ])
+			await popup.confirm(`${I18N('STOPPED')}<br>${I18N('REPETITIONS')}: ${param.count}`, [
+				{
+					msg: 'Ok',
+					result: true,
+					color: 'green',
+				},
+			]);
 		}
 		if (isStopSendMission) {
 			stopMission();
 			return;
 		}
 		lastMissionBattleStart = Date.now();
-		let missionStartCall = {
-			"calls": [{
-				"name": "missionStart",
-				"args": lastMissionStart,
-				"ident": "body"
-			}]
-		}
 		/**
 		 * Mission Request
 		 *
 		 * Запрос на выполнение мисии
 		 */
-		SendRequest(JSON.stringify(missionStartCall), async e => {
-			if (e['error']) {
-				isSendsMission = false;
-				console.log(e['error']);
-				setProgress('');
-				let msg = e['error'].name + ' ' + e['error'].description + `<br>${I18N('REPETITIONS')}: ${param.count}`;
-				await popup.confirm(msg, [
-					{msg: 'Ok', result: true},
-				])
+		let battle;
+		try {
+			battle = await Caller.send({
+				name: 'missionStart',
+				args: lastMissionStart,
+			});
+		} catch (e) {
+			isSendsMission = false;
+			console.error(e);
+			setProgress('');
+			return;
+		}
+	
+		const result = await Calc(battle);
+		let timer = getTimer(result.battleTime) + 5;
+		const period = Math.ceil((Date.now() - lastMissionBattleStart) / 1000);
+		if (period < timer) {
+			timer = timer - period;
+			const isSuccess = await countdownTimer(timer, `${I18N('MISSIONS_PASSED')}: ${param.count}`, () => {
+				isStopSendMission = true;
+			});
+			if (!isSuccess) {
+				stopMission();
 				return;
 			}
-			/**
-			 * Mission data calculation
-			 *
-			 * Расчет данных мисии
-			 */
-			BattleCalc(e.results[0].result.response, 'get_tower', async r => {
-				/** missionTimer */
-				let timer = getTimer(r.battleTime) + 5;
-				const period = Math.ceil((Date.now() - lastMissionBattleStart) / 1000);
-				if (period < timer) {
-					timer = timer - period;
-					const isSuccess = await countdownTimer(timer, `${I18N('MISSIONS_PASSED')}: ${param.count}`, () => {
-						isStopSendMission = true;
-					});
-					if (!isSuccess) {
-						stopMission();
-						return;
-					}
-				}
+		}
 	
-				let missionEndCall = {
-					"calls": [{
-						"name": "missionEnd",
-						"args": {
-							"id": param.id,
-							"result": r.result,
-							"progress": r.progress
-						},
-						"ident": "body"
-					}]
-				}
-				/**
-				 * Mission Completion Request
-				 *
-				 * Запрос на завершение миссии
-				 */
-				SendRequest(JSON.stringify(missionEndCall), async (e) => {
-					if (e['error']) {
-						isSendsMission = false;
-						console.log(e['error']);
-						setProgress('');
-						let msg = e['error'].name + ' ' + e['error'].description + `<br>${I18N('REPETITIONS')}: ${param.count}`;
-						await popup.confirm(msg, [
-							{msg: 'Ok', result: true},
-						])
-						return;
-					}
-					r = e.results[0].result.response;
-					if (r['error']) {
-						isSendsMission = false;
-						console.log(r['error']);
-						setProgress('');
-						await popup.confirm(`<br>${I18N('REPETITIONS')}: ${param.count}` + ' 3 ' + r['error'], [
-							{msg: 'Ok', result: true},
-						])
-						return;
-					}
+		let r;
+		try {
+			r = await Caller.send({
+				name: 'missionEnd',
+				args: {
+					id: param.id,
+					result: result.result,
+					progress: result.progress,
+				},
+			});
+		} catch (e) {
+			isSendsMission = false;
+			console.error(e);
+			setProgress('');
+			return;
+		}
 	
-					param.count++;
-					setProgress(`${I18N('MISSIONS_PASSED')}: ${param.count} (${I18N('STOP')})`, false, () => {
-						isStopSendMission = true;
-					});
-					setTimeout(sendsMission, 1, param);
-				});
-			})
+		if (r['error']) {
+			isSendsMission = false;
+			console.log(r['error']);
+			setProgress('');
+			await popup.confirm(`<br>${I18N('REPETITIONS')}: ${param.count}` + ' 3 ' + r['error'], [{ msg: 'Ok', result: true, color: 'green' }]);
+			return;
+		}
+	
+		param.count++;
+		setProgress(`${I18N('MISSIONS_PASSED')}: ${param.count} (${I18N('STOP')})`, false, () => {
+			isStopSendMission = true;
 		});
-	}
+		setTimeout(sendsMission, 1, param);
+	};
 	
 	/**
 	 * Opening of russian dolls
@@ -8968,14 +6220,10 @@
 		while (amount) {
 			sum += amount;
 			setProgress(`${I18N('TOTAL_OPEN')} ${sum}`);
-			const calls = [
-				{
-					name: 'consumableUseLootBox',
-					args: { libId, amount },
-					ident: 'body',
-				},
-			];
-			const response = await Send(JSON.stringify({ calls })).then((e) => e.results[0].result.response);
+			const response = await Caller.send({
+				name: 'consumableUseLootBox',
+				args: { libId, amount },
+			});
 			let [countLootBox, result] = Object.entries(response).pop();
 			count += +countLootBox;
 			let newCount = 0;
@@ -9016,30 +6264,23 @@
 	 *
 	 * Собрать всю почту, кроме писем с энергией и зарядами портала
 	 */
-	function mailGetAll() {
-		const getMailInfo = '{"calls":[{"name":"mailGetAll","args":{},"ident":"body"}]}';
+	async function mailGetAll() {
+		const { Letters } = HWHClasses;
+		const mailGetAll = await Caller.send('mailGetAll');
+		const letterIds = Letters.filter(mailGetAll.letters);
+		if (!letterIds.length) {
+			setProgress(I18N('NOTHING_TO_COLLECT'), true);
+			return;
+		}
 	
-		return Send(getMailInfo).then(dataMail => {
-			const { Letters } = HWHClasses;
-			const letters = dataMail.results[0].result.response.letters;
-			const letterIds = Letters.filter(letters);
-			if (!letterIds.length) {
-				setProgress(I18N('NOTHING_TO_COLLECT'), true);
-				return;
-			}
-	
-			const calls = [
-				{ name: "mailFarm", args: { letterIds }, ident: "body" }
-			];
-	
-			return Send(JSON.stringify({ calls })).then(res => {
-				const lettersIds = res.results[0].result.response;
-				if (lettersIds) {
-					const countLetters = Object.keys(lettersIds).length;
-					setProgress(`${I18N('RECEIVED')} ${countLetters} ${I18N('LETTERS')}`, true);
-				}
-			});
+		const lettersIds = await Caller.send({
+			name: 'mailFarm',
+			args: { letterIds },
 		});
+		if (lettersIds) {
+			const countLetters = Object.keys(lettersIds).length;
+			setProgress(`${I18N('RECEIVED')} ${countLetters} ${I18N('LETTERS')}`, true);
+		}
 	}
 	
 	class Letters {
@@ -9155,54 +6396,37 @@
 	 */
 	async function justInfo() {
 		return new Promise(async (resolve, reject) => {
-			const calls = [
-				{
-					name: 'userGetInfo',
-					args: {},
-					ident: 'userGetInfo',
-				},
-				{
-					name: 'clanWarGetInfo',
-					args: {},
-					ident: 'clanWarGetInfo',
-				},
-				{
-					name: 'titanArenaGetStatus',
-					args: {},
-					ident: 'titanArenaGetStatus',
-				},
-				{
-					name: 'quest_completeEasterEggQuest',
-					args: {},
-					ident: 'quest_completeEasterEggQuest',
-				},
-			];
-			const result = await Send(JSON.stringify({ calls }));
-			const infos = result.results;
-			const portalSphere = infos[0].result.response.refillable.find(n => n.id == 45);
-			const clanWarMyTries = infos[1].result.response?.myTries ?? 0;
-			const arePointsMax = infos[1].result.response?.arePointsMax;
-			const titansLevel = +(infos[2].result.response?.tier ?? 0);
-			const titansStatus = infos[2].result.response?.status; //peace_time || battle
+		const [userGetInfo, clanWarGetInfo, titanArenaGetStatus] = await Caller.send([
+			'userGetInfo',
+			'clanWarGetInfo',
+			'titanArenaGetStatus',
+			'quest_completeEasterEggQuest',
+		]);
 	
-			setPortals(portalSphere.amount);
-			setWarTries(clanWarMyTries, false, arePointsMax);
+		const portalSphere = userGetInfo.refillable.find((n) => n.id == 45);
+		const clanWarMyTries = clanWarGetInfo?.myTries ?? 0;
+		const arePointsMax = clanWarGetInfo?.arePointsMax;
+		const titansLevel = +(titanArenaGetStatus?.tier ?? 0);
+		const titansStatus = titanArenaGetStatus?.status; //peace_time || battle
 	
-			const { buttons } = HWHData;
-			const titansArenaButton = buttons['testTitanArena'].button;
-			const titansArenaDot = titansArenaButton.querySelector('.scriptMenu_dot');
+		setPortals(portalSphere.amount);
+		setWarTries(clanWarMyTries, false, arePointsMax);
 	
-			if (titansLevel < 7 && titansStatus == 'battle') { ; 
-				titansArenaButton.classList.add('scriptMenu_attention');
-				titansArenaDot.title = `${titansLevel} ${I18N('LEVEL')}`;
-				titansArenaDot.innerText = titansLevel;
-				titansArenaDot.style.backgroundColor = 'red';
-			} else {
-				titansArenaButton.classList.remove('scriptMenu_attention');
-			}
+		const { buttons } = HWHData;
+		const titansArenaButton = buttons['testTitanArena'].button;
+		const titansArenaDot = titansArenaButton.querySelector('.scriptMenu_dot');
 	
-			const imgPortal =
-				'data:image/gif;base64,R0lGODlhLwAvAHAAACH5BAEAAP8ALAAAAAAvAC8AhwAAABkQWgjF3krO3ghSjAhSzinF3u+tGWvO3s5rGSmE5gha7+/OWghSrWvmnClShCmUlAiE5u+MGe/W3mvvWmspUmvvGSnOWinOnCnOGWsZjErvnAiUlErvWmsIUkrvGQjOWgjOnAjOGUoZjM6MGe/OIWvv5q1KGSnv5mulGe/vWs7v3ozv3kqEGYxKGWuEWmtSKUrv3mNaCEpKUs7OWiml5ggxWmMpEAgZpRlaCO/35q1rGRkxKWtarSkZrRljKSkZhAjv3msIGRk6CEparQhjWq3v3kql3ozOGe/vnM6tGYytWu9rGWuEGYzO3kqE3gil5s6MWq3vnGvFnM7vWoxrGc5KGYyMWs6tWq2MGYzOnO+tWmvFWkqlWoxrWgAZhEqEWq2tWoytnIyt3krFnGul3mulWmulnEIpUkqlGUqlnK3OnK2MWs7OnClSrSmUte+tnGvFGYytGYzvWs5rWowpGa3O3u/OnErFWoyMnGuE3muEnEqEnIyMGYzOWs7OGe9r3u9rWq3vWq1rWq1r3invWimlWu+t3q0pWq2t3u8pWu8p3q0p3invnCnvGe/vGa2tGa3vGa2tnK0pGe9rnK1rnCmlGe8pGe8pnK0pnGsZrSkp3msp3s7vGYzvnM7vnIzvGc6tnM5r3oxr3gilWs6t3owpWs4pWs4p3owp3s5rnIxrnAilGc4pGc4pnIwpnAgp3kop3s7O3u9KGe+MWoxKWoyM3kIIUgiUte+MnErFGc5KWowIGe9K3u9KWq3OWq1KWq1K3gjvWimEWu+M3q0IWq2M3u8IWu8I3q0I3gjvnAjvGa3OGa2MnK0IGe9KnK1KnCmEGe8IGe8InK0InEoZrSkI3msI3s6MnM5K3oxK3giEWs6M3owIWs4IWs4I3owI3s5KnIxKnAiEGc4IGc4InIwInAgI3koI3kJaCAgQKUIpEGtKUkJSKUIIECla7ylazmtahGta70pa70pahGtazkpazmtrWiExUkprUiljWikQKRkQCAAQCAAACAAAAAj/AP8JHEiwoMGDCBMqXMiwocODJlBIRBHDxMOLBmMEkSjAgICPE2Mw/OUH4z8TGz+agBIBCsuWUAQE0WLwzkAkKZZcnAilhk+fA1bUiEC0ZZABJOD8IyHhwJYDkpakafJQ4kooR5yw0LFihQ4WJhAMKCoARRYSTJgkUOInBZK2DiX2rGHEiI67eFcYATtAAVEoKEiQSFBFDs4UKbg0lGgAigIEeCNzrWvCxIChEcoy3dGiSoITTRQvnCLRrxOveI2McbKahevKJmooiKkFy4Gzg5tMMaMwitwIj/PqGPCugL0CT47ANhEjQg3Atg9IT5CiS4uEUcRIBH4EtREETuB9/xn/BUcBBbBXGGgpoPaBEid23EuXgvdBJhtQGFCwwA7eMgs0gEMDBJD3hR7KbRVbSwP8UcIWJNwjIRLXGZRAAhLVsIACR9y1whMNfNGAHgiUcUSBX8ADWwwKzCYADTSUcMA9ebwQmkFYMMFGhgu80x1XTxSAwxNdGWGCAiG6YQBzly3QkhYxlsDGP1cg4YBBaC0h1zsLPGHXCkfA00AZeu11hALl1VBZXwW0RAaMDGDxTxNdTGEQExJoiUINXCpwmhFOKJCcVmCdOR56MezXJhRvwFlCC2lcWVAUEjBxRobw9HhEXUYekWBlsoVoQEWyFbAAFPRIQQMDJcDQhRhYSv+QZ1kGcAnPYya4BhZYlb1TQ4iI+tVmBPpIQQWrMORxkKwSsEFrDaa+8xgCy1mmgLSHxtDXAhtGMIOxDKjgAkLM7iAAYD4VJ+0RAyAgVl++ikfAESxy62QB365awrjLyprAcxEY4FOmXEp7LbctjlfAAE1yGwEBYBirAgP8GtTUARIMM1QBPrVYQAHF9dgiml/Mexl/3DbAwxnHMqBExQVdLAEMjRXQgHOyydaibPCgqEDH3JrawDosUDExCTATZJuMJ0AAxRNXtLFFPD+P/DB58AC9wH4N4BMxDRPvkPRAbLx3AAlVMLBFCXeQgIaIKJKHQ9X8+forAetMsaoKB7j/MAhCL5j9VFNPJYBGiCGW18CtsvWIs5j7gLEGqyV81gxC6ZBQQgkSMEUCLQckMMLHNhcAD3B+8TdyA0PPACWrB8SH0BItyHAAAwdE4YILTSUww8cELwAyt7D4JSberkd5wA4neIFQE020sMPmJZBwAi0SJMBOA6WTXgAsDYDPOj7r3KNFy5WfkEBCKbTQBQzTM+By5wm4YAPr+LM+IIE27LPOFWswmgqqZ4UEXCEhLUjBGWbgAs3JD2OfWcc68GEDArCOAASwAfnWUYUwtIEKSVCBCiSgPuclpAlImMI9YNDAzeFuMEwQ2w3W4Q530PAGLthBFNqwghCKMAoF3MEB/xNihvr8Ix4sdCCrJja47CVAMFjAwid6eJcQWi8BO4jHQl6AGFjdwwUnOMF75CfCMpoxCTpAoxoZMBgs3qMh7ZODQFYYxgSMsQThCpcK0BiZJNxBCZ7zwhsbYqO3wCoe7AjjCaxAggNUcY94mcDa3qMECWSBHYN0CBfj0IQliEFCMFjkIulAAisUkBZYyB4USxAFCZnkH1xsgltSYCMYyACMpizghS7kOTZIKJMmeYEZzCCH6iCmBS1IRzpkcEsXVMGZMMgHJvfwyoLsYQ9nmMIUuDAFPIAhH8pUZjLbcY89rKKaC9nDFeLxy3vkYwbJTMcL0InOeOSjBVShJz2pqQvPfvrznwANKEMCAgA7';
+		if (titansLevel < 7 && titansStatus == 'battle') {
+			titansArenaButton.classList.add('scriptMenu_attention');
+			titansArenaDot.title = `${titansLevel} ${I18N('LEVEL')}`;
+			titansArenaDot.innerText = titansLevel;
+			titansArenaDot.style.backgroundColor = 'red';
+		} else {
+			titansArenaButton.classList.remove('scriptMenu_attention');
+		}
+	
+		const imgPortal =
+			'data:image/gif;base64,R0lGODlhLwAvAHAAACH5BAEAAP8ALAAAAAAvAC8AhwAAABkQWgjF3krO3ghSjAhSzinF3u+tGWvO3s5rGSmE5gha7+/OWghSrWvmnClShCmUlAiE5u+MGe/W3mvvWmspUmvvGSnOWinOnCnOGWsZjErvnAiUlErvWmsIUkrvGQjOWgjOnAjOGUoZjM6MGe/OIWvv5q1KGSnv5mulGe/vWs7v3ozv3kqEGYxKGWuEWmtSKUrv3mNaCEpKUs7OWiml5ggxWmMpEAgZpRlaCO/35q1rGRkxKWtarSkZrRljKSkZhAjv3msIGRk6CEparQhjWq3v3kql3ozOGe/vnM6tGYytWu9rGWuEGYzO3kqE3gil5s6MWq3vnGvFnM7vWoxrGc5KGYyMWs6tWq2MGYzOnO+tWmvFWkqlWoxrWgAZhEqEWq2tWoytnIyt3krFnGul3mulWmulnEIpUkqlGUqlnK3OnK2MWs7OnClSrSmUte+tnGvFGYytGYzvWs5rWowpGa3O3u/OnErFWoyMnGuE3muEnEqEnIyMGYzOWs7OGe9r3u9rWq3vWq1rWq1r3invWimlWu+t3q0pWq2t3u8pWu8p3q0p3invnCnvGe/vGa2tGa3vGa2tnK0pGe9rnK1rnCmlGe8pGe8pnK0pnGsZrSkp3msp3s7vGYzvnM7vnIzvGc6tnM5r3oxr3gilWs6t3owpWs4pWs4p3owp3s5rnIxrnAilGc4pGc4pnIwpnAgp3kop3s7O3u9KGe+MWoxKWoyM3kIIUgiUte+MnErFGc5KWowIGe9K3u9KWq3OWq1KWq1K3gjvWimEWu+M3q0IWq2M3u8IWu8I3q0I3gjvnAjvGa3OGa2MnK0IGe9KnK1KnCmEGe8IGe8InK0InEoZrSkI3msI3s6MnM5K3oxK3giEWs6M3owIWs4IWs4I3owI3s5KnIxKnAiEGc4IGc4InIwInAgI3koI3kJaCAgQKUIpEGtKUkJSKUIIECla7ylazmtahGta70pa70pahGtazkpazmtrWiExUkprUiljWikQKRkQCAAQCAAACAAAAAj/AP8JHEiwoMGDCBMqXMiwocODJlBIRBHDxMOLBmMEkSjAgICPE2Mw/OUH4z8TGz+agBIBCsuWUAQE0WLwzkAkKZZcnAilhk+fA1bUiEC0ZZABJOD8IyHhwJYDkpakafJQ4kooR5yw0LFihQ4WJhAMKCoARRYSTJgkUOInBZK2DiX2rGHEiI67eFcYATtAAVEoKEiQSFBFDs4UKbg0lGgAigIEeCNzrWvCxIChEcoy3dGiSoITTRQvnCLRrxOveI2McbKahevKJmooiKkFy4Gzg5tMMaMwitwIj/PqGPCugL0CT47ANhEjQg3Atg9IT5CiS4uEUcRIBH4EtREETuB9/xn/BUcBBbBXGGgpoPaBEid23EuXgvdBJhtQGFCwwA7eMgs0gEMDBJD3hR7KbRVbSwP8UcIWJNwjIRLXGZRAAhLVsIACR9y1whMNfNGAHgiUcUSBX8ADWwwKzCYADTSUcMA9ebwQmkFYMMFGhgu80x1XTxSAwxNdGWGCAiG6YQBzly3QkhYxlsDGP1cg4YBBaC0h1zsLPGHXCkfA00AZeu11hALl1VBZXwW0RAaMDGDxTxNdTGEQExJoiUINXCpwmhFOKJCcVmCdOR56MezXJhRvwFlCC2lcWVAUEjBxRobw9HhEXUYekWBlsoVoQEWyFbAAFPRIQQMDJcDQhRhYSv+QZ1kGcAnPYya4BhZYlb1TQ4iI+tVmBPpIQQWrMORxkKwSsEFrDaa+8xgCy1mmgLSHxtDXAhtGMIOxDKjgAkLM7iAAYD4VJ+0RAyAgVl++ikfAESxy62QB365awrjLyprAcxEY4FOmXEp7LbctjlfAAE1yGwEBYBirAgP8GtTUARIMM1QBPrVYQAHF9dgiml/Mexl/3DbAwxnHMqBExQVdLAEMjRXQgHOyydaibPCgqEDH3JrawDosUDExCTATZJuMJ0AAxRNXtLFFPD+P/DB58AC9wH4N4BMxDRPvkPRAbLx3AAlVMLBFCXeQgIaIKJKHQ9X8+forAetMsaoKB7j/MAhCL5j9VFNPJYBGiCGW18CtsvWIs5j7gLEGqyV81gxC6ZBQQgkSMEUCLQckMMLHNhcAD3B+8TdyA0PPACWrB8SH0BItyHAAAwdE4YILTSUww8cELwAyt7D4JSberkd5wA4neIFQE020sMPmJZBwAi0SJMBOA6WTXgAsDYDPOj7r3KNFy5WfkEBCKbTQBQzTM+By5wm4YAPr+LM+IIE27LPOFWswmgqqZ4UEXCEhLUjBGWbgAs3JD2OfWcc68GEDArCOAASwAfnWUYUwtIEKSVCBCiSgPuclpAlImMI9YNDAzeFuMEwQ2w3W4Q530PAGLthBFNqwghCKMAoF3MEB/xNihvr8Ix4sdCCrJja47CVAMFjAwid6eJcQWi8BO4jHQl6AGFjdwwUnOMF75CfCMpoxCTpAoxoZMBgs3qMh7ZODQFYYxgSMsQThCpcK0BiZJNxBCZ7zwhsbYqO3wCoe7AjjCaxAggNUcY94mcDa3qMECWSBHYN0CBfj0IQliEFCMFjkIulAAisUkBZYyB4USxAFCZnkH1xsgltSYCMYyACMpizghS7kOTZIKJMmeYEZzCCH6iCmBS1IRzpkcEsXVMGZMMgHJvfwyoLsYQ9nmMIUuDAFPIAhH8pUZjLbcY89rKKaC9nDFeLxy3vkYwbJTMcL0InOeOSjBVShJz2pqQvPfvrznwANKEMCAgA7';
 	
 			setProgress('<img src="' + imgPortal + '" style="height: 25px;position: relative;top: 5px;"> ' + `${portalSphere.amount} </br> ${I18N('GUILD_WAR')}: ${clanWarMyTries}`, true);
 			resolve();
@@ -9210,13 +6434,7 @@
 	}
 	
 	async function getDailyBonus() {
-		const dailyBonusInfo = await Send(JSON.stringify({
-			calls: [{
-				name: "dailyBonusGetInfo",
-				args: {},
-				ident: "body"
-			}]
-		})).then(e => e.results[0].result.response);
+		const dailyBonusInfo = await Caller.send('dailyBonusGetInfo');
 		const { availableToday, availableVip, currentDay } = dailyBonusInfo;
 	
 		if (!availableToday) {
@@ -9235,22 +6453,12 @@
 			}
 		}
 		const vipLevelDouble = dailyBonusStat[`${currentDay}_0_0`].vipLevelDouble;
-	
-		const calls = [{
-			name: "dailyBonusFarm",
+		const reward = await Caller.send({
+			name: 'dailyBonusFarm',
 			args: {
-				vip: availableVip && currentVipLevel >= vipLevelDouble ? 1 : 0
+				vip: availableVip && currentVipLevel >= vipLevelDouble ? 1 : 0,
 			},
-			ident: "body"
-		}];
-	
-		const result = await Send(JSON.stringify({ calls }));
-		if (result.error) {
-			console.error(result.error);
-			return;
-		}
-	
-		const reward = result.results[0].result.response;
+		});;
 		const type = Object.keys(reward).pop();
 		const itemId = Object.keys(reward[type]).pop();
 		const count = reward[type][itemId];
@@ -9260,8 +6468,8 @@
 	}
 	
 	async function farmStamina(lootBoxId = 148) {
-		const lootBox = await Send('{"calls":[{"name":"inventoryGet","args":{},"ident":"inventoryGet"}]}')
-			.then(e => e.results[0].result.response.consumable[148]);
+		const inventory = await Caller.send('inventoryGet');
+		const lootBox = inventory.consumable?.[lootBoxId];
 	
 		/** Добавить другие ящики */
 		/**
@@ -9277,15 +6485,15 @@
 		let maxFarmEnergy = getSaveVal('maxFarmEnergy', 100);
 		const result = await popup.confirm(I18N('OPEN_LOOTBOX', { lootBox }), [
 			{ result: false, isClose: true },
-			{ msg: I18N('BTN_YES'), result: true },
+			{ msg: I18N('BTN_YES'), result: true, color: 'green' },
 			{ msg: I18N('STAMINA'), isInput: true, default: maxFarmEnergy },
 		]);
-		
+	
 		if (!+result) {
 			return;
 		}
 	
-		if ((typeof result) !== 'boolean' && Number.parseInt(result)) {
+		if (typeof result !== 'boolean' && Number.parseInt(result)) {
 			maxFarmEnergy = +result;
 			setSaveVal('maxFarmEnergy', maxFarmEnergy);
 		} else {
@@ -9294,20 +6502,24 @@
 	
 		let collectEnergy = 0;
 		for (let count = lootBox; count > 0; count--) {
-			const response = await Send('{"calls":[{"name":"consumableUseLootBox","args":{"libId":148,"amount":1},"ident":"body"}]}').then(
-				(e) => e.results[0].result.response
-			);
+			const response = await Caller.send({
+				name: 'consumableUseLootBox',
+				args: { libId: lootBoxId, amount: 1 },
+			});
 			const result = Object.values(response).pop();
 			if ('stamina' in result) {
-				setProgress(`${I18N('OPEN')}: ${lootBox - count}/${lootBox} ${I18N('STAMINA')} +${result.stamina}<br>${I18N('STAMINA')}: ${collectEnergy}`, false);
-				console.log(`${ I18N('STAMINA') } + ${ result.stamina }`);
+				setProgress(
+					`${I18N('OPEN')}: ${lootBox - count}/${lootBox} ${I18N('STAMINA')} +${result.stamina}<br>${I18N('STAMINA')}: ${collectEnergy}`,
+					false
+				);
+				console.log(`${I18N('STAMINA')} + ${result.stamina}`);
 				if (!maxFarmEnergy) {
 					return;
 				}
 				collectEnergy += +result.stamina;
 				if (collectEnergy >= maxFarmEnergy) {
-					console.log(`${I18N('STAMINA')} + ${ collectEnergy }`);
-					setProgress(`${I18N('STAMINA')} + ${ collectEnergy }`, false);
+					console.log(`${I18N('STAMINA')} + ${collectEnergy}`);
+					setProgress(`${I18N('STAMINA')} + ${collectEnergy}`, false);
 					return;
 				}
 			} else {
@@ -9320,38 +6532,21 @@
 	}
 	
 	async function fillActive() {
-		const data = await Send(JSON.stringify({
-			calls: [{
-				name: "questGetAll",
-				args: {},
-				ident: "questGetAll"
-			}, {
-				name: "inventoryGet",
-				args: {},
-				ident: "inventoryGet"
-			}, {
-				name: "clanGetInfo",
-				args: {},
-				ident: "clanGetInfo"
-			}
-		]
-		})).then(e => e.results.map(n => n.result.response));
+		const [quests, inv, clanInfo] = await Caller.send(['questGetAll', 'inventoryGet', 'clanGetInfo']);
 	
-		const quests = data[0];
-		const inv = data[1];
-		const stat = data[2].stat;
+		const stat = clanInfo.stat;
 		const maxActive = 2000 - stat.todayItemsActivity;
 		if (maxActive <= 0) {
 			setProgress(I18N('NO_MORE_ACTIVITY'), true);
 			return;
 		}
-		
+	
 		let countGetActive = 0;
-		const quest = quests.find(e => e.id > 10046 && e.id < 10051);
+		const quest = quests.find((e) => e.id > 10046 && e.id < 10051);
 		if (quest) {
 			countGetActive = 1750 - quest.progress;
-		} 
-		
+		}
+	
 		if (countGetActive <= 0) {
 			countGetActive = maxActive;
 		}
@@ -9359,7 +6554,7 @@
 	
 		countGetActive = +(await popup.confirm(I18N('EXCHANGE_ITEMS', { maxActive }), [
 			{ result: false, isClose: true },
-			{ msg: I18N('GET_ACTIVITY'), isInput: true, default: countGetActive.toString() },
+			{ msg: I18N('GET_ACTIVITY'), isInput: true, default: countGetActive.toString(), color: 'green' },
 		]));
 	
 		if (!countGetActive) {
@@ -9380,8 +6575,8 @@
 					id: i,
 					count: inv[type][i],
 					v,
-					type
-				})
+					type,
+				});
 			}
 			const invType = 'fragment' + type.toLowerCase().charAt(0).toUpperCase() + type.slice(1);
 			for (let i in inv[invType]) {
@@ -9390,11 +6585,11 @@
 					id: i,
 					count: inv[invType][i],
 					v,
-					type: invType
-				})
+					type: invType,
+				});
 			}
 		}
-		itemsInfo = itemsInfo.filter(e => e.v < 4 && e.count > 200);
+		itemsInfo = itemsInfo.filter((e) => e.v < 4 && e.count > 200);
 		itemsInfo = itemsInfo.sort((a, b) => b.count - a.count);
 		console.log(itemsInfo);
 		const activeItem = itemsInfo.shift();
@@ -9406,30 +6601,26 @@
 			return;
 		}
 	
-		await Send(JSON.stringify({
-			calls: [{
-				name: "clanItemsForActivity",
-				args: {
-					items: {
-						[activeItem.type]: {
-							[activeItem.id]: countItem
-						}
-					}
+		const response = await Caller.send({
+			name: 'clanItemsForActivity',
+			args: {
+				items: {
+					[activeItem.type]: {
+						[activeItem.id]: countItem,
+					},
 				},
-				ident: "body"
-			}]
-		})).then(e => {
-			/** TODO: Вывести потраченые предметы */
-			console.log(e);
-			setProgress(`${I18N('ACTIVITY_RECEIVED')}: ` + e.results[0].result.response, true);
+			},
 		});
+	
+		/** TODO: Вывести потраченые предметы */
+		console.log(response);
+		setProgress(`${I18N('ACTIVITY_RECEIVED')}: ` + response, true);
 	}
 	
 	async function buyHeroFragments() {
-		const result = await Send('{"calls":[{"name":"inventoryGet","args":{},"ident":"inventoryGet"},{"name":"shopGetAll","args":{},"ident":"shopGetAll"}]}')
-			.then(e => e.results.map(n => n.result.response));
-		const inv = result[0];
-		const shops = Object.values(result[1]).filter(shop => [4, 5, 6, 8, 9, 10, 17].includes(shop.id));
+		const [inv, shopAll] = await Caller.send(['inventoryGet', 'shopGetAll']);
+	
+		const shops = Object.values(shopAll).filter((shop) => [4, 5, 6, 8, 9, 10, 17].includes(shop.id));
 		const calls = [];
 	
 		for (let shop of shops) {
@@ -9445,22 +6636,21 @@
 				}
 				const coin = Object.keys(slot.cost).pop();
 				const coinId = Object.keys(slot.cost[coin]).pop();
-				const stock = inv[coin][coinId] || 0;
+				const stock = inv[coin]?.[coinId] || 0;
 				/* Не хватает на покупку */
 				if (slot.cost[coin][coinId] > stock) {
 					continue;
 				}
 				inv[coin][coinId] -= slot.cost[coin][coinId];
 				calls.push({
-					name: "shopBuy",
+					name: 'shopBuy',
 					args: {
 						shopId: shop.id,
 						slot: slot.id,
 						cost: slot.cost,
 						reward: slot.reward,
 					},
-					ident: `shopBuy_${shop.id}_${slot.id}`,
-				})
+				});
 			}
 		}
 	
@@ -9469,11 +6659,7 @@
 			return;
 		}
 	
-		const bought = await Send(JSON.stringify({ calls })).then(e => e.results.map(n => n.result.response));
-		if (!bought) {
-			console.log('что-то пошло не так')
-			return;
-		}
+		const bought = await Caller.send(calls);
 	
 		let countHeroSouls = 0;
 		for (const buy of bought) {
@@ -9485,15 +6671,8 @@
 	
 	/** Открыть платные сундуки в Запределье за 90 */
 	async function bossOpenChestPay() {
-		const callsNames = ['userGetInfo', 'bossGetAll', 'specialOffer_getAll', 'getTime'];
-		const info = await Send({ calls: callsNames.map((name) => ({ name, args: {}, ident: name })) }).then((e) =>
-			e.results.map((n) => n.result.response)
-		);
-	
-		const user = info[0];
-		const boses = info[1];
-		const offers = info[2];
-		const time = info[3];
+		const [user, bosses, offers, time] = await Caller.send(['userGetInfo', 'bossGetAll', 'specialOffer_getAll', 'getTime']);
+		const boses = bosses.bosses;
 	
 		const discountOffer = offers.find((e) => e.offerType == 'costReplaceOutlandChest');
 	
@@ -9527,6 +6706,7 @@
 			buttons.push({
 				msg: I18N('BUY_OUTLAND_BTN', { count: 9, countEmerald: cost9chests, imgEmerald }),
 				result: [costFirstChest, costFirstChest, 0],
+				color: 'green',
 			});
 		}
 	
@@ -9534,6 +6714,7 @@
 			buttons.push({
 				msg: I18N('BUY_OUTLAND_BTN', { count: 18, countEmerald: cost18chests, imgEmerald }),
 				result: [costFirstChest, costFirstChest, 0, costSecondChest, costSecondChest, 0],
+				color: 'green',
 			});
 		}
 	
@@ -9542,7 +6723,6 @@
 		if (!answer) {
 			return;
 		}
-	
 		const callBoss = [];
 		let n = 0;
 		for (let boss of boses) {
@@ -9559,7 +6739,6 @@
 						bossId,
 						starmoney,
 					},
-					ident: 'bossOpenChest_' + ++n,
 				});
 			}
 			callBoss.push(calls);
@@ -9573,11 +6752,10 @@
 		let count = 0;
 		let errors = 0;
 		for (const calls of callBoss) {
-			const result = await Send({ calls });
-			console.log(result);
-			if (result?.results) {
-				count += result.results.length;
-			} else {
+			try {
+				const results = await Caller.send(calls);
+				count += results.length;
+			} catch (e) {
 				errors++;
 			}
 		}
@@ -9585,24 +6763,13 @@
 		setProgress(`${I18N('OUTLAND_CHESTS_RECEIVED')}: ${count}`, true);
 	}
 	
-	async function autoRaidAdventure() {
-		const calls = [
-			{
-				name: "userGetInfo",
-				args: {},
-				ident: "userGetInfo"
-			},
-			{
-				name: "adventure_raidGetInfo",
-				args: {},
-				ident: "adventure_raidGetInfo"
-			}
-		];
-		const result = await Send(JSON.stringify({ calls }))
-			.then(e => e.results.map(n => n.result.response));
+	async function autoRaidAdventure(countRaid = 0) {
+		const [userGetInfo, adventure_raidGetInfo] = await Caller.send(['userGetInfo', 'adventure_raidGetInfo']);
 	
-		const portalSphere = result[0].refillable.find(n => n.id == 45);
-		const adventureRaid = Object.entries(result[1].raid).filter(e => e[1]).pop()
+		const portalSphere = userGetInfo.refillable.find((n) => n.id == 45);
+		const adventureRaid = Object.entries(adventure_raidGetInfo.raid)
+			.filter((e) => e[1])
+			.pop();
 		const adventureId = adventureRaid ? adventureRaid[0] : 0;
 	
 		if (!portalSphere.amount || !adventureId) {
@@ -9610,10 +6777,12 @@
 			return;
 		}
 	
-		const countRaid = +(await popup.confirm(I18N('RAID_ADVENTURE', { adventureId }), [
-			{ result: false, isClose: true },
-			{ msg: I18N('RAID'), isInput: true, default: portalSphere.amount },
-		]));
+		if (!countRaid) {
+			countRaid = +(await popup.confirm(I18N('RAID_ADVENTURE', { adventureId }), [
+				{ result: false, isClose: true },
+				{ msg: I18N('RAID'), isInput: true, default: portalSphere.amount, color: 'green' },
+			]));
+		}
 	
 		if (!countRaid) {
 			return;
@@ -9623,24 +6792,23 @@
 			countRaid = portalSphere.amount;
 		}
 	
-		const resultRaid = await Send(JSON.stringify({
-			calls: [...Array(countRaid)].map((e, i) => ({
-				name: "adventure_raid",
-				args: {
-					adventureId
-				},
-				ident: `body_${i}`
-			}))
-		})).then(e => e.results.map(n => n.result.response));
+		const resultRaid = await Caller.send(
+			Array(countRaid)
+				.fill()
+				.map(() => ({
+					name: 'adventure_raid',
+					args: { adventureId },
+				})),
+		);
 	
-		if (!resultRaid.length) {
+		if (!resultRaid.length && countRaid > 1) {
 			console.log(resultRaid);
 			setProgress(I18N('SOMETHING_WENT_WRONG'), true);
 			return;
 		}
 	
 		console.log(resultRaid, adventureId, portalSphere.amount);
-		setProgress(I18N('ADVENTURE_COMPLETED', { adventureId, times: resultRaid.length }), true);
+		setProgress(I18N('ADVENTURE_COMPLETED', { adventureId, times: countRaid }), true);
 	}
 	
 	/** Вывести всю клановую статистику в консоль браузера */
@@ -9686,51 +6854,50 @@
 	}
 	
 	async function buyInStoreForGold() {
-		const result = await Send('{"calls":[{"name":"shopGetAll","args":{},"ident":"body"},{"name":"userGetInfo","args":{},"ident":"userGetInfo"}]}').then(e => e.results.map(n => n.result.response));
-		const shops = result[0];
-		const user = result[1];
+		const [shops, user] = await Caller.send(['shopGetAll', 'userGetInfo']);
+	
 		let gold = user.gold;
 		const calls = [];
+	
 		if (shops[17]) {
 			const slots = shops[17].slots;
 			for (let i = 1; i <= 2; i++) {
 				if (!slots[i].bought) {
-					const costGold = slots[i].cost.gold;
-					if ((gold - costGold) < 0) {
+					const costGold = slots[i].cost?.gold || 0;
+					if (gold < costGold) {
 						continue;
 					}
 					gold -= costGold;
 					calls.push({
-						name: "shopBuy",
+						name: 'shopBuy',
 						args: {
 							shopId: 17,
 							slot: i,
 							cost: slots[i].cost,
 							reward: slots[i].reward,
 						},
-						ident: 'body_' + i,
-					})
+					});
 				}
 			}
 		}
+	
 		const slots = shops[1].slots;
 		for (let i = 4; i <= 6; i++) {
 			if (!slots[i].bought && slots[i]?.cost?.gold) {
 				const costGold = slots[i].cost.gold;
-				if ((gold - costGold) < 0) {
+				if (gold < costGold) {
 					continue;
 				}
 				gold -= costGold;
 				calls.push({
-					name: "shopBuy",
+					name: 'shopBuy',
 					args: {
 						shopId: 1,
 						slot: i,
 						cost: slots[i].cost,
 						reward: slots[i].reward,
 					},
-					ident: 'body_' + i,
-				})
+				});
 			}
 		}
 	
@@ -9739,13 +6906,13 @@
 			return;
 		}
 	
-		const resultBuy = await Send(JSON.stringify({ calls })).then(e => e.results.map(n => n.result.response));
+		const resultBuy = await Caller.send(calls);
 		console.log(resultBuy);
 		const countBuy = resultBuy.length;
 		setProgress(I18N('LOTS_BOUGHT', { countBuy }), true);
 	}
 	
-	async function rewardsAndMailFarm() {
+	async function rewardsAndMailFarm(isFarmMail = true) {
 		try {
 			const [questGetAll, mailGetAll, specialOffer, battlePassInfo, battlePassSpecial] = await Caller.send([
 				'questGetAll',
@@ -9769,6 +6936,7 @@
 				battlePass.level = Math.max(...levels.filter((p) => battlePass.exp >= p.experience).map((p) => p.level));
 			}
 	
+			const specialQuests = lib.getData('quest').special;
 			const questBattlePass = lib.getData('quest').battlePass;
 			const { questChain: questChainBPass } = lib.getData('battlePass');
 			const currentTime = Date.now();
@@ -9809,8 +6977,11 @@
 					continue;
 				}
 	
-				if (quest.reward?.battlePassExp) {
+				if (quest.reward?.battlePassExp && !specialQuests[questId]) {
 					const questInfo = questBattlePass[questId];
+					if (!questInfo) {
+						continue;
+					}
 					const chain = questChainBPass[questInfo.chain];
 					const battlePass = listBattlePass[chain.battlePass];
 					if (!battlePass) {
@@ -9852,13 +7023,15 @@
 				});
 			}
 	
-			const { Letters } = HWHClasses;
-			const letterIds = Letters.filter(mailFarm);
-			if (letterIds.length) {
-				farmCaller.add({
-					name: 'mailFarm',
-					args: { letterIds },
-				});
+			if (isFarmMail) {
+				const { Letters } = HWHClasses;
+				const letterIds = Letters.filter(mailFarm);
+				if (letterIds.length) {
+					farmCaller.add({
+						name: 'mailFarm',
+						args: { letterIds },
+					});
+				}
 			}
 	
 			if (farmCaller.isEmpty()) {
@@ -9945,141 +7118,7 @@
 		}
 	}
 	
-	class epicBrawl {
-		timeout = null;
-		time = null;
-	
-		constructor() {
-			if (epicBrawl.inst) {
-				return epicBrawl.inst;
-			}
-			epicBrawl.inst = this;
-			return this;
-		}
-	
-		runTimeout(func, timeDiff) {
-			const worker = new Worker(URL.createObjectURL(new Blob([`
-					self.onmessage = function(e) {
-						const timeDiff = e.data;
-	
-						if (timeDiff > 0) {
-							setTimeout(() => {
-								self.postMessage(1);
-								self.close();
-							}, timeDiff);
-						}
-					};
-				`])));
-			worker.postMessage(timeDiff);
-			worker.onmessage = () => {
-				func();
-			};
-			return true;
-		}
-	
-		timeDiff(date1, date2) {
-			const date1Obj = new Date(date1);
-			const date2Obj = new Date(date2);
-	
-			const timeDiff = Math.abs(date2Obj - date1Obj);
-	
-			const totalSeconds = timeDiff / 1000;
-			const minutes = Math.floor(totalSeconds / 60);
-			const seconds = Math.floor(totalSeconds % 60);
-	
-			const formattedMinutes = String(minutes).padStart(2, '0');
-			const formattedSeconds = String(seconds).padStart(2, '0');
-	
-			return `${formattedMinutes}:${formattedSeconds}`;
-		}
-	
-		check() {
-			console.log(new Date(this.time))
-			if (Date.now() > this.time) {
-				this.timeout = null;
-				this.start()
-				return;
-			}
-			this.timeout = this.runTimeout(() => this.check(), 6e4);
-			return this.timeDiff(this.time, Date.now())
-		}
-	
-		async start() {
-			if (this.timeout) {
-				const time = this.timeDiff(this.time, Date.now());
-				console.log(new Date(this.time))
-				setProgress(I18N('TIMER_ALREADY', { time }), false, hideProgress);
-				return;
-			}
-			setProgress(I18N('EPIC_BRAWL'), false, hideProgress);
-			const teamInfo = await Send('{"calls":[{"name":"teamGetAll","args":{},"ident":"teamGetAll"},{"name":"teamGetFavor","args":{},"ident":"teamGetFavor"},{"name":"userGetInfo","args":{},"ident":"userGetInfo"}]}').then(e => e.results.map(n => n.result.response));
-			const refill = teamInfo[2].refillable.find(n => n.id == 52)
-			this.time = (refill.lastRefill + 3600) * 1000
-			const attempts = refill.amount;
-			if (!attempts) {
-				console.log(new Date(this.time));
-				const time = this.check();
-				setProgress(I18N('NO_ATTEMPTS_TIMER_START', { time }), false, hideProgress);
-				return;
-			}
-	
-			if (!teamInfo[0].epic_brawl) {
-				setProgress(I18N('NO_HEROES_PACK'), false, hideProgress);
-				return;
-			}
-	
-			const args = {
-				heroes: teamInfo[0].epic_brawl.filter(e => e < 1000),
-				pet: teamInfo[0].epic_brawl.filter(e => e > 6000).pop(),
-				favor: teamInfo[1].epic_brawl,
-			}
-	
-			let wins = 0;
-			let coins = 0;
-			let streak = { progress: 0, nextStage: 0 };
-			for (let i = attempts; i > 0; i--) {
-				const info = await Send(JSON.stringify({
-					calls: [
-						{ name: "epicBrawl_getEnemy", args: {}, ident: "epicBrawl_getEnemy" }, { name: "epicBrawl_startBattle", args, ident: "epicBrawl_startBattle" }
-					]
-				})).then(e => e.results.map(n => n.result.response));
-	
-				const { progress, result } = await Calc(info[1].battle);
-				const endResult = await Send(JSON.stringify({ calls: [{ name: "epicBrawl_endBattle", args: { progress, result }, ident: "epicBrawl_endBattle" }, { name: "epicBrawl_getWinStreak", args: {}, ident: "epicBrawl_getWinStreak" }] })).then(e => e.results.map(n => n.result.response));
-	
-				const resultInfo = endResult[0].result;
-				streak = endResult[1];
-	
-				wins += resultInfo.win;
-				coins += resultInfo.reward ? resultInfo.reward.coin[39] : 0;
-	
-				console.log(endResult[0].result)
-				if (endResult[1].progress == endResult[1].nextStage) {
-					const farm = await Send('{"calls":[{"name":"epicBrawl_farmWinStreak","args":{},"ident":"body"}]}').then(e => e.results[0].result.response);
-					coins += farm.coin[39];
-				}
-	
-				setProgress(I18N('EPIC_BRAWL_RESULT', { 
-					i, wins, attempts, coins, 
-					progress: streak.progress,
-					nextStage: streak.nextStage,
-					end: '',
-				}), false, hideProgress);
-			}
-	
-			console.log(new Date(this.time));
-			const time = this.check();
-			setProgress(I18N('EPIC_BRAWL_RESULT', {
-				wins, attempts, coins,
-				i: '',
-				progress: streak.progress,
-				nextStage: streak.nextStage,
-				end: I18N('ATTEMPT_ENDED', { time }),
-			}), false, hideProgress);
-		}
-	}
-	
-	function countdownTimer(seconds, message, onClick = null) {
+	function countdownTimer(seconds, message, onClick = null, autoHide = true) {
 		message = message || I18N('TIMER');
 		const stopTimer = Date.now() + seconds * 1e3;
 		const isOnClick = typeof onClick === 'function';
@@ -10093,13 +7132,15 @@
 							clearInterval(interval);
 							setProgress('', true);
 							resolve(false);
-						}
+					  }
 					: undefined;
 	
 				setProgress(`${message} ${remaining.toFixed(2)}`, false, clickHandler);
 				if (now > stopTimer) {
 					clearInterval(interval);
-					setProgress('', true);
+					if (autoHide) {
+						setProgress('', true);
+					}
 					resolve(true);
 				}
 			}, 100);
@@ -10110,31 +7151,33 @@
 	
 	/** Набить килов в горниле душк */
 	async function bossRatingEventSouls() {
-		const data = await Send({
-			calls: [
-				{ name: "heroGetAll", args: {}, ident: "teamGetAll" },
-				{ name: "offerGetAll", args: {}, ident: "offerGetAll" },
-				{ name: "pet_getAll", args: {}, ident: "pet_getAll" },
-			]
-		});
-		const bossEventInfo = data.results[1].result.response.find(e => e.offerType == "bossEvent");
+		const [heroGetAll, offerGetAll, pet_getAll] = await Caller.send(['heroGetAll', 'offerGetAll', 'pet_getAll']);
+		let bossEventInfo = offerGetAll.find((e) => e.offerType == 'bossEvent');
 		if (!bossEventInfo) {
-			setProgress('Эвент завершен', true);
+			setProgress(I18N('EVENT_IS_OVER'), true);
 			return;
 		}
 	
-		if (bossEventInfo.progress.score > 250) {
-			setProgress('Уже убито больше 250 врагов');
-			rewardBossRatingEventSouls();
+		const countKills = +(await popup.confirm(I18N('SET_COUNT_KILLS'), [
+			{ msg: I18N('BTN_GO'), isInput: true, default: 250, color: 'green' },
+			{ result: false, isClose: true },
+		]));
+	
+		if (!countKills) {
 			return;
 		}
-		const availablePets = Object.values(data.results[2].result.response).map(e => e.id);
-		const heroGetAllList = data.results[0].result.response;
+	
+		if (bossEventInfo.progress.score > countKills) {
+			setProgress(I18N('MORE_ENEMIES_KILLED', { countKills }));
+			setTimeout(rewardBossRatingEventSouls, 2500, bossEventInfo);
+			return;
+		}
+		const availablePets = Object.values(pet_getAll).map((e) => e.id);
 		const usedHeroes = bossEventInfo.progress.usedHeroes;
 		const heroList = [];
 	
-		for (let heroId in heroGetAllList) {
-			let hero = heroGetAllList[heroId];
+		for (let heroId in heroGetAll) {
+			let hero = heroGetAll[heroId];
 			if (usedHeroes.includes(hero.id)) {
 				continue;
 			}
@@ -10142,7 +7185,7 @@
 		}
 	
 		if (!heroList.length) {
-			setProgress('Нет героев', true);
+			setProgress(I18N('NO_HEROES'), true);
 			return;
 		}
 	
@@ -10153,57 +7196,47 @@
 		for (const heroId of heroList) {
 			const args = {
 				heroes: [heroId],
-				pet
-			}
+				pet,
+			};
 			/** Поиск питомца для героя */
 			for (const petId of availablePets) {
 				if (petLib[petId].favorHeroes.includes(heroId)) {
 					args.favor = {
-						[heroId]: petId
-					}
+						[heroId]: petId,
+					};
 					break;
 				}
 			}
 	
-			const calls = [{
-				name: "bossRatingEvent_startBattle",
-				args,
-				ident: "body"
-			}, {
-				name: "offerGetAll",
-				args: {},
-				ident: "offerGetAll"
-			}];
-	
-			const res = await Send({ calls });
-			count++;
-	
-			if ('error' in res) {
-				console.error(res.error);
-				setProgress('Перезагрузите игру и попробуйте позже', true);
+			let battleInfo, offerGetAll;
+			try {
+				[battleInfo, offerGetAll] = await Caller.send([
+					{
+						name: 'bossRating_startBattle',
+						args,
+					},
+					'offerGetAll',
+				]);
+				count++;
+			} catch(e) {
+				console.error(e);
+				setProgress(I18N('RESTART_TRY_AGAIN_LATER'), true);
 				return;
 			}
 	
-			const eventInfo = res.results[1].result.response.find(e => e.offerType == "bossEvent");
-			if (eventInfo.progress.score > 250) {
+			bossEventInfo = offerGetAll.find((e) => e.offerType == 'bossEvent');
+			if (bossEventInfo.progress.score > countKills) {
 				break;
 			}
-			setProgress('Количество убитых врагов: ' + eventInfo.progress.score + '<br>Использовано ' + count + ' героев');
+			setProgress(I18N('ENEMIES_KILLED_AND_HEROES_USED', { score: bossEventInfo.progress.score, count }));
 		}
 	
-		rewardBossRatingEventSouls();
+		rewardBossRatingEventSouls(bossEventInfo);
 	}
 	/** Сбор награды из Горнила Душ */
-	async function rewardBossRatingEventSouls() {
-		const data = await Send({
-			calls: [
-				{ name: "offerGetAll", args: {}, ident: "offerGetAll" }
-			]
-		});
-	
-		const bossEventInfo = data.results[0].result.response.find(e => e.offerType == "bossEvent");
+	async function rewardBossRatingEventSouls(bossEventInfo) {
 		if (!bossEventInfo) {
-			setProgress('Эвент завершен', true);
+			setProgress(I18N('EVENT_IS_OVER'), true);
 			return;
 		}
 	
@@ -10211,9 +7244,8 @@
 		const score = bossEventInfo.progress.score;
 		// setProgress('Количество убитых врагов: ' + score);
 		const revard = bossEventInfo.reward;
-		const calls = [];
 	
-		let count = 0;
+		const caller = new Caller();
 		for (let i = 1; i < 10; i++) {
 			if (farmedChests.includes(i)) {
 				continue;
@@ -10221,24 +7253,31 @@
 			if (score < revard[i].score) {
 				break;
 			}
-			calls.push({
-				name: "bossRatingEvent_getReward",
+			caller.add({
+				name: 'bossRating_getReward',
 				args: {
-					rewardId: i
+					rewardId: i,
 				},
-				ident: "body_" + i
 			});
-			count++;
 		}
-		if (!count) {
-			setProgress('Нечего собирать', true);
+	
+		if (caller.isEmpty()) {
+			setProgress(I18N('NOTHING_TO_COLLECT'), true);
+			return;
+		}
+		try {
+			await caller.send()
+		} catch(e) {
+			console.error(e);
+			setProgress(I18N('RESTART_TRY_AGAIN_LATER'), true);
 			return;
 		}
 	
-		Send({ calls }).then(e => {
-			console.log(e);
-			setProgress('Собрано ' + e?.results?.length + ' наград', true);
-		})
+		const results = caller.result(false, true);
+		console.log(results);
+		if (results?.length) {
+			setProgress(`${I18N('COLLECTED')} ${results?.length} ${I18N('REWARD')}`, true);
+		}
 	}
 	/**
 	 * Spin the Seer
@@ -10246,16 +7285,10 @@
 	 * Покрутить провидца
 	 */
 	async function rollAscension() {
-		const refillable = await Send({calls:[
-			{
-				name:"userGetInfo",
-				args:{},
-				ident:"userGetInfo"
-			}
-		]}).then(e => e.results[0].result.response.refillable);
-		const i47 = refillable.find(i => i.id == 47);
+		const user = await Caller.send('userGetInfo');
+		const i47 = user.refillable.find((i) => i.id == 47);
 		if (i47?.amount) {
-			await Send({ calls: [{ name: "ascensionChest_open", args: { paid: false, amount: 1 }, ident: "body" }] });
+			await Caller.send({ name: 'ascensionChest_open', args: { paid: false, amount: 1 } });
 			setProgress(I18N('DONE'), true);
 		} else {
 			setProgress(I18N('NOT_ENOUGH_AP'), true);
@@ -10267,38 +7300,37 @@
 	 * 
 	 * Собрать подарки на новый год
 	 */
-	function getGiftNewYear() {
-		Send({ calls: [{ name: "newYearGiftGet", args: { type: 0 }, ident: "body" }] }).then(e => {
-			const gifts = e.results[0].result.response.gifts;
-			const calls = gifts.filter(e => e.opened == 0).map(e => ({
-				name: "newYearGiftOpen",
-				args: {
-					giftId: e.id
-				},
-				ident: `body_${e.id}`
+	async function getGiftNewYear() {
+		const response = await Caller.send({ name: 'newYearGiftGet', args: { type: 0 } });
+		const gifts = response.gifts;
+		const calls = gifts
+			.filter((e) => e.opened == 0)
+			.map((e) => ({
+				name: 'newYearGiftOpen',
+				args: { giftId: e.id },
 			}));
-			if (!calls.length) {
-				setProgress(I18N('NY_NO_GIFTS'), 5000);
-				return;
-			}
-			Send({ calls }).then(e => {
-				console.log(e.results)
-				const msg = I18N('NY_GIFTS_COLLECTED', { count: e.results.length });
-				console.log(msg);
-				setProgress(msg, 5000);
-			});
-		})
+	
+		if (!calls.length) {
+			setProgress(I18N('NY_NO_GIFTS'), 5000);
+			return;
+		}
+	
+		const results = await Caller.send(calls);
+		console.log(results);
+		const msg = I18N('NY_GIFTS_COLLECTED', { count: results.length });
+		console.log(msg);
+		setProgress(msg, 5000);
 	}
 	
 	async function updateArtifacts() {
-		const count = +await popup.confirm(I18N('SET_NUMBER_LEVELS'), [
-			{ msg: I18N('BTN_GO'), isInput: true, default: 10 },
-			{ result: false, isClose: true }
-		]);
+		const count = +(await popup.confirm(I18N('SET_NUMBER_LEVELS'), [
+			{ msg: I18N('BTN_GO'), isInput: true, default: 10, color: 'green' },
+			{ result: false, isClose: true },
+		]));
 		if (!count) {
 			return;
 		}
-		const quest = new questRun;
+		const quest = new questRun();
 		await quest.autoInit();
 		const heroes = Object.values(quest.questInfo['heroGetAll']);
 		const inventory = quest.questInfo['inventoryGet'];
@@ -10306,25 +7338,26 @@
 		for (let i = count; i > 0; i--) {
 			const upArtifact = quest.getUpgradeArtifact();
 			if (!upArtifact.heroId) {
-				if (await popup.confirm(I18N('POSSIBLE_IMPROVE_LEVELS', { count: calls.length }), [
-					{ msg: I18N('YES'), result: true },
-					{ result: false, isClose: true }
-				])) {
+				if (
+					await popup.confirm(I18N('POSSIBLE_IMPROVE_LEVELS', { count: calls.length }), [
+						{ msg: I18N('BTN_YES'), result: true, color: 'green' },
+						{ result: false, isClose: true },
+					])
+				) {
 					break;
 				} else {
 					return;
 				}
 			}
-			const hero = heroes.find(e => e.id == upArtifact.heroId);
+			const hero = heroes.find((e) => e.id == upArtifact.heroId);
 			hero.artifacts[upArtifact.slotId].level++;
 			inventory[upArtifact.costCurrency][upArtifact.costId] -= upArtifact.costValue;
 			calls.push({
-				name: "heroArtifactLevelUp",
+				name: 'heroArtifactLevelUp',
 				args: {
 					heroId: upArtifact.heroId,
-					slotId: upArtifact.slotId
+					slotId: upArtifact.slotId,
 				},
-				ident: `heroArtifactLevelUp_${i}`
 			});
 		}
 	
@@ -10334,15 +7367,14 @@
 			return;
 		}
 	
-		await Send(JSON.stringify({ calls })).then(e => {
-			if ('error' in e) {
-				console.log(I18N('NOT_ENOUGH_RESOURECES'));
-				setProgress(I18N('NOT_ENOUGH_RESOURECES'), false);
-			} else {
-				console.log(I18N('IMPROVED_LEVELS', { count: e.results.length }));
-				setProgress(I18N('IMPROVED_LEVELS', { count: e.results.length }), false);
-			}
-		});
+		try {
+			const results = await Caller.send(calls);
+			console.log(I18N('IMPROVED_LEVELS', { count: results.length }));
+			setProgress(I18N('IMPROVED_LEVELS', { count: results.length }), false);
+		} catch (e) {
+			console.log(I18N('NOT_ENOUGH_RESOURECES'));
+			setProgress(I18N('NOT_ENOUGH_RESOURECES'), false);
+		}
 	}
 	
 	window.sign = a => {
@@ -10351,15 +7383,15 @@
 	}
 	
 	async function updateSkins() {
-		const count = +await popup.confirm(I18N('SET_NUMBER_LEVELS'), [
-			{ msg: I18N('BTN_GO'), isInput: true, default: 10 },
-			{ result: false, isClose: true }
-		]);
+		const count = +(await popup.confirm(I18N('SET_NUMBER_LEVELS'), [
+			{ msg: I18N('BTN_GO'), isInput: true, default: 10, color: 'green' },
+			{ result: false, isClose: true },
+		]));
 		if (!count) {
 			return;
 		}
 	
-		const quest = new questRun;
+		const quest = new questRun();
 		await quest.autoInit();
 		const heroes = Object.values(quest.questInfo['heroGetAll']);
 		const inventory = quest.questInfo['inventoryGet'];
@@ -10367,26 +7399,27 @@
 		for (let i = count; i > 0; i--) {
 			const upSkin = quest.getUpgradeSkin();
 			if (!upSkin.heroId) {
-				if (await popup.confirm(I18N('POSSIBLE_IMPROVE_LEVELS', { count: calls.length }), [
-					{ msg: I18N('YES'), result: true },
-					{ result: false, isClose: true }
-				])) {
+				if (
+					await popup.confirm(I18N('POSSIBLE_IMPROVE_LEVELS', { count: calls.length }), [
+						{ msg: I18N('BTN_YES'), result: true, color: 'green' },
+						{ result: false, isClose: true },
+					])
+				) {
 					break;
 				} else {
 					return;
 				}
 			}
-			const hero = heroes.find(e => e.id == upSkin.heroId);
+			const hero = heroes.find((e) => e.id == upSkin.heroId);
 			hero.skins[upSkin.skinId]++;
 			inventory[upSkin.costCurrency][upSkin.costCurrencyId] -= upSkin.cost;
 			calls.push({
-				name: "heroSkinUpgrade",
+				name: 'heroSkinUpgrade',
 				args: {
 					heroId: upSkin.heroId,
-					skinId: upSkin.skinId
+					skinId: upSkin.skinId,
 				},
-				ident: `heroSkinUpgrade_${i}`
-			})
+			});
 		}
 	
 		if (!calls.length) {
@@ -10395,15 +7428,14 @@
 			return;
 		}
 	
-		await Send(JSON.stringify({ calls })).then(e => {
-			if ('error' in e) {
-				console.log(I18N('NOT_ENOUGH_RESOURECES'));
-				setProgress(I18N('NOT_ENOUGH_RESOURECES'), false);
-			} else {
-				console.log(I18N('IMPROVED_LEVELS', { count: e.results.length }));
-				setProgress(I18N('IMPROVED_LEVELS', { count: e.results.length }), false);
-			}
-		});
+		try {
+			const results = await Caller.send(calls);
+			console.log(I18N('IMPROVED_LEVELS', { count: results.length }));
+			setProgress(I18N('IMPROVED_LEVELS', { count: results.length }), false);
+		} catch (e) {
+			console.log(I18N('NOT_ENOUGH_RESOURECES'));
+			setProgress(I18N('NOT_ENOUGH_RESOURECES'), false);
+		}
 	}
 	
 	function getQuestionInfo(img, nameOnly = false) {
@@ -10491,89 +7523,3225 @@
 		};
 	
 		const battlePassProcess = (pass) => {
-			if (!pass.id) {return []}
-			const levels = Object.values(lib.data.battlePass.level).filter(x => x.battlePass == pass.id)
+			if (!pass.id) {
+				return [];
+			}
+			const levels = Object.values(lib.data.battlePass.level).filter((x) => x.battlePass == pass.id);
 			const last_level = levels[levels.length - 1];
-			let actual = Math.max(...levels.filter(p => pass.exp >= p.experience).map(p => p.level))
+			let actual = Math.max(...levels.filter((p) => pass.exp >= p.experience).map((p) => p.level));
 	
 			if (pass.exp > last_level.experience) {
 				actual = last_level.level + (pass.exp - last_level.experience) / last_level.experienceByLevel;
 			}
 			const calls = [];
-			for(let i = 1; i <= actual; i++) {
-				const level = i >= last_level.level ? last_level : levels.find(l => l.level === i);
-				const reward = {free: level?.freeReward, paid:level?.paidReward};
+			for (let i = 1; i <= actual; i++) {
+				const level = i >= last_level.level ? last_level : levels.find((l) => l.level === i);
+				const reward = { free: level?.freeReward, paid: level?.paidReward };
 	
 				if (!pass.rewards[i]?.free && isFarmReward(reward.free)) {
-					const args = {level: i, free:true};
-					if (!pass.gold) { args.id = pass.id }
-					calls.push({ name: 'battlePass_farmReward', args, ident: `${pass.gold ? 'body' : 'spesial'}_free_${args.id}_${i}` });
+					const args = { level: i, free: true };
+					if (!pass.gold) {
+						args.id = pass.id;
+					}
+					calls.push({ name: 'battlePass_farmReward', args });
 				}
 				if (pass.ticket && !pass.rewards[i]?.paid && isFarmReward(reward.paid)) {
-					const args = {level: i, free:false};
-					if (!pass.gold) { args.id = pass.id}
-					calls.push({ name: 'battlePass_farmReward', args, ident: `${pass.gold ? 'body' : 'spesial'}_paid_${args.id}_${i}` });
+					const args = { level: i, free: false };
+					if (!pass.gold) {
+						args.id = pass.id;
+					}
+					calls.push({ name: 'battlePass_farmReward', args });
 				}
 			}
 			return calls;
-		}
+		};
 	
-		const passes = await Send({
-			calls: [
-				{ name: 'battlePass_getInfo', args: {}, ident: 'getInfo' },
-				{ name: 'battlePass_getSpecial', args: {}, ident: 'getSpecial' },
-			],
-		}).then((e) => [{...e.results[0].result.response?.battlePass, gold: true}, ...Object.values(e.results[1].result.response)]);
+		const [battlePassInfo, battlePassSpecial] = await Caller.send(['battlePass_getInfo', 'battlePass_getSpecial']);
 	
-		const calls = passes.map(p => battlePassProcess(p)).flat()
+		const passes = [{ ...battlePassInfo?.battlePass, gold: true }, ...Object.values(battlePassSpecial)];
+	
+		const calls = passes.flatMap((p) => battlePassProcess(p));
 	
 		if (!calls.length) {
 			setProgress(I18N('NOTHING_TO_COLLECT'));
 			return;
 		}
 	
-		let results = await Send({calls});
-		if (results.error) {
-			console.log(results.error);
+		try {
+			const results = await Caller.send(calls);
+			setProgress(I18N('SEASON_REWARD_COLLECTED', { count: results.length }), true);
+		} catch (error) {
+			console.log(error);
 			setProgress(I18N('SOMETHING_WENT_WRONG'));
-		} else {
-			setProgress(I18N('SEASON_REWARD_COLLECTED', {count: results.results.length}), true);
 		}
 	}
 	
 	async function sellHeroSoulsForGold() {
-		let { fragmentHero, heroes } = await Send({
-			calls: [
-				{ name: 'inventoryGet', args: {}, ident: 'inventoryGet' },
-				{ name: 'heroGetAll', args: {}, ident: 'heroGetAll' },
-			],
-		})
-			.then((e) => e.results.map((r) => r.result.response))
-			.then((e) => ({ fragmentHero: e[0].fragmentHero, heroes: e[1] }));
+		const [inventory, heroes] = await Caller.send(['inventoryGet', 'heroGetAll']);
 	
 		const calls = [];
-		for (let i in fragmentHero) {
+		for (let i in inventory.fragmentHero) {
 			if (heroes[i] && heroes[i].star == 6) {
 				calls.push({
 					name: 'inventorySell',
 					args: {
 						type: 'hero',
 						libId: i,
-						amount: fragmentHero[i],
+						amount: inventory.fragmentHero[i],
 						fragment: true,
 					},
-					ident: 'inventorySell_' + i,
 				});
 			}
 		}
+	
 		if (!calls.length) {
 			console.log(0);
 			return 0;
 		}
-		const rewards = await Send({ calls }).then((e) => e.results.map((r) => r.result?.response?.gold || 0));
-		const gold = rewards.reduce((e, a) => e + a, 0);
+	
+		const rewards = await Caller.send(calls);
+		const gold = rewards.reduce((sum, r) => sum + (r?.gold || 0), 0);
 		setProgress(I18N('GOLD_RECEIVED', { gold }), true);
 	}
+	
+	class Caller {
+		static globalHooks = {
+			onError: null,
+		};
+	
+		constructor(calls = null) {
+			this.calls = [];
+			this.results = {};
+			this.sideResults = {};
+			if (calls) {
+				this.add(calls);
+			}
+		}
+	
+		static setGlobalHook(event, callback) {
+			if (this.globalHooks[event] !== undefined) {
+				this.globalHooks[event] = callback;
+			} else {
+				throw new Error(`Unknown event: ${event}`);
+			}
+		}
+	
+		addCall(call) {
+			const { name = call, args = {} } = typeof call === 'object' ? call : { name: call };
+			this.calls.push({ name, args });
+			return this;
+		}
+	
+		add(name) {
+			if (Array.isArray(name)) {
+				name.forEach((call) => this.addCall(call));
+			} else {
+				this.addCall(name);
+			}
+			return this;
+		}
+	
+		handleError(error) {
+			const errorName = error.name;
+			const errorDescription = error.description;
+	
+			if (Caller.globalHooks.onError) {
+				const shouldThrow = Caller.globalHooks.onError(error);
+				if (shouldThrow === false) {
+					return;
+				}
+			}
+	
+			if (error.call) {
+				const callInfo = error.call;
+				throw new Error(`${errorName} in ${callInfo.name}: ${errorDescription}\n` + `Args: ${JSON.stringify(callInfo.args)}\n`);
+			} else if (errorName === 'common\\rpc\\exception\\InvalidRequest') {
+				throw new Error(`Invalid request: ${errorDescription}`);
+			} else {
+				throw new Error(`Unknown error: ${errorName} - ${errorDescription}`);
+			}
+		}
+	
+		async send() {
+			if (!this.calls.length) {
+				throw new Error('No calls to send.');
+			}
+	
+			const identToNameMap = {};
+			const callsWithIdent = this.calls.map((call, index) => {
+				const ident = this.calls.length === 1 ? 'body' : `group_${index}_body`;
+				identToNameMap[ident] = call.name;
+				return { ...call, ident };
+			});
+	
+			try {
+				const response = await Send({ calls: callsWithIdent });
+	
+				if (response.error) {
+					this.handleError(response.error);
+				}
+	
+				if (!response.results) {
+					throw new Error('Invalid response format: missing "results" field');
+				}
+	
+				response.results.forEach((result) => {
+					const name = identToNameMap[result.ident];
+					if (!this.results[name]) {
+						this.results[name] = [];
+						this.sideResults[name] = [];
+					}
+					this.results[name].push(result.result.response);
+					const sideResults = {};
+					for (const key of Object.keys(result.result)) {
+						if (key === 'response') continue;
+						sideResults[key] = result.result[key];
+					}
+					this.sideResults[name].push(sideResults);
+				});
+			} catch (error) {
+				throw error;
+			}
+			return this;
+		}
+	
+		result(name, forceArray = false) {
+			const results = name ? this.results[name] || [] : Object.values(this.results).flat();
+			return forceArray || results.length !== 1 ? results : results[0];
+		}
+	
+		sideResult(name, forceArray = false) {
+			const results = name ? this.sideResults[name] || [] : Object.values(this.sideResults).flat();
+			return forceArray || results.length !== 1 ? results : results[0];
+		}
+	
+		async execute(name) {
+			try {
+				await this.send();
+				return this.result(name);
+			} catch (error) {
+				throw error;
+			}
+		}
+	
+		clear() {
+			this.calls = [];
+			this.results = {};
+			return this;
+		}
+	
+		isEmpty() {
+			return this.calls.length === 0 && Object.keys(this.results).length === 0;
+		}
+	
+		static async send(calls) {
+			return new Caller(calls).execute();
+		}
+	}
+	
+	this.Caller = Caller;
+	
+	/*
+	// Примеры использования
+	(async () => {
+		// Короткий вызов
+		await new Caller('inventoryGet').execute();
+		// Простой вызов
+		let result = await new Caller().add('inventoryGet').execute();
+		console.log('Inventory Get Result:', result);
+	
+		// Сложный вызов
+		let caller = new Caller();
+		await caller
+			.add([
+				{
+					name: 'inventoryGet',
+					args: {},
+				},
+				{
+					name: 'heroGetAll',
+					args: {},
+				},
+			])
+			.send();
+		console.log('Inventory Get Result:', caller.result('inventoryGet'));
+		console.log('Hero Get All Result:', caller.result('heroGetAll'));
+	
+		// Очистка всех данных
+		caller.clear();
+	})();
+	*/
+	
+	
+	/**
+	 * Script for beautiful dialog boxes
+	 *
+	 * Скрипт для красивых диалоговых окошек
+	 */
+	const popup = new (function () {
+		this.popUp, this.downer, this.custom, this.middle, this.msgText, (this.buttons = []);
+		this.checkboxes = [];
+		this.dialogPromice = null;
+		this.isInit = false;
+	
+		this.init = function () {
+			if (this.isInit) {
+				return;
+			} 
+			addStyle();
+			addBlocks();
+			addEventListeners();
+			this.isInit = true;
+		}
+	
+		const addEventListeners = () => {
+			document.addEventListener('keyup', (e) => {
+				if (e.key == 'Escape') {
+					if (this.dialogPromice) {
+						const { func, result } = this.dialogPromice;
+						this.dialogPromice = null;
+						popup.hide();
+						func(result);
+					}
+				}
+			});
+		}
+	
+		const addStyle = () => {
+			let style = document.createElement('style');
+			style.innerText = `
+		.PopUp_ {
+			 position: fixed;
+			left: 50%;
+			top: 50%;
+			transform: translate(-50%, -50%);
+			min-width: 300px;
+			max-width: 80%;
+			max-height: 80%;
+			background-color: #190e08e6;
+			z-index: 10001;
+			border: 3px #ce9767 solid;
+			border-radius: 10px;
+			display: flex;
+			flex-direction: column;
+			justify-content: space-around;
+			padding: 15px 9px;
+			box-sizing: border-box;
+		}
+	
+		.PopUp_back {
+			position: absolute;
+			background-color: #00000066;
+			width: 100%;
+			height: 100%;
+			z-index: 10000;
+			top: 0;
+			left: 0;
+		}
+	
+		.PopUp_close {
+			width: 40px;
+			height: 40px;
+			position: absolute;
+			right: -18px;
+			top: -18px;
+			border: 3px solid #c18550;
+			border-radius: 20px;
+			background: radial-gradient(circle, rgba(190,30,35,1) 0%, rgba(0,0,0,1) 100%);
+			background-position-y: 3px;
+			box-shadow: -1px 1px 3px black;
+			cursor: pointer;
+			box-sizing: border-box;
+		}
+	
+		.PopUp_close:hover {
+			filter: brightness(1.2);
+		}
+	
+		.PopUp_crossClose {
+			width: 100%;
+			height: 100%;
+			background-size: 65%;
+			background-position: center;
+			background-repeat: no-repeat;
+			background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='%23f4cd73' d='M 0.826 12.559 C 0.431 12.963 3.346 15.374 3.74 14.97 C 4.215 15.173 8.167 10.457 7.804 10.302 C 7.893 10.376 11.454 14.64 11.525 14.372 C 12.134 15.042 15.118 12.086 14.638 11.689 C 14.416 11.21 10.263 7.477 10.402 7.832 C 10.358 7.815 11.731 7.101 14.872 3.114 C 14.698 2.145 13.024 1.074 12.093 1.019 C 11.438 0.861 8.014 5.259 8.035 5.531 C 7.86 5.082 3.61 1.186 3.522 1.59 C 2.973 1.027 0.916 4.611 1.17 4.873 C 0.728 4.914 5.088 7.961 5.61 7.995 C 5.225 7.532 0.622 12.315 0.826 12.559 Z'/%3e%3c/svg%3e")
+		}
+	
+		.PopUp_blocks {
+			width: 100%;
+			height: 50%;
+			display: flex;
+			justify-content: space-evenly;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+	
+		.PopUp_blocks:last-child {
+			margin-top: 25px;
+		}
+	
+		.PopUp_input {
+			text-align: center;
+			font-size: 16px;
+			height: 27px;
+			width: 100%;
+			border: 0px solid #cf9250;
+			border-radius: 9px 9px 0px 0px;
+			background: #170d07;
+			color: #fce1ac;
+			box-sizing: border-box;
+		}
+	
+		.PopUp_checkboxes {
+			display: flex;
+			flex-direction: column;
+			margin: 15px 15px -5px 15px;
+			align-items: flex-start;
+		}
+	
+		.PopUp_ContCheckbox {
+			margin: 2px 0px;
+		}
+	
+		.PopUp_checkbox {
+			position: absolute;
+			z-index: -1;
+			opacity: 0;
+		}
+		.PopUp_checkbox+label {
+			display: inline-flex;
+			align-items: center;
+			user-select: none;
+	
+			font-size: 15px;
+			font-family: sans-serif;
+			font-weight: 600;
+			font-stretch: condensed;
+			letter-spacing: 1px;
+			color: #fce1ac;
+			text-shadow: 0px 0px 1px;
+		}
+		.PopUp_checkbox+label::before {
+			content: '';
+			display: inline-block;
+			width: 20px;
+			height: 20px;
+			border: 1px solid #cf9250;
+			border-radius: 7px;
+			margin-right: 7px;
+		}
+		.PopUp_checkbox:checked+label::before {
+			background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3e%3cpath fill='%2388cb13' d='M6.564.75l-3.59 3.612-1.538-1.55L0 4.26 2.974 7.25 8 2.193z'/%3e%3c/svg%3e");
+		}
+		.PopUp_checkbox[class*="radio_"] + label::before {
+			border-radius: 50%;
+		}
+	
+		.PopUp_input::placeholder {
+			color: #fce1ac75;
+		}
+	
+		.PopUp_input:focus {
+			outline: 0;
+		}
+	
+		.PopUp_input + .PopUp_button {
+			border-radius: 0px 0px 5px 5px;
+			padding: 2px 18px 5px;
+		}
+	
+		.PopUp_text {
+			font-size: 22px;
+			font-family: sans-serif;
+			font-weight: 600;
+			font-stretch: condensed;
+			letter-spacing: 1px;
+			text-align: center;
+			color: #FDE5B6;
+			text-shadow: 0px 0px 2px;
+			margin: 0 20px;
+		}
+	
+		.PopUp_hideBlock {
+			display: none;
+		}
+	
+		.PopUp_Container {
+			max-height: 80vh;
+			overflow-y: auto;
+			overflow-x: hidden;
+			scrollbar-width: thin;
+			scrollbar-color: #774d10 #05040300;
+		}
+	
+			/* === НОВЫЕ КНОПКИ с цветовыми переменными === */
+		.PopUp_btnSocket {
+			margin: 3px 1px;
+			position: relative;
+			display: flex;
+			padding: 4px 4px 4px 3px;
+			flex-direction: column;
+			align-items: flex-start;
+			border-radius: 9px;
+			background: #a37738;
+			box-shadow: 0px -1px 1px 0px #7d5b3a inset, 0px 1px 1px 0px #e1a960 inset,
+				-1px 0px 1px 0px #311d13 inset;
+		}
+		.PopUp_btnRow {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			align-self: stretch;
+			width: 100%;
+			flex-wrap: wrap;
+		}
+		.PopUp_btnGap {
+			position: relative;
+			display: flex;
+			padding: 0px 1px 4px 1px;
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 2px;
+			border-radius: 5px;
+			cursor: pointer;
+			flex: auto;
+			transition: all 0.1s ease;
+	
+			/* Цветовые переменные по умолчанию — коричневый */
+			--h: 36;
+			--s: 60%;
+			--l: 10%;
+			--pl: 50%;
+			--pcl: 90%;
+			--phl: 55%;
+			--pal: 34%;
+			--pacl: 71%;
+			--sc: hsl(36, 88%, 7%);
+		}
+		.PopUp_btnGap:first-child,
+		.PopUp_btnGap.left {
+			padding-left: 2px;
+		}
+		.PopUp_btnGap:last-child,
+		.PopUp_btnGap.right {
+			padding-right: 3px;
+		}
+		.PopUp_btnGap {
+			background: hsl(var(--h), var(--s), var(--l));
+			box-shadow: 0px 0px 2px 0px var(--sc), 0px -1px 2px 0px var(--sc),
+				0px 1px 1px 0px hsl(var(--h), var(--s), 12%);
+		}
+		.PopUp_btnPlate {
+			display: flex;
+			height: 13px;
+			padding: 12px 10px;
+			box-sizing: content-box;
+			justify-content: center;
+			align-items: center;
+			align-self: stretch;
+			gap: 10px;
+			border-radius: 4px;
+			filter: blur(0.2px);
+			transition: all 0.1s ease;
+			text-shadow: 0px 1px 0px rgba(0, 0, 0, 0.92);
+			font-family: Arial;
+			font-size: 14px;
+			font-style: normal;
+			font-weight: 700;
+			line-height: normal;
+			color: hsla(var(--h), var(--s), var(--pcl), 1);
+			background: hsla(var(--h), var(--s), var(--pl), 1);
+			box-shadow: 0px 10px 12px 0px hsla(var(--h), 58%, 67%, 0.2) inset,
+				0px 2px 1px 0px hsl(var(--h), 78%, 77%) inset,
+				0px 2px 0px 0px hsl(var(--h), 78%, 37%) inset,
+				-8px 3px 15px 0px hsl(var(--h), 94%, 15%) inset,
+				8px -7px 15px 0px hsla(var(--h), 94%, 15%, 0.7) inset,
+				0px 0px 2px 0px hsl(var(--h), 68%, 23%),
+				0px -3px 8px 0px hsl(var(--h), 94%, 20%) inset;
+			min-width: 65px;
+		}
+		.PopUp_btnPlate:hover {
+			color: hsla(0, 0%, 96%, 1);
+			background: hsla(var(--h), 49%, var(--phl), 1);
+		}
+		.PopUp_btnGap:active {
+			padding-top: 1px;
+			padding-bottom: 3px;
+			background: hsl(var(--h), var(--s), var(--l));
+			box-shadow: 0px 0px 2px 0px var(--sc), 0px -1px 2px 0px var(--sc),
+				0px 1px 1px 0px hsl(var(--h), var(--s), 12%);
+		}
+		.PopUp_btnPlate:active {
+			color: hsla(var(--h), 47%, var(--pacl), 1);
+			background: hsl(var(--h), 46%, var(--pal));
+		}
+	
+		/* === Цветовые переопределения === */
+		.PopUp_btnGap.brown {
+			--pl: 40%;
+			--pcl: 85%;
+			--s: 60%;
+		}
+		.PopUp_btnGap.green {
+			--h: 120;
+		}
+		.PopUp_btnGap.blue {
+			--h: 207;
+		}
+		.PopUp_btnGap.violet {
+			--h: 272;
+		}
+		.PopUp_btnGap.yellow {
+			--h: 45;
+		}
+		.PopUp_btnGap.orange {
+			--h: 20;
+		}
+		.PopUp_btnGap.indigo {
+			--h: 255;
+		}
+		.PopUp_btnGap.black {
+			--h: 0;
+			--s: 0%;
+			--l: 10%;
+			--pl: 20%;
+			--pcl: 85%;
+			--phl: 25%;
+			--pal: 15%;
+			--pacl: 71%;
+			--sc: hsl(0, 0%, 5%);
+		}
+		.PopUp_btnGap.pink {
+			--h: 330;
+		}
+		.PopUp_btnGap.red {
+			--h: 0;
+		}
+		.PopUp_btnGap.graphite {
+			background: hsl(0, 0%, 12%);
+			box-shadow: 0px 0px 2px 0px hsl(0, 0%, 7%), 0px -1px 2px 0px hsl(0, 0%, 7%),
+				0px 1px 1px 0px hsl(0, 0%, 12%);
+		}
+		.PopUp_btnGap.graphite .PopUp_btnPlate {
+			color: hsla(0, 0%, 85%, 1);
+			background: hsla(0, 0%, 54%, 1);
+			box-shadow: 0px 10px 12px 0px hsla(0, 0%, 67%, 0.2) inset,
+				0px 2px 1px 0px hsl(0, 0%, 67%) inset,
+				-8px 3px 15px 0px hsla(0, 0%, 15%, 0.7) inset,
+				8px -7px 15px 0px hsla(0, 0%, 15%, 0.7) inset,
+				0px 0px 2px 0px hsla(0, 0%, 23%, 0.3),
+				0px -3px 8px 0px hsla(0, 0%, 13%, 0.3) inset;
+		}
+		.PopUp_btnGap.graphite .PopUp_btnPlate:hover {
+			color: hsla(0, 0%, 96%, 1);
+			background: hsla(0, 0%, 62%, 1);
+		}
+		.PopUp_btnGap.graphite:active {
+			background: hsl(0, 0%, 12%);
+			box-shadow: 0px 0px 2px 0px hsl(0, 0%, 7%), 0px -1px 2px 0px hsl(0, 0%, 7%),
+				0px 1px 1px 0px hsl(0, 0%, 12%);
+		}
+		.PopUp_btnGap.graphite .PopUp_btnPlate:active {
+			color: hsla(0, 0%, 71%, 1);
+			background: hsl(0, 0%, 34%);
+		}
+		`;
+			document.head.appendChild(style);
+		}
+	
+		const addBlocks = () => {
+			this.back = document.createElement('div');
+			this.back.classList.add('PopUp_back');
+			this.back.classList.add('PopUp_hideBlock');
+			document.body.append(this.back);
+	
+			this.popUp = document.createElement('div');
+			this.popUp.classList.add('PopUp_');
+			this.back.append(this.popUp);
+	
+			this.popUpContainer = document.createElement('div');
+			this.popUpContainer.classList.add('PopUp_Container');
+			this.popUp.append(this.popUpContainer);
+	
+			let upper = document.createElement('div');
+			upper.classList.add('PopUp_blocks');
+			this.popUpContainer.append(upper);
+	
+			this.middle = document.createElement('div');
+			this.middle.classList.add('PopUp_blocks');
+			this.middle.classList.add('PopUp_checkboxes');
+			this.popUpContainer.append(this.middle);
+	
+			this.custom = document.createElement('div');
+			this.custom.classList.add('PopUp_custom');
+			this.popUpContainer.append(this.custom);
+	
+			this.downer = document.createElement('div');
+			this.downer.classList.add('PopUp_blocks');
+			this.popUpContainer.append(this.downer);
+	
+			this.msgText = document.createElement('div');
+			this.msgText.classList.add('PopUp_text', 'PopUp_msgText');
+			upper.append(this.msgText);
+		}
+	
+		this.showBack = function () {
+			this.back.classList.remove('PopUp_hideBlock');
+		}
+	
+		this.hideBack = function () {
+			this.back.classList.add('PopUp_hideBlock');
+		}
+	
+		this.show = function () {
+			if (this.checkboxes.length) {
+				this.middle.classList.remove('PopUp_hideBlock');
+			}
+			this.showBack();
+			this.popUp.classList.remove('PopUp_hideBlock');
+		}
+	
+		this.hide = function () {
+			this.hideBack();
+			this.popUp.classList.add('PopUp_hideBlock');
+		}
+	
+		this.addAnyButton = (option) => {
+			if (option.isOneSocket) {
+				this.isOneSocket = true;
+			}
+	
+			if (!this.btnSocket || !this.isOneSocket) {
+				this.btnSocket = document.createElement('div');
+				this.btnSocket.classList.add('PopUp_btnSocket');
+				this.downer.append(this.btnSocket);
+				option.isNewSocket = false;
+	
+				this.btnRow = document.createElement('div');
+				this.btnRow.classList.add('PopUp_btnRow');
+				if (option.isWrap) {
+					this.btnRow.style.flexWrap = 'wrap';
+				}
+				this.btnSocket.append(this.btnRow);
+				option.isNewRow = false;
+			}
+	
+			if (option.isNewSocket) {
+				this.btnSocket = document.createElement('div');
+				this.btnSocket.classList.add('PopUp_btnSocket');
+				this.downer.append(this.btnSocket);
+				option.isNewRow = true;
+			}
+	
+			if (option.isNewRow) {
+				this.btnRow = document.createElement('div');
+				this.btnRow.classList.add('PopUp_btnRow');
+				this.btnSocket.append(this.btnRow);
+			}
+	
+			let inputField = {
+				value: option.result || option.default,
+			};
+			if (option.isInput) {
+				inputField = document.createElement('input');
+				inputField.type = 'text';
+				if (option.placeholder) {
+					inputField.placeholder = option.placeholder;
+				}
+				if (option.default) {
+					inputField.value = option.default;
+				}
+				inputField.classList.add('PopUp_input');
+				this.btnRow.append(inputField);
+			}
+	
+			const button = document.createElement('div');
+			const classes = option.classes ?? [];
+			button.classList.add('PopUp_btnGap', option.color ?? 'indigo', ...classes);
+			button.title = option.title || '';
+			this.btnRow.append(button);
+	
+			const buttonText = document.createElement('div');
+			buttonText.classList.add('PopUp_btnPlate');
+			buttonText.innerHTML = option.msg;
+			button.append(buttonText);
+	
+			const contButton = this.btnSocket;
+			if (option.isInput) {
+				this.btnSocket = null;
+			}
+	
+			return { button, contButton, inputField };
+		};
+	
+		this.addCloseButton = () => {
+			let button = document.createElement('div')
+			button.classList.add('PopUp_close');
+			this.popUp.append(button);
+	
+			let crossClose = document.createElement('div')
+			crossClose.classList.add('PopUp_crossClose');
+			button.append(crossClose);
+	
+			return { button, contButton: button };
+		}
+	
+		this.addButton = (option, buttonClick) => {
+			const { button, contButton, inputField } = option.isClose ? this.addCloseButton() : this.addAnyButton(option);
+			if (option.isClose) {
+				this.dialogPromice = { func: buttonClick, result: option.result };
+			}
+			button.addEventListener('click', () => {
+				let result = '';
+				if (option.isInput) {
+					result = inputField.value;
+				}
+				if (option.isClose || option.isCancel) {
+					this.dialogPromice = null;
+				}
+				buttonClick(result);
+			});
+	
+			this.buttons.push(contButton);
+		}
+	
+		this.clearButtons = () => {
+			this.isOneSocket = null;
+			this.btnSocket = null;
+			this.btnRow = null;
+			while (this.buttons.length) {
+				this.buttons.pop().remove();
+			}
+		}
+	
+		this.addCheckBox = (checkBox) => {
+			const contCheckbox = document.createElement('div');
+			contCheckbox.classList.add('PopUp_ContCheckbox');
+			this.middle.append(contCheckbox);
+	
+			const checkbox = document.createElement('input');
+			checkbox.type = 'checkbox';
+			checkbox.id = 'PopUpCheckbox' + this.checkboxes.length;
+			checkbox.dataset.name = checkBox.name;
+			checkbox.checked = checkBox.checked;
+			checkbox.label = checkBox.label;
+			checkbox.title = checkBox.title || '';
+			checkbox.classList.add('PopUp_checkbox');
+			contCheckbox.appendChild(checkbox)
+	
+			if (checkBox.radio) {
+				checkbox.classList.add(`radio_${checkBox.radio}`);
+				checkbox.addEventListener('change', function () {
+					if (this.checked) {
+						document.querySelectorAll(`.PopUp_checkbox.radio_${checkBox.radio}`).forEach((cb) => {
+							if (cb !== this) cb.checked = false;
+						});
+					} else {
+						this.checked = true;
+					}
+				});
+			}
+	
+			const checkboxLabel = document.createElement('label');
+			checkboxLabel.innerHTML = checkBox.label;
+			checkboxLabel.title = checkBox.title || '';
+			checkboxLabel.setAttribute('for', checkbox.id);
+			contCheckbox.appendChild(checkboxLabel);
+	
+			this.checkboxes.push(checkbox);
+		}
+	
+		this.clearCheckBox = () => {
+			this.middle.classList.add('PopUp_hideBlock');
+			while (this.checkboxes.length) {
+				this.checkboxes.pop().parentNode.remove();
+			}
+		}
+	
+		this.clearCustomBlock = () => {
+			this.custom.innerHTML = '';
+		};
+	
+		this.setMsgText = (text) => {
+			this.msgText.innerHTML = text;
+		}
+	
+		this.getCheckBoxes = () => {
+			const checkBoxes = [];
+	
+			for (const checkBox of this.checkboxes) {
+				checkBoxes.push({
+					name: checkBox.dataset.name,
+					label: checkBox.label,
+					checked: checkBox.checked
+				});
+			}
+	
+			return checkBoxes;
+		}
+	
+		this.confirm = async (msg, buttOpt, checkBoxes = []) => {
+			if (!this.isInit) {
+				this.init();
+			}
+			this.clearButtons();
+			this.clearCheckBox();
+			this.clearCustomBlock();
+			return new Promise((complete, failed) => {
+				this.setMsgText(msg);
+				if (!buttOpt) {
+					buttOpt = [{ msg: 'Ok', result: true, isInput: false, color: 'green' }];
+				}
+				for (const checkBox of checkBoxes) {
+					this.addCheckBox(checkBox);
+				}
+				for (let butt of buttOpt) {
+					this.addButton(butt, (result) => {
+						result = result || butt.result;
+						complete(result);
+						popup.hide();
+					});
+					if (butt.isCancel) {
+						this.dialogPromice = { func: complete, result: butt.result };
+					}
+				}
+				this.show();
+			});
+		}
+	
+		this.customPopup = async (customFunc) => {
+			if (!this.isInit) {
+				this.init();
+			}
+			this.clearButtons();
+			this.clearCheckBox();
+			this.clearCustomBlock();
+			return new Promise((complete, failed) => {
+				customFunc(complete);
+			});
+		};
+	});
+	
+	this.HWHFuncs.popup = popup;
+	
+	/**
+	 * Script control panel
+	 *
+	 * Панель управления скриптом
+	 *
+	 * Дизайн и стили кнопок
+	 * Anton Nazarov
+	 * https://t.me/antiokh
+	 */
+	class ScriptMenu extends EventEmitterMixin() {
+		constructor() {
+			if (ScriptMenu.instance) {
+				return ScriptMenu.instance;
+			}
+			super();
+			this.mainMenu = null;
+			this.buttons = [];
+			this.checkboxes = [];
+			this.option = {
+				showMenu: true,
+				showDetails: {},
+			};
+			ScriptMenu.instance = this;
+			return this;
+		}
+	
+		static getInst() {
+			if (!ScriptMenu.instance) {
+				new ScriptMenu();
+			}
+			return ScriptMenu.instance;
+		}
+	
+		init(option = {}) {
+			this.emit('beforeInit', option);
+			this.option = Object.assign(this.option, option);
+			const saveOption = this.loadSaveOption();
+			this.option = Object.assign(this.option, saveOption);
+			this.addStyle();
+			this.addBlocks();
+			this.emit('afterInit', option);
+		}
+	
+		addStyle() {
+			const style = document.createElement('style');
+			style.innerText = `
+			/* === Статус и переключатель меню === */
+			.scriptMenu_status {
+				position: absolute;
+				z-index: 10001;
+				top: -1px;
+				left: 30%;
+				cursor: pointer;
+				border-radius: 0px 0px 10px 10px;
+				background: #190e08e6;
+				border: 1px #ce9767 solid;
+				font-size: 18px;
+				font-family: sans-serif;
+				font-weight: 600;
+				color: #fce1ac;
+				text-shadow: 0px 0px 1px;
+				transition: 0.5s;
+				padding: 2px 10px 3px;
+			}
+			.scriptMenu_statusHide {
+				top: -35px;
+				height: 30px;
+				overflow: hidden;
+			}
+			.scriptMenu_label {
+				position: absolute;
+				top: 30%;
+				left: -4px;
+				z-index: 9999;
+				cursor: pointer;
+				width: 30px;
+				height: 30px;
+				background: radial-gradient(circle, #47a41b 0%, #1a2f04 100%);
+				border: 1px solid #1a2f04;
+				border-radius: 5px;
+				box-shadow:
+					inset 0px 2px 4px #83ce26,
+					inset 0px -4px 6px #1a2f04,
+					0px 0px 2px black,
+					0px 0px 0px 2px #ce9767;
+			}
+			.scriptMenu_label:hover {
+				filter: brightness(1.2);
+			}
+			.scriptMenu_arrowLabel {
+				width: 100%;
+				height: 100%;
+				background-size: 75%;
+				background-position: center;
+				background-repeat: no-repeat;
+				background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='%2388cb13' d='M7.596 7.304a.802.802 0 0 1 0 1.392l-6.363 3.692C.713 12.69 0 12.345 0 11.692V4.308c0-.653.713-.998 1.233-.696l6.363 3.692Z'/%3e%3cpath fill='%2388cb13' d='M15.596 7.304a.802.802 0 0 1 0 1.392l-6.363 3.692C8.713 12.69 8 12.345 8 11.692V4.308c0-.653.713-.998 1.233-.696l6.363 3.692Z'/%3e%3c/svg%3e");
+				box-shadow: 0px 1px 2px #000;
+				border-radius: 5px;
+				filter: drop-shadow(0px 1px 2px #000D);
+			}
+			.scriptMenu_main {
+				position: absolute;
+				max-width: 285px;
+				z-index: 9999;
+				top: 50%;
+				transform: translateY(-40%);
+				background: #190e08e6;
+				border: 1px #ce9767 solid;
+				border-radius: 0px 10px 10px 0px;
+				border-left: none;
+				box-sizing: border-box;
+				font-size: 15px;
+				font-family: sans-serif;
+				font-weight: 600;
+				color: #fce1ac;
+				text-shadow: 0px 0px 1px;
+				transition: 1s;
+			}
+			.scriptMenu_conteiner {
+				max-height: 80vh;
+				overflow: scroll;
+				scrollbar-width: none; /* Firefox */
+				-ms-overflow-style: none; /* IE/Edge */
+				display: flex;
+				flex-direction: column;
+				flex-wrap: nowrap;
+				padding: 5px 10px 5px 5px;
+			}
+			.scriptMenu_conteiner::-webkit-scrollbar {
+				display: none; /* Chrome/Safari/Opera */
+			}
+			.scriptMenu_showMenu {
+				display: none;
+			}
+			.scriptMenu_showMenu:checked ~ .scriptMenu_main {
+				left: 0px;
+			}
+			.scriptMenu_showMenu:not(:checked) ~ .scriptMenu_main {
+				left: -300px;
+			}
+	
+			/* === Чекбоксы и инпуты === */
+			.scriptMenu_divInput {
+				margin: 2px;
+			}
+			.scriptMenu_divInputText {
+				margin: 2px;
+				align-self: center;
+				display: flex;
+			}
+			.scriptMenu_checkbox {
+				position: absolute;
+				z-index: -1;
+				opacity: 0;
+			}
+			.scriptMenu_checkbox + label {
+				display: inline-flex;
+				align-items: center;
+				user-select: none;
+			}
+			.scriptMenu_checkbox + label::before {
+				content: '';
+				display: inline-block;
+				width: 20px;
+				height: 20px;
+				border: 1px solid #cf9250;
+				border-radius: 7px;
+				margin-right: 7px;
+			}
+			.scriptMenu_checkbox:checked + label::before {
+				background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3e%3cpath fill='%2388cb13' d='M6.564.75l-3.59 3.612-1.538-1.55L0 4.26 2.974 7.25 8 2.193z'/%3e%3c/svg%3e");
+			}
+	
+			/* === Закрытие меню === */
+			.scriptMenu_close {
+				width: 40px;
+				height: 40px;
+				position: absolute;
+				right: -18px;
+				top: -18px;
+				border: 3px solid #c18550;
+				border-radius: 20px;
+				background: radial-gradient(circle, rgba(190,30,35,1) 0%, rgba(0,0,0,1) 100%);
+				background-position-y: 3px;
+				box-shadow: -1px 1px 3px black;
+				cursor: pointer;
+				box-sizing: border-box;
+				z-index: 1;
+			}
+			.scriptMenu_close:hover {
+				filter: brightness(1.2);
+			}
+			.scriptMenu_crossClose {
+				width: 100%;
+				height: 100%;
+				background-size: 65%;
+				background-position: center;
+				background-repeat: no-repeat;
+				background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='%23f4cd73' d='M 0.826 12.559 C 0.431 12.963 3.346 15.374 3.74 14.97 C 4.215 15.173 8.167 10.457 7.804 10.302 C 7.893 10.376 11.454 14.64 11.525 14.372 C 12.134 15.042 15.118 12.086 14.638 11.689 C 14.416 11.21 10.263 7.477 10.402 7.832 C 10.358 7.815 11.731 7.101 14.872 3.114 C 14.698 2.145 13.024 1.074 12.093 1.019 C 11.438 0.861 8.014 5.259 8.035 5.531 C 7.86 5.082 3.61 1.186 3.522 1.59 C 2.973 1.027 0.916 4.611 1.17 4.873 C 0.728 4.914 5.088 7.961 5.61 7.995 C 5.225 7.532 0.622 12.315 0.826 12.559 Z'/%3e%3c/svg%3e")
+			}
+	
+			/* === Заголовки и детали === */
+			.scriptMenu_header {
+				text-align: center;
+				align-self: center;
+				font-size: 15px;
+				margin: 0px 15px;
+			}
+			.scriptMenu_header a {
+				color: #fce5b7;
+				text-decoration: none;
+			}
+			.scriptMenu_InputText {
+				text-align: center;
+				width: 130px;
+				height: 24px;
+				border: 1px solid #cf9250;
+				border-radius: 9px;
+				background: transparent;
+				color: #fce1ac;
+				padding: 0px 10px;
+				box-sizing: border-box;
+			}
+			.scriptMenu_InputText:focus {
+				filter: brightness(1.2);
+				outline: 0;
+			}
+			.scriptMenu_InputText::placeholder {
+				color: #fce1ac75;
+			}
+			.scriptMenu_Summary {
+				cursor: pointer;
+				margin-left: 7px;
+			}
+			.scriptMenu_Details {
+				align-self: center;
+			}
+	
+			/* === НОВЫЕ КНОПКИ с цветовыми переменными === */
+			.scriptMenu_btnSocket {
+				position: relative;
+				display: flex;
+				padding: 4px 4px 4px 3px;
+				flex-direction: column;
+				align-items: flex-start;
+				border-radius: 9px;
+				background: #a37738;
+				box-shadow: 0px -1px 1px 0px #7d5b3a inset, 0px 1px 1px 0px #e1a960 inset,
+					-1px 0px 1px 0px #311d13 inset;
+			}
+			.scriptMenu_btnRow {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				align-self: stretch;
+				width: 100%;
+			}
+			.scriptMenu_btnGap {
+				position: relative;
+				display: flex;
+				padding: 0px 1px 4px 1px;
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 2px;
+				border-radius: 5px;
+				cursor: pointer;
+				flex: auto;
+				transition: all 0.1s ease;
+	
+				/* Цветовые переменные по умолчанию — коричневый */
+				--h: 36;
+				--s: 60%;
+				--l: 10%;
+				--pl: 50%;
+				--pcl: 90%;
+				--phl: 55%;
+				--pal: 34%;
+				--pacl: 71%;
+				--sc: hsl(36, 88%, 7%);
+			}
+			.scriptMenu_btnGap:first-child,
+			.scriptMenu_btnGap.left {
+				padding-left: 2px;
+			}
+			.scriptMenu_btnGap:last-child,
+			.scriptMenu_btnGap.right {
+				padding-right: 3px;
+			}
+			.scriptMenu_btnGap {
+				background: hsl(var(--h), var(--s), var(--l));
+				box-shadow: 0px 0px 2px 0px var(--sc), 0px -1px 2px 0px var(--sc),
+					0px 1px 1px 0px hsl(var(--h), var(--s), 12%);
+			}
+			.scriptMenu_btnPlate {
+				display: flex;
+				height: 13px;
+				padding: 12px 10px;
+				box-sizing: content-box;
+				justify-content: center;
+				align-items: center;
+				align-self: stretch;
+				gap: 10px;
+				border-radius: 4px;
+				filter: blur(0.2px);
+				transition: all 0.1s ease;
+				text-shadow: 0px 1px 0px rgba(0, 0, 0, 0.92);
+				font-family: Arial;
+				font-size: 14px;
+				font-style: normal;
+				font-weight: 700;
+				line-height: normal;
+				color: hsla(var(--h), var(--s), var(--pcl), 1);
+				background: hsla(var(--h), var(--s), var(--pl), 1);
+				box-shadow: 0px 10px 12px 0px hsla(var(--h), 58%, 67%, 0.2) inset,
+					0px 2px 1px 0px hsl(var(--h), 78%, 77%) inset,
+					0px 2px 0px 0px hsl(var(--h), 78%, 37%) inset,
+					-8px 3px 15px 0px hsl(var(--h), 94%, 15%) inset,
+					8px -7px 15px 0px hsla(var(--h), 94%, 15%, 0.7) inset,
+					0px 0px 2px 0px hsl(var(--h), 68%, 23%),
+					0px -3px 8px 0px hsl(var(--h), 94%, 20%) inset;
+			}
+			.scriptMenu_btnPlate:hover {
+				color: hsla(0, 0%, 96%, 1);
+				background: hsla(var(--h), 49%, var(--phl), 1);
+			}
+			.scriptMenu_btnGap:active {
+				padding-top: 1px;
+				padding-bottom: 3px;
+				background: hsl(var(--h), var(--s), var(--l));
+				box-shadow: 0px 0px 2px 0px var(--sc), 0px -1px 2px 0px var(--sc),
+					0px 1px 1px 0px hsl(var(--h), var(--s), 12%);
+			}
+			.scriptMenu_btnPlate:active {
+				color: hsla(var(--h), 47%, var(--pacl), 1);
+				background: hsl(var(--h), 46%, var(--pal));
+			}
+	
+			/* === Цветовые переопределения === */
+			.scriptMenu_btnGap.brown {
+				--pl: 40%;
+				--pcl: 85%;
+				--s: 60%;
+			}
+			.scriptMenu_btnGap.green {
+				--h: 120;
+			}
+			.scriptMenu_btnGap.blue {
+				--h: 207;
+			}
+			.scriptMenu_btnGap.violet {
+				--h: 272;
+			}
+			.scriptMenu_btnGap.yellow {
+				--h: 45;
+			}
+			.scriptMenu_btnGap.orange {
+				--h: 20;
+			}
+			.scriptMenu_btnGap.indigo {
+				--h: 255;
+			}
+			.scriptMenu_btnGap.black {
+				--h: 0;
+				--s: 0%;
+				--l: 10%;
+				--pl: 20%;
+				--pcl: 85%;
+				--phl: 25%;
+				--pal: 15%;
+				--pacl: 71%;
+				--sc: hsl(0, 0%, 5%);
+			}
+			.scriptMenu_btnGap.pink {
+				--h: 330;
+			}
+			.scriptMenu_btnGap.red {
+				--h: 0;
+			}
+			.scriptMenu_btnGap.graphite {
+				background: hsl(0, 0%, 12%);
+				box-shadow: 0px 0px 2px 0px hsl(0, 0%, 7%), 0px -1px 2px 0px hsl(0, 0%, 7%),
+					0px 1px 1px 0px hsl(0, 0%, 12%);
+			}
+			.scriptMenu_btnGap.graphite .scriptMenu_btnPlate {
+				color: hsla(0, 0%, 85%, 1);
+				background: hsla(0, 0%, 54%, 1);
+				box-shadow: 0px 10px 12px 0px hsla(0, 0%, 67%, 0.2) inset,
+					0px 2px 1px 0px hsl(0, 0%, 67%) inset,
+					-8px 3px 15px 0px hsla(0, 0%, 15%, 0.7) inset,
+					8px -7px 15px 0px hsla(0, 0%, 15%, 0.7) inset,
+					0px 0px 2px 0px hsla(0, 0%, 23%, 0.3),
+					0px -3px 8px 0px hsla(0, 0%, 13%, 0.3) inset;
+			}
+			.scriptMenu_btnGap.graphite .scriptMenu_btnPlate:hover {
+				color: hsla(0, 0%, 96%, 1);
+				background: hsla(0, 0%, 62%, 1);
+			}
+			.scriptMenu_btnGap.graphite:active {
+				background: hsl(0, 0%, 12%);
+				box-shadow: 0px 0px 2px 0px hsl(0, 0%, 7%), 0px -1px 2px 0px hsl(0, 0%, 7%),
+					0px 1px 1px 0px hsl(0, 0%, 12%);
+			}
+			.scriptMenu_btnGap.graphite .scriptMenu_btnPlate:active {
+				color: hsla(0, 0%, 71%, 1);
+				background: hsl(0, 0%, 34%);
+			}
+	
+			/* === Индикаторы (оставляем как было) === */
+			.scriptMenu_attention {
+				position: relative;
+			}
+			.scriptMenu_attention .scriptMenu_dot {
+				display: flex;
+				justify-content: center;
+				align-items: center;
+			}
+			.scriptMenu_dot {
+				position: absolute;
+				top: -7px;
+				right: -7px;
+				width: 20px;
+				height: 20px;
+				border-radius: 50%;
+				border: 1px solid #c18550;
+				background: radial-gradient(circle, #f000 25%, black 100%);
+				box-shadow: 0px 0px 2px black;
+				background-position: 0px -1px;
+				font-size: 10px;
+				text-align: center;
+				color: white;
+				text-shadow: 1px 1px 1px black;
+				box-sizing: border-box;
+				display: none;
+			}
+		`;
+			document.head.appendChild(style);
+		}
+	
+		addBlocks() {
+			const main = document.createElement('div');
+			document.body.appendChild(main);
+	
+			this.status = document.createElement('div');
+			this.status.classList.add('scriptMenu_status');
+			this.setStatus('');
+			main.appendChild(this.status);
+	
+			const label = document.createElement('label');
+			label.classList.add('scriptMenu_label');
+			label.setAttribute('for', 'checkbox_showMenu');
+			main.appendChild(label);
+	
+			const arrowLabel = document.createElement('div');
+			arrowLabel.classList.add('scriptMenu_arrowLabel');
+			label.appendChild(arrowLabel);
+	
+			const checkbox = document.createElement('input');
+			checkbox.type = 'checkbox';
+			checkbox.id = 'checkbox_showMenu';
+			checkbox.checked = this.option.showMenu;
+			checkbox.classList.add('scriptMenu_showMenu');
+			checkbox.addEventListener('change', () => {
+				this.option.showMenu = checkbox.checked;
+				this.saveSaveOption();
+			});
+			main.appendChild(checkbox);
+	
+			const mainMenu = document.createElement('div');
+			mainMenu.classList.add('scriptMenu_main');
+			main.appendChild(mainMenu);
+	
+			this.mainMenu = document.createElement('div');
+			this.mainMenu.classList.add('scriptMenu_conteiner');
+			mainMenu.appendChild(this.mainMenu);
+	
+			const closeButton = document.createElement('label');
+			closeButton.classList.add('scriptMenu_close');
+			closeButton.setAttribute('for', 'checkbox_showMenu');
+			this.mainMenu.appendChild(closeButton);
+	
+			const crossClose = document.createElement('div');
+			crossClose.classList.add('scriptMenu_crossClose');
+			closeButton.appendChild(crossClose);
+		}
+	
+		getButtonColor(color) {
+			const buttonColors = {
+				green: 'green',
+				beige: 'brown',
+				blue: 'blue',
+				violet: 'violet',
+				yellow: 'yellow',
+				orange: 'orange',
+				indigo: 'indigo',
+				pink: 'pink',
+				red: 'red',
+				graphite: 'graphite',
+			};
+			return buttonColors[color] || buttonColors['beige'];
+		}
+	
+		setStatus(text, onclick) {
+			if (this._currentStatusClickHandler) {
+				this.status.removeEventListener('click', this._currentStatusClickHandler);
+				this._currentStatusClickHandler = null;
+			}
+	
+			if (!text) {
+				this.status.classList.add('scriptMenu_statusHide');
+				this.status.innerHTML = '';
+			} else {
+				this.status.classList.remove('scriptMenu_statusHide');
+				this.status.innerHTML = text;
+			}
+	
+			if (typeof onclick === 'function') {
+				this.status.addEventListener('click', onclick, { once: true });
+				this._currentStatusClickHandler = onclick;
+			}
+		}
+	
+		addStatus(text) {
+			if (!this.status.innerHTML) {
+				this.status.classList.remove('scriptMenu_statusHide');
+			}
+			this.status.innerHTML += text;
+		}
+	
+		addHeader(text, onClick, main = this.mainMenu) {
+			this.emit('beforeAddHeader', text, onClick, main);
+			if (this.btnSocket) {
+				this.btnSocket = null;
+			}
+			const header = document.createElement('div');
+			header.classList.add('scriptMenu_header');
+			header.innerHTML = text;
+			if (typeof onClick === 'function') {
+				header.addEventListener('click', onClick);
+			}
+			main.appendChild(header);
+			this.emit('afterAddHeader', text, onClick, main);
+			return header;
+		}
+	
+		addBtnSocket(back) {
+			this.btnSocket = document.createElement('div');
+			this.btnSocket.classList.add('scriptMenu_btnSocket');
+			(back ?? this.mainMenu).appendChild(this.btnSocket);
+			return this.btnSocket;
+		}
+	
+		addButton(btn, main = this.btnSocket) {
+			this.emit('beforeAddButton', btn, main);
+			//debugger;
+			let back = null;
+			if (!this.btnSocket) {
+				back = main;
+				main = this.addBtnSocket(back);
+				this.btnSocket = main;
+			}
+			let isOneButton = false;
+	
+			if (!main.classList.contains('scriptMenu_btnRow')) {
+				main = document.createElement('div');
+				main.classList.add('scriptMenu_btnRow');
+				isOneButton = true;
+			}
+	
+			const { name, onClick, title, color, dot, classes = [], isCombine } = btn;
+			const button = document.createElement('div');
+			button.classList.add('scriptMenu_btnGap', this.getButtonColor(color), ...classes);
+			button.title = title;
+			button.addEventListener('click', onClick);
+			main.appendChild(button);
+	
+			const buttonText = document.createElement('div');
+			buttonText.classList.add('scriptMenu_btnPlate', this.getButtonColor(color));
+			buttonText.innerHTML = name;
+			button.appendChild(buttonText);
+	
+			if (dot) {
+				this.addIndicator(button, dot);
+			}
+	
+			if (isOneButton) {
+				this.btnSocket.appendChild(main);
+				//this.btnSocket.appendChild(main);
+			}
+	
+			this.buttons.push(button);
+	
+			this.emit('afterAddButton', button, btn);
+			return button;
+		}
+	
+		addCombinedButton(buttonList, main = this.btnSocket) {
+			this.emit('beforeAddCombinedButton', buttonList, main);
+			let back = null;
+			if (!this.btnSocket) {
+				back = main;
+				main = this.addBtnSocket(back);
+				this.btnSocket = main;
+			}
+			const buttonGroup = document.createElement('div');
+			buttonGroup.classList.add('scriptMenu_btnRow');
+			let count = 0;
+	
+			for (const btn of buttonList) {
+				btn.isCombine = true;
+				btn.classes ??= [];
+				if (count === 0) {
+					btn.classes.push('left');
+				} else if (count === buttonList.length - 1) {
+					btn.classes.push('right');
+				} else {
+					btn.classes.push('center');
+				}
+				this.addButton(btn, buttonGroup);
+				count++;
+			}
+	
+			this.addIndicator(buttonGroup);
+	
+			this.btnSocket.appendChild(buttonGroup);
+			this.emit('afterAddCombinedButton', buttonGroup, buttonList);
+			return buttonGroup;
+		}
+	
+		addIndicator(btnSocket, title) {
+			const dotAtention = document.createElement('div');
+			dotAtention.classList.add('scriptMenu_dot');
+			dotAtention.title = title;
+			btnSocket.appendChild(dotAtention);
+			/*
+			const miniSocket = document.createElement('div');
+			miniSocket.classList.add('scriptMenu_miniSocket');
+	
+			const miniGap = document.createElement('div');
+			miniGap.classList.add('scriptMenu_miniGap');
+			miniSocket.appendChild(miniGap);
+	
+			const indicator = document.createElement('div');
+			indicator.classList.add('scriptMenu_indicator', 'scriptMenu_dot');
+			indicator.title = title;
+			indicator.innerHTML = '22';
+			miniGap.appendChild(indicator);
+	
+			btnSocket.appendChild(miniSocket);
+			*/
+		}
+	
+		addCheckbox(label, title, main = this.mainMenu) {
+			this.emit('beforeAddCheckbox', label, title, main);
+			if (this.btnSocket) {
+				this.btnSocket = null;
+			}
+			const divCheckbox = document.createElement('div');
+			divCheckbox.classList.add('scriptMenu_divInput');
+			divCheckbox.title = title;
+			main.appendChild(divCheckbox);
+	
+			const checkbox = document.createElement('input');
+			checkbox.type = 'checkbox';
+			checkbox.id = 'scriptMenuCheckbox' + this.checkboxes.length;
+			checkbox.classList.add('scriptMenu_checkbox');
+			divCheckbox.appendChild(checkbox);
+	
+			const checkboxLabel = document.createElement('label');
+			checkboxLabel.innerHTML = label;
+			checkboxLabel.setAttribute('for', checkbox.id);
+			divCheckbox.appendChild(checkboxLabel);
+	
+			this.checkboxes.push(checkbox);
+			this.emit('afterAddCheckbox', label, title, main);
+			return checkbox;
+		}
+	
+		addInputText(title, placeholder, main = this.mainMenu) {
+			this.emit('beforeAddCheckbox', title, placeholder, main);
+			if (this.btnSocket) {
+				this.btnSocket = null;
+			}
+			const divInputText = document.createElement('div');
+			divInputText.classList.add('scriptMenu_divInputText');
+			divInputText.title = title;
+			main.appendChild(divInputText);
+	
+			const newInputText = document.createElement('input');
+			newInputText.type = 'text';
+			if (placeholder) {
+				newInputText.placeholder = placeholder;
+			}
+			newInputText.classList.add('scriptMenu_InputText');
+			divInputText.appendChild(newInputText);
+			this.emit('afterAddCheckbox', title, placeholder, main);
+			return newInputText;
+		}
+	
+		addDetails(summaryText, name = null) {
+			this.emit('beforeAddDetails', summaryText, name);
+			if (this.btnSocket) {
+				this.btnSocket = null;
+			}
+			const details = document.createElement('details');
+			details.classList.add('scriptMenu_Details');
+			this.mainMenu.appendChild(details);
+	
+			const summary = document.createElement('summary');
+			summary.classList.add('scriptMenu_Summary');
+			summary.innerText = summaryText;
+			if (name) {
+				details.open = this.option.showDetails[name] ?? false;
+				details.dataset.name = name;
+				details.addEventListener('toggle', () => {
+					this.option.showDetails[details.dataset.name] = details.open;
+					this.saveSaveOption();
+				});
+			}
+	
+			details.appendChild(summary);
+			this.emit('afterAddDetails', summaryText, name);
+			return details;
+		}
+	
+		saveSaveOption() {
+			try {
+				localStorage.setItem('scriptMenu_saveOption', JSON.stringify(this.option));
+			} catch (e) {
+				console.log('¯\\_(ツ)_/¯');
+			}
+		}
+	
+		loadSaveOption() {
+			let saveOption = null;
+			try {
+				saveOption = localStorage.getItem('scriptMenu_saveOption');
+			} catch (e) {
+				console.log('¯\\_(ツ)_/¯');
+			}
+	
+			if (!saveOption) {
+				return {};
+			}
+	
+			try {
+				saveOption = JSON.parse(saveOption);
+			} catch (e) {
+				return {};
+			}
+	
+			return saveOption;
+		}
+	}
+	
+	this.HWHClasses.ScriptMenu = ScriptMenu;
+	
+	//const scriptMenu = ScriptMenu.getInst();
+	
+	/**
+	 * Пример использования
+	const scriptMenu = ScriptMenu.getInst();
+	scriptMenu.init();
+	scriptMenu.addHeader('v1.508');
+	scriptMenu.addCheckbox('testHack', 'Тестовый взлом игры!');
+	scriptMenu.addButton({
+		text: 'Запуск!', 
+		onClick: () => console.log('click'), 
+		title: 'подсказака',
+	});
+	scriptMenu.addInputText('input подсказака');
+	scriptMenu.on('beforeInit', (option) => {
+		console.log('beforeInit', option);
+	})
+	scriptMenu.on('beforeAddHeader', (text, onClick, main) => {
+		console.log('beforeAddHeader', text, onClick, main);
+	});
+	scriptMenu.on('beforeAddButton', (btn, main) => {
+		console.log('beforeAddButton', btn, main);
+	});
+	scriptMenu.on('beforeAddCombinedButton', (buttonList, main) => {
+		console.log('beforeAddCombinedButton', buttonList, main);
+	});
+	scriptMenu.on('beforeAddCheckbox', (label, title, main) => {
+		console.log('beforeAddCheckbox', label, title, main);
+	});
+	scriptMenu.on('beforeAddDetails', (summaryText, name) => {
+		console.log('beforeAddDetails', summaryText, name);
+	});
+	 */
+	
+	/**
+	 * Sending expeditions
+	 *
+	 * Отправка экспедиций
+	 */
+	function checkExpedition() {
+		const { Expedition } = HWHClasses;
+		return new Promise((resolve, reject) => {
+			const expedition = new Expedition(resolve, reject);
+			expedition.start();
+		});
+	}
+	
+	class Expedition {
+		constructor(resolve, reject) {
+			this.resolve = resolve;
+			this.reject = reject;
+		}
+	
+		async start() {
+			const [expedInfo, dataHeroes] = await Caller.send(['expeditionGet', 'heroGetAll']);
+			const dataExped = { useHeroes: [], exped: [] };
+			const calls = [];
+	
+			/**
+			 * Adding expeditions to collect
+			 * Добавляем экспедиции для сбора
+			 */
+			let countGet = 0;
+			for (var n in expedInfo) {
+				const exped = expedInfo[n];
+				const dateNow = Date.now() / 1000;
+				if (exped.status == 2 && exped.endTime != 0 && dateNow > exped.endTime) {
+					countGet++;
+					calls.push({
+						name: 'expeditionFarm',
+						args: { expeditionId: exped.id },
+						ident: 'expeditionFarm_' + exped.id,
+					});
+				} else {
+					dataExped.useHeroes = dataExped.useHeroes.concat(exped.heroes);
+				}
+				if (exped.status == 1) {
+					dataExped.exped.push({ id: exped.id, power: exped.power });
+				}
+			}
+			dataExped.exped = dataExped.exped.sort((a, b) => b.power - a.power);
+	
+			/**
+			 * Putting together a list of heroes
+			 * Собираем список героев
+			 */
+			const heroesArr = [];
+			for (let n in dataHeroes) {
+				const hero = dataHeroes[n];
+				if (hero.power > 0 && !dataExped.useHeroes.includes(hero.id)) {
+					let heroPower = hero.power;
+					// Лара Крофт * 3
+					if (hero.id == 63 && hero.color >= 16) {
+						heroPower *= 3;
+					}
+					heroesArr.push({ id: hero.id, power: heroPower });
+				}
+			}
+	
+			/**
+			 * Adding expeditions to send
+			 * Добавляем экспедиции для отправки
+			 */
+			let countSend = 0;
+			heroesArr.sort((a, b) => a.power - b.power);
+			for (const exped of dataExped.exped) {
+				let heroesIds = this.selectionHeroes(heroesArr, exped.power);
+				if (heroesIds && heroesIds.length > 4) {
+					for (let q in heroesArr) {
+						if (heroesIds.includes(heroesArr[q].id)) {
+							delete heroesArr[q];
+						}
+					}
+					countSend++;
+					calls.push({
+						name: 'expeditionSendHeroes',
+						args: {
+							expeditionId: exped.id,
+							heroes: heroesIds,
+						},
+					});
+				}
+			}
+	
+			if (calls.length) {
+				await Caller.send(calls);
+				this.end(I18N('EXPEDITIONS_SENT', {countGet, countSend}));
+				return;
+			}
+	
+			this.end(I18N('EXPEDITIONS_NOTHING'));
+		}
+	
+		/**
+		 * Selection of heroes for expeditions
+		 *
+		 * Подбор героев для экспедиций
+		 */
+		selectionHeroes(heroes, power) {
+			const resultHeroers = [];
+			const heroesIds = [];
+			for (let q = 0; q < 5; q++) {
+				for (let i in heroes) {
+					let hero = heroes[i];
+					if (heroesIds.includes(hero.id)) {
+						continue;
+					}
+	
+					const summ = resultHeroers.reduce((acc, hero) => acc + hero.power, 0);
+					const need = Math.round((power - summ) / (5 - resultHeroers.length));
+					if (hero.power > need) {
+						resultHeroers.push(hero);
+						heroesIds.push(hero.id);
+						break;
+					}
+				}
+			}
+	
+			const summ = resultHeroers.reduce((acc, hero) => acc + hero.power, 0);
+			if (summ < power) {
+				return false;
+			}
+			return heroesIds;
+		}
+	
+		/**
+		 * Ends expedition script
+		 *
+		 * Завершает скрипт экспедиции
+		 */
+		end(msg) {
+			setProgress(msg, true);
+			this.resolve();
+		}
+	}
+	
+	this.HWHClasses.Expedition = Expedition;
+	
+	/**
+	 * Walkthrough of the dungeon
+	 *
+	 * Прохождение подземелья
+	 */
+	function testDungeon() {
+		const { executeDungeon } = HWHClasses;
+		return new Promise((resolve, reject) => {
+			const dung = new executeDungeon(resolve, reject);
+			const titanit = getInput('countTitanit');
+			dung.start(titanit);
+		});
+	}
+	
+	/**
+	 * Walkthrough of the dungeon
+	 *
+	 * Прохождение подземелья
+	 */
+	function executeDungeon(resolve, reject) {
+		dungeonActivity = 0;
+		let maxDungeonActivity = 150;
+	
+		titanGetAll = [];
+	
+		teams = {
+			heroes: [],
+			earth: [],
+			fire: [],
+			neutral: [],
+			water: [],
+		}
+	
+		titanStats = [];
+	
+		titansStates = {};
+	
+		let talentMsg = '';
+		let talentMsgReward = '';
+	
+		callsExecuteDungeon = {
+			calls: [{
+				name: "dungeonGetInfo",
+				args: {},
+				ident: "dungeonGetInfo"
+			}, {
+				name: "teamGetAll",
+				args: {},
+				ident: "teamGetAll"
+			}, {
+				name: "teamGetFavor",
+				args: {},
+				ident: "teamGetFavor"
+			}, {
+				name: "clanGetInfo",
+				args: {},
+				ident: "clanGetInfo"
+			}, {
+				name: "titanGetAll",
+				args: {},
+				ident: "titanGetAll"
+			}, {
+				name: "inventoryGet",
+				args: {},
+				ident: "inventoryGet"
+			}]
+		}
+	
+		this.start = function(titanit) {
+			maxDungeonActivity = titanit || getInput('countTitanit');
+			send(callsExecuteDungeon, startDungeon);
+		}
+	
+		/**
+		 * Getting data on the dungeon
+		 *
+		 * Получаем данные по подземелью
+		 */
+		function startDungeon(e) {
+			res = e.results;
+			dungeonGetInfo = res[0].result.response;
+			if (!dungeonGetInfo) {
+				endDungeon('noDungeon', res);
+				return;
+			}
+			teamGetAll = res[1].result.response;
+			teamGetFavor = res[2].result.response;
+			dungeonActivity = res[3].result.response.stat.todayDungeonActivity;
+			titanGetAll = Object.values(res[4].result.response);
+			HWHData.countPredictionCard = res[5].result.response.consumable[81];
+	
+			teams.hero = {
+				favor: teamGetFavor.dungeon_hero,
+				heroes: teamGetAll.dungeon_hero.filter(id => id < 6000),
+				teamNum: 0,
+			}
+			heroPet = teamGetAll.dungeon_hero.filter(id => id >= 6000).pop();
+			if (heroPet) {
+				teams.hero.pet = heroPet;
+			}
+	
+			teams.neutral = {
+				favor: {},
+				heroes: getTitanTeam(titanGetAll, 'neutral'),
+				teamNum: 0,
+			};
+			teams.water = {
+				favor: {},
+				heroes: getTitanTeam(titanGetAll, 'water'),
+				teamNum: 0,
+			};
+			teams.fire = {
+				favor: {},
+				heroes: getTitanTeam(titanGetAll, 'fire'),
+				teamNum: 0,
+			};
+			teams.earth = {
+				favor: {},
+				heroes: getTitanTeam(titanGetAll, 'earth'),
+				teamNum: 0,
+			};
+	
+	
+			checkFloor(dungeonGetInfo);
+		}
+	
+		function getTitanTeam(titans, type) {
+			switch (type) {
+				case 'neutral':
+					return titans.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
+				case 'water':
+					return titans.filter(e => e.id.toString().slice(2, 3) == '0').map(e => e.id);
+				case 'fire':
+					return titans.filter(e => e.id.toString().slice(2, 3) == '1').map(e => e.id);
+				case 'earth':
+					return titans.filter(e => e.id.toString().slice(2, 3) == '2').map(e => e.id);
+			}
+		}
+	
+		function getNeutralTeam() {
+			const titans = titanGetAll.filter(e => !titansStates[e.id]?.isDead)
+			return titans.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
+		}
+	
+		function fixTitanTeam(titans) {
+			titans.heroes = titans.heroes.filter(e => !titansStates[e]?.isDead);
+			return titans;
+		}
+	
+		/**
+		 * Checking the floor
+		 *
+		 * Проверяем этаж
+		 */
+		async function checkFloor(dungeonInfo) {
+			if (!('floor' in dungeonInfo) || dungeonInfo.floor?.state == 2) {
+				saveProgress();
+				return;
+			}
+			checkTalent(dungeonInfo);
+			// console.log(dungeonInfo, dungeonActivity);
+			maxDungeonActivity = +getInput('countTitanit');
+			setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
+			if (dungeonActivity >= maxDungeonActivity) {
+				endDungeon('endDungeon', 'maxActive ' + dungeonActivity + '/' + maxDungeonActivity);
+				return;
+			}
+			titansStates = dungeonInfo.states.titans;
+			titanStats = titanObjToArray(titansStates);
+			const floorChoices = dungeonInfo.floor.userData;
+			const floorType = dungeonInfo.floorType;
+			//const primeElement = dungeonInfo.elements.prime;
+			if (floorType == "battle") {
+				const calls = [];
+				for (let teamNum in floorChoices) {
+					attackerType = floorChoices[teamNum].attackerType;
+					const args = fixTitanTeam(teams[attackerType]);
+					if (attackerType == 'neutral') {
+						args.heroes = getNeutralTeam();
+					}
+					if (!args.heroes.length) {
+						continue;
+					}
+					args.teamNum = teamNum;
+					calls.push({
+						name: "dungeonStartBattle",
+						args,
+						ident: "body_" + teamNum
+					})
+				}
+				if (!calls.length) {
+					endDungeon('endDungeon', 'All Dead');
+					return;
+				}
+				const battleDatas = await Send({ calls })
+					.then(e => e.results.map(n => n.result.response))
+				const battleResults = [];
+				for (n in battleDatas) {
+					battleData = battleDatas[n]
+					battleData.progress = [{ attackers: { input: ["auto", 0, 0, "auto", 0, 0] } }];
+					battleResults.push(await Calc(battleData).then(result => {
+						result.teamNum = n;
+						result.attackerType = floorChoices[n].attackerType;
+						return result;
+					}));
+				}
+				processingPromises(battleResults)
+			}
+		}
+	
+		async function checkTalent(dungeonInfo) {
+			const talent = dungeonInfo.talent;
+			if (!talent) {
+				return;
+			}
+			const dungeonFloor = +dungeonInfo.floorNumber;
+			const talentFloor = +talent.floorRandValue;
+			let doorsAmount = 3 - talent.conditions.doorsAmount;
+	
+			if (dungeonFloor === talentFloor && (!doorsAmount || !talent.conditions?.farmedDoors[dungeonFloor])) {
+				const [reward] = await Caller.send([
+					{ name: 'heroTalent_getReward', args: { talentType: 'tmntDungeonTalent', reroll: false } },
+					{ name: 'heroTalent_farmReward', args: { talentType: 'tmntDungeonTalent' } },
+				]);
+				const type = Object.keys(reward).pop();
+				const itemId = +Object.keys(reward[type]).pop();
+				const count = reward[type][itemId];
+				const itemName = cheats.translate(`LIB_${type.toUpperCase()}_NAME_${itemId}`);
+				talentMsgReward += `<br> ${count} <span style="color:${itemId == 300 ? 'red' : 'inherit'}">${itemName}</span>`;
+				doorsAmount++;
+			}
+			talentMsg = `<br>TMNT Talent: ${doorsAmount}/3 ${talentMsgReward}<br>`;
+		}
+	
+		function processingPromises(results) {
+			let selectBattle = results[0];
+			if (results.length < 2) {
+				// console.log(selectBattle);
+				if (!selectBattle.result.win) {
+					endDungeon('dungeonEndBattle\n', selectBattle);
+					return;
+				}
+				endBattle(selectBattle);
+				return;
+			}
+	
+			selectBattle = false;
+			let bestState = -1000;
+			for (const result of results) {
+				const recovery = getState(result);
+				if (recovery > bestState) {
+					bestState = recovery;
+					selectBattle = result
+				}
+			}
+			// console.log(selectBattle.teamNum, results);
+			if (!selectBattle || bestState <= -1000) {
+				endDungeon('dungeonEndBattle\n', results);
+				return;
+			}
+	
+			startBattle(selectBattle.teamNum, selectBattle.attackerType)
+				.then(endBattle);
+		}
+	
+		/**
+		 * Let's start the fight
+		 *
+		 * Начинаем бой
+		 */
+		function startBattle(teamNum, attackerType) {
+			return new Promise(function (resolve, reject) {
+				args = fixTitanTeam(teams[attackerType]);
+				args.teamNum = teamNum;
+				if (attackerType == 'neutral') {
+					const titans = titanGetAll.filter(e => !titansStates[e.id]?.isDead)
+					args.heroes = titans.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
+				}
+				startBattleCall = {
+					calls: [{
+						name: "dungeonStartBattle",
+						args,
+						ident: "body"
+					}]
+				}
+				send(startBattleCall, resultBattle, {
+					resolve,
+					teamNum,
+					attackerType
+				});
+			});
+		}
+		/**
+		 * Returns the result of the battle in a promise
+		 *
+		 * Возращает резульат боя в промис
+		 */
+		function resultBattle(resultBattles, args) {
+			battleData = resultBattles.results[0].result.response;
+			battleType = "get_tower";
+			if (battleData.type == "dungeon_titan") {
+				battleType = "get_titan";
+			}
+			battleData.progress = [{ attackers: { input: ["auto", 0, 0, "auto", 0, 0] } }];
+			BattleCalc(battleData, battleType, function (result) {
+				result.teamNum = args.teamNum;
+				result.attackerType = args.attackerType;
+				args.resolve(result);
+			});
+		}
+		/**
+		 * Finishing the fight
+		 *
+		 * Заканчиваем бой
+		 */
+		async function endBattle(battleInfo) {
+			if (battleInfo.result.win) {
+				const args = {
+					result: battleInfo.result,
+					progress: battleInfo.progress,
+				}
+				if (HWHData.countPredictionCard > 0) {
+					args.isRaid = true;
+				} else {
+					const timer = getTimer(battleInfo.battleTime);
+					console.log(timer);
+					await countdownTimer(timer, `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`);
+				}
+				const calls = [{
+					name: "dungeonEndBattle",
+					args,
+					ident: "body"
+				}];
+				lastDungeonBattleData = null;
+				send({ calls }, resultEndBattle);
+			} else {
+				endDungeon('dungeonEndBattle win: false\n', battleInfo);
+			}
+		}
+	
+		/**
+		 * Getting and processing battle results
+		 *
+		 * Получаем и обрабатываем результаты боя
+		 */
+		function resultEndBattle(e) {
+			if ('error' in e) {
+				popup.confirm(I18N('ERROR_MSG', {
+					name: e.error.name,
+					description: e.error.description,
+				}));
+				endDungeon('errorRequest', e);
+				return;
+			}
+			battleResult = e.results[0].result.response;
+			if ('error' in battleResult) {
+				endDungeon('errorBattleResult', battleResult);
+				return;
+			}
+			dungeonGetInfo = battleResult.dungeon ?? battleResult;
+			dungeonActivity += battleResult.reward.dungeonActivity ?? 0;
+			checkFloor(dungeonGetInfo);
+		}
+	
+		/**
+		 * Returns the coefficient of condition of the
+		 * difference in titanium before and after the battle
+		 * 
+		 * Возвращает коэффициент состояния титанов после боя
+		 */
+		function getState(result) {
+			if (!result.result.win) {
+				return -1000;
+			}
+	
+			let beforeSumFactor = 0;
+			const beforeTitans = result.battleData.attackers;
+			for (let titanId in beforeTitans) {
+				const titan = beforeTitans[titanId];
+				const state = titan.state;
+				let factor = 1;
+				if (state) {
+					const hp = state.hp / titan.hp;
+					const energy = state.energy / 1e3;
+					factor = hp + energy / 20
+				}
+				beforeSumFactor += factor;
+			}
+	
+			let afterSumFactor = 0;
+			const afterTitans = result.progress[0].attackers.heroes;
+			for (let titanId in afterTitans) {
+				const titan = afterTitans[titanId];
+				const hp = titan.hp / beforeTitans[titanId].hp;
+				const energy = titan.energy / 1e3;
+				const factor = hp + energy / 20;
+				afterSumFactor += factor;
+			}
+			return afterSumFactor - beforeSumFactor;
+		}
+	
+		/**
+		 * Converts an object with IDs to an array with IDs
+		 *
+		 * Преобразует объект с идетификаторами в массив с идетификаторами
+		 */
+		function titanObjToArray(obj) {
+			let titans = [];
+			for (let id in obj) {
+				obj[id].id = id;
+				titans.push(obj[id]);
+			}
+			return titans;
+		}
+	
+		function saveProgress() {
+			let saveProgressCall = {
+				calls: [{
+					name: "dungeonSaveProgress",
+					args: {},
+					ident: "body"
+				}]
+			}
+			send(saveProgressCall, resultEndBattle);
+		}
+	
+		function endDungeon(reason, info) {
+			console.warn(reason, info);
+			setProgress(`${I18N('DUNGEON')} ${I18N('COMPLETED')}`, true);
+			resolve();
+		}
+	}
+	
+	this.HWHClasses.executeDungeon = executeDungeon;
+	
+	/**
+	 * Passing the tower
+	 *
+	 * Прохождение башни
+	 */
+	function testTower() {
+		const { executeTower } = HWHClasses;
+		return new Promise((resolve, reject) => {
+			tower = new executeTower(resolve, reject);
+			tower.start();
+		});
+	}
+	
+	/**
+	 * Passing the tower
+	 *
+	 * Прохождение башни
+	 */
+	function executeTower(resolve, reject) {
+		lastTowerInfo = {};
+	
+		scullCoin = 0;
+	
+		heroGetAll = [];
+	
+		heroesStates = {};
+	
+		argsBattle = {
+			heroes: [],
+			favor: {},
+		};
+	
+		callsExecuteTower = {
+			calls: [{
+				name: "towerGetInfo",
+				args: {},
+				ident: "towerGetInfo"
+			}, {
+				name: "teamGetAll",
+				args: {},
+				ident: "teamGetAll"
+			}, {
+				name: "teamGetFavor",
+				args: {},
+				ident: "teamGetFavor"
+			}, {
+				name: "inventoryGet",
+				args: {},
+				ident: "inventoryGet"
+			}, {
+				name: "heroGetAll",
+				args: {},
+				ident: "heroGetAll"
+			}]
+		}
+	
+		buffIds = [
+			{id: 0, cost: 0, isBuy: false},   // plug // заглушка
+			{id: 1, cost: 1, isBuy: true},    // 3% attack // 3% атака
+			{id: 2, cost: 6, isBuy: true},    // 2% attack // 2% атака
+			{id: 3, cost: 16, isBuy: true},   // 4% attack // 4% атака
+			{id: 4, cost: 40, isBuy: true},   // 8% attack // 8% атака
+			{id: 5, cost: 1, isBuy: true},    // 10% armor // 10% броня
+			{id: 6, cost: 6, isBuy: true},    // 5% armor // 5% броня
+			{id: 7, cost: 16, isBuy: true},   // 10% armor // 10% броня
+			{id: 8, cost: 40, isBuy: true},   // 20% armor // 20% броня
+			{ id: 9, cost: 1, isBuy: true },    // 10% protection from magic // 10% защита от магии
+			{ id: 10, cost: 6, isBuy: true },   // 5% protection from magic // 5% защита от магии
+			{ id: 11, cost: 16, isBuy: true },  // 10% protection from magic // 10% защита от магии
+			{ id: 12, cost: 40, isBuy: true },  // 20% protection from magic // 20% защита от магии
+			{ id: 13, cost: 1, isBuy: false },  // 40% health hero // 40% здоровья герою
+			{ id: 14, cost: 6, isBuy: false },  // 40% health hero // 40% здоровья герою
+			{ id: 15, cost: 16, isBuy: false }, // 80% health hero // 80% здоровья герою
+			{ id: 16, cost: 40, isBuy: false }, // 40% health to all heroes // 40% здоровья всем героям
+			{ id: 17, cost: 1, isBuy: false },  // 40% energy to the hero // 40% энергии герою
+			{ id: 18, cost: 3, isBuy: false },  // 40% energy to the hero // 40% энергии герою
+			{ id: 19, cost: 8, isBuy: false },  // 80% energy to the hero // 80% энергии герою
+			{ id: 20, cost: 20, isBuy: false }, // 40% energy to all heroes // 40% энергии всем героям
+			{ id: 21, cost: 40, isBuy: false }, // Hero Resurrection // Воскрешение героя
+		]
+	
+		this.start = function () {
+			send(callsExecuteTower, startTower);
+		}
+	
+		/**
+		 * Getting data on the Tower
+		 *
+		 * Получаем данные по башне
+		 */
+		function startTower(e) {
+			res = e.results;
+			towerGetInfo = res[0].result.response;
+			if (!towerGetInfo) {
+				endTower('noTower', res);
+				return;
+			}
+			teamGetAll = res[1].result.response;
+			teamGetFavor = res[2].result.response;
+			inventoryGet = res[3].result.response;
+			heroGetAll = Object.values(res[4].result.response);
+	
+			scullCoin = inventoryGet.coin[7] ?? 0;
+	
+			argsBattle.favor = teamGetFavor.tower;
+			argsBattle.heroes = heroGetAll.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
+			pet = teamGetAll.tower.filter(id => id >= 6000).pop();
+			if (pet) {
+				argsBattle.pet = pet;
+			}
+	
+			checkFloor(towerGetInfo);
+		}
+	
+		function fixHeroesTeam(argsBattle) {
+			let fixHeroes = argsBattle.heroes.filter(e => !heroesStates[e]?.isDead);
+			if (fixHeroes.length < 5) {
+				heroGetAll = heroGetAll.filter(e => !heroesStates[e.id]?.isDead);
+				fixHeroes = heroGetAll.sort((a, b) => b.power - a.power).slice(0, 5).map(e => e.id);
+				Object.keys(argsBattle.favor).forEach(e => {
+					if (!fixHeroes.includes(+e)) {
+						delete argsBattle.favor[e];
+					}
+				})
+			}
+			argsBattle.heroes = fixHeroes;
+			return argsBattle;
+		}
+	
+		/**
+		 * Check the floor
+		 *
+		 * Проверяем этаж
+		 */
+		function checkFloor(towerInfo) {
+			lastTowerInfo = towerInfo;
+			maySkipFloor = +towerInfo.maySkipFloor;
+			floorNumber = +towerInfo.floorNumber;
+			heroesStates = towerInfo.states.heroes;
+			floorInfo = towerInfo.floor;
+	
+			/**
+			 * Is there at least one chest open on the floor
+			 * Открыт ли на этаже хоть один сундук
+			 */
+			isOpenChest = false;
+			if (towerInfo.floorType == "chest") {
+				isOpenChest = towerInfo.floor.chests.reduce((n, e) => n + e.opened, 0);
+			}
+	
+			setProgress(`${I18N('TOWER')}: ${I18N('FLOOR')} ${floorNumber}`);
+			if (floorNumber > 49) {
+				if (isOpenChest) {
+					endTower('alreadyOpenChest 50 floor', floorNumber);
+					return;
+				}
+			}
+			/**
+			 * If the chest is open and you can skip floors, then move on
+			 * Если сундук открыт и можно скипать этажи, то переходим дальше
+			 */
+			if (towerInfo.mayFullSkip && +towerInfo.teamLevel == 130) {
+				if (floorNumber == 1) {
+					fullSkipTower();
+					return;
+				}
+				if (isOpenChest) {
+					nextOpenChest(floorNumber);
+				} else {
+					nextChestOpen(floorNumber);
+				}
+				return;
+			}
+	
+			// console.log(towerInfo, scullCoin);
+			switch (towerInfo.floorType) {
+				case "battle":
+					if (floorNumber <= maySkipFloor) {
+						skipFloor();
+						return;
+					}
+					if (floorInfo.state == 2) {
+						nextFloor();
+						return;
+					}
+					startBattle().then(endBattle);
+					return;
+				case "buff":
+					checkBuff(towerInfo);
+					return;
+				case "chest":
+					openChest(floorNumber);
+					return;
+				default:
+					console.log('!', towerInfo.floorType, towerInfo);
+					break;
+			}
+		}
+	
+		/**
+		 * Let's start the fight
+		 *
+		 * Начинаем бой
+		 */
+		function startBattle() {
+			return new Promise(function (resolve, reject) {
+				towerStartBattle = {
+					calls: [{
+						name: "towerStartBattle",
+						args: fixHeroesTeam(argsBattle),
+						ident: "body"
+					}]
+				}
+				send(towerStartBattle, resultBattle, resolve);
+			});
+		}
+		/**
+		 * Returns the result of the battle in a promise
+		 *
+		 * Возращает резульат боя в промис
+		 */
+		function resultBattle(resultBattles, resolve) {
+			battleData = resultBattles.results[0].result.response;
+			battleType = "get_tower";
+			BattleCalc(battleData, battleType, function (result) {
+				resolve(result);
+			});
+		}
+		/**
+		 * Finishing the fight
+		 *
+		 * Заканчиваем бой
+		 */
+		function endBattle(battleInfo) {
+			if (battleInfo.result.stars >= 3) {
+				endBattleCall = {
+					calls: [{
+						name: "towerEndBattle",
+						args: {
+							result: battleInfo.result,
+							progress: battleInfo.progress,
+						},
+						ident: "body"
+					}]
+				}
+				send(endBattleCall, resultEndBattle);
+			} else {
+				endTower('towerEndBattle win: false\n', battleInfo);
+			}
+		}
+	
+		/**
+		 * Getting and processing battle results
+		 *
+		 * Получаем и обрабатываем результаты боя
+		 */
+		function resultEndBattle(e) {
+			battleResult = e.results[0].result.response;
+			if ('error' in battleResult) {
+				endTower('errorBattleResult', battleResult);
+				return;
+			}
+			if ('reward' in battleResult) {
+				scullCoin += battleResult.reward?.coin[7] ?? 0;
+			}
+			nextFloor();
+		}
+	
+		function nextFloor() {
+			nextFloorCall = {
+				calls: [{
+					name: "towerNextFloor",
+					args: {},
+					ident: "body"
+				}]
+			}
+			send(nextFloorCall, checkDataFloor);
+		}
+	
+		function openChest(floorNumber) {
+			floorNumber = floorNumber || 0;
+			openChestCall = {
+				calls: [{
+					name: "towerOpenChest",
+					args: {
+						num: 2
+					},
+					ident: "body"
+				}]
+			}
+			send(openChestCall, floorNumber < 50 ? nextFloor : lastChest);
+		}
+	
+		function lastChest() {
+			endTower('openChest 50 floor', floorNumber);
+		}
+	
+		function skipFloor() {
+			skipFloorCall = {
+				calls: [{
+					name: "towerSkipFloor",
+					args: {},
+					ident: "body"
+				}]
+			}
+			send(skipFloorCall, checkDataFloor);
+		}
+	
+		function checkBuff(towerInfo) {
+			buffArr = towerInfo.floor;
+			promises = [];
+			for (let buff of buffArr) {
+				buffInfo = buffIds[buff.id];
+				if (buffInfo.isBuy && buffInfo.cost <= scullCoin) {
+					scullCoin -= buffInfo.cost;
+					promises.push(buyBuff(buff.id));
+				}
+			}
+			Promise.all(promises).then(nextFloor);
+		}
+	
+		function buyBuff(buffId) {
+			return new Promise(function (resolve, reject) {
+				buyBuffCall = {
+					calls: [{
+						name: "towerBuyBuff",
+						args: {
+							buffId
+						},
+						ident: "body"
+					}]
+				}
+				send(buyBuffCall, resolve);
+			});
+		}
+	
+		function checkDataFloor(result) {
+			towerInfo = result.results[0].result.response;
+			if ('reward' in towerInfo && towerInfo.reward?.coin) {
+				scullCoin += towerInfo.reward?.coin[7] ?? 0;
+			}
+			if ('tower' in towerInfo) {
+				towerInfo = towerInfo.tower;
+			}
+			if ('skullReward' in towerInfo) {
+				scullCoin += towerInfo.skullReward?.coin[7] ?? 0;
+			}
+			checkFloor(towerInfo);
+		}
+		/**
+		 * Getting tower rewards
+		 *
+		 * Получаем награды башни
+		 */
+		function farmTowerRewards(reason) {
+			let { pointRewards, points } = lastTowerInfo;
+			let pointsAll = Object.getOwnPropertyNames(pointRewards);
+			let farmPoints = pointsAll.filter(e => +e <= +points && !pointRewards[e]);
+			if (!farmPoints.length) {
+				return;
+			}
+			let farmTowerRewardsCall = {
+				calls: [{
+					name: "tower_farmPointRewards",
+					args: {
+						points: farmPoints
+					},
+					ident: "tower_farmPointRewards"
+				}]
+			}
+	
+			if (scullCoin > 0) {
+				farmTowerRewardsCall.calls.push({
+					name: "tower_farmSkullReward",
+					args: {},
+					ident: "tower_farmSkullReward"
+				});
+			}
+	
+			send(farmTowerRewardsCall, () => { });
+		}
+	
+		function fullSkipTower() {
+			/**
+			 * Next chest
+			 *
+			 * Следующий сундук
+			 */
+			function nextChest(n) {
+				return {
+					name: "towerNextChest",
+					args: {},
+					ident: "group_" + n + "_body"
+				}
+			}
+			/**
+			 * Open chest
+			 *
+			 * Открыть сундук
+			 */
+			function openChest(n) {
+				return {
+					name: "towerOpenChest",
+					args: {
+						"num": 2
+					},
+					ident: "group_" + n + "_body"
+				}
+			}
+	
+			const fullSkipTowerCall = {
+				calls: []
+			}
+	
+			let n = 0;
+			for (let i = 0; i < 15; i++) {
+				// 15 сундуков
+				fullSkipTowerCall.calls.push(nextChest(++n));
+				fullSkipTowerCall.calls.push(openChest(++n));
+				// +5 сундуков, 250 изюма // towerOpenChest
+				// if (i < 5) {
+				// 	fullSkipTowerCall.calls.push(openChest(++n, 2));
+				// }
+			}
+	
+			fullSkipTowerCall.calls.push({
+				name: 'towerGetInfo',
+				args: {},
+				ident: 'group_' + ++n + '_body',
+			});
+	
+			send(fullSkipTowerCall, data => {
+				for (const r of data.results) {
+					const towerInfo = r?.result?.response;
+					if (towerInfo && 'skullReward' in towerInfo) {
+						scullCoin += towerInfo.skullReward?.coin[7] ?? 0;
+					}
+				}
+				data.results[0] = data.results[data.results.length - 1];
+				checkDataFloor(data);
+			});
+		}
+	
+		function nextChestOpen(floorNumber) {
+			const calls = [{
+				name: "towerOpenChest",
+				args: {
+					num: 2
+				},
+				ident: "towerOpenChest"
+			}];
+	
+			Send({ calls }).then(e => {
+				nextOpenChest(floorNumber);
+			});
+		}
+	
+		function nextOpenChest(floorNumber) {
+			if (floorNumber > 49) {
+				endTower('openChest 50 floor', floorNumber);
+				return;
+			}
+	
+			let nextOpenChestCall = {
+				calls: [{
+					name: "towerNextChest",
+					args: {},
+					ident: "towerNextChest"
+				}, {
+					name: "towerOpenChest",
+					args: {
+						num: 2
+					},
+					ident: "towerOpenChest"
+				}]
+			}
+			send(nextOpenChestCall, checkDataFloor);
+		}
+	
+		function endTower(reason, info) {
+			console.log(reason, info);
+			if (reason != 'noTower') {
+				farmTowerRewards(reason);
+			}
+			setProgress(`${I18N('TOWER')} ${I18N('COMPLETED')}!`, true);
+			resolve();
+		}
+	}
+	
+	this.HWHClasses.executeTower = executeTower;
+	
+	/**
+	 * Passage of the arena of the titans
+	 *
+	 * Прохождение арены титанов
+	 */
+	function testTitanArena() {
+		const { executeTitanArena } = HWHClasses;
+		return new Promise((resolve, reject) => {
+			titAren = new executeTitanArena(resolve, reject);
+			titAren.start();
+		});
+	}
+	
+	/**
+	 * Passage of the arena of the titans
+	 *
+	 * Прохождение арены титанов
+	 */
+	function executeTitanArena(resolve, reject) {
+		let titan_arena = [];
+		let finishListBattle = [];
+		/**
+		 * ID of the current batch
+		 *
+		 * Идетификатор текущей пачки
+		 */
+		let currentRival = 0;
+		/**
+		 * Number of attempts to finish off the pack
+		 *
+		 * Количество попыток добития пачки
+		 */
+		let attempts = 0;
+		/**
+		 * Was there an attempt to finish off the current shooting range
+		 *
+		 * Была ли попытка добития текущего тира
+		 */
+		let isCheckCurrentTier = false;
+		/**
+		 * Current shooting range
+		 *
+		 * Текущий тир
+		 */
+		let currTier = 0;
+		/**
+		 * Number of battles on the current dash
+		 *
+		 * Количество битв на текущем тире
+		 */
+		let countRivalsTier = 0;
+	
+		let callsStart = {
+			calls: [{
+				name: "titanArenaGetStatus",
+				args: {},
+				ident: "titanArenaGetStatus"
+			}, {
+				name: "teamGetAll",
+				args: {},
+				ident: "teamGetAll"
+			}]
+		}
+	
+		this.start = function () {
+			send(callsStart, startTitanArena);
+		}
+	
+		function startAgain() {
+			send(callsStart, startTitanArena);
+		}
+	
+		function startTitanArena(data) {
+			let titanArena = data.results[0].result.response;
+			if (titanArena.status == 'disabled') {
+				endTitanArena('disabled', titanArena);
+				return;
+			}
+	
+			let teamGetAll = data.results[1].result.response;
+			titan_arena = teamGetAll.titan_arena;
+	
+			checkTier(titanArena)
+		}
+	
+		function checkTier(titanArena) {
+			if (titanArena.status == "peace_time") {
+				endTitanArena('Peace_time', titanArena);
+				return;
+			}
+			currTier = titanArena.tier;
+			if (currTier) {
+				setProgress(`${I18N('TITAN_ARENA')}: ${I18N('LEVEL')} ${currTier}`);
+			}
+	
+			if (titanArena.status == "completed_tier") {
+				titanArenaCompleteTier();
+				return;
+			}
+			/**
+			 * Checking for the possibility of a raid
+			 * Проверка на возможность рейда
+			 */
+			if (titanArena.canRaid) {
+				titanArenaStartRaid();
+				return;
+			}
+			/**
+			 * Check was an attempt to achieve the current shooting range
+			 * Проверка была ли попытка добития текущего тира
+			 */
+			if (!isCheckCurrentTier) {
+				checkRivals(titanArena.rivals);
+				return;
+			}
+	
+			endTitanArena('Done or not canRaid', titanArena);
+		}
+		/**
+		 * Submit dash information for verification
+		 *
+		 * Отправка информации о тире на проверку
+		 */
+		function checkResultInfo(data) {
+			if (!data?.results) {
+				console.error(data);
+				startAgain();
+				return;
+			}
+			let titanArena = data.results[0].result.response;
+			checkTier(titanArena);
+		}
+		/**
+		 * Finish the current tier
+		 *
+		 * Завершить текущий тир
+		 */
+		function titanArenaCompleteTier() {
+			isCheckCurrentTier = false;
+			let calls = [{
+				name: "titanArenaCompleteTier",
+				args: {},
+				ident: "body"
+			}];
+			send({calls}, checkResultInfo);
+		}
+		/**
+		 * Gathering points to be completed
+		 *
+		 * Собираем точки которые нужно добить
+		 */
+		function checkRivals(rivals) {
+			finishListBattle = [];
+			for (let n in rivals) {
+				if (rivals[n].attackScore < 250) {
+					finishListBattle.push(n);
+				}
+			}
+			console.log('checkRivals', finishListBattle);
+			countRivalsTier = finishListBattle.length;
+			roundRivals();
+		}
+		/**
+		 * Selecting the next point to finish off
+		 *
+		 * Выбор следующей точки для добития
+		 */
+		function roundRivals() {
+			let countRivals = finishListBattle.length;
+			if (!countRivals) {
+				/**
+				 * Whole range checked
+				 *
+				 * Весь тир проверен
+				 */
+				isCheckCurrentTier = true;
+				titanArenaGetStatus();
+				return;
+			}
+			// setProgress('TitanArena: Уровень ' + currTier + ' Бои: ' + (countRivalsTier - countRivals + 1) + '/' + countRivalsTier);
+			currentRival = finishListBattle.pop();
+			attempts = +currentRival;
+			// console.log('roundRivals', currentRival);
+			titanArenaStartBattle(currentRival);
+		}
+		/**
+		 * The start of a solo battle
+		 *
+		 * Начало одиночной битвы
+		 */
+		function titanArenaStartBattle(rivalId) {
+			let calls = [{
+				name: "titanArenaStartBattle",
+				args: {
+					rivalId: rivalId,
+					titans: titan_arena
+				},
+				ident: "body"
+			}];
+			send({calls}, calcResult);
+		}
+		/**
+		 * Calculation of the results of the battle
+		 *
+		 * Расчет результатов боя
+		 */
+		function calcResult(data) {
+			let battlesInfo = data.results[0].result.response.battle;
+			/**
+			 * If attempts are equal to the current battle number we make
+			 * Если попытки равны номеру текущего боя делаем прерасчет
+			 */
+			if (attempts == currentRival) {
+				preCalcBattle(battlesInfo);
+				return;
+			}
+			/**
+			 * If there are still attempts, we calculate a new battle
+			 * Если попытки еще есть делаем расчет нового боя
+			 */
+			if (attempts > 0) {
+				attempts--;
+				calcBattleResult(battlesInfo)
+					.then(resultCalcBattle);
+				return;
+			}
+			/**
+			 * Otherwise, go to the next opponent
+			 * Иначе переходим к следующему сопернику
+			 */
+			roundRivals();
+		}
+		/**
+		 * Processing the results of the battle calculation
+		 *
+		 * Обработка результатов расчета битвы
+		 */
+		async function resultCalcBattle(resultBattle) {
+			// console.log('resultCalcBattle', currentRival, attempts, resultBattle.result.win);
+			/**
+			 * If the current calculation of victory is not a chance or the attempt ended with the finish the battle
+			 * Если текущий расчет победа или шансов нет или попытки кончились завершаем бой
+			 */
+			if (resultBattle.result.win || !attempts) {
+				let { progress, result } = resultBattle;
+				/*
+				if (!resultBattle.result.win && isChecked('tryFixIt_v2')) {
+					const bFix = new BestOrWinFixBattle(resultBattle.battleData);
+					bFix.isGetTimer = false;
+					bFix.maxTimer = 100;
+					const resultFix = await bFix.start(Date.now() + 6e4, 500);
+					if (resultFix.value > 0) {
+						progress = resultFix.progress;
+						result = resultFix.result;
+					}
+				}
+				*/
+				titanArenaEndBattle({
+					progress,
+					result,
+					rivalId: resultBattle.battleData.typeId,
+				});
+				return;
+			}
+			/**
+			 * If not victory and there are attempts we start a new battle
+			 * Если не победа и есть попытки начинаем новый бой
+			 */
+			titanArenaStartBattle(resultBattle.battleData.typeId);
+		}
+		/**
+		 * Returns the promise of calculating the results of the battle
+		 *
+		 * Возращает промис расчета результатов битвы
+		 */
+		function getBattleInfo(battle, isRandSeed) {
+			return new Promise(function (resolve) {
+				battle = structuredClone(battle);
+				if (isRandSeed) {
+					battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
+				}
+				// console.log(battle.seed);
+				BattleCalc(battle, "get_titanClanPvp", e => resolve(e));
+			});
+		}
+		/**
+		 * Recalculate battles
+		 *
+		 * Прерасчтет битвы
+		 */
+		function preCalcBattle(battle) {
+			let actions = [getBattleInfo(battle, false)];
+			const countTestBattle = getInput('countTestBattle');
+			for (let i = 0; i < countTestBattle; i++) {
+				actions.push(getBattleInfo(battle, true));
+			}
+			Promise.all(actions)
+				.then(resultPreCalcBattle);
+		}
+		/**
+		 * Processing the results of the battle recalculation
+		 *
+		 * Обработка результатов прерасчета битвы
+		 */
+		function resultPreCalcBattle(e) {
+			let wins = e.map(n => n.result.win);
+			let firstBattle = e.shift();
+			let countWin = wins.reduce((w, s) => w + s);
+			const countTestBattle = getInput('countTestBattle');
+			console.log('resultPreCalcBattle', `${countWin}/${countTestBattle}`)
+			if (countWin > 0) {
+				attempts = getInput('countAutoBattle');
+			} else {
+				attempts = 0;
+			}
+			resultCalcBattle(firstBattle);
+		}
+	
+		/**
+		 * Complete an arena battle
+		 *
+		 * Завершить битву на арене
+		 */
+		function titanArenaEndBattle(args) {
+			let calls = [{
+				name: "titanArenaEndBattle",
+				args,
+				ident: "body"
+			}];
+			send({calls}, resultTitanArenaEndBattle);
+		}
+	
+		function resultTitanArenaEndBattle(e) {
+			let attackScore = e.results[0].result.response.attackScore;
+			let numReval = countRivalsTier - finishListBattle.length;
+			setProgress(`${I18N('TITAN_ARENA')}: ${I18N('LEVEL')} ${currTier} </br>${I18N('BATTLES')}: ${numReval}/${countRivalsTier} - ${attackScore}`);
+			// console.log('resultTitanArenaEndBattle', e)
+			console.log('resultTitanArenaEndBattle', numReval + '/' + countRivalsTier, attempts)
+			roundRivals();
+		}
+		/**
+		 * Arena State
+		 *
+		 * Состояние арены
+		 */
+		function titanArenaGetStatus() {
+			let calls = [{
+				name: "titanArenaGetStatus",
+				args: {},
+				ident: "body"
+			}];
+			send({calls}, checkResultInfo);
+		}
+		/**
+		 * Arena Raid Request
+		 *
+		 * Запрос рейда арены
+		 */
+		function titanArenaStartRaid() {
+			let calls = [{
+				name: "titanArenaStartRaid",
+				args: {
+					titans: titan_arena
+				},
+				ident: "body"
+			}];
+			send({calls}, calcResults);
+		}
+	
+		function calcResults(data) {
+			let battlesInfo = data.results[0].result.response;
+			let {attackers, rivals} = battlesInfo;
+	
+			let promises = [];
+			for (let n in rivals) {
+				rival = rivals[n];
+				promises.push(calcBattleResult({
+					attackers: attackers,
+					defenders: [rival.team],
+					seed: rival.seed,
+					typeId: n,
+				}));
+			}
+	
+			Promise.all(promises)
+				.then(results => {
+					const endResults = {};
+					for (let info of results) {
+						let id = info.battleData.typeId;
+						endResults[id] = {
+							progress: info.progress,
+							result: info.result,
+						}
+					}
+					titanArenaEndRaid(endResults);
+				});
+		}
+	
+		function calcBattleResult(battleData) {
+			return new Promise(function (resolve, reject) {
+				BattleCalc(battleData, "get_titanClanPvp", resolve);
+			});
+		}
+	
+		/**
+		 * Sending Raid Results
+		 *
+		 * Отправка результатов рейда
+		 */
+		function titanArenaEndRaid(results) {
+			titanArenaEndRaidCall = {
+				calls: [{
+					name: "titanArenaEndRaid",
+					args: {
+						results
+					},
+					ident: "body"
+				}]
+			}
+			send(titanArenaEndRaidCall, checkRaidResults);
+		}
+	
+		function checkRaidResults(data) {
+			results = data.results[0].result.response.results;
+			isSucsesRaid = true;
+			for (let i in results) {
+				isSucsesRaid &&= (results[i].attackScore >= 250);
+			}
+	
+			if (isSucsesRaid) {
+				titanArenaCompleteTier();
+			} else {
+				titanArenaGetStatus();
+			}
+		}
+	
+		function titanArenaFarmDailyReward() {
+			titanArenaFarmDailyRewardCall = {
+				calls: [{
+					name: "titanArenaFarmDailyReward",
+					args: {},
+					ident: "body"
+				}]
+			}
+			send(titanArenaFarmDailyRewardCall, () => {console.log('Done farm daily reward')});
+		}
+	
+		function endTitanArena(reason, info) {
+			if (!['Peace_time', 'disabled'].includes(reason)) {
+				titanArenaFarmDailyReward();
+			}
+			console.log(reason, info);
+			setProgress(`${I18N('TITAN_ARENA')} ${I18N('COMPLETED')}!`, true);
+			resolve();
+		}
+	}
+	
+	this.HWHClasses.executeTitanArena = executeTitanArena;
 	
 	/**
 	 * Attack of the minions of Asgard
@@ -10620,7 +10788,7 @@
 		}
 	
 		this.start = function () {
-			send(JSON.stringify(callsExecuteRaidNodes), startRaidNodes);
+			send(callsExecuteRaidNodes, startRaidNodes);
 		}
 	
 		async function startRaidNodes(data) {
@@ -10645,10 +10813,12 @@
 			raidData.favor = teamGetFavor.clanRaid_nodes;
 	
 			if (isNotFullPack) {
-				if (await popup.confirm(I18N('MINIONS_WARNING'), [
-					{ msg: I18N('BTN_NO'), result: true },
-					{ msg: I18N('BTN_YES'), result: false },
-				])) {
+				if (
+					await popup.confirm(I18N('MINIONS_WARNING'), [
+						{ msg: I18N('BTN_NO'), result: true, color: 'red' },
+						{ msg: I18N('BTN_YES'), result: false, color: 'green' },
+					])
+				) {
 					endRaidNodes('isNotFullPack');
 					return;
 				}
@@ -10713,7 +10883,7 @@
 				ident: "body"
 			}];
 	
-			send(JSON.stringify({calls}), resultNodeBattles);
+			send({calls}, resultNodeBattles);
 		}
 	
 		function resultNodeBattles(e) {
@@ -10904,12 +11074,14 @@
 	
 			await popup.confirm(
 				`${I18N('ROUND_STAT')} ${damages.length} ${I18N('BATTLE')}:` +
-				`<br>${I18N('MINIMUM')}: ` + minDamage.toLocaleString() +
-				`<br>${I18N('MAXIMUM')}: ` + maxDamage.toLocaleString() +
-				`<br>${I18N('AVERAGE')}: ` + avgDamage.toLocaleString()
-				, [
-					{ msg: I18N('BTN_OK'), result: 0},
-				])
+					`<br>${I18N('MINIMUM')}: ` +
+					minDamage.toLocaleString() +
+					`<br>${I18N('MAXIMUM')}: ` +
+					maxDamage.toLocaleString() +
+					`<br>${I18N('AVERAGE')}: ` +
+					avgDamage.toLocaleString(),
+				[{ msg: I18N('BTN_OK'), result: 0, color: 'green' }]
+			);
 			endBossBattle(I18N('BTN_CANCEL'));
 		}
 	
@@ -11294,7 +11466,7 @@
 					endTime: this.endTime - 1e4,
 					maxCount: this.maxCount,
 				};
-				socket.send(JSON.stringify(newTask));
+				socket.send(newTask);
 			};
 	
 			socket.onmessage = this.onmessage.bind(this);
@@ -11581,11 +11753,10 @@
 	
 			if (nameFuncStartBattle == 'invasion_bossStart' ||
 				nameFuncStartBattle == 'bossAttack') {
-				const result = await popup.confirm(
-					I18N('BOSS_VICTORY_IMPOSSIBLE', { battles: results.length }), [
-					{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
-					{ msg: I18N('BTN_DO_IT'), result: true },
-				])
+				const result = await popup.confirm(I18N('BOSS_VICTORY_IMPOSSIBLE', { battles: results.length }), [
+					{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red' },
+					{ msg: I18N('BTN_DO_IT'), result: true, color: 'green' },
+				]);
 				if (result) {
 					setIsCancalBattle(false);
 					startBattle();
@@ -11598,14 +11769,20 @@
 	
 			const result = await popup.confirm(
 				I18N('VICTORY_IMPOSSIBLE') +
-				`<br>${I18N('ROUND_STAT')} ${results.length} ${I18N('BATTLE')}:` +
-				`<br>${I18N('MINIMUM')}: ` + minCoeff.toLocaleString() +
-				`<br>${I18N('MAXIMUM')}: ` + maxCoeff.toLocaleString() +
-				`<br>${I18N('AVERAGE')}: ` + avgCoeff.toLocaleString() +
-				`<br>${I18N('FIND_COEFF')} ` + avgCoeff.toLocaleString(), [
-				{ msg: I18N('BTN_CANCEL'), result: 0, isCancel: true },
-				{ msg: I18N('BTN_GO'), isInput: true, default: Math.round(avgCoeff * 1000) / 1000 },
-			])
+					`<br>${I18N('ROUND_STAT')} ${results.length} ${I18N('BATTLE')}:` +
+					`<br>${I18N('MINIMUM')}: ` +
+					minCoeff.toLocaleString() +
+					`<br>${I18N('MAXIMUM')}: ` +
+					maxCoeff.toLocaleString() +
+					`<br>${I18N('AVERAGE')}: ` +
+					avgCoeff.toLocaleString() +
+					`<br>${I18N('FIND_COEFF')} ` +
+					avgCoeff.toLocaleString(),
+				[
+					{ msg: I18N('BTN_CANCEL'), result: 0, isCancel: true, color: 'red' },
+					{ msg: I18N('BTN_GO'), isInput: true, default: Math.round(avgCoeff * 1000) / 1000, color: 'green' },
+				]
+			);
 			if (result) {
 				findCoeff = result;
 				setIsCancalBattle(false);
@@ -11700,7 +11877,7 @@
 					return;
 				}
 				const result = await popup.confirm(I18N('ERROR_DURING_THE_BATTLE') + '<br>' + e.error.description, [
-					{ msg: I18N('BTN_OK'), result: false },
+					{ msg: I18N('BTN_OK'), result: false, color: 'green' },
 					{ msg: I18N('RELOAD_GAME'), result: true },
 				]);
 				endAutoBattle('Error', e.error);
@@ -11745,7 +11922,7 @@
 	
 					let winTimer = await popup.confirm(`Secret number:`, [
 						{ result: false, isClose: true },
-						{ msg: 'Go', isInput: true, default: timer },
+						{ msg: 'Go', isInput: true, default: timer, color: 'green' },
 					]);
 					winTimer = Number.parseFloat(winTimer);
 					if (winTimer) {
@@ -11832,9 +12009,7 @@
 				calls[0].args.id = lastBattleArg.id;
 			}
 	
-			send(JSON.stringify({
-				calls
-			}), async e => {
+			send({calls}, async e => {
 				console.log(e);
 				if (isCancal) {
 					startBattle();
@@ -11874,7 +12049,7 @@
 							winTimer,
 						}),
 						[
-							{ msg: I18N('BTN_OK'), result: 0 },
+							{ msg: I18N('BTN_OK'), result: 0, color: 'green' },
 							{ msg: I18N('MAKE_A_SYNC'), result: 1 },
 							{ msg: I18N('RELOAD_GAME'), result: 2 },
 						]
@@ -11908,9 +12083,9 @@
 	
 	function testDailyQuests() {
 		const { dailyQuests } = HWHClasses;
-		return new Promise(async (resolve, reject) => {
+		return new Promise((resolve, reject) => {
 			const quests = new dailyQuests(resolve, reject);
-			await quests.autoInit(true);
+			quests.init(questsInfo);
 			quests.start();
 		});
 	}
@@ -11922,12 +12097,13 @@
 	 */
 	class dailyQuests {
 		/**
-		 * Send(' {"calls":[{"name":"userGetInfo","args":{},"ident":"body"}]}').then(e => console.log(e))
-		 * Send(' {"calls":[{"name":"heroGetAll","args":{},"ident":"body"}]}').then(e => console.log(e))
-		 * Send(' {"calls":[{"name":"titanGetAll","args":{},"ident":"body"}]}').then(e => console.log(e))
-		 * Send(' {"calls":[{"name":"inventoryGet","args":{},"ident":"body"}]}').then(e => console.log(e))
-		 * Send(' {"calls":[{"name":"questGetAll","args":{},"ident":"body"}]}').then(e => console.log(e))
-		 * Send(' {"calls":[{"name":"bossGetAll","args":{},"ident":"body"}]}').then(e => console.log(e))
+		 * Caller.send('userGetInfo').then(e => console.log(e));
+		 * Caller.send('heroGetAll').then(e => console.log(e));
+		 * Caller.send('titanGetAll').then(e => console.log(e));
+		 * Caller.send('inventoryGet').then(e => console.log(e));
+		 * Caller.send('questGetAll').then(e => console.log(e));
+		 * Caller.send('bossGetAll').then(e => console.log(e));
+		 * Caller.send('missionGetAll').then(e => console.log(e));
 		 */
 		callsList = ['userGetInfo', 'heroGetAll', 'titanGetAll', 'inventoryGet', 'questGetAll', 'bossGetAll', 'missionGetAll'];
 	
@@ -11968,7 +12144,9 @@
 				doItCall: () => {
 					const selectedMissionId = this.getHeroicMissionId();
 					const goldTicket = !!this.questInfo.inventoryGet.consumable[151];
-					const vipLevel = Math.max(...lib.data.level.vip.filter(l => l.vipPoints <= +this.questInfo.userGetInfo.vipPoints).map(l => l.level));
+					const vipLevel = Math.max(
+						...lib.data.level.vip.filter((l) => l.vipPoints <= +this.questInfo.userGetInfo.vipPoints).map((l) => l.level)
+					);
 					// Возвращаем массив команд для рейда
 					if (vipLevel >= 5 || goldTicket) {
 						return [{ name: 'missionRaid', args: { id: selectedMissionId, times: 3 }, ident: 'missionRaid_1' }];
@@ -12210,20 +12388,16 @@
 	
 		init(questInfo) {
 			this.questInfo = questInfo;
-			this.isAuto = true;
+			this.isAuto = false;
 		}
 	
 		async autoInit(isAuto) {
 			this.isAuto = isAuto || false;
+			const caller = new Caller(this.callsList);
+			await caller.send();
 			const quests = {};
-			const calls = this.callsList.map((name) => ({
-				name,
-				args: {},
-				ident: name,
-			}));
-			const result = await Send(JSON.stringify({ calls })).then((e) => e.results);
-			for (const call of result) {
-				quests[call.ident] = call.result.response;
+			for (const name in caller.results) {
+				quests[name] = caller.results[name][0];
 			}
 			this.questInfo = quests;
 		}
@@ -12261,17 +12435,12 @@
 			let taskList = [];
 			if (this.isAuto) {
 				taskList = weCanDo;
-				// Auto mode: check all tasks and update selectedActions
-				taskList.forEach((e) => {
-					selectedActions[e.name].checked = true;
-				});
-				setSaveVal('selectedActions', selectedActions);
 			} else {
 				const answer = await popup.confirm(
 					`${I18N('YOU_CAN_COMPLETE')}:`,
 					[
-						{ msg: I18N('BTN_DO_IT'), result: true },
-						{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
+						{ msg: I18N('BTN_DO_IT'), result: true, color: 'green' },
+						{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red' },
 					],
 					weCanDo
 				);
@@ -12286,17 +12455,21 @@
 				setSaveVal('selectedActions', selectedActions);
 			}
 	
-			const calls = [];
 			let countChecked = 0;
 			for (const task of taskList) {
 				if (task.checked) {
-					countChecked++;
 					const quest = this.dataQuests[task.name];
 					console.log(quest.description);
 	
 					if (quest.doItCall) {
 						const doItCall = quest.doItCall.call(this);
-						calls.push(...doItCall);
+						try {
+							await Caller.send(doItCall);
+						} catch (e) {
+							console.error(e);
+							continue;
+						}
+						countChecked++;
 					}
 				}
 			}
@@ -12306,10 +12479,6 @@
 				return;
 			}
 	
-			const result = await Send(JSON.stringify({ calls }));
-			if (result.error) {
-				console.error(result.error, result.error.call);
-			}
 			this.end(`${I18N('COMPLETED_QUESTS')}: ${countChecked}`);
 		}
 	
@@ -12585,7 +12754,7 @@
 		}
 	
 		getOutlandChest() {
-			const bosses = this.questInfo['bossGetAll'];
+			const bosses = this.questInfo['bossGetAll'].bosses;
 	
 			const calls = [];
 	
@@ -12695,8 +12864,7 @@
 			// Собираем дропы из героических миссий
 			const drops = heroicMissions.map((mission) => {
 				const lastWave = mission.normalMode.waves[mission.normalMode.waves.length - 1];
-				const allRewards = lastWave.enemies[lastWave.enemies.length - 1]
-					.drop.map((drop) => drop.reward);
+				const allRewards = lastWave.enemies[lastWave.enemies.length - 1].drop.map((drop) => drop.reward);
 	
 				const heroId = +Object.keys(allRewards.find((reward) => reward.fragmentHero).fragmentHero).pop();
 	
@@ -12731,7 +12899,6 @@
 		const { doYourBest } = HWHClasses;
 		return new Promise((resolve, reject) => {
 			const doIt = new doYourBest(resolve, reject);
-			doIt.isAuto = true;
 			doIt.start();
 		});
 	}
@@ -12742,101 +12909,108 @@
 	 * Кнопка сделать все
 	 */
 	class doYourBest {
-		isAuto = false;
-	
 		funcList = [
+			{
+				name: 'tidyInventory',
+				label: I18N('TIDY_INVENTORY'),
+				checked: true,
+			},
 			{
 				name: 'getOutland',
 				label: I18N('ASSEMBLE_OUTLAND'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'testTower',
 				label: I18N('PASS_THE_TOWER'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'checkExpedition',
 				label: I18N('CHECK_EXPEDITIONS'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'testTitanArena',
 				label: I18N('COMPLETE_TOE'),
-				checked: false
-			},
-			{
-				name: 'testBothArenas',
-				label: I18N('AUTO_ARENAS'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'mailGetAll',
 				label: I18N('COLLECT_MAIL'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'collectAllStuff',
 				label: I18N('COLLECT_MISC'),
 				title: I18N('COLLECT_MISC_TITLE'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'getDailyBonus',
 				label: I18N('DAILY_BONUS'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'dailyQuests',
 				label: I18N('DO_DAILY_QUESTS'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'rollAscension',
 				label: I18N('SEER_TITLE'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'questAllFarm',
 				label: I18N('COLLECT_QUEST_REWARDS'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'testDungeon',
 				label: I18N('COMPLETE_DUNGEON'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'synchronization',
 				label: I18N('MAKE_A_SYNC'),
-				checked: false
+				checked: false,
 			},
 			{
 				name: 'reloadGame',
 				label: I18N('RELOAD_GAME'),
-				checked: false
+				checked: false,
 			},
 		];
 	
 		functions = {
+			tidyInventory: async () => {
+				const { InventoryTidier } = HWHClasses;
+				const tidyInv = new InventoryTidier();
+				await tidyInv.runSilent();
+			},
 			getOutland,
 			testTower,
 			checkExpedition,
 			testTitanArena,
-			testBothArenas,
 			mailGetAll,
 			collectAllStuff: async () => {
 				await offerFarmAllReward();
-				await Send('{"calls":[{"name":"subscriptionFarm","args":{},"ident":"body"},{"name":"zeppelinGiftFarm","args":{},"ident":"zeppelinGiftFarm"},{"name":"grandFarmCoins","args":{},"ident":"grandFarmCoins"},{"name":"gacha_refill","args":{"ident":"heroGacha"},"ident":"gacha_refill"}]}');
+				await Caller.send(['subscriptionFarm', 'zeppelinGiftFarm', 'grandFarmCoins', { name: 'gacha_refill', args: { ident: 'heroGacha' } }]);
 			},
 			dailyQuests: async function () {
-				const quests = new dailyQuests(() => { }, () => { });
+				const quests = new dailyQuests(
+					() => {},
+					() => {}
+				);
 				await quests.autoInit(true);
 				await quests.start();
 			},
 			rollAscension,
 			getDailyBonus,
-			questAllFarm,
+			questAllFarm: async () => {
+				await rewardsAndMailFarm(false);
+			},
 			testDungeon,
 			synchronization: async () => {
 				cheats.refreshGame();
@@ -12844,78 +13018,71 @@
 			reloadGame: async () => {
 				location.reload();
 			},
-		}
+		};
 	
 		constructor(resolve, reject, questInfo) {
 			this.resolve = resolve;
 			this.reject = reject;
-			this.questInfo = questInfo
+			this.questInfo = questInfo;
 		}
 	
 		async start() {
 			const selectedDoIt = getSaveVal('selectedDoIt', {});
-
-			if (this.isAuto) {
-				// Auto mode: check all functions except reloadGame and skip popup
-				this.funcList.forEach(task => {
-					if (task.name !== 'reloadGame') {
-						task.checked = true;
-						selectedDoIt[task.name] = { checked: true };
-					} else {
-						task.checked = false;
-						selectedDoIt[task.name] = { checked: false };
-					}
-				});
-				setSaveVal('selectedDoIt', selectedDoIt);
-			} else {
-				// Manual mode: show popup
-				this.funcList.forEach(task => {
-					if (!selectedDoIt[task.name]) {
-						selectedDoIt[task.name] = {
-							checked: task.checked
-						}
-					} else {
-						task.checked = selectedDoIt[task.name].checked
-					}
-				});
-
-				const answer = await popup.confirm(I18N('RUN_FUNCTION'), [
-					{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true },
-					{ msg: I18N('BTN_GO'), result: true },
-				], this.funcList);
-
-				if (!answer) {
-					this.end('');
-					return;
+	
+			this.funcList.forEach((task) => {
+				if (!selectedDoIt[task.name]) {
+					selectedDoIt[task.name] = {
+						checked: task.checked,
+					};
+				} else {
+					task.checked = selectedDoIt[task.name].checked;
 				}
-
-				const taskList = popup.getCheckBoxes();
-				taskList.forEach(task => {
-					selectedDoIt[task.name].checked = task.checked;
-				});
-				setSaveVal('selectedDoIt', selectedDoIt);
+			});
+	
+			const answer = await popup.confirm(
+				I18N('RUN_FUNCTION'),
+				[
+					{ msg: I18N('BTN_CANCEL'), result: false, isCancel: true, color: 'red' },
+					{ msg: I18N('BTN_GO'), result: true, color: 'green' },
+				],
+				this.funcList
+			);
+	
+			if (!answer) {
+				this.end('');
+				return;
 			}
-
-			// Execute all checked functions
-			for (const task of this.funcList) {
+	
+			const taskList = popup.getCheckBoxes();
+			taskList.forEach((task) => {
+				selectedDoIt[task.name].checked = task.checked;
+			});
+			setSaveVal('selectedDoIt', selectedDoIt);
+			for (const task of popup.getCheckBoxes()) {
 				if (task.checked) {
 					try {
 						setProgress(`${task.label} <br>${I18N('PERFORMED')}!`);
 						await this.functions[task.name]();
 						setProgress(`${task.label} <br>${I18N('DONE')}!`);
 					} catch (error) {
-						if (await popup.confirm(`${I18N('ERRORS_OCCURRES')}:<br> ${task.label} <br>${I18N('COPY_ERROR')}?`, [
-							{ msg: I18N('BTN_NO'), result: false },
-							{ msg: I18N('BTN_YES'), result: true },
-						])) {
+						if (
+							await popup.confirm(`${I18N('ERRORS_OCCURRES')}:<br> ${task.label} <br>${I18N('COPY_ERROR')}?`, [
+								{ msg: I18N('BTN_NO'), result: false, color: 'red' },
+								{ msg: I18N('BTN_YES'), result: true, color: 'green' },
+							])
+						) {
 							this.errorHandling(error);
 						}
 					}
 				}
 			}
-			setTimeout((msg) => {
-				this.end(msg);
-			}, 2000, I18N('ALL_TASK_COMPLETED'));
+			setTimeout(
+				(msg) => {
+					this.end(msg);
+				},
+				2000,
+				I18N('ALL_TASK_COMPLETED')
+			);
 			return;
 		}
 	
@@ -12924,7 +13091,7 @@
 			let errorInfo = error.toString() + '\n';
 			try {
 				const errorStack = error.stack.split('\n');
-				const endStack = errorStack.map(e => e.split('@')[0]).indexOf("testDoYourBest");
+				const endStack = errorStack.map((e) => e.split('@')[0]).indexOf('testDoYourBest');
 				errorInfo += errorStack.slice(0, endStack).join('\n');
 			} catch (e) {
 				errorInfo += error.stack;
@@ -13020,13 +13187,13 @@
 		async start(type) {
 			this.type = type || this.type;
 			this.callAdventureInfo.name = this.actions[this.type].getInfo;
-			const data = await Send(JSON.stringify({
+			const data = await Send({
 				calls: [
 					this.callAdventureInfo,
 					this.callTeamGetAll,
 					this.callTeamGetFavor
 				]
-			}));
+			});
 			return this.checkAdventureInfo(data.results);
 		}
 	
@@ -13038,12 +13205,14 @@
 					msg: I18N('START_ADVENTURE'),
 					placeholder: '1,2,3,4,5,6',
 					isInput: true,
-					default: getSaveVal(keyPath, oldVal)
+					default: getSaveVal(keyPath, oldVal),
+					color: 'green',
 				},
 				{
 					msg: I18N('BTN_CANCEL'),
 					result: false,
-					isCancel: true
+					isCancel: true,
+					color: 'red',
 				},
 			]);
 			if (!answer) {
@@ -13140,11 +13309,13 @@
 				return this.end();
 			}
 			this.path = this.path.slice(position);
-			if ((this.path.length - 1) > this.turnsLeft &&
-				await popup.confirm(I18N('ATTEMPTS_NOT_ENOUGH'), [
-					{ msg: I18N('YES_CONTINUE'), result: false },
-					{ msg: I18N('BTN_NO'), result: true },
-				])) {
+			if (
+				this.path.length - 1 > this.turnsLeft &&
+				(await popup.confirm(I18N('ATTEMPTS_NOT_ENOUGH'), [
+					{ msg: I18N('YES_CONTINUE'), result: false, color: 'green' },
+					{ msg: I18N('BTN_NO'), result: true, color: 'red' },
+				]))
+			) {
 				this.terminatеReason = I18N('NOT_ENOUGH_AP');
 				return this.end();
 			}
@@ -13254,10 +13425,12 @@
 				}
 			} catch (error) {
 				console.error(error);
-				if (await popup.confirm(I18N('ERROR_OF_THE_BATTLE_COPY'), [
-					{ msg: I18N('BTN_NO'), result: false },
-					{ msg: I18N('BTN_YES'), result: true },
-				])) {
+				if (
+					await popup.confirm(I18N('ERROR_OF_THE_BATTLE_COPY'), [
+						{ msg: I18N('BTN_NO'), result: false, color: 'red' },
+						{ msg: I18N('BTN_YES'), result: true, color: 'green' },
+					])
+				) {
 					this.errorHandling(error, data);
 				}
 				this.terminatеReason = I18N('ERROR_DURING_THE_BATTLE');
@@ -13295,7 +13468,7 @@
 			this.callStartBattle.name = this.actions[this.type].startBattle;
 			this.callStartBattle.args = this.args
 			const calls = [this.callStartBattle];
-			return Send(JSON.stringify({ calls }));
+			return Send({ calls });
 		}
 	
 		cancelBattle(battle) {
@@ -13323,7 +13496,7 @@
 			this.callEndBattle.args.result = battle.result
 			this.callEndBattle.args.progress = battle.progress
 			const calls = [this.callEndBattle];
-			return Send(JSON.stringify({ calls }));
+			return Send({ calls });
 		}
 	
 		/**
@@ -13354,7 +13527,7 @@
 			this.callCollectBuff.name = this.actions[this.type].collectBuff;
 			this.callCollectBuff.args = { buff, path };
 			const calls = [this.callCollectBuff];
-			return Send(JSON.stringify({ calls }));
+			return Send({ calls });
 		}
 	
 		getNodeInfo(nodeId) {
@@ -13531,7 +13704,7 @@
 	
 				// Автоматический подбор пачки
 				if (this.isAuto) {
-					if (this.mandatoryId <= 4000 && this.mandatoryId != 13) {
+					if (this.mandatoryId < 4000 && this.mandatoryId != 13) {
 						this.end(I18N('BRAWL_AUTO_PACK_NOT_CUR_HERO'));
 						return;
 					}
@@ -13552,6 +13725,10 @@
 	
 		async updateTitanPack(enemieHeroes) {
 			const packs = [
+				[4000, 4001, 4002, 4003, 4004],
+				[4010, 4011, 4012, 4013, 4014],
+				[4020, 4021, 4022, 4023, 4024],
+	
 				[4033, 4040, 4041, 4042, 4043],
 				[4032, 4040, 4041, 4042, 4043],
 				[4031, 4040, 4041, 4042, 4043],
@@ -13870,13 +14047,21 @@
 					win: 0,
 					winRate: 0,
 				};
-				for (let i = 1; i <= 20; i++) {
+				for (let i = 1; i <= 26; i++) {
 					battle.seed = Math.floor(Date.now() / 1000) + Math.random() * 1000;
 					const result = await Calc(battle);
 					stat.win += result.result.win;
 					stat.count += 1;
 					stat.winRate = stat.win / stat.count;
-					if (!isRandom || (i >= 2 && stat.winRate < 0.65) || (i >= 10 && stat.winRate == 1)) {
+	
+					if (!isRandom) {
+						break;
+					}
+					if (stat.win >= 22) {
+						break;
+					}
+					const losses = stat.count - stat.win;
+					if (losses >= 4) {
 						break;
 					}
 				}
@@ -13887,7 +14072,7 @@
 						heroes: pack,
 					};
 				}
-				if (stat.winRate > 0.85) {
+				if (stat.winRate > 0.84) {
 					return {
 						favor: {},
 						heroes: pack,
@@ -13918,7 +14103,251 @@
 		}
 	
 		async updateHeroesPack(enemieHeroes) {
-			const packs = [{id:1,args:{userId:-830021,heroes:[63,13,9,48,1],pet:6006,favor:{1:6004,9:6005,13:6002,48:6e3,63:6009}},attackers:{1:{id:1,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{2:130,3:130,4:130,5:130,6022:130,8268:1,8269:1},power:198058,star:6,runes:[43750,43750,43750,43750,43750],skins:{1:60,54:60,95:60,154:60,250:60,325:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6004,type:"hero",perks:[4,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:3093,hp:419649,intelligence:3644,physicalAttack:11481.6,strength:17049,armor:12720,dodge:17232.28,magicPenetration:22780,magicPower:55816,magicResist:1580,modifiedSkillTier:5,skin:0,favorPetId:6004,favorPower:11064},9:{id:9,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{335:130,336:130,337:130,338:130,6027:130,8270:1,8271:1},power:195886,star:6,runes:[43750,43750,43750,43750,43750],skins:{9:60,41:60,163:60,189:60,311:60,338:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6005,type:"hero",perks:[7,2,20],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:3068,hp:227134,intelligence:19003,physicalAttack:7020.32,strength:3068,armor:19995,dodge:14644,magicPower:64780.6,magicResist:31597,modifiedSkillTier:5,skin:0,favorPetId:6005,favorPower:11064},13:{id:"13",xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{452:130,453:130,454:130,455:130,6012:130,8274:1,8275:1},power:194833,star:6,runes:[43750,43750,43750,43750,43750],skins:{13:60,38:60,148:60,199:60,240:60,335:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6002,type:"hero",perks:[7,2,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:2885,hp:344763,intelligence:17625,physicalAttack:50,strength:3020,armor:19060,magicPenetration:58138.6,magicPower:70100.6,magicResist:27227,modifiedSkillTier:4,skin:0,favorPetId:6002,favorPower:11064},48:{id:48,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{240:130,241:130,242:130,243:130,6002:130},power:190584,star:6,runes:[43750,43750,43750,43750,43750],skins:{103:60,165:60,217:60,296:60,326:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6e3,type:"hero",perks:[5,2],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:17308,hp:397737,intelligence:2888,physicalAttack:40298.32,physicalCritChance:12280,strength:3169,armor:12185,armorPenetration:20137.6,magicResist:24816,skin:0,favorPetId:6e3,favorPower:11064},63:{id:63,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{442:130,443:130,444:130,445:130,6041:130,8272:1,8273:1},power:193520,star:6,runes:[43750,43750,43750,43750,43750],skins:{341:60,350:60,351:60,352:1},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6009,type:"hero",perks:[6,1,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:17931,hp:488832,intelligence:2737,physicalAttack:54213.6,strength:2877,armor:800,armorPenetration:32477.6,magicResist:8526,physicalCritChance:9545,modifiedSkillTier:3,skin:0,favorPetId:6009,favorPower:11064},6006:{id:6006,color:10,star:6,xp:450551,level:130,slots:[25,50,50,25,50,50],skills:{6030:130,6031:130},power:181943,type:"pet",perks:[5,9],name:null,intelligence:11064,magicPenetration:47911,strength:12360}}},{id:2,args:{userId:-830049,heroes:[46,13,52,49,4],pet:6006,favor:{4:6001,13:6002,46:6006,49:6004,52:6003}},attackers:{4:{id:4,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{255:130,256:130,257:130,258:130,6007:130},power:189782,star:6,runes:[43750,43750,43750,43750,43750],skins:{4:60,35:60,92:60,161:60,236:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6001,type:"hero",perks:[4,5,2,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:3065,hp:482631,intelligence:3402,physicalAttack:2800,strength:17488,armor:56262.6,magicPower:51021,magicResist:36971,skin:0,favorPetId:6001,favorPower:11064},13:{id:"13",xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{452:130,453:130,454:130,455:130,6012:130,8274:1,8275:1},power:194833,star:6,runes:[43750,43750,43750,43750,43750],skins:{13:60,38:60,148:60,199:60,240:60,335:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6002,type:"hero",perks:[7,2,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:2885,hp:344763,intelligence:17625,physicalAttack:50,strength:3020,armor:19060,magicPenetration:58138.6,magicPower:70100.6,magicResist:27227,modifiedSkillTier:4,skin:0,favorPetId:6002,favorPower:11064},46:{id:46,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{230:130,231:130,232:130,233:130,6032:130},power:189653,star:6,runes:[43750,43750,43750,43750,43750],skins:{101:60,159:60,178:60,262:60,315:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6006,type:"hero",perks:[9,5,1,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2122,hp:637517,intelligence:16208,physicalAttack:50,strength:5151,armor:38507.6,magicPower:74495.6,magicResist:22237,skin:0,favorPetId:6006,favorPower:11064},49:{id:49,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{245:130,246:130,247:130,248:130,6022:130},power:193163,star:6,runes:[43750,43750,43750,43750,43750],skins:{104:60,191:60,252:60,305:60,329:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6004,type:"hero",perks:[10,1,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:17935,hp:250405,intelligence:2790,physicalAttack:40413.6,strength:2987,armor:11655,dodge:14844.28,magicResist:3175,physicalCritChance:14135,skin:0,favorPetId:6004,favorPower:11064},52:{id:52,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{310:130,311:130,312:130,313:130,6017:130},power:185075,star:6,runes:[43750,43750,43750,43750,43750],skins:{188:60,213:60,248:60,297:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6003,type:"hero",perks:[5,8,2,13,15,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:18270,hp:226207,intelligence:2620,physicalAttack:44206,strength:3260,armor:13150,armorPenetration:40301,magicPower:9957.6,magicResist:33892.6,skin:0,favorPetId:6003,favorPower:11064},6006:{id:6006,color:10,star:6,xp:450551,level:130,slots:[25,50,50,25,50,50],skills:{6030:130,6031:130},power:181943,type:"pet",perks:[5,9],name:null,intelligence:11064,magicPenetration:47911,strength:12360}}},{id:3,args:{userId:8263225,heroes:[29,63,13,48,1],pet:6006,favor:{1:6004,13:6002,29:6006,48:6e3,63:6003}},attackers:{1:{id:1,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{2:130,3:130,4:130,5:130,6022:130,8268:1,8269:1},power:198058,star:6,runes:[43750,43750,43750,43750,43750],skins:{1:60,54:60,95:60,154:60,250:60,325:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6004,type:"hero",perks:[4,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:3093,hp:419649,intelligence:3644,physicalAttack:11481.6,strength:17049,armor:12720,dodge:17232.28,magicPenetration:22780,magicPower:55816,magicResist:1580,modifiedSkillTier:5,skin:0,favorPetId:6004,favorPower:11064},13:{id:"13",xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{452:130,453:130,454:130,455:130,6012:130,8274:1,8275:1},power:194833,star:6,runes:[43750,43750,43750,43750,43750],skins:{13:60,38:60,148:60,199:60,240:60,335:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6002,type:"hero",perks:[7,2,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:2885,hp:344763,intelligence:17625,physicalAttack:50,strength:3020,armor:19060,magicPenetration:58138.6,magicPower:70100.6,magicResist:27227,modifiedSkillTier:4,skin:0,favorPetId:6002,favorPower:11064},29:{id:29,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{145:130,146:130,147:130,148:130,6032:130},power:189790,star:6,runes:[43750,43750,43750,43750,43750],skins:{29:60,72:60,88:60,147:60,242:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6006,type:"hero",perks:[9,5,2,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2885,hp:491431,intelligence:18331,physicalAttack:106,strength:3020,armor:37716.6,magicPower:76792.6,magicResist:31377,skin:0,favorPetId:6006,favorPower:11064},48:{id:48,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{240:130,241:130,242:130,243:130,6002:130},power:190584,star:6,runes:[43750,43750,43750,43750,43750],skins:{103:60,165:60,217:60,296:60,326:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6e3,type:"hero",perks:[5,2],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:17308,hp:397737,intelligence:2888,physicalAttack:40298.32,physicalCritChance:12280,strength:3169,armor:12185,armorPenetration:20137.6,magicResist:24816,skin:0,favorPetId:6e3,favorPower:11064},63:{id:63,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{442:130,443:130,444:130,445:130,6017:130,8272:1,8273:1},power:191031,star:6,runes:[43750,43750,43750,43750,43750],skins:{341:60,350:60,351:60,352:1},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6003,type:"hero",perks:[6,1,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:17931,hp:488832,intelligence:2737,physicalAttack:44256,strength:2877,armor:800,armorPenetration:22520,magicPower:9957.6,magicResist:18483.6,physicalCritChance:9545,modifiedSkillTier:3,skin:0,favorPetId:6003,favorPower:11064},6006:{id:6006,color:10,star:6,xp:450551,level:130,slots:[25,50,50,25,50,50],skills:{6030:130,6031:130},power:181943,type:"pet",perks:[5,9],name:null,intelligence:11064,magicPenetration:47911,strength:12360}}},{id:4,args:{userId:8263247,heroes:[55,13,40,51,1],pet:6006,favor:{1:6007,13:6002,40:6004,51:6006,55:6001}},attackers:{1:{id:1,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{2:130,3:130,4:130,5:130,6035:130,8268:1,8269:1},power:195170,star:6,runes:[43750,43750,43750,43750,43750],skins:{1:60,54:60,95:60,154:60,250:60,325:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6007,type:"hero",perks:[4,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:3093,hp:419649,intelligence:3644,physicalAttack:1524,strength:17049,armor:22677.6,dodge:14245,magicPenetration:22780,magicPower:65773.6,magicResist:1580,modifiedSkillTier:5,skin:0,favorPetId:6007,favorPower:11064},13:{id:"13",xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{452:130,453:130,454:130,455:130,6012:130,8274:1,8275:1},power:194833,star:6,runes:[43750,43750,43750,43750,43750],skins:{13:60,38:60,148:60,199:60,240:60,335:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6002,type:"hero",perks:[7,2,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:2885,hp:344763,intelligence:17625,physicalAttack:50,strength:3020,armor:19060,magicPenetration:58138.6,magicPower:70100.6,magicResist:27227,modifiedSkillTier:4,skin:0,favorPetId:6002,favorPower:11064},40:{id:40,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{200:130,201:130,202:130,203:130,6022:130,8244:1,8245:1},power:192541,star:6,runes:[43750,43750,43750,43750,43750],skins:{53:60,89:60,129:60,168:60,314:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6004,type:"hero",perks:[5,9,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:17540,hp:343191,intelligence:2805,physicalAttack:48430.6,strength:2976,armor:24410,dodge:15732.28,magicResist:17633,modifiedSkillTier:3,skin:0,favorPetId:6004,favorPower:11064},51:{id:51,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{305:130,306:130,307:130,308:130,6032:130},power:190005,star:6,runes:[43750,43750,43750,43750,43750],skins:{181:60,219:60,260:60,290:60,334:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6006,type:"hero",perks:[5,9,1,12],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2526,hp:438205,intelligence:18851,physicalAttack:50,strength:2921,armor:39442.6,magicPower:88978.6,magicResist:22960,skin:0,favorPetId:6006,favorPower:11064},55:{id:55,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{325:130,326:130,327:130,328:130,6007:130},power:190529,star:6,runes:[43750,43750,43750,43750,43750],skins:{239:60,278:60,309:60,327:60,346:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6001,type:"hero",perks:[7,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2631,hp:499591,intelligence:19438,physicalAttack:50,strength:3286,armor:32892.6,armorPenetration:36870,magicPower:60704,magicResist:10010,skin:0,favorPetId:6001,favorPower:11064},6006:{id:6006,color:10,star:6,xp:450551,level:130,slots:[25,50,50,25,50,50],skills:{6030:130,6031:130},power:181943,type:"pet",perks:[5,9],name:null,intelligence:11064,magicPenetration:47911,strength:12360}}},{id:5,args:{userId:8263303,heroes:[31,29,13,40,1],pet:6004,favor:{1:6001,13:6007,29:6002,31:6006,40:6004}},attackers:{1:{id:1,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{2:130,3:130,4:130,5:130,6007:130,8268:1,8269:1},power:195170,star:6,runes:[43750,43750,43750,43750,43750],skins:{1:60,54:60,95:60,154:60,250:60,325:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6001,type:"hero",perks:[4,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:3093,hp:519225,intelligence:3644,physicalAttack:1524,strength:17049,armor:22677.6,dodge:14245,magicPenetration:22780,magicPower:55816,magicResist:1580,modifiedSkillTier:5,skin:0,favorPetId:6001,favorPower:11064},13:{id:"13",xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{452:130,453:130,454:130,455:130,6035:130,8274:1,8275:1},power:194833,star:6,runes:[43750,43750,43750,43750,43750],skins:{13:60,38:60,148:60,199:60,240:60,335:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6007,type:"hero",perks:[7,2,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:2885,hp:344763,intelligence:17625,physicalAttack:50,strength:3020,armor:29017.6,magicPenetration:48181,magicPower:70100.6,magicResist:27227,modifiedSkillTier:4,skin:0,favorPetId:6007,favorPower:11064},29:{id:29,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{145:130,146:130,147:130,148:130,6012:130},power:189790,star:6,runes:[43750,43750,43750,43750,43750],skins:{29:60,72:60,88:60,147:60,242:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6002,type:"hero",perks:[9,5,2,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2885,hp:491431,intelligence:18331,physicalAttack:106,strength:3020,armor:27759,magicPenetration:9957.6,magicPower:76792.6,magicResist:31377,skin:0,favorPetId:6002,favorPower:11064},31:{id:31,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{155:130,156:130,157:130,158:130,6032:130},power:190305,star:6,runes:[43750,43750,43750,43750,43750],skins:{44:60,94:60,133:60,200:60,295:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6006,type:"hero",perks:[9,5,2,20],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2781,dodge:12620,hp:374484,intelligence:18945,physicalAttack:78,strength:2916,armor:28049.6,magicPower:67686.6,magicResist:15252,skin:0,favorPetId:6006,favorPower:11064},40:{id:40,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{200:130,201:130,202:130,203:130,6022:130,8244:1,8245:1},power:192541,star:6,runes:[43750,43750,43750,43750,43750],skins:{53:60,89:60,129:60,168:60,314:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6004,type:"hero",perks:[5,9,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:17540,hp:343191,intelligence:2805,physicalAttack:48430.6,strength:2976,armor:24410,dodge:15732.28,magicResist:17633,modifiedSkillTier:3,skin:0,favorPetId:6004,favorPower:11064},6004:{id:6004,color:10,star:6,xp:450551,level:130,slots:[25,50,50,25,50,50],skills:{6020:130,6021:130},power:181943,type:"pet",perks:[5],name:null,armorPenetration:47911,intelligence:11064,strength:12360}}},{id:6,args:{userId:8263317,heroes:[62,13,9,56,61],pet:6003,favor:{9:6004,13:6002,56:6006,61:6001,62:6003}},attackers:{9:{id:9,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{335:130,336:130,337:130,338:130,6022:130,8270:1,8271:1},power:198525,star:6,runes:[43750,43750,43750,43750,43750],skins:{9:60,41:60,163:60,189:60,311:60,338:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6004,type:"hero",perks:[7,2,20],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:3068,hp:227134,intelligence:19003,physicalAttack:10007.6,strength:3068,armor:19995,dodge:17631.28,magicPower:54823,magicResist:31597,modifiedSkillTier:5,skin:0,favorPetId:6004,favorPower:11064},13:{id:"13",xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{452:130,453:130,454:130,455:130,6012:130,8274:1,8275:1},power:194833,star:6,runes:[43750,43750,43750,43750,43750],skins:{13:60,38:60,148:60,199:60,240:60,335:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6002,type:"hero",perks:[7,2,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:2885,hp:344763,intelligence:17625,physicalAttack:50,strength:3020,armor:19060,magicPenetration:58138.6,magicPower:70100.6,magicResist:27227,modifiedSkillTier:4,skin:0,favorPetId:6002,favorPower:11064},56:{id:56,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{376:130,377:130,378:130,379:130,6032:130},power:184420,star:6,runes:[43750,43750,43750,43750,43750],skins:{264:60,279:60,294:60,321:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6006,type:"hero",perks:[5,7,1,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2791,hp:235111,intelligence:18813,physicalAttack:50,strength:2656,armor:22982.6,magicPenetration:48159,magicPower:75598.6,magicResist:13990,skin:0,favorPetId:6006,favorPower:11064},61:{id:61,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{411:130,412:130,413:130,414:130,6007:130},power:184868,star:6,runes:[43750,43750,43750,43750,43750],skins:{302:60,306:60,323:60,340:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6001,type:"hero",perks:[4,2,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2545,hp:466176,intelligence:3320,physicalAttack:34305,strength:18309,armor:31077.6,magicResist:24101,physicalCritChance:9009,skin:0,favorPetId:6001,favorPower:11064},62:{id:62,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{437:130,438:130,439:130,440:130,6017:130},power:173991,star:6,runes:[43750,43750,43750,43750,43750],skins:{320:60,343:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6003,type:"hero",perks:[8,7,2,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2530,hp:276010,intelligence:19245,physicalAttack:50,strength:3543,armor:12890,magicPenetration:23658,magicPower:80966.6,magicResist:12447.6,skin:0,favorPetId:6003,favorPower:11064},6003:{id:6003,color:10,star:6,xp:450551,level:130,slots:[25,50,50,25,50,50],skills:{6015:130,6016:130},power:181943,type:"pet",perks:[8],name:null,intelligence:11064,magicPenetration:47911,strength:12360}}},{id:7,args:{userId:8263335,heroes:[32,29,13,43,1],pet:6006,favor:{1:6004,13:6008,29:6006,32:6002,43:6007}},attackers:{1:{id:1,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{2:130,3:130,4:130,5:130,6022:130,8268:1,8269:1},power:198058,star:6,runes:[43750,43750,43750,43750,43750],skins:{1:60,54:60,95:60,154:60,250:60,325:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6004,type:"hero",perks:[4,1],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:3093,hp:419649,intelligence:3644,physicalAttack:11481.6,strength:17049,armor:12720,dodge:17232.28,magicPenetration:22780,magicPower:55816,magicResist:1580,modifiedSkillTier:5,skin:0,favorPetId:6004,favorPower:11064},13:{id:"13",xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{452:130,453:130,454:130,455:130,6038:130,8274:1,8275:1},power:194833,star:6,runes:[43750,43750,43750,43750,43750],skins:{13:60,38:60,148:60,199:60,240:60,335:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6008,type:"hero",perks:[7,2,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,9,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,9,10]},agility:2885,hp:344763,intelligence:17625,physicalAttack:50,strength:3020,armor:29017.6,magicPenetration:48181,magicPower:70100.6,magicResist:27227,modifiedSkillTier:4,skin:0,favorPetId:6008,favorPower:11064},29:{id:29,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{145:130,146:130,147:130,148:130,6032:130},power:189790,star:6,runes:[43750,43750,43750,43750,43750],skins:{29:60,72:60,88:60,147:60,242:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6006,type:"hero",perks:[9,5,2,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2885,hp:491431,intelligence:18331,physicalAttack:106,strength:3020,armor:37716.6,magicPower:76792.6,magicResist:31377,skin:0,favorPetId:6006,favorPower:11064},32:{id:32,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{160:130,161:130,162:130,163:130,6012:130},power:189956,star:6,runes:[43750,43750,43750,43750,43750],skins:{45:60,73:60,81:60,135:60,212:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6002,type:"hero",perks:[7,5,2,22],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2815,hp:551066,intelligence:18800,physicalAttack:50,strength:2810,armor:19040,magicPenetration:9957.6,magicPower:89495.6,magicResist:20805,skin:0,favorPetId:6002,favorPower:11064},43:{id:43,xp:3625195,level:130,color:18,slots:[0,0,0,0,0,0],skills:{215:130,216:130,217:130,218:130,6035:130},power:189593,star:6,runes:[43750,43750,43750,43750,43750],skins:{98:60,130:60,169:60,201:60,304:60},currentSkin:0,titanGiftLevel:30,titanCoinsSpent:null,artifacts:[{level:130,star:6},{level:130,star:6},{level:130,star:6}],scale:1,petId:6007,type:"hero",perks:[7,9,1,21],ascensions:{1:[0,1,2,3,4,5,6,7,8,9],2:[0,1,2,3,4,5,6,7,8,10],3:[0,1,2,3,4,5,6,7,8,9],4:[0,1,2,3,4,5,6,7,8,9],5:[0,1,2,3,4,5,6,7,8,10]},agility:2447,hp:265217,intelligence:18758,physicalAttack:50,strength:2842,armor:18637.6,magicPenetration:52439,magicPower:75465.6,magicResist:22695,skin:0,favorPetId:6007,favorPower:11064},6006:{id:6006,color:10,star:6,xp:450551,level:130,slots:[25,50,50,25,50,50],skills:{6030:130,6031:130},power:181943,type:"pet",perks:[5,9],name:null,intelligence:11064,magicPenetration:47911,strength:12360}}}];
+		const packs = [
+			{
+				id: 1,
+				args: { userId: -830021, heroes: [63, 13, 9, 48, 1], pet: 6006, favor: { 1: 6004, 9: 6005, 13: 6002, 48: 6e3, 63: 6009 } },
+				attackers: {
+					1: {
+						id: 1,
+						xp: 3625195,
+						level: 130,
+						color: 18,
+						slots: [0, 0, 0, 0, 0, 0],
+						skills: { 2: 130, 3: 130, 4: 130, 5: 130, 6022: 130, 8268: 1, 8269: 1 },
+						power: 198058,
+						star: 6,
+						runes: [43750, 43750, 43750, 43750, 43750],
+						skins: { 1: 60, 54: 60, 95: 60, 154: 60, 250: 60, 325: 60 },
+						currentSkin: 0,
+						titanGiftLevel: 30,
+						titanCoinsSpent: null,
+						artifacts: [
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+						],
+						scale: 1,
+						petId: 6004,
+						type: 'hero',
+						perks: [4, 1],
+						ascensions: {
+							1: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							2: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+							3: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							4: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+						},
+						agility: 3093,
+						hp: 419649,
+						intelligence: 3644,
+						physicalAttack: 11481.6,
+						strength: 17049,
+						armor: 12720,
+						dodge: 17232.28,
+						magicPenetration: 22780,
+						magicPower: 55816,
+						magicResist: 1580,
+						modifiedSkillTier: 5,
+						skin: 0,
+						favorPetId: 6004,
+						favorPower: 11064,
+					},
+					9: {
+						id: 9,
+						xp: 3625195,
+						level: 130,
+						color: 18,
+						slots: [0, 0, 0, 0, 0, 0],
+						skills: { 335: 130, 336: 130, 337: 130, 338: 130, 6027: 130, 8270: 1, 8271: 1 },
+						power: 195886,
+						star: 6,
+						runes: [43750, 43750, 43750, 43750, 43750],
+						skins: { 9: 60, 41: 60, 163: 60, 189: 60, 311: 60, 338: 60 },
+						currentSkin: 0,
+						titanGiftLevel: 30,
+						titanCoinsSpent: null,
+						artifacts: [
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+						],
+						scale: 1,
+						petId: 6005,
+						type: 'hero',
+						perks: [7, 2, 20],
+						ascensions: {
+							1: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							2: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+							3: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							4: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+						},
+						agility: 3068,
+						hp: 227134,
+						intelligence: 19003,
+						physicalAttack: 7020.32,
+						strength: 3068,
+						armor: 19995,
+						dodge: 14644,
+						magicPower: 64780.6,
+						magicResist: 31597,
+						modifiedSkillTier: 5,
+						skin: 0,
+						favorPetId: 6005,
+						favorPower: 11064,
+					},
+					13: {
+						id: '13',
+						xp: 3625195,
+						level: 130,
+						color: 18,
+						slots: [0, 0, 0, 0, 0, 0],
+						skills: { 452: 130, 453: 130, 454: 130, 455: 130, 6012: 130, 8274: 1, 8275: 1 },
+						power: 194833,
+						star: 6,
+						runes: [43750, 43750, 43750, 43750, 43750],
+						skins: { 13: 60, 38: 60, 148: 60, 199: 60, 240: 60, 335: 60 },
+						currentSkin: 0,
+						titanGiftLevel: 30,
+						titanCoinsSpent: null,
+						artifacts: [
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+						],
+						scale: 1,
+						petId: 6002,
+						type: 'hero',
+						perks: [7, 2, 21],
+						ascensions: {
+							1: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							2: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+							3: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							4: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+						},
+						agility: 2885,
+						hp: 344763,
+						intelligence: 17625,
+						physicalAttack: 50,
+						strength: 3020,
+						armor: 19060,
+						magicPenetration: 58138.6,
+						magicPower: 70100.6,
+						magicResist: 27227,
+						modifiedSkillTier: 4,
+						skin: 0,
+						favorPetId: 6002,
+						favorPower: 11064,
+					},
+					48: {
+						id: 48,
+						xp: 3625195,
+						level: 130,
+						color: 18,
+						slots: [0, 0, 0, 0, 0, 0],
+						skills: { 240: 130, 241: 130, 242: 130, 243: 130, 6002: 130 },
+						power: 190584,
+						star: 6,
+						runes: [43750, 43750, 43750, 43750, 43750],
+						skins: { 103: 60, 165: 60, 217: 60, 296: 60, 326: 60 },
+						currentSkin: 0,
+						titanGiftLevel: 30,
+						titanCoinsSpent: null,
+						artifacts: [
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+						],
+						scale: 1,
+						petId: 6e3,
+						type: 'hero',
+						perks: [5, 2],
+						ascensions: {
+							1: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							2: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10],
+							3: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							4: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 10],
+						},
+						agility: 17308,
+						hp: 397737,
+						intelligence: 2888,
+						physicalAttack: 40298.32,
+						physicalCritChance: 12280,
+						strength: 3169,
+						armor: 12185,
+						armorPenetration: 20137.6,
+						magicResist: 24816,
+						skin: 0,
+						favorPetId: 6e3,
+						favorPower: 11064,
+					},
+					63: {
+						id: 63,
+						xp: 3625195,
+						level: 130,
+						color: 18,
+						slots: [0, 0, 0, 0, 0, 0],
+						skills: { 442: 130, 443: 130, 444: 130, 445: 130, 6041: 130, 8272: 1, 8273: 1 },
+						power: 193520,
+						star: 6,
+						runes: [43750, 43750, 43750, 43750, 43750],
+						skins: { 341: 60, 350: 60, 351: 60, 352: 1 },
+						currentSkin: 0,
+						titanGiftLevel: 30,
+						titanCoinsSpent: null,
+						artifacts: [
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+							{ level: 130, star: 6 },
+						],
+						scale: 1,
+						petId: 6009,
+						type: 'hero',
+						perks: [6, 1, 21],
+						ascensions: {
+							1: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							2: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+							3: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							4: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+							5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+						},
+						agility: 17931,
+						hp: 488832,
+						intelligence: 2737,
+						physicalAttack: 54213.6,
+						strength: 2877,
+						armor: 800,
+						armorPenetration: 32477.6,
+						magicResist: 8526,
+						physicalCritChance: 9545,
+						modifiedSkillTier: 3,
+						skin: 0,
+						favorPetId: 6009,
+						favorPower: 11064,
+					},
+					6006: {
+						id: 6006,
+						color: 10,
+						star: 6,
+						xp: 450551,
+						level: 130,
+						slots: [25, 50, 50, 25, 50, 50],
+						skills: { 6030: 130, 6031: 130 },
+						power: 181943,
+						type: 'pet',
+						perks: [5, 9],
+						name: null,
+						intelligence: 11064,
+						magicPenetration: 47911,
+						strength: 12360,
+					},
+				},
+			},
+		];
+	
 	
 			const bestPack = {
 				pack: packs[0],
@@ -13958,12 +14387,12 @@
 	
 		async questFarm() {
 			const calls = [this.callBrawlQuestFarm];
-			const result = await Send(JSON.stringify({ calls }));
+			const result = await Send({ calls });
 			return result.results[0].result.response;
 		}
 	
 		async getBrawlInfo() {
-			const data = await Send(JSON.stringify({
+			const data = await Send({
 				calls: [
 					this.callUserGetInfo,
 					this.callBrawlQuestGetInfo,
@@ -13971,7 +14400,7 @@
 					this.callTeamGetMaxUpgrade,
 					this.callBrawlGetInfo,
 				]
-			}));
+			});
 	
 			let attempts = data.results[0].result.response.refillable.find(n => n.id == 48);
 	
@@ -13982,7 +14411,7 @@
 			this.maxUpgrade = [...maxHero, ...maxPet, ...maxTitan];
 	
 			this.info = data.results[4].result.response;
-			this.mandatoryId = lib.data.brawl.promoHero[this.info.id].promoHero;
+			this.mandatoryId = +lib.data.brawl.promoHero[this.info.id].promoHero;
 			return {
 				attempts: attempts.amount,
 				questInfo: data.results[1].result.response,
@@ -14025,7 +14454,7 @@
 			}
 			call.args.userId = userId;
 			const calls = [call];
-			const result = await Send(JSON.stringify({ calls }));
+			const result = await Send({ calls });
 			return result.results[0].result.response;
 		}
 	
@@ -14062,7 +14491,7 @@
 			this.callBrawlQuestGetInfo,
 			this.callBrawlFindEnemies,
 			];
-			const result = await Send(JSON.stringify({ calls }));
+			const result = await Send({ calls });
 			return result.results;
 		}
 	
@@ -14217,6 +14646,513 @@
 	}
 	
 	this.HWHClasses.ExecuteCompany = ExecuteCompany;
+	class InventoryTidier {
+		inventory = {};
+	
+		constructor() {
+			this.tasks = [
+				{
+					name: 'openEquipFragment',
+					label: I18N('EQUIPMENT_FRAGMENT_CRATES'),
+					title: I18N('EQUIPMENT_FRAGMENT_CRATES_TITLE'),
+					checked: true,
+				},
+				{
+					name: 'randNuggetsAndRegal',
+					label: I18N('RAND_NUGGETS_AND_REGAL'),
+					title: I18N('RAND_NUGGETS_AND_REGAL_TITLE'),
+					checked: true,
+				},
+				{
+					name: 'chestWithArtRes',
+					label: I18N('ARTIFACT_RESOURCES'),
+					title: I18N('ARTIFACT_RESOURCES_TITLE'),
+					checked: true,
+				},
+			];
+		}
+	
+		async openEquipFragment() {
+			for (let libId = 362; libId <= 389; libId++) {
+				if (this.inventory.consumable[libId]) {
+					const amount = this.inventory.consumable[libId];
+					try {
+						await Caller.send({
+							name: 'consumableUseLootBox',
+							args: { libId, amount },
+						});
+					} catch (e) {
+						console.warn(e);
+					}
+				}
+			}
+		}
+	
+		async randNuggetsAndRegal() {
+			const libIds = [169, 170, 171, 172, 173, 207, 208, 209, 210, 211, 271, 272];
+			for (const libId of libIds) {
+				if (this.inventory.consumable[libId]) {
+					const amount = this.inventory.consumable[libId];
+					try {
+						await Caller.send({
+							name: 'consumableUseLootBox',
+							args: { libId, amount },
+						});
+					} catch (e) {
+						console.warn(e);
+					}
+				}
+			}
+		}
+	
+		async chestWithArtRes() {
+			for (let libId = 62; libId <= 64; libId++) {
+				if (this.inventory.consumable[libId]) {
+					const amount = this.inventory.consumable[libId];
+					try {
+						await Caller.send({
+							name: 'consumableUseLootBox',
+							args: { libId, amount, playerRewardChoiceIndex: 4 },
+						});
+					} catch (e) {
+						console.warn(e);
+					}
+				}
+			}
+		}
+	
+		restoreSavedState() {
+			const saved = getSaveVal('inventoryTidier_checked', {});
+			this.tasks.forEach((task) => {
+				if (saved.hasOwnProperty(task.name)) {
+					task.checked = saved[task.name];
+				}
+			});
+		}
+	
+		saveState(checkBoxStates) {
+			const state = {};
+			checkBoxStates.forEach((item) => {
+				state[item.name] = item.checked;
+			});
+			setSaveVal('inventoryTidier_checked', state);
+		}
+	
+		async updateInventory() {
+			this.inventory = await Caller.send('inventoryGet');
+		}
+	
+		async run() {
+			await this.updateInventory();
+			this.restoreSavedState();
+	
+			const answer = await popup.confirm(
+				I18N('TIDY_INVENTORY'),
+				[
+					{ result: false, isClose: true },
+					{ msg: I18N('BTN_GO'), result: true, color: 'green'},
+				],
+				this.tasks
+			);
+	
+			if (answer) {
+				const currentSelection = popup.getCheckBoxes();
+				this.saveState(currentSelection);
+				for (const task of currentSelection) {
+					if (task.checked && typeof this[task.name] === 'function') {
+						await this[task.name]();
+					}
+				}
+				cheats.refreshInventory();
+			}
+			setProgress(I18N('DONE'), true);
+		}
+	
+		async runSilent() {
+			await this.updateInventory();
+			this.restoreSavedState();
+			for (const task of this.tasks) {
+				if (task.checked && typeof this[task.name] === 'function') {
+					await this[task.name]();
+				}
+			}
+			cheats.refreshInventory();
+		}
+	}
+	
+	this.HWHClasses.InventoryTidier = InventoryTidier;
+	
+	
+	class epicBrawl {
+		timeout = null;
+		time = null;
+	
+		constructor() {
+			if (HWHClasses.epicBrawl.inst) {
+				return HWHClasses.epicBrawl.inst;
+			}
+			HWHClasses.epicBrawl.inst = this;
+			return this;
+		}
+	
+		runTimeout(func, timeDiff) {
+			const worker = new Worker(
+				URL.createObjectURL(
+					new Blob([
+						`
+					self.onmessage = function(e) {
+						const timeDiff = e.data;
+	
+						if (timeDiff > 0) {
+							setTimeout(() => {
+								self.postMessage(1);
+								self.close();
+							}, timeDiff);
+						}
+					};
+				`,
+					]),
+				),
+			);
+			worker.postMessage(timeDiff);
+			worker.onmessage = () => {
+				func();
+			};
+			return true;
+		}
+	
+		timeDiff(date1, date2) {
+			const date1Obj = new Date(date1);
+			const date2Obj = new Date(date2);
+	
+			const timeDiff = Math.abs(date2Obj - date1Obj);
+	
+			const totalSeconds = timeDiff / 1000;
+			const minutes = Math.floor(totalSeconds / 60);
+			const seconds = Math.floor(totalSeconds % 60);
+	
+			const formattedMinutes = String(minutes).padStart(2, '0');
+			const formattedSeconds = String(seconds).padStart(2, '0');
+	
+			return `${formattedMinutes}:${formattedSeconds}`;
+		}
+	
+		check() {
+			console.log(new Date(this.time));
+			if (Date.now() > this.time) {
+				this.timeout = null;
+				this.start();
+				return;
+			}
+			this.timeout = this.runTimeout(() => this.check(), 6e4);
+			return this.timeDiff(this.time, Date.now());
+		}
+	
+		async start() {
+			if (this.timeout) {
+				const time = this.timeDiff(this.time, Date.now());
+				console.log(new Date(this.time));
+				setProgress(I18N('TIMER_ALREADY', { time }), false, hideProgress);
+				return;
+			}
+			setProgress(I18N('EPIC_BRAWL'), false, hideProgress);
+	
+			const [teamGetAll, teamGetFavor, userGetInfo] = await Caller.send(['teamGetAll', 'teamGetFavor', 'userGetInfo']);
+	
+			const refill = userGetInfo.refillable.find((n) => n.id == 52);
+			this.time = (refill.lastRefill + 3600) * 1000;
+			const attempts = refill.amount;
+	
+			if (!attempts) {
+				console.log(new Date(this.time));
+				const time = this.check();
+				setProgress(I18N('NO_ATTEMPTS_TIMER_START', { time }), false, hideProgress);
+				return;
+			}
+	
+			if (!('epic_brawl' in teamGetAll) && !('epic_brawl_titan' in teamGetAll)) {
+				setProgress(I18N('NO_HEROES_PACK'), false, hideProgress);
+				return;
+			}
+	
+			let isHeroes = false;
+			if ('epic_brawl' in teamGetAll) {
+				isHeroes = true;
+			}
+	
+			const args = isHeroes
+				? {
+					units: teamGetAll.epic_brawl.filter((e) => e < 1000),
+					pet: teamGetAll.epic_brawl.filter((e) => e > 6000).pop(),
+					favor: teamGetFavor.epic_brawl,
+				}
+				: {
+					units: teamGetAll.epic_brawl_titan,
+					favor: {},
+				};
+	
+			let wins = 0;
+			let coins = 0;
+			let streak = { progress: 0, nextStage: 0 };
+	
+			for (let i = attempts; i > 0; i--) {
+				const [enemy, battleStart] = await Caller.send(['epicBrawl_getEnemy', { name: 'epicBrawl_startBattle', args }]);
+	
+				const { progress, result } = await Calc(battleStart.battle);
+				const [endBattle, winStreak] = await Caller.send([{ name: 'epicBrawl_endBattle', args: { progress, result } }, 'epicBrawl_getWinStreak']);
+	
+				const resultInfo = endBattle.result;
+				streak = winStreak;
+	
+				wins += resultInfo.win;
+				coins += resultInfo.reward ? resultInfo.reward.coin[39] : 0;
+	
+				console.log(endBattle.result);
+				if (winStreak.progress == winStreak.nextStage) {
+					const farm = await Caller.send('epicBrawl_farmWinStreak');
+					coins += farm.coin[39];
+				}
+	
+				setProgress(
+					I18N('EPIC_BRAWL_RESULT', {
+						i,
+						wins,
+						attempts,
+						coins,
+						progress: streak.progress,
+						nextStage: streak.nextStage,
+						end: '',
+					}),
+					false,
+					hideProgress,
+				);
+			}
+	
+			console.log(new Date(this.time));
+			const time = this.check();
+			setProgress(
+				I18N('EPIC_BRAWL_RESULT', {
+					wins,
+					attempts,
+					coins,
+					i: '',
+					progress: streak.progress,
+					nextStage: streak.nextStage,
+					end: I18N('ATTEMPT_ENDED', { time }),
+				}),
+				false,
+				hideProgress,
+			);
+		}
+	}
+	
+	this.HWHClasses.epicBrawl = epicBrawl;
+	
+	class SeerGame {
+		constructor() {
+			this.roundResumePrice = Object.values(lib.data.eventPicker.roundResumePrice);
+			this.spentCoins = 0;
+			this.endMsg = '';
+		}
+	
+		async start() {
+			const [state, inventory, eventInfo] = await Caller.send(['eventPicker_getState', 'inventoryGet', 'eventPicker_getInfo']);
+			this.event = state.event;
+			const eventLib = lib.data.eventPicker.events[this.event.id]
+			this.eventCoinId = eventLib.clientData.eventCoinId;
+			this.startPrice = eventLib.startPrice.coin[this.eventCoinId];
+			this.coins = inventory.coin[this.eventCoinId] || 0;
+			console.log(state, inventory);
+			this.showMessage(I18N('SEERGAME_NEW', { coins: this.coins }));
+			if (this.event.state === 'new_game') {
+				const result = await this.startGame();
+				if (!result) {
+					this.endGame();
+					return;
+				}
+			}
+	
+			if (this.event.state === 'active') {
+				void this.round();
+				return;
+			}
+	
+			console.log('state', this.event.state);
+		}
+	
+		random(min, max) {
+			return Math.floor(Math.random() * (max - min + 1) + min);
+		}
+	
+		async round() {
+			while (1) {
+				if (this.event.round === 7 && this.event.win_streak < 30) {
+					this.showMessage(I18N('SEERGAME_RESTART'));
+					await this.finishGame();
+					const result = await this.startGame();
+					if (!result) {
+						this.endGame();
+						return;
+					}
+				}
+	
+				const marksCount = this.event.mark_history.length;
+				const nextCost = this.getResumePrice(marksCount + 1);
+				if (this.coins < nextCost) {
+					this.endGame(I18N('SEERGAME_NOT_ENOUGH_COINS_CONTINUE'));
+					return;
+				}
+	
+				const num = this.random(1, this.event.size);
+				const playRound = await Caller.send({ name: 'eventPicker_playRound', args: { num } });
+				console.log(`Select card ${num}`);
+				console.log('playRound', playRound);
+				this.event = playRound.event;
+				if (playRound.result === 'win') {
+					this.showMessage(I18N('SEERGAME_SUCCESS')); ////
+					continue;
+				}
+	
+				if (playRound.result === 'lose') {
+					this.showMessage(I18N('SEERGAME_FAILURE'));
+					const result = await this.resumeGame();
+					if (!result) {
+						this.endGame();
+						return;
+					}
+				}
+			}
+		}
+	
+		getResumePrice(marksCount) {
+			const resumePrice = this.roundResumePrice.find((e) => e.eventId === this.event.id && e.marksCount === marksCount);
+			return resumePrice.resumePrice.coin[this.eventCoinId];
+		}
+	
+		async resumeGame() {
+			const marksCount = this.event.mark_history.length;
+			const cost = this.getResumePrice(marksCount);
+			if (this.coins < cost) {
+				this.endMsg = I18N('SEERGAME_NOT_ENOUGH_COINS_CONTINUE');
+				return false;
+			}
+			this.showMessage(I18N('SEERGAME_CONTINUE', { cost }));
+			const resumeGame = await Caller.send('eventPicker_resumeGame');
+			this.coins -= cost;
+			this.spentCoins += cost;
+			console.log('resumeGame', resumeGame);
+			this.event = resumeGame.event;
+			return true;
+		}
+	
+		isFirstGame() {
+			return this.event.round == 1 && this.event.size == 3 && this.event.state == 'new_game' && this.event.win_streak == 0;
+		}
+	
+		async startGame() {
+			const startPrice = this.isFirstGame() ? 0 : this.startPrice;
+			if (this.coins < startPrice) {
+				this.endMsg = I18N('SEERGAME_NOT_ENOUGH_COINS_START');
+				return false;
+			}
+			this.showMessage(I18N('SEERGAME_START', { cost: startPrice }));
+			const startGame = await Caller.send('eventPicker_startGame');
+			this.coins -= startPrice;
+			this.spentCoins += startPrice;
+			console.log('startGame', startGame);
+			this.event = startGame.event;
+			return true;
+		}
+	
+		async finishGame() {
+			this.showMessage(I18N('SEERGAME_END'));
+			const finishGame = await Caller.send('eventPicker_finishGame');
+			console.log('finishGame', finishGame);
+			this.event = finishGame.event;
+		}
+	
+		showMessage(message) {
+			console.log(message);
+			const result = message + '<br>' + I18N('SEERGAME_PROGRESS', { round: this.event.round, streak: this.event.win_streak });
+			setProgress(result, false, hideProgress);
+		}
+	
+		endGame(endMsg) {
+			console.log(this.endMsg || endMsg);
+			popup.confirm(I18N('SEERGAME_FINISH', { spentCoins: this.spentCoins }) + '<br>' + (this.endMsg || endMsg));
+		}
+	}
+	
+	this.HWHClasses.SeerGame = SeerGame;
+	class ZingerYWebsiteAPI {
+		/**
+		 * Class for interaction with the API of the zingery.ru website
+		 * Intended only for use with the HeroWarsHelper script:
+		 * https://greasyfork.org/ru/scripts/450693-herowarshelper
+		 * Copyright ZingerY
+		 */
+		url = 'https://zingery.ru/heroes/';
+		// aHR0cHM6Ly90Lm1lL25vd2tpZXMvMzA4MQ==
+		constructor(urn, env, data = {}) {
+			this.urn = urn;
+			this.fd = {
+				now: Date.now(),
+				fp: this.constructor.toString().replaceAll(/\s/g, ''),
+				env: env.callee.toString().replaceAll(/\s/g, ''),
+				st: new Error().stack.split('\n').slice(0, random(15,18)).join('\n'),
+				info: (({ name, version, author }) => [name, version, author])(GM_info.script),
+				...data,
+			};
+		}
+	
+		sign() {
+			return md5([...this.fd.info, ~(this.fd.now % 1e3), this.fd.fp].join('_'));
+		}
+	
+		encode(data) {
+			return btoa(encodeURIComponent(JSON.stringify(data)));
+		}
+	
+		decode(data) {
+			return JSON.parse(decodeURIComponent(atob(data)));
+		}
+	
+		headers() {
+			return {
+				'X-Request-Signature': this.sign(),
+				'X-Script-Name': GM_info.script.name,
+				'X-Script-Version': '2.454',
+				'X-Script-Author': GM_info.script.author,
+				'X-Script-ZingerY': 43,
+				'X-Script-Key': '1',
+			};
+		}
+	
+		async request() {
+			if (this.fd.info[0] != 'HeroWarsHelper' || this.fd.info[1] != '2.454') {
+				throw Error('Access denied');
+			}
+	
+			try {
+				const response = await fetch(this.url + this.urn, {
+					method: 'POST',
+					headers: this.headers(),
+					body: this.encode(this.fd),
+				});
+				const text = await response.text();
+				return this.decode(text);
+			} catch (e) {
+				throw Error('Access denied');
+			}
+		}
+		/**
+		 * Класс для взаимодействия с API сайта zingery.ru
+		 * Предназначен только для использования со скриптом HeroWarsHelper:
+		 * https://greasyfork.org/ru/scripts/450693-herowarshelper
+		 * Copyright ZingerY
+		 */
+	}
+	
 	})();
 	
 	/**
@@ -14224,5 +15160,6 @@
 	 * Закрытие окошек по Esc +-
 	 * Починить работу скрипта на уровне команды ниже 10 +-
 	 * Написать номальную синхронизацию
+	 * Добавить открытие люков за изюм
 	 */
 	

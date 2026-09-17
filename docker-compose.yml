@@ -1,0 +1,51 @@
+# AutoHero PostgreSQL (Docker Desktop)
+# Start: docker compose up -d
+# Stop:  docker compose stop
+services:
+  postgres:
+    image: postgres:17
+    container_name: autohero-postgres
+    restart: unless-stopped
+    # Default Docker shm (64MB) caps PostgreSQL shared memory; raise for larger shared_buffers.
+    shm_size: 2gb
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: autohero
+    volumes:
+      - autohero-postgres-data:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - wal_buffers=64MB
+      - -c
+      - max_connections=100
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - max_parallel_workers=8
+      - -c
+      - max_worker_processes=8
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - max_wal_size=2GB
+
+volumes:
+  autohero-postgres-data:
+    external: true
+    name: e895ba9be4bd8b723b04cdf6e36508cc9f1e3bfb4fbfb1601f0cf47ad6ea749c

@@ -1,0 +1,33 @@
+{
+  "advAutoBuyer_1": {
+    "197": true,
+    "199": true
+  },
+  "advAutoBuyer_4": {
+    "93": true,
+    "196": true,
+    "Flaming Heart": true,
+    "Giant-Slayer": true,
+    "Pastor's Seal": true,
+    "Minotaur's Head": true,
+    "Hand of Glory": true,
+    "Desert Blade": true,
+    "La Mort's Card": true,
+    "Alchemist's Set": true,
+    "Lycanthrope's Fang": true,
+    "Harunian Helm": true,
+    "Enigma's Chronicles": true
+  },
+  "advAutoBuyer_5": {
+    "Flaming Heart": true,
+    "Giant-Slayer": true,
+    "Pastor's Seal": true,
+    "Minotaur's Head": true,
+    "Desert Blade": true,
+    "Hand of Glory": true,
+    "Alchemist's Set": true,
+    "Lycanthrope's Fang": true,
+    "La Mort's Card": true,
+    "Harunian Helm": true
+  }
+}
