@@ -917,21 +917,32 @@ export async function getOpponentSkipCheck({
             MAX(mt.win_rate) AS best_win_rate,
             MAX(mt.tested_at) AS last_tested_at,
             (
-                SELECT json_build_object(
-                    'myHeroIds', best.my_hero_ids,
-                    'myHeroNames', best.my_hero_names,
-                    'myPet', best.my_pet,
-                    'winRate', best.win_rate,
-                    'testedAt', best.tested_at
-                )
-                FROM matchup_tests best
-                WHERE best.opponent_combo_id = oc.id
-                  AND best.win_rate >= ${minWinRateParam}
-                  AND best.tested_at >= NOW() - (${maxAgeParam}::text || ' days')::interval
-                  AND COALESCE(best.max_upgrade, TRUE) = TRUE
-                ORDER BY best.win_rate DESC, best.tested_at DESC
-                LIMIT 1
-            ) AS best_match
+                SELECT COALESCE(json_agg(ranked.match ORDER BY ranked.win_rate DESC, ranked.tested_at DESC), '[]'::json)
+                FROM (
+                    SELECT distinct_matches.*
+                    FROM (
+                        SELECT DISTINCT ON (best.my_hero_ids, COALESCE(best.my_pet, 0))
+                            json_build_object(
+                                'myHeroIds', best.my_hero_ids,
+                                'myHeroNames', best.my_hero_names,
+                                'myPet', best.my_pet,
+                                'winRate', best.win_rate,
+                                'testedAt', best.tested_at
+                            ) AS match,
+                            best.win_rate,
+                            best.tested_at
+                        FROM matchup_tests best
+                        WHERE best.opponent_combo_id = oc.id
+                          AND best.win_rate >= ${minWinRateParam}
+                          AND best.tested_at >= NOW() - (${maxAgeParam}::text || ' days')::interval
+                          AND COALESCE(best.max_upgrade, TRUE) = TRUE
+                          AND cardinality(best.my_hero_ids) = 5
+                        ORDER BY best.my_hero_ids, COALESCE(best.my_pet, 0), best.win_rate DESC, best.tested_at DESC
+                    ) distinct_matches
+                    ORDER BY distinct_matches.win_rate DESC, distinct_matches.tested_at DESC
+                    LIMIT 50
+                ) ranked
+            ) AS best_matches
          FROM opponent_combos oc
          JOIN matchup_tests mt ON mt.opponent_combo_id = oc.id
          WHERE ${opponentWhere}
@@ -943,22 +954,28 @@ export async function getOpponentSkipCheck({
     );
 
     const row = result.rows[0];
-    if (!row?.best_match) {
+    const bestMatches = Array.isArray(row?.best_matches)
+        ? row.best_matches.filter((match) => Array.isArray(match?.myHeroIds) && match.myHeroIds.length === 5)
+        : [];
+    if (!bestMatches.length) {
         return {
             shouldSkip: false,
             comboKey,
             minWinRate,
             maxAgeDays,
+            bestMatches: [],
         };
     }
 
+    const bestMatch = bestMatches[0];
     return {
         shouldSkip: true,
         comboKey: row.combo_key,
         opponentName: row.opponent_name,
         bestWinRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
         lastTestedAt: row.last_tested_at,
-        bestMatch: row.best_match,
+        bestMatch,
+        bestMatches,
         minWinRate,
         maxAgeDays,
     };

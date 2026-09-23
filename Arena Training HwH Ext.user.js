@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.21
+// @version      1.22
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -1476,42 +1476,26 @@
                 const opponentCombo = resolveOpponentComboContext(opponentRaw, opponentMeta);
                 const comboKey = opponentCombo.comboKey;
                 let workflowTesterUserId;
+                const cachedMaxQueue = [];
+                let cachedMaxLoaded = false;
 
-                const tryApplyCachedMaxSkip = (skipInfo, attemptNum) => {
-                    const bestMatch = skipInfo?.bestMatch || skipInfo?.cachedBestMatch;
-                    const shouldSkip = skipInfo?.shouldSkip || skipInfo?.skipped;
-                    if (!shouldSkip || bestMatch?.myHeroIds?.length !== 5) {
-                        if (shouldSkip) {
-                            console.warn(
-                                `[Arena Training] Round ${roundNum} skip-check returned shouldSkip without a valid 5-hero counter`,
-                                skipInfo
-                            );
-                        } else if (comboKey) {
-                            console.log(
-                                `[Arena Training] Round ${roundNum} skip-check — no cached ${trainOptions.skipCacheMinWinRate ?? CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+ max counter for ${comboKey}`
-                            );
-                        }
-                        return null;
-                    }
-
-                    const cachedLineup = counterLineupFromCache(bestMatch);
-                    const cachedKey = candidateKey(cachedLineup);
-                    if (excludeKeys.has(cachedKey)) {
-                        console.log(
-                            `[Arena Training] Round ${roundNum} cached counter excluded (${cachedKey}), searching another max counter`
-                        );
-                        return null;
-                    }
-
+                const pushCachedMaxAttempt = (lineup, attemptNum, skipInfo = null) => {
                     const skippedResult = {
                         skipped: true,
                         skipReason: 'cached_counter',
                         attempt: attemptNum,
                         opponentComboKey: comboKey,
-                        cachedBestWinRate: skipInfo.bestWinRate ?? skipInfo.cachedBestWinRate,
-                        cachedBestMatch: bestMatch,
-                        cachedLastTestedAt: skipInfo.lastTestedAt ?? skipInfo.cachedLastTestedAt,
-                        counterLineup: cachedLineup,
+                        cachedBestWinRate: lineup.cachedWinRate
+                            ?? skipInfo?.bestWinRate
+                            ?? skipInfo?.cachedBestWinRate,
+                        cachedBestMatch: {
+                            myHeroIds: lineup.heroes,
+                            myHeroNames: lineup.heroNames,
+                            myPet: lineup.pet,
+                            winRate: lineup.cachedWinRate,
+                        },
+                        cachedLastTestedAt: skipInfo?.lastTestedAt ?? skipInfo?.cachedLastTestedAt,
+                        counterLineup: lineup,
                         opponent: {
                             index: opponentMeta.index,
                             userId: opponentMeta.userId,
@@ -1528,9 +1512,55 @@
                     pairAttempts.push({ attempt: attemptNum, type: 'max-cache', result: skippedResult });
                     if (loopSession) loopSession.rounds.push(skippedResult);
                     console.log(
-                        `[Arena Training] Round ${roundNum} attempt ${attemptNum} — using cached ${(skipInfo.bestWinRate ?? skipInfo.cachedBestWinRate)?.toFixed?.(1) ?? skipInfo.bestWinRate ?? skipInfo.cachedBestWinRate}% counter`
+                        `[Arena Training] Round ${roundNum} attempt ${attemptNum} — using cached ${lineup.cachedWinRate?.toFixed?.(1) ?? lineup.cachedWinRate ?? '?'}% counter (${cachedMaxQueue.length} remaining in cache queue)`
                     );
-                    return cachedLineup;
+                    return lineup;
+                };
+
+                const enqueueCachedMaxMatches = (skipInfo) => {
+                    const matches = Array.isArray(skipInfo?.bestMatches) && skipInfo.bestMatches.length
+                        ? skipInfo.bestMatches
+                        : (skipInfo?.bestMatch || skipInfo?.cachedBestMatch
+                            ? [skipInfo.bestMatch || skipInfo.cachedBestMatch]
+                            : []);
+                    let queued = 0;
+                    for (const match of matches) {
+                        if (!Array.isArray(match?.myHeroIds) || match.myHeroIds.length !== 5) continue;
+                        const lineup = counterLineupFromCache(match);
+                        const key = candidateKey(lineup);
+                        if (excludeKeys.has(key)) continue;
+                        if (cachedMaxQueue.some((entry) => candidateKey(entry) === key)) continue;
+                        cachedMaxQueue.push(lineup);
+                        queued++;
+                    }
+                    return queued;
+                };
+
+                const tryApplyCachedMaxSkip = (skipInfo, attemptNum) => {
+                    const shouldSkip = skipInfo?.shouldSkip || skipInfo?.skipped;
+                    if (!shouldSkip) {
+                        if (comboKey) {
+                            console.log(
+                                `[Arena Training] Round ${roundNum} skip-check — no cached ${trainOptions.skipCacheMinWinRate ?? CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+ max counter for ${comboKey}`
+                            );
+                        }
+                        return null;
+                    }
+
+                    const queued = enqueueCachedMaxMatches(skipInfo);
+                    if (!cachedMaxQueue.length) {
+                        console.warn(
+                            `[Arena Training] Round ${roundNum} skip-check returned shouldSkip without a usable 5-hero counter`,
+                            skipInfo
+                        );
+                        return null;
+                    }
+                    if (queued > 0) {
+                        console.log(
+                            `[Arena Training] Round ${roundNum} — queued ${cachedMaxQueue.length} cached ${trainOptions.skipCacheMinWinRate ?? CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+ max counter(s) to try with user team first`
+                        );
+                    }
+                    return pushCachedMaxAttempt(cachedMaxQueue.shift(), attemptNum, skipInfo);
                 };
 
                 while (!stopRequested && (!loopSession || loopRunning)) {
@@ -1540,16 +1570,20 @@
                     let usedCache = false;
 
                     if (
-                        attempt === 1
+                        !cachedMaxLoaded
                         && trainOptions.skipCachedOpponents !== false
                         && comboKey
                     ) {
+                        cachedMaxLoaded = true;
                         const skipInfo = await fetchOpponentSkipCheck(comboKey, {
                             ...trainOptions,
                             opponentHeroIds: opponentCombo.heroes,
                         });
                         counterLineup = tryApplyCachedMaxSkip(skipInfo, attempt);
                         usedCache = !!counterLineup;
+                    } else if (cachedMaxQueue.length) {
+                        counterLineup = pushCachedMaxAttempt(cachedMaxQueue.shift(), attempt);
+                        usedCache = true;
                     }
 
                     if (!counterLineup) {
@@ -1557,9 +1591,7 @@
                         maxResult = await this.runSingle({
                             ...trainOptions,
                             maxUpgrade: true,
-                            skipCachedOpponents: attempt === 1
-                                ? trainOptions.skipCachedOpponents !== false
-                                : false,
+                            skipCachedOpponents: false,
                             opponentHeroIds: opponentCombo.heroes,
                             excludeCandidateKeys: [...excludeKeys],
                             searchUntilTarget: true,
@@ -1712,8 +1744,11 @@
                     }
 
                     excludeKeys.add(candidateKey(counterLineup));
+                    const nextFromCache = cachedMaxQueue.length > 0;
                     console.log(
-                        `[Arena Training] Round ${roundNum} — user ${userWinRate.toFixed(1)}% < ${userTargetWinRate}%, searching another ${maxTargetWinRate}%+ max counter`
+                        nextFromCache
+                            ? `[Arena Training] Round ${roundNum} — user ${userWinRate.toFixed(1)}% < ${userTargetWinRate}%, trying next cached max counter (${cachedMaxQueue.length} left)`
+                            : `[Arena Training] Round ${roundNum} — user ${userWinRate.toFixed(1)}% < ${userTargetWinRate}%, searching another ${maxTargetWinRate}%+ max counter`
                     );
 
                     const maxAttempts = Number(trainOptions.maxCounterAttempts);
@@ -2308,7 +2343,7 @@
                 <p><b>Loop mode</b> loads the arena top 50 via <code>topGet</code>, then tests vs <b>meta team</b> opponents from the bridge DB.</p>
                 <p>Demo battles only — <b>no arena attempts used</b>.</p>
                 <p>Skips opponents already solved in PostgreSQL: <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+</b> max counter within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b>. User-team tests for the same lineup are also skipped within <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days</b>.</p>
-                <p>Per opponent: find a <b>${CONSTANTS.DEFAULT_TARGET_WIN_RATE}%+</b> max counter (or use cache), test the <b>same lineup</b> with your real heroes, and re-search if user win rate is below <b>${CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE}%</b>.</p>
+                <p>Per opponent: try all cached <b>${CONSTANTS.DEFAULT_SKIP_CACHE_MIN_WIN_RATE}%+</b> max counters with your real heroes first. If none reach <b>${CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE}%</b>, search for a new max counter and re-test.</p>
                 <p>Max search phases: <b>arena</b> → <b>grand arena</b> → <b>meta teams</b> → generated.</p>
                 <p>Run <code>node llm-bridge-server.mjs</code> with PostgreSQL (<code>DATABASE_URL</code>) so results save to the bridge database.</p>
             `;
