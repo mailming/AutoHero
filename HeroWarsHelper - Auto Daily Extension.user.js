@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.3.0
+// @version      3.3.1
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.3.0";
+    const EXTENSION_VERSION = "3.3.1";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -1633,7 +1633,10 @@
 
     // --- DUNGEON SETTINGS GUI ---
     function createDungeonSettingsGUI() {
-        if (document.getElementById('titanSettingsGUI')) return; // Already created
+        if (document.getElementById('titanSettingsGUI')) {
+            ensureDungeonSettingsToggle();
+            return; // Already created
+        }
 
         const style = document.createElement('style');
         style.textContent = `
@@ -1878,9 +1881,17 @@
             });
         });
 
-        // Toggle GUI visibility (can be triggered from dungeon indicator if needed)
+        // Toggle GUI visibility from menu / Auto Daily popup
+        ensureDungeonSettingsToggle();
+    }
+
+    function ensureDungeonSettingsToggle() {
         window.toggleDungeonSettingsGUI = () => {
-            gui.style.display = gui.style.display === 'none' ? 'flex' : 'none';
+            createDungeonSettingsGUI();
+            const panel = document.getElementById('titanSettingsGUI');
+            if (!panel) return;
+            const hidden = panel.style.display === 'none' || !panel.style.display;
+            panel.style.display = hidden ? 'flex' : 'none';
         };
     }
 
@@ -2193,6 +2204,7 @@ async function executeGetDailyBonus() {
                 <label><input type="checkbox" id="hide-quests-btn" ${hideButtonsState.quests ? 'checked' : ''}> Hide 'Quests'</label>
                 <label><input type="checkbox" id="hide-actions-btn" ${hideButtonsState.actions ? 'checked' : ''}> Hide 'Actions'</label>
                 <a id="other-settings-link">Other Settings</a>
+                <a id="dungeon-settings-link" title="Open dungeon team / tank survival settings">Dungeon Settings</a>
                 <label><input type="checkbox" id="new-sync-btn" ${hideButtonsState.newSync ? 'checked' : ''}> New Sync</label>
             </div>
         `;
@@ -2238,6 +2250,11 @@ async function executeGetDailyBonus() {
         document.getElementById('hide-actions-btn').addEventListener('change', (e) => { hideButtonsState.actions = e.target.checked; saveAllSettings(); applyButtonVisibility(); });
         document.getElementById('new-sync-btn').addEventListener('change', (e) => { hideButtonsState.newSync = e.target.checked; saveAllSettings(); applySyncButtonState(); });
         document.getElementById('other-settings-link').addEventListener('click', createOthersPopup);
+        document.getElementById('dungeon-settings-link').addEventListener('click', () => {
+            if (typeof window.toggleDungeonSettingsGUI === 'function') {
+                window.toggleDungeonSettingsGUI();
+            }
+        });
         document.getElementById('sync-settings-btn').addEventListener('click', createSyncPopup);
         updateQuestStatus();
     }
@@ -2775,6 +2792,23 @@ async function executeGetDailyBonus() {
         autoDailyButton.dataset.extensionButton = "auto-daily";
 
         scriptMenuContainer.insertBefore(autoDailyButton, actionsButton);
+
+        const dungeonSettingsButton = HWHClasses.ScriptMenu.getInst().addButton({
+            name: 'Dungeon Settings',
+            onClick: () => {
+                if (typeof window.toggleDungeonSettingsGUI === 'function') {
+                    window.toggleDungeonSettingsGUI();
+                } else {
+                    createDungeonSettingsGUI();
+                    window.toggleDungeonSettingsGUI?.();
+                }
+            },
+            title: 'Dungeon team building and tank survival cutoffs',
+            color: 'purple',
+        }, scriptMenuContainer);
+        dungeonSettingsButton.dataset.extensionButton = 'dungeon-settings';
+        scriptMenuContainer.insertBefore(dungeonSettingsButton, actionsButton);
+
         createCustomOthersButton();
 
         applyButtonVisibility();
