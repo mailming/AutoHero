@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.8
+// @version      3.2.9
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,8 +15,9 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.8";
+    const EXTENSION_VERSION = "3.2.9";
     const EXTENSION_AUTHOR = "You";
+    const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
     /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
@@ -1577,22 +1578,20 @@
                 background-color: #228B22;
                 transform: translateY(-1px);
             }
-            #resetTitanSettings {
+            #titanSettingsGUI #resetTitanSettings {
                 background-color: #FF6347;
                 width: fit-content;
-                margin: 10px auto;
+                margin: 10px auto 0;
                 display: block;
                 padding: 8px 12px;
                 font-size: 14px;
                 border-radius: 5px;
             }
+            #titanSettingsGUI #resetTitanSettings:hover {
+                background-color: #e5533d;
+            }
         `;
         document.head.appendChild(style);
-
-        const resetButton = document.createElement('button');
-        resetButton.id = 'resetTitanSettings';
-        resetButton.textContent = 'Reset to Defaults';
-        document.body.appendChild(resetButton);
 
         const gui = document.createElement('div');
         gui.id = 'titanSettingsGUI';
@@ -1634,11 +1633,12 @@
                 <input type="number" id="titan4000Energy670HP" min="0" max="100" step="1">
             </div>
             <button id="saveTitanSettings">Save & Apply</button>
+            <button id="resetTitanSettings" type="button">Reset to Defaults</button>
         `;
         document.body.appendChild(gui);
 
+        const resetButton = document.getElementById('resetTitanSettings');
         gui.style.display = 'none';
-        resetButton.style.display = 'none';
 
         function updateGUIFields() {
             document.getElementById('minOverallHP').value = titanHealthSettings.minOverallHP * 100;
@@ -1694,13 +1694,7 @@
 
         // Toggle GUI visibility (can be triggered from dungeon indicator if needed)
         window.toggleDungeonSettingsGUI = () => {
-            if (gui.style.display === 'none') {
-                gui.style.display = 'flex';
-                resetButton.style.display = 'block';
-            } else {
-                gui.style.display = 'none';
-                resetButton.style.display = 'none';
-            }
+            gui.style.display = gui.style.display === 'none' ? 'flex' : 'none';
         };
     }
 
@@ -1896,6 +1890,27 @@ async function executeGetDailyBonus() {
     ];
 
     // --- STATE MANAGEMENT ---
+    function getDefaultOthersSettingsState() {
+        return othersTasks.reduce((acc, task) => {
+            acc[task.id] = true;
+            return acc;
+        }, {});
+    }
+
+    function normalizeOthersSettingsState(state = {}) {
+        const normalized = getDefaultOthersSettingsState();
+        for (const task of othersTasks) {
+            if (Object.prototype.hasOwnProperty.call(state, task.id)) {
+                normalized[task.id] = state[task.id] !== false;
+            }
+        }
+        return normalized;
+    }
+
+    function isOthersTaskEnabled(taskId) {
+        return othersSettingsState[taskId] !== false;
+    }
+
     function loadAllSettings() {
         const { HWHFuncs } = window;
         if (typeof window.getAutoDailySettings === 'function') {
@@ -1904,13 +1919,15 @@ async function executeGetDailyBonus() {
             const providerSettings = window.getAutoDailySettings();
             executionState = providerSettings.executionState || {};
             hideButtonsState = providerSettings.hideButtonsState || {};
-            othersSettingsState = providerSettings.othersSettingsState || {};
+            othersSettingsState = normalizeOthersSettingsState(providerSettings.othersSettingsState || {});
         } else {
             console.log(`${EXTENSION_NAME}: Settings Provider not found. Loading account-specific settings.`);
             isProviderActive = false;
             executionState = HWHFuncs.getSaveVal('autoDaily_executionState', {});
             hideButtonsState = HWHFuncs.getSaveVal('autoDaily_hideButtonsState', { doAll: false, quests: false, actions: false, newSync: false });
-            othersSettingsState = HWHFuncs.getSaveVal('autoDaily_othersSettingsState', othersTasks.reduce((acc, task) => { acc[task.id] = true; return acc; }, {}));
+            othersSettingsState = normalizeOthersSettingsState(
+                HWHFuncs.getSaveVal('autoDaily_othersSettingsState', getDefaultOthersSettingsState())
+            );
         }
     }
 
@@ -1927,15 +1944,22 @@ async function executeGetDailyBonus() {
     // --- UI & CORE LOGIC ---
     function waitForHWH(callback) {
         const interval = setInterval(() => {
-            if (window.HWHData && window.HWHClasses && window.HWHFuncs && window.HWHData.buttons.doActions && window.HWHData.buttons.doActions.button) {
+            const buttons = window.HWHData?.buttons;
+            if (
+                window.HWHData
+                && window.HWHClasses
+                && window.HWHFuncs
+                && buttons?.doActions?.button
+                && buttons?.doOthers?.button
+            ) {
                 clearInterval(interval);
                 callback();
             }
         }, 500);
     }
 
-    function createPopup() {
-        if (document.getElementById('auto-daily-popup-container')) return;
+    function ensurePopupStyles() {
+        if (document.getElementById(AUTO_DAILY_STYLE_ID)) return;
         const styles = `
             .auto-daily-popup-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 10001; }
             .auto-daily-popup-main { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #190e08e6; border: 3px #ce9767 solid; border-radius: 10px; z-index: 10002; color: #fce1ac; padding: 20px; min-width: 900px; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
@@ -1957,8 +1981,14 @@ async function executeGetDailyBonus() {
             .sync-settings-footer, .others-settings-footer { display: flex; justify-content: space-around; margin-top: 15px; }
         `;
         const styleSheet = document.createElement("style");
+        styleSheet.id = AUTO_DAILY_STYLE_ID;
         styleSheet.innerText = styles;
         document.head.appendChild(styleSheet);
+    }
+
+    function createPopup() {
+        if (document.getElementById('auto-daily-popup-container')) return;
+        ensurePopupStyles();
         const backdrop = document.createElement('div');
         backdrop.className = 'auto-daily-popup-backdrop';
         backdrop.id = 'auto-daily-popup-container';
@@ -2027,6 +2057,7 @@ async function executeGetDailyBonus() {
     }
     function createOthersPopup() {
         if (document.getElementById('others-settings-popup-container')) return;
+        ensurePopupStyles();
         const backdrop = document.createElement('div');
         backdrop.className = 'auto-daily-popup-backdrop';
         backdrop.id = 'others-settings-popup-container';
@@ -2034,7 +2065,7 @@ async function executeGetDailyBonus() {
         popup.className = 'auto-daily-popup-main others-settings-popup-main';
         let listHTML = othersTasks.map(task => `
             <li class="auto-daily-task-item">
-                <label><input type="checkbox" data-task-id="${task.id}" ${othersSettingsState[task.id] !== false ? 'checked' : ''}><span>${task.label}</span></label>
+                <label><input type="checkbox" data-task-id="${task.id}" ${isOthersTaskEnabled(task.id) ? 'checked' : ''}><span>${task.label}</span></label>
             </li>`).join('');
         popup.innerHTML = `
             <button class="auto-daily-close-btn">&times;</button>
@@ -2068,6 +2099,7 @@ async function executeGetDailyBonus() {
     }
     function createSyncPopup() {
         if (document.getElementById('sync-settings-popup-container')) return;
+        ensurePopupStyles();
         const backdrop = document.createElement('div');
         backdrop.className = 'auto-daily-popup-backdrop';
         backdrop.id = 'sync-settings-popup-container';
@@ -2124,7 +2156,7 @@ async function executeGetDailyBonus() {
                     if (importedSettings.executionState && importedSettings.hideButtonsState && importedSettings.othersSettingsState) {
                         executionState = importedSettings.executionState;
                         hideButtonsState = importedSettings.hideButtonsState;
-                        othersSettingsState = importedSettings.othersSettingsState;
+                        othersSettingsState = normalizeOthersSettingsState(importedSettings.othersSettingsState);
                         saveAllSettings();
                         applyButtonVisibility();
                         applyOthersVisibility();
@@ -2157,32 +2189,79 @@ async function executeGetDailyBonus() {
         if(doActions && doActions.button) doActions.button.style.display = hideButtonsState.actions ? 'none' : 'flex';
     }
     function applyOthersVisibility() {
-        const isAnyChecked = Object.values(othersSettingsState).some(value => value === true);
+        const isAnyChecked = othersTasks.some(task => isOthersTaskEnabled(task.id));
         if (customOthersButton) customOthersButton.style.display = isAnyChecked ? 'flex' : 'none';
     }
+
+    function getOthersButtonMsg(button) {
+        try {
+            return button?.msg;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function isKnownOthersTaskButton(button) {
+        const { I18N } = window;
+        const msg = getOthersButtonMsg(button);
+        if (!msg) return false;
+        return othersTasks.some(task => msg === I18N(task.id) || msg === task.label);
+    }
+
+    function findOthersPopupButton(task) {
+        const { HWHData, I18N } = window;
+        const buttons = HWHData?.othersPopupButtons || [];
+        const translated = I18N(task.id);
+        return buttons.find(button => {
+            if (button?.isClose) return false;
+            const msg = getOthersButtonMsg(button);
+            return msg === translated || msg === task.label;
+        });
+    }
+
+    function buildFilteredOthersPopupButtons() {
+        const { HWHData } = window;
+        const sourceButtons = HWHData?.othersPopupButtons || [];
+        const popupButtons = [];
+        const used = new Set();
+
+        for (const task of othersTasks) {
+            if (!isOthersTaskEnabled(task.id)) continue;
+            const match = findOthersPopupButton(task);
+            if (!match) {
+                console.warn(`[Auto Daily] No Others handler found for ${task.id} (${task.label})`);
+                continue;
+            }
+            popupButtons.push(match);
+            used.add(match);
+        }
+
+        // Keep extension-added Others actions (e.g. Gift of the Elements) always visible.
+        for (const button of sourceButtons) {
+            if (!button || button.isClose || used.has(button)) continue;
+            if (isKnownOthersTaskButton(button)) continue;
+            popupButtons.push(button);
+        }
+
+        popupButtons.push({ result: false, isClose: true });
+        return popupButtons;
+    }
+
     async function onCustomOthersClick() {
         const { HWHFuncs, I18N, HWHClasses } = window;
-        const visibleTasks = othersTasks.filter(task => othersSettingsState[task.id]);
-        if (visibleTasks.length === 0) return;
-        const popupButtons = visibleTasks.map(task => ({
-            msg: I18N(task.id),
-            title: I18N(task.id + '_TITLE'),
-            result: async () => {
-                if (HWHClasses.executeBrawls && HWHClasses.executeBrawls.isBrawlsAutoStart) return;
-                // Use HWHData.buttons.doOthers functionality if available, otherwise show error
-                const { HWHData, HWHFuncs } = window;
-                if (HWHData && HWHData.buttons && HWHData.buttons.doOthers && HWHData.buttons.doOthers.button) {
-                    // Trigger the original doOthers button click handler
-                    HWHData.buttons.doOthers.button.click();
-                } else {
-                    HWHFuncs.setProgress(`${task.label}: Function not available. Use main menu "Others" button.`, true);
-                    console.warn(`[Auto Daily] Others task ${task.id} (${task.label}) - handler not available`);
-                }
-            }
-        }));
-        popupButtons.push({ result: false, isClose: true });
-        const answer = await HWHFuncs.popup.confirm(I18N('CHOOSE_ACTION'), popupButtons);
-        if (typeof answer === 'function') answer();
+        if (HWHClasses?.executeBrawls?.isBrawlsAutoStart) return;
+
+        const popupButtons = buildFilteredOthersPopupButtons();
+        // Only the trailing close button means nothing is available.
+        if (popupButtons.length <= 1) {
+            HWHFuncs.setProgress('Others: no enabled actions available.', true);
+            return;
+        }
+
+        const answer = await HWHFuncs.popup.confirm(`${I18N('CHOOSE_ACTION')}:`, popupButtons);
+        if (typeof answer === 'function') {
+            await answer();
+        }
     }
     function applySyncButtonState() {
         const { HWHClasses, HWHData, HWHFuncs } = window;
@@ -2455,17 +2534,24 @@ async function executeGetDailyBonus() {
     }
     function createCustomOthersButton() {
         const { HWHClasses, HWHData, I18N } = window;
-        const origOthersButton = HWHData.buttons.doOthers.button;
-        if (!origOthersButton) return;
+        const origOthersButton = HWHData.buttons?.doOthers?.button;
+        if (!origOthersButton) {
+            console.warn('[Auto Daily] Original Others button not found; skipping custom Others button.');
+            return;
+        }
         const scriptMenuContainer = origOthersButton.parentElement;
         if (!scriptMenuContainer) return;
+        if (customOthersButton) {
+            customOthersButton.remove();
+            customOthersButton = null;
+        }
         origOthersButton.style.display = 'none';
         customOthersButton = HWHClasses.ScriptMenu.getInst().addButton({
             name: I18N('OTHERS'),
             title: I18N('OTHERS_TITLE'),
             onClick: onCustomOthersClick
         }, scriptMenuContainer);
-        const referenceButton = HWHData.buttons.testTitanArena.button || HWHData.buttons.testDungeon.button;
+        const referenceButton = HWHData.buttons.testTitanArena?.button || HWHData.buttons.testDungeon?.button;
         if (referenceButton && scriptMenuContainer.contains(referenceButton)) {
              scriptMenuContainer.insertBefore(customOthersButton, referenceButton);
         } else {
