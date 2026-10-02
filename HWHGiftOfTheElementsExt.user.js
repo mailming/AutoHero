@@ -3,7 +3,7 @@
 // @name:en         HWHGiftOfTheElementsExt
 // @name:ru         HWHGiftOfTheElementsExt
 // @namespace       HWHGiftOfTheElementsExt
-// @version         4.0.1
+// @version         4.1.0
 // @description     Extension for HeroWarsHelper script
 // @description:en  Extension for HeroWarsHelper script
 // @description:ru  Расширение для скрипта HeroWarsHelper
@@ -36,8 +36,11 @@
 		154, 154, 154, 154, 198, 198, 198, 198, 198, 242, 242, 242, 242, 242];
 	const MAX_TITAN_GIFT_LEVEL = 30;
 	const TARGET_GIFT_LEVEL_GET_POWER = 29;
+	const TARGET_GIFT_LEVEL_BURN_PRESTIGE = 29;
 	const MIN_USER_LEVEL = 30;
 	const CONSUMABLE_ID_TITAN_GIFT = 24;
+	const GOLD_PER_PRESTIGE_BATCH = 400000;
+	const PRESTIGE_POINTS_PER_BATCH = 15;
 	const AUTO_EXECUTION_TIMEOUT = 100;
 	const AUTO_EXECUTION_DELAY = 3000;
 
@@ -91,6 +94,30 @@
 		GOE_AUTO_GET_POWER_TITLE: 'Automatically get power when script loads',
 		GOE_AUTO_GET_POWER_AMOUNT: 'Auto Get Power Amount',
 		GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Amount of power to get automatically (0 = disabled)',
+		GOE_BURN_GOLD_PRESTIGE: 'Burn Gold for Prestige',
+		GOE_BURN_GOLD_PRESTIGE_TITLE: 'Spend gold on Gift of the Elements (lowest hero → lvl 29 → reset) to burn prestige points',
+		GOE_BURN_GOLD_PRESTIGE_MESSAGE:
+			`Spend gold by upgrading the <span style="color: red;">lowest power</span> hero's Gift of the Elements to level <span style="color: green;">29</span>, then reset, and repeat.
+            <br> Rate: <span style="color: green;"> {goldPerBatch} </span> gold = <span style="color: green;"> {prestigePerBatch} </span> prestige points
+            <br> Available gold: <span style="color: green;"> {haveGold} </span>
+            <br> Available sparks: <span style="color: green;"> {haveSparks} </span>
+            <br> Gold per full cycle (0→29): <span style="color: green;"> {goldPerCycle} </span>
+            <br> Sparks needed per cycle (refunded on reset): <span style="color: green;"> {sparksPerCycle} </span>
+            <br><br> Specify how much gold to spend
+            <br> Prestige points: <span id="goe-prestige-points" style="color: aqua; font-weight: bold;"> {prestigePoints} </span>`,
+		GOE_BURN_GOLD_PRESTIGE_START: 'Burning gold for prestige...',
+		GOE_BURN_GOLD_PRESTIGE_PROGRESS:
+			'Cycle <span style="color: green;"> {cycle} </span> | Spent <span style="color: green;"> {goldSpent} </span> gold | Prestige ~ <span style="color: aqua;"> {prestigePoints} </span>',
+		GOE_BURN_GOLD_PRESTIGE_RESULT:
+			`Spent <span style="color: green;"> {goldSpent} </span> gold
+            <br> Prestige points: <span style="color: aqua;"> {prestigePoints} </span>
+            <br> Cycles completed: <span style="color: green;"> {cycles} </span>
+            <br> Upgrades: <span style="color: green;"> {upgrades} </span>`,
+		GOE_BURN_GOLD_NO_HERO: 'No active hero available below Gift of the Elements level 30',
+		GOE_BURN_GOLD_NOT_ENOUGH_SPARKS:
+			`Not enough sparks of power for one upgrade cycle
+            <br> Have: <span style="color: red;"> {haveSparks} </span>
+            <br> Need: <span style="color: green;"> {needSparks} </span>`,
 	};
 
 	i18nLangData['en'] = Object.assign(i18nLangData['en'], i18nLangDataEn);
@@ -145,6 +172,30 @@
 		GOE_AUTO_GET_POWER_TITLE: 'Автоматически получать мощь при загрузке скрипта',
 		GOE_AUTO_GET_POWER_AMOUNT: 'Количество мощи для авто получения',
 		GOE_AUTO_GET_POWER_AMOUNT_TITLE: 'Количество мощи для автоматического получения (0 = отключено)',
+		GOE_BURN_GOLD_PRESTIGE: 'Сжечь золото за престиж',
+		GOE_BURN_GOLD_PRESTIGE_TITLE: 'Тратить золото на Дар стихий (слабейший герой → 29 ур. → сброс) для престижа',
+		GOE_BURN_GOLD_PRESTIGE_MESSAGE:
+			`Тратит золото, улучшая Дар стихий <span style="color: red;">самого слабого</span> героя до <span style="color: green;">29</span> уровня, затем сбрасывает и повторяет.
+            <br> Курс: <span style="color: green;"> {goldPerBatch} </span> золота = <span style="color: green;"> {prestigePerBatch} </span> очков престижа
+            <br> Доступно золота: <span style="color: green;"> {haveGold} </span>
+            <br> Доступно искр: <span style="color: green;"> {haveSparks} </span>
+            <br> Золота за полный цикл (0→29): <span style="color: green;"> {goldPerCycle} </span>
+            <br> Искр на цикл (возвращаются при сбросе): <span style="color: green;"> {sparksPerCycle} </span>
+            <br><br> Укажите, сколько золота потратить
+            <br> Очки престижа: <span id="goe-prestige-points" style="color: aqua; font-weight: bold;"> {prestigePoints} </span>`,
+		GOE_BURN_GOLD_PRESTIGE_START: 'Сжигаем золото за престиж...',
+		GOE_BURN_GOLD_PRESTIGE_PROGRESS:
+			'Цикл <span style="color: green;"> {cycle} </span> | Потрачено <span style="color: green;"> {goldSpent} </span> золота | Престиж ~ <span style="color: aqua;"> {prestigePoints} </span>',
+		GOE_BURN_GOLD_PRESTIGE_RESULT:
+			`Потрачено <span style="color: green;"> {goldSpent} </span> золота
+            <br> Очки престижа: <span style="color: aqua;"> {prestigePoints} </span>
+            <br> Завершено циклов: <span style="color: green;"> {cycles} </span>
+            <br> Улучшений: <span style="color: green;"> {upgrades} </span>`,
+		GOE_BURN_GOLD_NO_HERO: 'Нет активного героя с Даром стихий ниже 30 уровня',
+		GOE_BURN_GOLD_NOT_ENOUGH_SPARKS:
+			`Недостаточно искр мощи для одного цикла улучшения
+            <br> Есть: <span style="color: red;"> {haveSparks} </span>
+            <br> Нужно: <span style="color: green;"> {needSparks} </span>`,
 	};
 
 	i18nLangData['ru'] = Object.assign(i18nLangData['ru'], i18nLangDataRu);
@@ -256,6 +307,18 @@
 			},
 			{
 				get msg() {
+					return I18N('GOE_BURN_GOLD_PRESTIGE');
+				},
+				get title() {
+					return I18N('GOE_BURN_GOLD_PRESTIGE_TITLE');
+				},
+				result: async function () {
+					await burnGoldForPrestige();
+				},
+				color: 'orange',
+			},
+			{
+				get msg() {
 					return I18N('GOE_RESET_GIFTS_LIGHT');
 				},
 				get title() {
@@ -304,6 +367,40 @@
 	// Helper: Sort heroes by power descending (highest power first)
 	function sortHeroesByPowerDesc(heroes) {
 		return [...heroes].sort((a, b) => b.power - a.power);
+	}
+
+	// Helper: Sort heroes by power ascending (lowest power first)
+	function sortHeroesByPowerAsc(heroes) {
+		return [...heroes].sort((a, b) => a.power - b.power);
+	}
+
+	// Helper: Prestige points from gold (400,000 gold = 15 points)
+	function calcPrestigeFromGold(goldAmount) {
+		const gold = Math.max(0, Math.floor(+goldAmount || 0));
+		return Math.floor(gold / GOLD_PER_PRESTIGE_BATCH) * PRESTIGE_POINTS_PER_BATCH;
+	}
+
+	// Helper: Gold/sparks cost to upgrade Gift of the Elements between levels
+	function getUpgradeCostBetweenLevels(titanGiftLib, fromLevel, toLevel) {
+		let gold = 0;
+		let sparks = 0;
+		for (let level = fromLevel; level < toLevel; level++) {
+			const nextLevelCost = titanGiftLib[level + 1]?.cost;
+			if (!nextLevelCost) {
+				break;
+			}
+			gold += nextLevelCost.gold || 0;
+			sparks += nextLevelCost.consumable?.[CONSUMABLE_ID_TITAN_GIFT] || 0;
+		}
+		return { gold, sparks };
+	}
+
+	// Helper: Lowest-power active hero that can be used for prestige burn (< level 30)
+	function getLowestActiveHeroForBurn(heroes) {
+		const candidates = sortHeroesByPowerAsc(heroes).filter(
+			(hero) => hero.power > 0 && hero.titanGiftLevel < MAX_TITAN_GIFT_LEVEL
+		);
+		return candidates[0] || null;
 	}
 
 	// Helper: Calculate maximum possible power (highest-power hero first, up to level 29)
@@ -679,6 +776,194 @@
 			isAutoMode: false,
 			showProgress: true,
 		});
+	}
+
+	// Burn gold for prestige: lowest hero → lvl 29 → reset → loop
+	async function burnGoldForPrestige() {
+		let [heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+		let heroes = Object.values(heroGetAll);
+		const titanGiftLib = lib.getData('titanGift');
+		let titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT] || 0;
+		let gold = user.gold;
+
+		if (user.level < MIN_USER_LEVEL) {
+			confShow(`${I18N('GOE_NOTHING_TO_IMPROVE_LVL30')}`);
+			return;
+		}
+
+		const lowestHero = getLowestActiveHeroForBurn(heroes);
+		if (!lowestHero) {
+			confShow(`${I18N('GOE_BURN_GOLD_NO_HERO')}`);
+			return;
+		}
+
+		const fullCycleCost = getUpgradeCostBetweenLevels(titanGiftLib, 0, TARGET_GIFT_LEVEL_BURN_PRESTIGE);
+		const firstCycleCost = getUpgradeCostBetweenLevels(
+			titanGiftLib,
+			lowestHero.titanGiftLevel >= TARGET_GIFT_LEVEL_BURN_PRESTIGE ? 0 : lowestHero.titanGiftLevel,
+			TARGET_GIFT_LEVEL_BURN_PRESTIGE
+		);
+		// If already at 29, a reset is needed first; sparks are already invested in the hero
+		const sparksNeededNow = lowestHero.titanGiftLevel >= TARGET_GIFT_LEVEL_BURN_PRESTIGE
+			? 0
+			: firstCycleCost.sparks;
+		if (titanGift < sparksNeededNow) {
+			confShow(
+				I18N('GOE_BURN_GOLD_NOT_ENOUGH_SPARKS', {
+					haveSparks: titanGift.toLocaleString(),
+					needSparks: Math.max(sparksNeededNow, fullCycleCost.sparks).toLocaleString(),
+				})
+			);
+			return;
+		}
+
+		if (gold <= 0) {
+			confShow(`${I18N('GOE_NOT_ENOUGH_RESOURCES')}`);
+			return;
+		}
+
+		const defaultGold = Math.min(gold, fullCycleCost.gold);
+		const popupPromise = popup.confirm(
+			I18N('GOE_BURN_GOLD_PRESTIGE_MESSAGE', {
+				goldPerBatch: GOLD_PER_PRESTIGE_BATCH.toLocaleString(),
+				prestigePerBatch: PRESTIGE_POINTS_PER_BATCH.toLocaleString(),
+				haveGold: gold.toLocaleString(),
+				haveSparks: titanGift.toLocaleString(),
+				goldPerCycle: fullCycleCost.gold.toLocaleString(),
+				sparksPerCycle: fullCycleCost.sparks.toLocaleString(),
+				prestigePoints: calcPrestigeFromGold(defaultGold).toLocaleString(),
+			}),
+			[
+				{ result: 0, isClose: true },
+				{ msg: I18N('GOE_BURN_GOLD_PRESTIGE'), isInput: true, default: defaultGold.toString(), color: 'orange' },
+			]
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const goldInput = document.querySelector('.PopUp_input');
+		const prestigePointsEl = document.querySelector('#goe-prestige-points');
+		if (goldInput && prestigePointsEl) {
+			const updatePrestigePoints = () => {
+				prestigePointsEl.textContent = calcPrestigeFromGold(goldInput.value).toLocaleString();
+			};
+			goldInput.addEventListener('input', updatePrestigePoints);
+			updatePrestigePoints();
+		}
+
+		const goldToSpend = +(await popupPromise);
+		if (goldToSpend === 0 || !goldToSpend || goldToSpend < 0 || goldToSpend > gold) {
+			if (goldToSpend !== 0) {
+				confShow(`${I18N('GOE_INCORRECT_VALUE')}`);
+			}
+			return;
+		}
+
+		let goldBudget = goldToSpend;
+		let goldSpent = 0;
+		let upgradeCounter = 0;
+		let cycleCounter = 0;
+		const heroId = lowestHero.id;
+
+		setProgress(I18N('GOE_BURN_GOLD_PRESTIGE_START'), false);
+
+		while (goldBudget > 0 && gold > 0) {
+			let hero = heroes.find((entry) => entry.id === heroId);
+			if (!hero || hero.titanGiftLevel >= MAX_TITAN_GIFT_LEVEL) {
+				break;
+			}
+
+			// If already at target level, reset first so the loop can upgrade again
+			if (hero.titanGiftLevel >= TARGET_GIFT_LEVEL_BURN_PRESTIGE) {
+				await Caller.send([{ name: 'heroTitanGiftDrop', args: { heroId } }]);
+				cycleCounter++;
+				[heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+				heroes = Object.values(heroGetAll);
+				titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT] || 0;
+				gold = user.gold;
+				continue;
+			}
+
+			const calls = [];
+			let upgradedThisCycle = 0;
+			let localGiftLevel = hero.titanGiftLevel;
+
+			while (localGiftLevel < TARGET_GIFT_LEVEL_BURN_PRESTIGE) {
+				const nextLevelCost = titanGiftLib[localGiftLevel + 1]?.cost;
+				if (!nextLevelCost) {
+					break;
+				}
+
+				const costTitanGift = nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT];
+				const costGold = nextLevelCost.gold;
+
+				if (titanGift < costTitanGift || gold < costGold || goldBudget < costGold) {
+					break;
+				}
+
+				calls.push({ name: 'heroTitanGiftLevelUp', args: { heroId } });
+				titanGift -= costTitanGift;
+				gold -= costGold;
+				goldBudget -= costGold;
+				goldSpent += costGold;
+				localGiftLevel++;
+				upgradedThisCycle++;
+			}
+
+			if (calls.length === 0) {
+				break;
+			}
+
+			await Caller.send(calls);
+			upgradeCounter += upgradedThisCycle;
+
+			// Reset to recover sparks (gold is not refunded)
+			if (localGiftLevel > 0) {
+				await Caller.send([{ name: 'heroTitanGiftDrop', args: { heroId } }]);
+				cycleCounter++;
+			}
+
+			// Refresh real balances after upgrade/reset (sparks are refunded by the server)
+			[heroGetAll, inventory, user] = await new Caller(['heroGetAll', 'inventoryGet', 'userGetInfo']).execute();
+			heroes = Object.values(heroGetAll);
+			titanGift = inventory.consumable[CONSUMABLE_ID_TITAN_GIFT] || 0;
+			gold = user.gold;
+
+			setProgress(
+				I18N('GOE_BURN_GOLD_PRESTIGE_PROGRESS', {
+					cycle: cycleCounter,
+					goldSpent: goldSpent.toLocaleString(),
+					prestigePoints: calcPrestigeFromGold(goldSpent).toLocaleString(),
+				}),
+				false
+			);
+
+			// Stop when remaining budget cannot afford the cheapest next upgrade from level 0
+			const nextLevelCost = titanGiftLib[1]?.cost;
+			if (
+				!nextLevelCost ||
+				goldBudget < nextLevelCost.gold ||
+				gold < nextLevelCost.gold ||
+				titanGift < nextLevelCost.consumable[CONSUMABLE_ID_TITAN_GIFT]
+			) {
+				break;
+			}
+		}
+
+		setProgress('', true);
+
+		if (upgradeCounter === 0) {
+			confShow(`${I18N('GOE_NOT_ENOUGH_RESOURCES')}`);
+			return;
+		}
+
+		confShow(
+			I18N('GOE_BURN_GOLD_PRESTIGE_RESULT', {
+				goldSpent: goldSpent.toLocaleString(),
+				prestigePoints: calcPrestigeFromGold(goldSpent).toLocaleString(),
+				cycles: cycleCounter,
+				upgrades: upgradeCounter,
+			})
+		);
 	}
 
 	// Reset titan gifts (level 1-29)
