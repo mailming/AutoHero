@@ -174,6 +174,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_matchup_tests_unique_session
 
 CREATE INDEX IF NOT EXISTS idx_matchup_tests_max_upgrade
     ON matchup_tests (max_upgrade);
+
+CREATE INDEX IF NOT EXISTS idx_matchup_tests_my_combo_stats
+    ON matchup_tests (max_upgrade, tester_user_id, win_rate DESC);
 `;
 
 function parseTimestamp(value) {
@@ -804,9 +807,24 @@ export async function getTrainingResultStats({
     topN = 10,
     minWinRate = 90,
     grandArenaMaxResults = 5,
+    grandArenaComboPool = 80,
 } = {}) {
-    const [allCombos, topMyCombos, topHeroesResult] = await Promise.all([
-        queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds: [], testerUserId, minWinRate }),
+    // Cap the GA input pool — uncapped O(n³) over 1000+ combos hangs Node and can throw
+    // "Set maximum size exceeded" (V8 Set limit ~16.7M).
+    const gaPoolLimit = Number.isFinite(grandArenaComboPool) && grandArenaComboPool > 0
+        ? Math.floor(grandArenaComboPool)
+        : 80;
+    const gaResultLimit = grandArenaMaxResults > 0 ? grandArenaMaxResults : 5;
+
+    const [gaCombos, topMyCombos, topHeroesResult] = await Promise.all([
+        queryMyComboStats({
+            comboKey,
+            opponentHeroIds,
+            myHeroIds: [],
+            testerUserId,
+            minWinRate,
+            limit: gaPoolLimit,
+        }),
         queryMyComboStats({ comboKey, opponentHeroIds, myHeroIds, testerUserId, minWinRate, limit: topN }),
         (async () => {
             if (!pool) {
@@ -849,13 +867,11 @@ export async function getTrainingResultStats({
     ]);
 
     const grandArenaRequiredHeroes = normalizeHeroFilterIds(myHeroIds);
-    const grandArenaAll = findGrandArenaSelections(allCombos, {
-        maxResults: 0,
+    const grandArena = findGrandArenaSelections(gaCombos, {
+        maxResults: gaResultLimit,
         requiredHeroIds: grandArenaRequiredHeroes,
+        maxComboPool: gaPoolLimit,
     });
-    const grandArenaSelections = grandArenaMaxResults > 0
-        ? grandArenaAll.slice(0, grandArenaMaxResults)
-        : grandArenaAll;
 
     return {
         topMyCombos: topMyCombos,
@@ -865,10 +881,10 @@ export async function getTrainingResultStats({
             wins90: row.wins_90,
             avgWinRate: row.avg_win_rate != null ? Number(row.avg_win_rate) : null,
         })),
-        grandArenaSelections,
-        grandArenaSelectionCount: grandArenaAll.length,
-        grandArenaShownCount: grandArenaSelections.length,
-        comboPoolSize: allCombos.length,
+        grandArenaSelections: grandArena.selections,
+        grandArenaSelectionCount: grandArena.totalCount,
+        grandArenaShownCount: grandArena.selections.length,
+        comboPoolSize: grandArena.poolSize,
         grandArenaRequiredHeroes,
         minWinRate,
     };

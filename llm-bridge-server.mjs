@@ -166,36 +166,44 @@ const server = http.createServer(async (req, res) => {
                 || undefined;
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const limitParam = url.searchParams.get('limit');
-            const pageSize = limitParam == null ? 500 : Math.max(0, Number(limitParam) || 0);
+            const pageSize = limitParam == null ? 100 : Math.max(0, Number(limitParam) || 0);
             const sort = url.searchParams.get('sort') || 'when';
             const order = url.searchParams.get('order') || 'desc';
             const filterArgs = { comboKey, opponentHeroIds, myHeroIds, testerUserId, sort, order };
-            const [rows, summary, total, stats, testers] = await Promise.all([
-                getTrainingResults({
-                    ...filterArgs,
+            try {
+                const [rows, summary, total, stats, testers] = await Promise.all([
+                    getTrainingResults({
+                        ...filterArgs,
+                        offset,
+                        limit: pageSize > 0 ? pageSize : undefined,
+                    }),
+                    getTrainingSummary(),
+                    getTrainingResultCount(filterArgs),
+                    getTrainingResultStats(filterArgs),
+                    getTrainingTesters(),
+                ]);
+                const results = rows.map(formatTrainingResultRow);
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                return res.end(renderTrainingResultsPage(results, summary, {
+                    total,
                     offset,
-                    limit: pageSize > 0 ? pageSize : undefined,
-                }),
-                getTrainingSummary(),
-                getTrainingResultCount(filterArgs),
-                getTrainingResultStats(filterArgs),
-                getTrainingTesters(),
-            ]);
-            const results = rows.map(formatTrainingResultRow);
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            return res.end(renderTrainingResultsPage(results, summary, {
-                total,
-                offset,
-                pageSize: pageSize > 0 ? pageSize : total,
-                comboKey,
-                opponentHeroIds,
-                myHeroIds,
-                testerUserId,
-                testers,
-                stats,
-                sort,
-                order,
-            }));
+                    pageSize: pageSize > 0 ? pageSize : total,
+                    comboKey,
+                    opponentHeroIds,
+                    myHeroIds,
+                    testerUserId,
+                    testers,
+                    stats,
+                    sort,
+                    order,
+                }));
+            } catch (error) {
+                console.error('[training/view] failed:', error);
+                return sendJson(res, 500, {
+                    ok: false,
+                    error: error?.message || String(error),
+                });
+            }
         }
 
         if (req.method === 'GET' && url.pathname === '/training/results') {

@@ -429,7 +429,7 @@ function renderGrandArenaSelections(stats = {}) {
       <h2>Grand Arena — suggested defense</h2>
       <p class="section-lead">
         Three teams built from your best counters. Each hero is used once across all teams (15 heroes total); pets can repeat.
-        ${totalFound ? `Found ${totalFound} valid lineup${totalFound === 1 ? '' : 's'} from ${poolSize} strong teams${shownCount < totalFound ? ` — top ${shownCount} shown` : ''}.` : ''}
+        ${totalFound ? `Found ${totalFound} valid lineup${totalFound === 1 ? '' : 's'} from the top ${poolSize} counters${shownCount < totalFound ? ` — top ${shownCount} shown` : ''}.` : ''}
         ${myHeroFilterNote ? `${myHeroFilterNote}` : ''}
       </p>
     </div>
