@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.2.9
+// @version      3.3.0
 // @description  Adds an advanced auto-run panel for daily tasks and quests to HeroWarsHelper.
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.2.9";
+    const EXTENSION_VERSION = "3.3.0";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -73,7 +73,21 @@
         titan4000HP: 0.63,
         titan4000Energy400HP: 0.45,
         titan4000Energy670HP: 0.34,
-        autoRefreshPage: false
+        autoRefreshPage: false,
+        // Optional: skip glass-cannon titans on elemental doors (Tidus/Asherona/Verdoc).
+        // Off by default — they're strong; enable if long farms keep dying.
+        excludeFragileElemental: false,
+        // Try smaller earth/fire teams (5→2) when a full team fails survival checks.
+        shrinkEarthFireTeams: true,
+        // Reject sims that leave tanks below the HP/energy cutoffs above.
+        enforceTankSurvival: true,
+    };
+
+    /** Fragile high-DPS titans that can brick long auto runs on elemental doors. */
+    const FRAGILE_ELEMENTAL_TITANS = {
+        water: 4004, // Tidus
+        fire: 4014,  // Asherona
+        earth: 4024, // Verdoc
     };
 
     let titanHealthSettings = {};
@@ -92,7 +106,8 @@
     function loadTitanHealthSettings() {
         const { HWHFuncs } = window;
         if (HWHFuncs && HWHFuncs.getSaveVal) {
-            titanHealthSettings = HWHFuncs.getSaveVal('titanHealthSettings', defaultTitanHealthSettings);
+            const saved = HWHFuncs.getSaveVal('titanHealthSettings', {}) || {};
+            titanHealthSettings = Object.assign({}, defaultTitanHealthSettings, saved);
         } else {
             titanHealthSettings = Object.assign({}, defaultTitanHealthSettings);
         }
@@ -730,6 +745,108 @@
             return option.heroes.length + Number(!!option.pet) - Object.keys(after).length;
         }
 
+        function checkTitanSurvival(titanId, energy, percentHP) {
+            const s = titanHealthSettings || defaultTitanHealthSettings;
+            const id = String(titanId);
+            switch (id) {
+                case '4020': // Angus
+                    return percentHP > (s.titan4020HP ?? 0.4)
+                        || (energy >= 1000 && percentHP > (s.titan4020EnergyHP ?? 0.2));
+                case '4010': // Moloch
+                    return percentHP + energy / 2000.0 > (s.titan4010Combined ?? 0.67);
+                case '4000': // Sigurd
+                    return percentHP > (s.titan4000HP ?? 0.63)
+                        || (energy < 1000 && (
+                            (percentHP > (s.titan4000Energy400HP ?? 0.45) && energy >= 400)
+                            || (percentHP > (s.titan4000Energy670HP ?? 0.34) && energy >= 670)
+                        ));
+                default:
+                    return true;
+            }
+        }
+
+        function passesDungeonSurvival(option) {
+            if (!option?.result?.win) {
+                return false;
+            }
+            if (option.result.stars != null && option.result.stars < 3) {
+                return false;
+            }
+            if (getDeads(option) > 0) {
+                return false;
+            }
+            if (titanHealthSettings.enforceTankSurvival === false) {
+                return true;
+            }
+            const beforeTitans = option.battleData?.attackers || {};
+            const afterTitans = option.progress?.[0]?.attackers?.heroes || {};
+            for (const [id, titan] of Object.entries(afterTitans)) {
+                const before = beforeTitans[id] || beforeTitans[Number(id)];
+                const maxHp = before?.hp || titan.hp || 1;
+                const percentHP = titan.hp / maxHp;
+                const energy = titan.energy ?? 0;
+                if (!checkTitanSurvival(id, energy, percentHP)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function getElementalPool(aliveTitans, attackerType) {
+            let pool = [...(aliveTitans[attackerType] || aliveTitans.all || [])];
+            if (titanHealthSettings.excludeFragileElemental) {
+                const fragileId = FRAGILE_ELEMENTAL_TITANS[attackerType];
+                if (fragileId) {
+                    pool = pool.filter((t) => Number(t.id) !== fragileId);
+                }
+            }
+            return pool;
+        }
+
+        async function evaluateElementalDoor(teamNum, attackerType, aliveTitans) {
+            const pool = getElementalPool(aliveTitans, attackerType);
+            if (!pool.length) {
+                return null;
+            }
+
+            const maxSize = Math.min(5, pool.length);
+            const shouldShrink = titanHealthSettings.shrinkEarthFireTeams !== false
+                && (attackerType === 'earth' || attackerType === 'fire');
+            const minSize = shouldShrink ? Math.min(2, maxSize) : maxSize;
+
+            let best = null;
+            for (let size = maxSize; size >= minSize; size--) {
+                if (stopDung || end) {
+                    break;
+                }
+                const heroes = pool.slice(0, size).map((t) => Number(t.id));
+                const option = await startAndSimulate(teamNum, heroes, null, attackerType);
+                if (!option?.win) {
+                    if (DUNGEON_VERBOSE) {
+                        console.log(`[Dungeon] ${attackerType} size ${size}: no win`);
+                    }
+                    continue;
+                }
+                if (!passesDungeonSurvival(option)) {
+                    if (DUNGEON_VERBOSE) {
+                        console.log(`[Dungeon] ${attackerType} size ${size}: win but failed survival checks`);
+                    }
+                    continue;
+                }
+                if (!best || isOptionBetter(best, option)) {
+                    best = option;
+                    if (DUNGEON_VERBOSE) {
+                        console.log(`[Dungeon] ${attackerType} size ${size}: accepted candidate`);
+                    }
+                }
+                // Full team that passes survival is preferred; stop shrinking early.
+                if (size === maxSize) {
+                    break;
+                }
+            }
+            return best;
+        }
+
         function debugString(option, attackerType) {
             if (!option) return 'INVALID';
             let s = `[${option.teamNum}]${attackerType}`;
@@ -1230,9 +1347,13 @@
                         team = neutralTeam.length > 0 ? { heroes: neutralTeam, pet: null } : null;
                     }
                 } else {
-                    const pool = aliveTitans[attackerType] ? aliveTitans[attackerType] : aliveTitans.all;
-                    const heroes = pool.slice(0, 5).map((t) => t.id);
-                    team = heroes.length > 0 ? { heroes, pet: null } : null;
+                    const elementalOption = await evaluateElementalDoor(teamNum, attackerType, aliveTitans);
+                    if (elementalOption) {
+                        options.push({ option: elementalOption, attackerType });
+                    } else {
+                        options.push(null);
+                    }
+                    continue;
                 }
 
                 if (!team) {
@@ -1257,10 +1378,19 @@
                     const fallback = getNeutralTitans(aliveTitans);
                     if (fallback.length > 0) {
                         const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType);
-                        options.push(fallbackOption?.win ? { option: fallbackOption, attackerType } : null);
+                        options.push(fallbackOption?.win && passesDungeonSurvival(fallbackOption)
+                            ? { option: fallbackOption, attackerType }
+                            : null);
                     } else {
                         options.push(null);
                     }
+                    continue;
+                }
+                if (!passesDungeonSurvival(option)) {
+                    if (DUNGEON_VERBOSE) {
+                        console.log(`[Dungeon] ${attackerType} door ${teamNum}: win but failed survival checks`);
+                    }
+                    options.push(null);
                     continue;
                 }
                 options.push({ option, attackerType });
@@ -1384,6 +1514,11 @@
             if (DUNGEON_VERBOSE) {
                 console.log('[Dungeon] Water', waterPower, '| Earth', earthPower, '| Fire', firePower, '| canHeal:', isAbleToHeal);
                 console.log('[Dungeon] Starting full dungeon run:', new Date());
+                console.log('[Dungeon] Settings:', {
+                    excludeFragileElemental: !!titanHealthSettings.excludeFragileElemental,
+                    shrinkEarthFireTeams: titanHealthSettings.shrinkEarthFireTeams !== false,
+                    enforceTankSurvival: titanHealthSettings.enforceTankSurvival !== false,
+                });
             }
             return true;
         }
@@ -1590,16 +1725,61 @@
             #titanSettingsGUI #resetTitanSettings:hover {
                 background-color: #e5533d;
             }
+            #titanSettingsGUI .setting-check {
+                display: flex;
+                align-items: flex-start;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            #titanSettingsGUI .setting-check input[type="checkbox"] {
+                margin-top: 3px;
+                flex-shrink: 0;
+            }
+            #titanSettingsGUI .setting-check label {
+                display: inline;
+                font-weight: normal;
+                color: #E0E0E0;
+                margin-bottom: 0;
+            }
+            #titanSettingsGUI .setting-hint {
+                display: block;
+                font-size: 11px;
+                color: #9fb3d1;
+                margin-top: 2px;
+                font-weight: normal;
+            }
         `;
         document.head.appendChild(style);
 
         const gui = document.createElement('div');
         gui.id = 'titanSettingsGUI';
         gui.innerHTML = `
-            <h3>Dungeon Cutoff Settings 1.0.7</h3>
-            <div>
+            <h3>Dungeon Cutoff Settings 1.1.0</h3>
+            <div class="setting-check">
                 <input type="checkbox" id="autoRefreshPage">
                 <label for="autoRefreshPage">Refresh(F5) after dungeon</label>
+            </div>
+            <h4>Team building</h4>
+            <div class="setting-check">
+                <input type="checkbox" id="excludeFragileElemental">
+                <label for="excludeFragileElemental">
+                    Exclude fragile titans on elemental doors
+                    <span class="setting-hint">Tidus / Asherona / Verdoc — off by default (they're strong). Turn on if long farms keep dying.</span>
+                </label>
+            </div>
+            <div class="setting-check">
+                <input type="checkbox" id="shrinkEarthFireTeams">
+                <label for="shrinkEarthFireTeams">
+                    Shrink earth/fire teams when unsafe
+                    <span class="setting-hint">Try 5→4→3→2 titans if full team fails survival checks.</span>
+                </label>
+            </div>
+            <div class="setting-check">
+                <input type="checkbox" id="enforceTankSurvival">
+                <label for="enforceTankSurvival">
+                    Enforce tank HP/energy cutoffs
+                    <span class="setting-hint">Reject sims that leave Angus / Moloch / Sigurd too low.</span>
+                </label>
             </div>
             <div>
                 <label for="minOverallHP">General Thresholds (%) (>=30):</label>
@@ -1648,7 +1828,10 @@
             document.getElementById('titan4000HP').value = titanHealthSettings.titan4000HP * 100;
             document.getElementById('titan4000Energy400HP').value = titanHealthSettings.titan4000Energy400HP * 100;
             document.getElementById('titan4000Energy670HP').value = titanHealthSettings.titan4000Energy670HP * 100;
-            document.getElementById('autoRefreshPage').checked = titanHealthSettings.autoRefreshPage;
+            document.getElementById('autoRefreshPage').checked = !!titanHealthSettings.autoRefreshPage;
+            document.getElementById('excludeFragileElemental').checked = !!titanHealthSettings.excludeFragileElemental;
+            document.getElementById('shrinkEarthFireTeams').checked = titanHealthSettings.shrinkEarthFireTeams !== false;
+            document.getElementById('enforceTankSurvival').checked = titanHealthSettings.enforceTankSurvival !== false;
         }
 
         updateGUIFields();
@@ -1662,6 +1845,9 @@
             titanHealthSettings.titan4000Energy400HP = parseFloat(document.getElementById('titan4000Energy400HP').value) / 100;
             titanHealthSettings.titan4000Energy670HP = parseFloat(document.getElementById('titan4000Energy670HP').value) / 100;
             titanHealthSettings.autoRefreshPage = document.getElementById('autoRefreshPage').checked;
+            titanHealthSettings.excludeFragileElemental = document.getElementById('excludeFragileElemental').checked;
+            titanHealthSettings.shrinkEarthFireTeams = document.getElementById('shrinkEarthFireTeams').checked;
+            titanHealthSettings.enforceTankSurvival = document.getElementById('enforceTankSurvival').checked;
             saveTitanHealthSettings();
             const { HWHFuncs } = window;
             if (HWHFuncs) HWHFuncs.setProgress('Dungeon settings saved!', true);
@@ -1681,14 +1867,14 @@
         inputs.forEach(input => {
             input.addEventListener('change', () => {
                 const id = input.id;
-                if (titanHealthSettings.hasOwnProperty(id)) {
+                if (Object.prototype.hasOwnProperty.call(defaultTitanHealthSettings, id)) {
                     if (input.type === 'checkbox') {
                         titanHealthSettings[id] = input.checked;
                     } else {
                         titanHealthSettings[id] = parseFloat(input.value) / 100;
                     }
+                    saveTitanHealthSettings();
                 }
-                saveTitanHealthSettings();
             });
         });
 
