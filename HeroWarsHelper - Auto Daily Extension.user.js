@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.8
+// @version      3.5.9
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.8";
+    const EXTENSION_VERSION = "3.5.9";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -3272,51 +3272,51 @@ async function executeGetDailyBonus() {
                     };
                     console.log('[DEMO] Grand Arena visible defenses:', visibleSlots.length, 'slots', visibleSlots);
                 }
+            } else {
                 // Regular Arena: 1 team
-                // heroes is array of 6 objects (5 heroes + 1 pet)
-                if (opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length >= 6) {
-                    const heroIds = [];
-                    let petId = 6005; // Default pet
+                // heroes is typically an array of 6 objects (5 heroes + 1 pet)
+                const rawHeroes = Array.isArray(opp.heroes) ? opp.heroes : [];
+                const heroIds = [];
+                let petId = 6005; // Default pet
 
-                    // Extract hero IDs and pet ID from objects
-                    for (let i = 0; i < opp.heroes.length; i++) {
-                        const item = opp.heroes[i];
-                        const id = extractId(item);
-                        
-                        if (id && !isPet(item)) {
-                            // It's a hero
-                            if (heroIds.length < 5) {
-                                heroIds.push(id);
-                            }
-                        } else if (id && isPet(item)) {
-                            // It's a pet (usually the 6th item)
-                            petId = id;
-                        }
-                    }
+                for (let i = 0; i < rawHeroes.length; i++) {
+                    const item = rawHeroes[i];
+                    const id = extractId(item);
 
-                    // Extract banner ID from banner object
-                    let bannerId = 1; // Default
-                    if (opp.banners && Array.isArray(opp.banners) && opp.banners.length > 0) {
-                        bannerId = extractBannerId(opp.banners[0]);
-                    } else if (typeof opp.banner === 'number') {
-                        bannerId = opp.banner;
+                    if (id && isPet(item)) {
+                        petId = id;
+                    } else if (id && heroIds.length < 5) {
+                        heroIds.push(id);
                     }
+                }
 
-                    if (heroIds.length === 5) {
-                        hasValidTeam = true;
-                        config = {
-                            hasValidTeam: true,
-                            heroes: heroIds,
-                            pet: petId,
-                            banner: bannerId,
-                            favor: {} // Favor data not available in arenaFindEnemies response
-                        };
-                        console.log('[DEMO] Regular Arena config extracted:', {
-                            heroes: heroIds,
-                            pet: petId,
-                            banner: bannerId
-                        });
-                    }
+                let bannerId = 1;
+                if (opp.banners && Array.isArray(opp.banners) && opp.banners.length > 0) {
+                    bannerId = extractBannerId(opp.banners[0]);
+                } else if (typeof opp.banner === 'number') {
+                    bannerId = opp.banner;
+                }
+
+                if (heroIds.length === 5) {
+                    hasValidTeam = true;
+                    config = {
+                        hasValidTeam: true,
+                        heroes: heroIds,
+                        pet: petId,
+                        banner: bannerId,
+                        favor: {} // Favor data not available in arenaFindEnemies response
+                    };
+                    console.log('[DEMO] Regular Arena config extracted:', {
+                        heroes: heroIds,
+                        pet: petId,
+                        banner: bannerId
+                    });
+                } else {
+                    console.warn('[DEMO] Regular Arena lineup incomplete:', {
+                        extractedHeroes: heroIds,
+                        pet: petId,
+                        rawLength: rawHeroes.length
+                    });
                 }
             }
 
