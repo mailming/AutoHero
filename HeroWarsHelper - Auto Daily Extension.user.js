@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.2
+// @version      3.5.3
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.2";
+    const EXTENSION_VERSION = "3.5.3";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -6224,7 +6224,87 @@ async function executeGetDailyBonus() {
     }
     function applyOthersVisibility() {
         const isAnyChecked = othersTasks.some(task => isOthersTaskEnabled(task.id));
-        if (customOthersButton) customOthersButton.style.display = isAnyChecked ? 'flex' : 'none';
+        if (customOthersButton) {
+            const row = getMenuButtonRow(customOthersButton);
+            (row || customOthersButton).style.display = isAnyChecked ? '' : 'none';
+        }
+    }
+
+    /**
+     * HWH ScriptMenu: button.parentElement is a scriptMenu_btnRow.
+     * Passing that row into addButton/insertBefore merges into existing groups
+     * (e.g. Action Replay). Always create standalone rows and move the row.
+     */
+    function getMenuButtonRow(el) {
+        if (!el) return null;
+        if (el.classList?.contains('scriptMenu_btnRow')) return el;
+        return el.closest?.('.scriptMenu_btnRow') || el.parentElement;
+    }
+
+    function placeMenuRowBefore(rowEl, beforeEl) {
+        if (!rowEl) return;
+        const beforeRow = getMenuButtonRow(beforeEl);
+        const socket = beforeRow?.parentElement
+            || window.HWHClasses?.ScriptMenu?.getInst()?.btnSocket;
+        if (!socket) return;
+        if (beforeRow && beforeRow.parentElement === socket) {
+            socket.insertBefore(rowEl, beforeRow);
+        } else {
+            socket.appendChild(rowEl);
+        }
+    }
+
+    function removeMenuButtonRow(buttonOrRow) {
+        const row = getMenuButtonRow(buttonOrRow);
+        if (row) row.remove();
+    }
+
+    function applySyncButtonState() {
+        const { HWHClasses, HWHData, HWHFuncs } = window;
+        const { newDay } = HWHData.buttons;
+        const autoDailyButton = document.querySelector('[data-extension-button="auto-daily"]');
+        if (!autoDailyButton) return;
+        const actionsButton = HWHData.buttons.doActions?.button;
+        if (!actionsButton) return;
+
+        if (combinedButton) {
+            removeMenuButtonRow(combinedButton);
+            combinedButton = null;
+        }
+
+        const autoDailyRow = getMenuButtonRow(autoDailyButton);
+        if (autoDailyRow) autoDailyRow.style.display = '';
+        autoDailyButton.style.display = 'flex';
+        if (newDay && newDay.button) newDay.button.style.display = 'flex';
+
+        if (hideButtonsState.newSync) {
+            if (newDay && newDay.button) newDay.button.style.display = 'none';
+            if (autoDailyRow) autoDailyRow.style.display = 'none';
+            autoDailyButton.style.display = 'none';
+
+            const buttonList = [{
+                name: 'Auto Daily', onClick: createPopup, title: 'Open the Auto Daily control panel',
+            }, {
+                name: UI_ICON.sync,
+                onClick: () => { HWHFuncs.setProgress('Syncing...', true); window.cheats.refreshGame(); },
+                title: 'Run Sync', color: 'green',
+            }];
+            // Do NOT pass an existing btnRow — that merges into other extensions' groups.
+            combinedButton = HWHClasses.ScriptMenu.getInst().addCombinedButton(buttonList);
+            if (!combinedButton) return;
+            const autoDailyCombined = combinedButton.children[0];
+            const syncCombined = combinedButton.children[1];
+            if (autoDailyCombined) {
+                autoDailyCombined.style.flexGrow = '1';
+                const buttonText = autoDailyCombined.querySelector('.scriptMenu_buttonText, .scriptMenu_btnPlate');
+                if (buttonText) buttonText.style.whiteSpace = 'nowrap';
+            }
+            if (syncCombined) {
+                syncCombined.style.flexGrow = '0';
+                syncCombined.style.width = '45px';
+            }
+            placeMenuRowBefore(combinedButton, actionsButton);
+        }
     }
 
     function getOthersButtonMsg(button) {
@@ -6297,46 +6377,7 @@ async function executeGetDailyBonus() {
             await answer();
         }
     }
-    function applySyncButtonState() {
-        const { HWHClasses, HWHData, HWHFuncs } = window;
-        const { newDay } = HWHData.buttons;
-        const autoDailyButton = document.querySelector('[data-extension-button="auto-daily"]');
-        if (!autoDailyButton) return;
-        const scriptMenuContainer = HWHData.buttons.doActions.button?.parentElement;
-        if (!scriptMenuContainer) return;
-        if (combinedButton) { combinedButton.remove(); combinedButton = null; }
-        autoDailyButton.style.display = 'flex';
-        if(newDay && newDay.button) newDay.button.style.display = 'flex';
-        if (hideButtonsState.newSync) {
-            if(newDay && newDay.button) newDay.button.style.display = 'none';
-            autoDailyButton.style.display = 'none';
-            const buttonList = [{
-                name: 'Auto Daily', onClick: createPopup, title: 'Open the Auto Daily control panel',
-            }, {
-                name: UI_ICON.sync,
-                onClick: () => { HWHFuncs.setProgress('Syncing...', true); window.cheats.refreshGame(); },
-                title: 'Run Sync', color: 'green',
-            }];
-            combinedButton = HWHClasses.ScriptMenu.getInst().addCombinedButton(buttonList, scriptMenuContainer);
-            if (!combinedButton) return;
-            const autoDailyCombined = combinedButton.children[0];
-            const syncCombined = combinedButton.children[1];
-            if (autoDailyCombined) {
-                autoDailyCombined.style.flexGrow = '1';
-                const buttonText = autoDailyCombined.querySelector('.scriptMenu_buttonText');
-                if (buttonText) buttonText.style.whiteSpace = 'nowrap';
-            }
-            if (syncCombined) {
-                syncCombined.style.flexGrow = '0';
-                syncCombined.style.width = '45px';
-            }
-            if (HWHData.buttons.doActions.button && scriptMenuContainer.contains(HWHData.buttons.doActions.button)) {
-                scriptMenuContainer.insertBefore(combinedButton, HWHData.buttons.doActions.button);
-            } else {
-                scriptMenuContainer.appendChild(combinedButton);
-            }
-        }
-    }
+
     async function updateQuestStatus() {
         const { HWHClasses } = window;
         // Check quest completion status using cached data - following API documentation pattern
@@ -6576,24 +6617,25 @@ async function executeGetDailyBonus() {
             console.warn('[Auto Daily] Original Others button not found; skipping custom Others button.');
             return;
         }
-        const scriptMenuContainer = origOthersButton.parentElement;
-        if (!scriptMenuContainer) return;
         if (customOthersButton) {
-            customOthersButton.remove();
+            removeMenuButtonRow(customOthersButton);
             customOthersButton = null;
         }
-        origOthersButton.style.display = 'none';
+
+        const origRow = getMenuButtonRow(origOthersButton);
+        if (origRow) origRow.style.display = 'none';
+        else origOthersButton.style.display = 'none';
+
+        // Standalone row — do not pass origOthersButton.parentElement (a btnRow).
         customOthersButton = HWHClasses.ScriptMenu.getInst().addButton({
             name: I18N('OTHERS'),
             title: I18N('OTHERS_TITLE'),
             onClick: onCustomOthersClick
-        }, scriptMenuContainer);
-        const referenceButton = HWHData.buttons.testTitanArena?.button || HWHData.buttons.testDungeon?.button;
-        if (referenceButton && scriptMenuContainer.contains(referenceButton)) {
-             scriptMenuContainer.insertBefore(customOthersButton, referenceButton);
-        } else {
-             scriptMenuContainer.appendChild(customOthersButton);
-        }
+        });
+        const referenceButton = HWHData.buttons.testTitanArena?.button
+            || HWHData.buttons.testDungeon?.button
+            || origOthersButton;
+        placeMenuRowBefore(getMenuButtonRow(customOthersButton), referenceButton);
     }
 
     function maindaily() {
@@ -6615,19 +6657,20 @@ async function executeGetDailyBonus() {
             createDungeonSettingsGUI();
         }
 
-        const scriptMenuContainer = HWHData.buttons.doActions.button.parentElement;
+        const scriptMenu = HWHClasses.ScriptMenu.getInst();
         const actionsButton = HWHData.buttons.doActions.button;
 
-        const autoDailyButton = HWHClasses.ScriptMenu.getInst().addButton({
+        // Each addButton without a btnRow parent creates its own row in btnSocket.
+        // Moving the whole row keeps us from merging into Action Replay / other groups.
+        const autoDailyButton = scriptMenu.addButton({
             name: 'Auto Daily',
             onClick: createPopup,
             title: 'Open the Auto Daily control panel',
-        }, scriptMenuContainer);
-        autoDailyButton.dataset.extensionButton = "auto-daily";
+        });
+        autoDailyButton.dataset.extensionButton = 'auto-daily';
+        placeMenuRowBefore(getMenuButtonRow(autoDailyButton), actionsButton);
 
-        scriptMenuContainer.insertBefore(autoDailyButton, actionsButton);
-
-        const dungeonSettingsButton = HWHClasses.ScriptMenu.getInst().addButton({
+        const dungeonSettingsButton = scriptMenu.addButton({
             name: 'Dungeon Settings',
             onClick: () => {
                 if (typeof window.toggleDungeonSettingsGUI === 'function') {
@@ -6639,9 +6682,9 @@ async function executeGetDailyBonus() {
             },
             title: 'Dungeon team building and tank survival cutoffs',
             color: 'purple',
-        }, scriptMenuContainer);
+        });
         dungeonSettingsButton.dataset.extensionButton = 'dungeon-settings';
-        scriptMenuContainer.insertBefore(dungeonSettingsButton, actionsButton);
+        placeMenuRowBefore(getMenuButtonRow(dungeonSettingsButton), actionsButton);
 
         createCustomOthersButton();
 
