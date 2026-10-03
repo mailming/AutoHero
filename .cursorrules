@@ -1,0 +1,138 @@
+# Cursor Rules for AutoHero Project
+
+## Extension Development Guidelines
+
+### Creating HeroWarsHelper Extensions
+
+When creating a new extension for HeroWarsHelper, follow this pattern:
+
+1. **File Structure**: Create a `.user.js` file with the extension name
+   - Example: `Secret Wealth Shop HwH Ext.user.js`
+
+2. **UserScript Header**: Include proper metadata
+   ```javascript
+   // ==UserScript==
+   // @name         Extension Name HwH Ext
+   // @namespace    HeroWarsHelper.ExtensionName
+   // @version      1.0
+   // @description  Brief description of the extension
+   // @author       YourName
+   // @match        https://www.hero-wars.com/*
+   // @match        https://apps-1701433570146040.apps.fbsbx.com/*
+   // @grant        none
+   // @run-at       document-end
+   // @downloadURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/Extension%20Name%20HwH%20Ext.user.js
+   // @updateURL https://github.com/mailming/AutoHero/raw/refs/heads/develop/Extension%20Name%20HwH%20Ext.user.js
+   // ==/UserScript==
+   ```
+
+3. **Initialization Pattern**: Always wait for HWH to be ready
+   ```javascript
+   (function() {
+       'use strict';
+
+       const waitForHWH = setInterval(() => {
+           if (window.HWHClasses && window.HWHClasses.ScriptMenu && window.lib && window.cheats) {
+               const scriptMenu = window.HWHClasses.ScriptMenu.getInst();
+               if (scriptMenu && scriptMenu.mainMenu) {
+                   clearInterval(waitForHWH);
+                   initializeExtension();
+               }
+           }
+       }, 200);
+
+       function initializeExtension() {
+           console.log('Extension Name: HWH UI is ready, initializing extension...');
+           
+           const { HWHClasses, HWHFuncs, Send, cheats, Caller, lib } = window;
+           
+           // Your extension code here
+           
+           // Add menu button
+           const { ScriptMenu } = HWHClasses;
+           const scriptMenu = ScriptMenu.getInst();
+           scriptMenu.addCombinedButton([
+               { name: 'Extension Name', title: 'Description', onClick: yourFunction, color: 'purple' }
+           ]);
+       }
+   })();
+   ```
+
+4. **Auto-Load on Script Run**: To execute code automatically when the script loads:
+   ```javascript
+   function initializeExtension() {
+       // ... setup code ...
+       
+       // Auto-execute function on script load
+       autoExecuteFunction().catch(error => {
+           console.error('Extension: Failed to auto-execute:', error);
+       });
+       
+       // Add menu button
+       scriptMenu.addCombinedButton([...]);
+   }
+   ```
+
+5. **Popup Handling**: When using popups, always await the promise properly:
+   ```javascript
+   async function openPopup() {
+       const popupContent = document.createElement('div');
+       // ... build popup content ...
+       
+       // Use confirm with proper async handling
+       const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
+       
+       // Wait a tick for popup to initialize
+       await new Promise(resolve => setTimeout(resolve, 0));
+       
+       const popupBody = document.querySelector('.PopUp_Container');
+       if (popupBody) {
+           popupBody.innerHTML = '';
+           popupBody.appendChild(popupContent);
+       }
+       
+       // Wait for popup to close before returning
+       await popupPromise;
+   }
+   ```
+
+6. **Available HWH APIs**:
+   - `HWHClasses.ScriptMenu` - Menu system
+   - `HWHFuncs.setProgress(text, hide)` - Progress messages
+   - `HWHFuncs.popup.confirm()` - Popup dialogs
+   - `Caller` - API call wrapper
+   - `cheats.translate(key)` - Translation system
+   - `Send()` - Direct API sending
+
+7. **Best Practices**:
+   - Always check if HWH is ready before initializing
+   - Use proper error handling with try/catch
+   - Log important events to console
+   - Use HWHFuncs.setProgress for user feedback
+   - Follow existing code patterns from other extensions
+   - Use async/await for API calls
+   - Properly handle popup promises to prevent menu interference
+
+8. **API Call Requirements**:
+   - **NEVER mock or fake API calls** - All API calls must be real and functional
+   - **Always verify API calls against documentation** - Check the relevant API documentation files:
+     - `ARENA_API_DOCUMENTATION.md` for Arena and Grand Arena APIs
+     - `GUILD_WAR_API_DOCUMENTATION.md` for Guild War APIs
+     - `CLAN_RAID_API_DOCUMENTATION.md` for Raid APIs
+     - `SECRET_WEALTH_SHOP_API_DOCUMENTATION.md` for Shop APIs
+   - **Follow exact API structure** - Match the request format exactly as documented:
+     - Include `name`, `args`, `context` (with `actionTs`), and `ident` fields
+     - Use correct parameter names and types as specified in documentation
+     - Ensure response handling matches documented response structure
+   - **Verify against working code** - If documentation is incomplete, verify against existing working implementations in `HeroWarsHelper.user.js`
+   - **Test API calls** - Ensure all API calls are tested and working before committing
+   - **No placeholder APIs** - Never use placeholder or example API calls that don't actually work
+
+## Code Style
+
+- Use meaningful variable names
+- Add comments for complex logic
+- Follow existing indentation (spaces, not tabs)
+- Use consistent naming conventions
+- Handle errors gracefully with user-friendly messages
+
