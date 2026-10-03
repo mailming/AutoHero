@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.1
+// @version      3.5.2
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.1";
+    const EXTENSION_VERSION = "3.5.2";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -5821,116 +5821,6 @@ async function executeGetDailyBonus() {
         await runRaidBoss();
     }
 
-    // Helper function to get I18N translation
-    function getI18N(key) {
-        if (window.I18N && typeof window.I18N === 'function') {
-            return window.I18N(key);
-        }
-        // Fallback translations
-        const fallbacks = {
-            'TITAN_ARENA': 'ToE',
-            'TITAN_ARENA_TITLE': 'Tournament of Elements'
-        };
-        return fallbacks[key] || key;
-    }
-
-    // Popup menu for manual triggers
-    async function openManualTriggersPopup() {
-        const popupContent = document.createElement('div');
-        popupContent.style.cssText = 'display: flex; flex-direction: column; height: 70vh; color: #fce1ac;';
-
-        const contentContainer = document.createElement('div');
-        contentContainer.style.cssText = 'flex-grow: 1; overflow-y: auto; padding: 10px;';
-
-        const title = document.createElement('h2');
-        title.textContent = 'Manual Battle Triggers';
-        title.style.cssText = 'text-align: center; color: #fce1ac; margin-bottom: 20px; border-bottom: 2px solid #8b6914; padding-bottom: 10px;';
-        contentContainer.appendChild(title);
-
-        const buttonGrid = document.createElement('div');
-        buttonGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; padding: 10px;';
-
-        const battleButtons = [
-            { name: 'Arena', title: 'Run Arena battles only', onClick: runArena, color: '#4A90E2', icon: '⚔️' },
-            { name: 'Grand Arena', title: 'Run Grand Arena battles only', onClick: runGrandArena, color: '#4A90E2', icon: '⚔️' },
-            { name: 'Guild War', title: 'Run Guild War attacks only', onClick: runGuildWar, color: '#9B59B6', icon: '🛡️' },
-            { name: 'Guild Raid', title: 'Run Guild Raid (Raid Nodes + Boss when available)', onClick: runGuildRaid, color: '#E67E22', icon: '⚡' },
-            { name: getI18N('TITAN_ARENA'), title: `Run ${getI18N('TITAN_ARENA')} only (Monday-Saturday)`, onClick: runTitanArena, color: '#1ABC9C', icon: '🏛️' },
-            { name: 'Clash of the World', title: 'Run Clash of the World / Cross Clan War attacks only', onClick: runCrossClanWar, color: '#F39C12', icon: '⚔️' }
-        ];
-
-        battleButtons.forEach(battle => {
-            const button = document.createElement('button');
-            button.style.cssText = `
-                padding: 15px;
-                background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
-                border: 2px solid ${battle.color};
-                border-radius: 8px;
-                color: #fce1ac;
-                cursor: pointer;
-                text-align: center;
-                transition: all 0.3s;
-                font-size: 14px;
-                font-weight: bold;
-            `;
-            button.innerHTML = `
-                <div style="font-size: 24px; margin-bottom: 5px;">${battle.icon}</div>
-                <div>${battle.name}</div>
-            `;
-            button.title = battle.title;
-            
-            button.addEventListener('mouseenter', () => {
-                button.style.background = `linear-gradient(135deg, ${battle.color}40 0%, ${battle.color}20 100%)`;
-                button.style.borderColor = battle.color;
-                button.style.transform = 'scale(1.05)';
-            });
-            button.addEventListener('mouseleave', () => {
-                button.style.background = 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)';
-                button.style.borderColor = battle.color;
-                button.style.transform = 'scale(1)';
-            });
-            button.addEventListener('click', async () => {
-                // Close popup first
-                const popupBody = document.querySelector('.PopUp_Container');
-                if (popupBody && popupBody.parentElement) {
-                    const closeBtn = document.querySelector('.PopUp_buttons button');
-                    if (closeBtn) closeBtn.click();
-                }
-                // Then execute battle
-                await battle.onClick();
-            });
-
-            buttonGrid.appendChild(button);
-        });
-
-        contentContainer.appendChild(buttonGrid);
-        popupContent.appendChild(contentContainer);
-
-        // Use confirm with proper async handling
-        const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
-        
-        // Wait a tick for popup to initialize
-        await new Promise(resolve => setTimeout(resolve, 0));
-        
-        const popupBody = document.querySelector('.PopUp_Container');
-        if (popupBody) {
-            popupBody.innerHTML = '';
-            popupBody.appendChild(popupContent);
-        }
-        
-        // Wait for popup to close before returning
-        await popupPromise;
-    }
-
-    // Menu integration
-    const { ScriptMenu } = HWHClasses;
-    const scriptMenu = ScriptMenu.getInst();
-    
-    scriptMenu.addCombinedButton([
-        { name: '⚙️ Manual Triggers', title: 'Open manual battle triggers (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World)', onClick: openManualTriggersPopup, color: 'gray' }
-    ]);
-
-    console.log('AutoBattle: UI initialized and attached to HWH menu.');
     // Expose for Auto Daily DO ALL tasks / external callers
     window.__HWH_runArena = runArena;
     window.__HWH_runGrandArena = runGrandArena;
@@ -5938,7 +5828,8 @@ async function executeGetDailyBonus() {
     window.__HWH_runGuildRaid = runGuildRaid;
     window.__HWH_runTitanArena = runTitanArena;
     window.__HWH_runCrossClanWar = runCrossClanWar;
-    window.__HWH_openManualTriggersPopup = openManualTriggersPopup;
+
+    console.log('AutoBattle: runners ready for Do All.');
 
     }
 
