@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.4.0
-// @description  Auto Daily panel plus merged AutoBattle (Arena, Grand Arena, Guild War, Raids, ToE, Boss, Cross Clan War).
+// @version      3.5.1
+// @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.4.0";
+    const EXTENSION_VERSION = "3.5.1";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -5694,177 +5694,7 @@ async function executeGetDailyBonus() {
     HWHClasses.executeRaidBoss = executeRaidBoss;
     HWHClasses.executeCrossClanWar = executeCrossClanWar;
 
-    let autoBattleRunning = false;
-
-    function isDungeonActive() {
-        return !!(window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN);
-    }
-
-    async function waitForDungeonIdle(maxWaitMs = 60000) {
-        const start = Date.now();
-        while (isDungeonActive() && Date.now() - start < maxWaitMs) {
-            await sleep(500);
-        }
-        return !isDungeonActive();
-    }
-
-    function shouldStopForDungeon() {
-        return isDungeonActive();
-    }
-
-    async function runAutoBattleStep(label, progressMsg, fn) {
-        if (shouldStopForDungeon()) {
-            console.log(`AutoBattle: Skipping ${label} — dungeon active`);
-            return false;
-        }
-        try {
-            console.log(`AutoBattle: Starting ${label}...`);
-            HWHFuncs.setProgress(progressMsg);
-            await fn();
-            console.log(`%cAutoBattle: ${label} completed`, 'color: lightgreen; font-weight: bold;');
-            return true;
-        } catch (error) {
-            console.error(`AutoBattle: ${label} error:`, error);
-            return false;
-        }
-    }
-
-    async function autoBattle() {
-        if (autoBattleRunning) {
-            console.log('AutoBattle: Already running — skipped');
-            return;
-        }
-        if (isDungeonActive()) {
-            console.log('AutoBattle: Dungeon active — waiting before auto-battles...');
-            HWHFuncs.setProgress('AutoBattle: Waiting for dungeon...', true);
-            const ready = await waitForDungeonIdle();
-            if (!ready) {
-                console.warn('AutoBattle: Dungeon still active — skipping auto-battles');
-                return;
-            }
-        }
-
-        autoBattleRunning = true;
-        window.HWH_AUTOBATTLE_RUNNING = true;
-
-        try {
-            console.log('AutoBattle: Starting auto-battle sequence...');
-            HWHFuncs.setProgress('AutoBattle: Starting auto-battles...');
-
-            const results = {
-                arena: false,
-                grandArena: false,
-                guildWar: false,
-                raidNodes: false,
-                raidBoss: false,
-                titanArena: false,
-                crossClanWar: false
-            };
-
-            results.arena = await runAutoBattleStep('Arena', 'AutoBattle: Arena battles...', () =>
-                new Promise((resolve, reject) => {
-                    const arena = new executeArena(resolve, reject);
-                    arena.start('arena');
-                })
-            );
-
-            results.grandArena = await runAutoBattleStep('Grand Arena', 'AutoBattle: Grand Arena battles...', () =>
-                new Promise((resolve, reject) => {
-                    const grandArena = new executeArena(resolve, reject);
-                    grandArena.start('grand');
-                })
-            );
-
-            results.guildWar = await runAutoBattleStep('Guild War', 'AutoBattle: Guild War attacks...', () =>
-                new Promise((resolve, reject) => {
-                    const guildWar = new executeGuildWar(resolve, reject);
-                    guildWar.start();
-                })
-            );
-
-            results.raidNodes = await runAutoBattleStep('Raid Nodes', 'AutoBattle: Raid Nodes...', () =>
-                new Promise((resolve, reject) => {
-                    const raidNodes = new executeRaidNodes(resolve, reject);
-                    raidNodes.start();
-                })
-            );
-
-            if (shouldStopForDungeon()) {
-                console.log('AutoBattle: Stopping before Titan Arena — dungeon active');
-            } else {
-                try {
-                    if (Utils.isTitanArenaDay()) {
-                        results.titanArena = await runAutoBattleStep('Titan Arena (ToE)', 'AutoBattle: Titan Arena (ToE)...', async () => {
-                            if (window.HWHClasses && window.HWHClasses.executeTitanArena) {
-                                await new Promise((resolve, reject) => {
-                                    const titanArena = new window.HWHClasses.executeTitanArena(resolve, reject);
-                                    titanArena.start();
-                                });
-                            } else if (window.testTitanArena && typeof window.testTitanArena === 'function') {
-                                await window.testTitanArena();
-                            } else {
-                                throw new Error('Titan Arena execution class not available');
-                            }
-                        });
-                    } else {
-                        Utils.log('log', `AutoBattle: Skipping Titan Arena (not Monday-Saturday, current day: ${Utils.getDayOfWeek()})`);
-                    }
-                } catch (error) {
-                    console.error('AutoBattle: Titan Arena error:', error);
-                }
-            }
-
-            if (shouldStopForDungeon()) {
-                console.log('AutoBattle: Stopping before Raid Boss — dungeon active');
-            } else {
-                try {
-                    if (Utils.isRaidBossDay()) {
-                        results.raidBoss = await runAutoBattleStep('Raid Boss', 'AutoBattle: Raid Boss attacks...', () =>
-                            new Promise((resolve, reject) => {
-                                const raidBoss = new executeRaidBoss(resolve, reject);
-                                raidBoss.start();
-                            })
-                        );
-                    } else {
-                        Utils.log('log', `AutoBattle: Skipping Raid Boss (not Saturday/Sunday, current day: ${Utils.getDayOfWeek()})`);
-                    }
-                } catch (error) {
-                    console.error('AutoBattle: Raid Boss error:', error);
-                }
-            }
-
-            results.crossClanWar = await runAutoBattleStep('Cross Clan War', 'AutoBattle: Cross Clan War attacks...', () =>
-                new Promise((resolve, reject) => {
-                    const crossClanWar = new executeCrossClanWar(resolve, reject);
-                    crossClanWar.start();
-                })
-            );
-
-            const completed = Object.values(results).filter(v => v === true).length;
-            const total = Object.keys(results).length;
-            const summary = [
-                `Arena: ${results.arena ? '✓' : '✗'}`,
-                `Grand Arena: ${results.grandArena ? '✓' : '✗'}`,
-                `Guild War: ${results.guildWar ? '✓' : '✗'}`,
-                `Raid Nodes: ${results.raidNodes ? '✓' : '✗'}`,
-                `Titan Arena: ${results.titanArena ? '✓' : '✗'}`,
-                `Raid Boss: ${results.raidBoss ? '✓' : '✗'}`,
-                `Cross Clan War: ${results.crossClanWar ? '✓' : '✗'}`
-            ].join(' | ');
-
-            console.log(`%cAutoBattle: Completed ${completed}/${total} battle types`, 'color: cyan; font-weight: bold;');
-            console.log(summary);
-            HWHFuncs.setProgress(`AutoBattle: Complete! ${completed}/${total} battle types executed.`, true);
-        } catch (error) {
-            console.error('AutoBattle: Fatal error:', error);
-            HWHFuncs.setProgress(`AutoBattle: Error - ${error.message}`, true);
-        } finally {
-            autoBattleRunning = false;
-            window.HWH_AUTOBATTLE_RUNNING = false;
-        }
-    }
-
-    // Individual battle functions for manual triggers
+    // Individual battle functions for manual triggers / Do All
     async function runArena() {
         try {
             HWHFuncs.setProgress('AutoBattle: Running Arena...');
@@ -5986,6 +5816,11 @@ async function executeGetDailyBonus() {
         }
     }
 
+    async function runGuildRaid() {
+        await runRaidNodes();
+        await runRaidBoss();
+    }
+
     // Helper function to get I18N translation
     function getI18N(key) {
         if (window.I18N && typeof window.I18N === 'function') {
@@ -6019,10 +5854,9 @@ async function executeGetDailyBonus() {
             { name: 'Arena', title: 'Run Arena battles only', onClick: runArena, color: '#4A90E2', icon: '⚔️' },
             { name: 'Grand Arena', title: 'Run Grand Arena battles only', onClick: runGrandArena, color: '#4A90E2', icon: '⚔️' },
             { name: 'Guild War', title: 'Run Guild War attacks only', onClick: runGuildWar, color: '#9B59B6', icon: '🛡️' },
-            { name: 'Raid Nodes', title: 'Run Raid Nodes only', onClick: runRaidNodes, color: '#E67E22', icon: '⚡' },
+            { name: 'Guild Raid', title: 'Run Guild Raid (Raid Nodes + Boss when available)', onClick: runGuildRaid, color: '#E67E22', icon: '⚡' },
             { name: getI18N('TITAN_ARENA'), title: `Run ${getI18N('TITAN_ARENA')} only (Monday-Saturday)`, onClick: runTitanArena, color: '#1ABC9C', icon: '🏛️' },
-            { name: 'Raid Boss', title: 'Run Raid Boss attacks only (5 attacks)', onClick: runRaidBoss, color: '#E74C3C', icon: '👹' },
-            { name: 'Cross Clan War', title: 'Run Cross Clan War attacks only', onClick: runCrossClanWar, color: '#F39C12', icon: '⚔️' }
+            { name: 'Clash of the World', title: 'Run Clash of the World / Cross Clan War attacks only', onClick: runCrossClanWar, color: '#F39C12', icon: '⚔️' }
         ];
 
         battleButtons.forEach(battle => {
@@ -6093,34 +5927,76 @@ async function executeGetDailyBonus() {
     const scriptMenu = ScriptMenu.getInst();
     
     scriptMenu.addCombinedButton([
-        { name: '⚔️ Auto Battle', title: 'Run all auto-battles (Arena, Grand Arena, Guild War, Raids, ToE, Boss, Cross Clan War)', onClick: autoBattle, color: 'green' },
-        { name: '⚙️ Manual Triggers', title: 'Open manual battle triggers menu', onClick: openManualTriggersPopup, color: 'gray' }
+        { name: '⚙️ Manual Triggers', title: 'Open manual battle triggers (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World)', onClick: openManualTriggersPopup, color: 'gray' }
     ]);
 
     console.log('AutoBattle: UI initialized and attached to HWH menu.');
-    // Expose for Auto Daily DO ALL task / external callers
-    window.__HWH_autoBattle = autoBattle;
+    // Expose for Auto Daily DO ALL tasks / external callers
+    window.__HWH_runArena = runArena;
+    window.__HWH_runGrandArena = runGrandArena;
+    window.__HWH_runGuildWar = runGuildWar;
+    window.__HWH_runGuildRaid = runGuildRaid;
+    window.__HWH_runTitanArena = runTitanArena;
+    window.__HWH_runCrossClanWar = runCrossClanWar;
     window.__HWH_openManualTriggersPopup = openManualTriggersPopup;
 
     }
 
-    async function executeAutoBattleTask() {
-        if (typeof window.__HWH_autoBattle === 'function') {
-            await window.__HWH_autoBattle();
-            return;
-        }
-        // Lazy init if somehow called before maindaily finished wiring
+    const AUTO_BATTLE_TASK_IDS = ['abArena', 'abGrandArena', 'abToE', 'abGuildWar', 'abGuildRaid', 'abClashOfWorld'];
+
+    function ensureAutoBattleReady() {
+        if (typeof window.__HWH_runArena === 'function') return;
         initializeAutoBattle();
-        if (typeof window.__HWH_autoBattle === 'function') {
-            await window.__HWH_autoBattle();
-        } else {
+        if (typeof window.__HWH_runArena !== 'function') {
             throw new Error('AutoBattle module failed to initialize');
         }
     }
 
+    async function withAutoBattleFlag(runner) {
+        ensureAutoBattleReady();
+        window.HWH_AUTOBATTLE_RUNNING = true;
+        try {
+            await runner();
+        } finally {
+            window.HWH_AUTOBATTLE_RUNNING = false;
+        }
+    }
+
+    async function executeAbArena() {
+        await withAutoBattleFlag(() => window.__HWH_runArena());
+    }
+    async function executeAbGrandArena() {
+        await withAutoBattleFlag(() => window.__HWH_runGrandArena());
+    }
+    async function executeAbToE() {
+        await withAutoBattleFlag(() => window.__HWH_runTitanArena());
+    }
+    async function executeAbGuildWar() {
+        await withAutoBattleFlag(() => window.__HWH_runGuildWar());
+    }
+    async function executeAbGuildRaid() {
+        await withAutoBattleFlag(() => window.__HWH_runGuildRaid());
+    }
+    async function executeAbClashOfWorld() {
+        await withAutoBattleFlag(() => window.__HWH_runCrossClanWar());
+    }
+
+    /** Migrate legacy single "autoBattle" checkbox into the split battle options. */
+    function migrateAutoBattleExecutionState(state) {
+        if (!state || !state.autoBattle) return state;
+        AUTO_BATTLE_TASK_IDS.forEach((id) => { state[id] = true; });
+        delete state.autoBattle;
+        return state;
+    }
+
     // --- DATA STRUCTURES ---
     const doAllTasks = [
-        { id: 'autoBattle', label: 'Auto Battle', func: executeAutoBattleTask },
+        { id: 'abArena', label: 'Arena', func: executeAbArena },
+        { id: 'abGrandArena', label: 'Grand Arena', func: executeAbGrandArena },
+        { id: 'abToE', label: 'ToE', func: executeAbToE },
+        { id: 'abGuildWar', label: 'Guild War', func: executeAbGuildWar },
+        { id: 'abGuildRaid', label: 'Guild Raid', func: executeAbGuildRaid },
+        { id: 'abClashOfWorld', label: 'Clash of the World', func: executeAbClashOfWorld },
         { id: 'getOutland', label: 'Outland', func: executeGetOutland }, { id: 'testTower', label: 'Tower', func: executeTestTower },
         { id: 'testDungeon', label: 'Dungeon', func: executeTestDungeon }, { id: 'checkExpedition', label: 'Expeditions', func: executeCheckExpedition },
         { id: 'offerFarmAllReward', label: 'Easter Eggs', func: executeOfferFarmAllReward },
@@ -6178,13 +6054,13 @@ async function executeGetDailyBonus() {
             console.log(`${EXTENSION_NAME}: Settings Provider found. Loading settings from Provider.`);
             isProviderActive = true;
             const providerSettings = window.getAutoDailySettings();
-            executionState = providerSettings.executionState || {};
+            executionState = migrateAutoBattleExecutionState(providerSettings.executionState || {});
             hideButtonsState = providerSettings.hideButtonsState || {};
             othersSettingsState = normalizeOthersSettingsState(providerSettings.othersSettingsState || {});
         } else {
             console.log(`${EXTENSION_NAME}: Settings Provider not found. Loading account-specific settings.`);
             isProviderActive = false;
-            executionState = HWHFuncs.getSaveVal('autoDaily_executionState', {});
+            executionState = migrateAutoBattleExecutionState(HWHFuncs.getSaveVal('autoDaily_executionState', {}));
             hideButtonsState = HWHFuncs.getSaveVal('autoDaily_hideButtonsState', { doAll: false, quests: false, actions: false, newSync: false });
             othersSettingsState = normalizeOthersSettingsState(
                 HWHFuncs.getSaveVal('autoDaily_othersSettingsState', getDefaultOthersSettingsState())
@@ -6421,7 +6297,7 @@ async function executeGetDailyBonus() {
                 try {
                     const importedSettings = JSON.parse(readerEvent.target.result);
                     if (importedSettings.executionState && importedSettings.hideButtonsState && importedSettings.othersSettingsState) {
-                        executionState = importedSettings.executionState;
+                        executionState = migrateAutoBattleExecutionState(importedSettings.executionState);
                         hideButtonsState = importedSettings.hideButtonsState;
                         othersSettingsState = normalizeOthersSettingsState(importedSettings.othersSettingsState);
                         saveAllSettings();
@@ -6754,9 +6630,10 @@ async function executeGetDailyBonus() {
         const questsAndUpgradeChecked = [...questTasks, ...upgradeTasks].filter(task => executionState[task.id]);
         if (doAllChecked.length === 0 && questsAndUpgradeChecked.length === 0) return;
 
-        // Auto Battle first, then other dailies; dungeon last to avoid API/UI conflicts.
-        const doAllAutoBattle = doAllChecked.filter(t => t.id === 'autoBattle');
-        const doAllNonDungeon = doAllChecked.filter(t => t.id !== 'testDungeon' && t.id !== 'autoBattle');
+        // Battle tasks first (in doAllTasks order), then other dailies; dungeon last to avoid API/UI conflicts.
+        const autoBattleIdSet = new Set(AUTO_BATTLE_TASK_IDS);
+        const doAllAutoBattle = doAllChecked.filter(t => autoBattleIdSet.has(t.id));
+        const doAllNonDungeon = doAllChecked.filter(t => t.id !== 'testDungeon' && !autoBattleIdSet.has(t.id));
         const doAllDungeon = doAllChecked.filter(t => t.id === 'testDungeon');
 
         // Quest 10022 is "Guild Dungeon" in the quest list; it also triggers dungeon logic.
