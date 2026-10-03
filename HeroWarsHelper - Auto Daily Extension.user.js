@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.9
+// @version      3.5.10
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.9";
+    const EXTENSION_VERSION = "3.5.10";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2613,7 +2613,7 @@ async function executeGetDailyBonus() {
                 this.opponentsData.array.forEach(opponentData => {
                     availableOpponents.push({
                         opponent: {
-                            id: opponentData.userId,
+                            id: opponentData.userId ?? opponentData.id,
                             power: parseInt(opponentData.power) || 0,
                             place: parseInt(opponentData.place) || 1000,
                             heroes: opponentData.heroes || [],
@@ -3043,28 +3043,42 @@ async function executeGetDailyBonus() {
             }
         }
 
-        this.parseGrandLineup = function(team) {
-            if (!team || !Array.isArray(team) || team.length < 5) {
+        this.parseLineup = function(team) {
+            if (!team) {
                 return null;
             }
-            const extractId = (item) => {
-                if (typeof item === 'number') return item;
-                if (item && typeof item === 'object' && item.id) return item.id;
+            const list = Array.isArray(team) ? team : (typeof team === 'object' ? Object.values(team) : []);
+            if (!list.length || Array.isArray(list[0])) {
+                return null;
+            }
+            const toId = (item) => {
+                if (typeof item === 'number' && Number.isFinite(item) && item > 0) {
+                    return item;
+                }
+                if (typeof item === 'string' && /^\d+$/.test(item.trim())) {
+                    return parseInt(item.trim(), 10);
+                }
+                if (item && typeof item === 'object') {
+                    const raw = item.id ?? item.heroId ?? item.unitId ?? item.petId;
+                    const n = Number(raw);
+                    return Number.isFinite(n) && n > 0 ? n : null;
+                }
                 return null;
             };
-            const isPet = (item) => {
-                if (typeof item === 'number') return item >= CONSTANTS.PET_ID_RANGE_MIN && item < CONSTANTS.PET_ID_RANGE_MAX;
-                if (item && typeof item === 'object') {
-                    return item.type === 'pet' || (item.id >= CONSTANTS.PET_ID_RANGE_MIN && item.id < CONSTANTS.PET_ID_RANGE_MAX);
+            const isPet = (item, id) => {
+                if (item && typeof item === 'object' && String(item.type || '').toLowerCase() === 'pet') {
+                    return true;
                 }
-                return false;
+                return id >= CONSTANTS.PET_ID_RANGE_MIN && id < CONSTANTS.PET_ID_RANGE_MAX;
             };
             const heroIds = [];
             let petId = CONSTANTS.DEFAULT_PET_ID;
-            for (const item of team) {
-                const id = extractId(item);
-                if (!id) continue;
-                if (isPet(item)) {
+            for (const item of list) {
+                const id = toId(item);
+                if (!id) {
+                    continue;
+                }
+                if (isPet(item, id)) {
                     petId = id;
                 } else if (heroIds.length < 5) {
                     heroIds.push(id);
@@ -3074,6 +3088,10 @@ async function executeGetDailyBonus() {
                 return null;
             }
             return { heroes: heroIds, pet: petId };
+        }
+
+        this.parseGrandLineup = function(team) {
+            return this.parseLineup(team);
         }
 
         this.permute = function(items) {
@@ -3207,61 +3225,56 @@ async function executeGetDailyBonus() {
             let hasValidTeam = false;
             let config = {};
 
-            // Helper function to extract hero/pet ID from object
-            const extractId = (item) => {
-                if (typeof item === 'number') {
-                    return item; // Already an ID
-                } else if (item && typeof item === 'object' && item.id) {
-                    return item.id; // Extract ID from object
-                }
-                return null;
-            };
-
-            // Helper function to check if item is a pet
-            const isPet = (item) => {
-                if (typeof item === 'number') {
-                    return item >= 6000 && item < 7000; // Pet ID range
-                } else if (item && typeof item === 'object') {
-                    return item.type === 'pet' || (item.id >= 6000 && item.id < 7000);
-                }
-                return false;
-            };
-
-            // Helper function to extract banner ID
             const extractBannerId = (banner) => {
-                if (typeof banner === 'number') {
+                if (typeof banner === 'number' && banner > 0) {
                     return banner;
-                } else if (banner && typeof banner === 'object' && banner.id) {
-                    return banner.id;
                 }
-                return 1; // Default banner
+                if (banner && typeof banner === 'object' && banner.id != null) {
+                    const n = Number(banner.id);
+                    return Number.isFinite(n) && n > 0 ? n : 1;
+                }
+                return 1;
             };
 
-            if (this.arenaType === 'grand') {
-                // Opponent may show 0–3 defense teams. Only parse complete visible lineups.
-                const rawTeams = Array.isArray(opp.heroes) ? opp.heroes : [];
+            const rawHeroes = Array.isArray(opp.heroes)
+                ? opp.heroes
+                : (opp.heroes && typeof opp.heroes === 'object' ? Object.values(opp.heroes) : []);
+            const looksNested = rawHeroes.some((entry) => Array.isArray(entry));
+
+            if (this.arenaType === 'grand' || looksNested) {
                 const teams = [];
                 const pets = [];
                 const banners = [];
                 const visibleSlots = [];
 
-                for (let i = 0; i < 3; i++) {
-                    const parsed = this.parseGrandLineup(rawTeams[i]);
-                    const banner = extractBannerId(opp.banners?.[i]);
+                if (!looksNested) {
+                    const parsed = this.parseLineup(rawHeroes);
                     if (parsed) {
-                        teams[i] = parsed.heroes;
-                        pets[i] = parsed.pet;
-                        banners[i] = banner;
-                        visibleSlots.push(i);
+                        teams[0] = parsed.heroes;
+                        pets[0] = parsed.pet;
+                        banners[0] = extractBannerId(opp.banners?.[0] ?? opp.banner);
+                        visibleSlots.push(0);
                         hasValidTeam = true;
-                    } else {
-                        teams[i] = null;
-                        pets[i] = null;
-                        banners[i] = banner || 1;
+                    }
+                } else {
+                    for (let i = 0; i < 3; i++) {
+                        const parsed = this.parseLineup(rawHeroes[i]);
+                        const banner = extractBannerId(opp.banners?.[i]);
+                        if (parsed) {
+                            teams[i] = parsed.heroes;
+                            pets[i] = parsed.pet;
+                            banners[i] = banner;
+                            visibleSlots.push(i);
+                            hasValidTeam = true;
+                        } else {
+                            teams[i] = null;
+                            pets[i] = null;
+                            banners[i] = banner || 1;
+                        }
                     }
                 }
 
-                if (hasValidTeam) {
+                if (hasValidTeam && this.arenaType === 'grand') {
                     config = {
                         hasValidTeam: true,
                         heroes: teams,
@@ -3271,51 +3284,36 @@ async function executeGetDailyBonus() {
                         visibleSlots
                     };
                     console.log('[DEMO] Grand Arena visible defenses:', visibleSlots.length, 'slots', visibleSlots);
+                } else if (hasValidTeam) {
+                    config = {
+                        hasValidTeam: true,
+                        heroes: teams[visibleSlots[0]],
+                        pet: pets[visibleSlots[0]],
+                        banner: banners[visibleSlots[0]] || 1,
+                        favor: {}
+                    };
                 }
             } else {
-                // Regular Arena: 1 team
-                // heroes is typically an array of 6 objects (5 heroes + 1 pet)
-                const rawHeroes = Array.isArray(opp.heroes) ? opp.heroes : [];
-                const heroIds = [];
-                let petId = 6005; // Default pet
-
-                for (let i = 0; i < rawHeroes.length; i++) {
-                    const item = rawHeroes[i];
-                    const id = extractId(item);
-
-                    if (id && isPet(item)) {
-                        petId = id;
-                    } else if (id && heroIds.length < 5) {
-                        heroIds.push(id);
-                    }
-                }
-
-                let bannerId = 1;
-                if (opp.banners && Array.isArray(opp.banners) && opp.banners.length > 0) {
-                    bannerId = extractBannerId(opp.banners[0]);
-                } else if (typeof opp.banner === 'number') {
-                    bannerId = opp.banner;
-                }
-
-                if (heroIds.length === 5) {
+                const parsed = this.parseLineup(rawHeroes);
+                const bannerId = extractBannerId(opp.banners?.[0] ?? opp.banner);
+                if (parsed) {
                     hasValidTeam = true;
                     config = {
                         hasValidTeam: true,
-                        heroes: heroIds,
-                        pet: petId,
+                        heroes: parsed.heroes,
+                        pet: parsed.pet,
                         banner: bannerId,
-                        favor: {} // Favor data not available in arenaFindEnemies response
+                        favor: {}
                     };
                     console.log('[DEMO] Regular Arena config extracted:', {
-                        heroes: heroIds,
-                        pet: petId,
+                        heroes: parsed.heroes,
+                        pet: parsed.pet,
                         banner: bannerId
                     });
                 } else {
                     console.warn('[DEMO] Regular Arena lineup incomplete:', {
-                        extractedHeroes: heroIds,
-                        pet: petId,
-                        rawLength: rawHeroes.length
+                        rawLength: rawHeroes.length,
+                        first: rawHeroes[0]
                     });
                 }
             }
