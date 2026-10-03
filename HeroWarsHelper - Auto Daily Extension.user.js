@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.3
+// @version      3.5.4
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.3";
+    const EXTENSION_VERSION = "3.5.4";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -201,6 +201,7 @@
         const EVAL_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || BRUTEFORCE_MS));
         const RESTART_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS) || BRUTEFORCE_MS));
         const STEP_DELAY_MS = Math.max(0, Math.min(1000, Number(window.HWH_DUNGEON_STEP_DELAY_MS) || 100));
+        const NO_WIN_RETRIES = Math.max(1, Math.min(8, Number(window.HWH_DUNGEON_NO_WIN_RETRIES) || 3));
         const MAX_TIMER_TRIES = window.HWH_DUNGEON_MAX_TIMER_TRIES != null
             ? Math.max(0, Math.min(200, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 0))
             : 0;
@@ -232,6 +233,7 @@
         let lastStartedTeamNum = -1;
         let battleStartTime = 0;
         let stepCount = 0;
+        let consecutiveNoWin = 0;
         let timeDungeon = { all: Date.now(), steps: 0 };
 
         function getApiResult(result) {
@@ -814,7 +816,8 @@
                 && (attackerType === 'earth' || attackerType === 'fire');
             const minSize = shouldShrink ? Math.min(2, maxSize) : maxSize;
 
-            let best = null;
+            let bestSafe = null;
+            let bestWin = null;
             for (let size = maxSize; size >= minSize; size--) {
                 if (stopDung || end) {
                     break;
@@ -827,24 +830,28 @@
                     }
                     continue;
                 }
-                if (!passesDungeonSurvival(option)) {
+                option.passesSurvival = passesDungeonSurvival(option);
+                if (option.passesSurvival) {
+                    if (!bestSafe || isOptionBetter(bestSafe, option)) {
+                        bestSafe = option;
+                        if (DUNGEON_VERBOSE) {
+                            console.log(`[Dungeon] ${attackerType} size ${size}: accepted candidate`);
+                        }
+                    }
+                    // Full team that passes survival is preferred; stop shrinking early.
+                    if (size === maxSize) {
+                        break;
+                    }
+                } else {
                     if (DUNGEON_VERBOSE) {
                         console.log(`[Dungeon] ${attackerType} size ${size}: win but failed survival checks`);
                     }
-                    continue;
-                }
-                if (!best || isOptionBetter(best, option)) {
-                    best = option;
-                    if (DUNGEON_VERBOSE) {
-                        console.log(`[Dungeon] ${attackerType} size ${size}: accepted candidate`);
+                    if (!bestWin || isOptionBetter(bestWin, option)) {
+                        bestWin = option;
                     }
                 }
-                // Full team that passes survival is preferred; stop shrinking early.
-                if (size === maxSize) {
-                    break;
-                }
             }
-            return best;
+            return bestSafe || bestWin;
         }
 
         function debugString(option, attackerType) {
@@ -893,7 +900,7 @@
             };
         }
 
-        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, bruteforceMs = EVAL_BRUTEFORCE_MS) {
+        async function startAndSimulateOnce(teamNum, heroes, pet, attackerType, favor = {}, bruteforceMs = EVAL_BRUTEFORCE_MS) {
             const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
             const apiResult = getApiResult(raw);
             if (apiResult?.error || apiResult?.validation) {
@@ -903,11 +910,13 @@
                         ? apiResult.error
                         : `${apiResult.error?.name || apiResult.error?.title || 'Error'}: ${apiResult.error?.description || apiResult.error?.title || ''}`);
                 console.warn(`[Dungeon] dungeonStartBattle failed (${attackerType}, team ${teamNum}):`, errMsg, raw);
+                setBattleOpen(false);
                 return null;
             }
             const battleData = apiResult?.response;
             if (!battleData) {
                 console.warn(`[Dungeon] dungeonStartBattle empty response (${attackerType}, team ${teamNum})`, raw);
+                setBattleOpen(false);
                 return null;
             }
 
@@ -916,7 +925,7 @@
             setBattleOpen(true);
 
             try {
-                return await simulateOnBattleData(
+                const option = await simulateOnBattleData(
                     battleData,
                     teamNum,
                     heroes,
@@ -928,11 +937,24 @@
                         maxTimerTries: MAX_TIMER_TRIES,
                     }
                 );
+                if (option?.win) {
+                    option.passesSurvival = passesDungeonSurvival(option);
+                }
+                return option;
             } catch (err) {
                 console.warn(`[Dungeon] BattleCalc failed (${attackerType}, team ${teamNum}):`, err);
                 setBattleOpen(false);
                 return null;
             }
+        }
+
+        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, bruteforceMs = EVAL_BRUTEFORCE_MS) {
+            const first = await startAndSimulateOnce(teamNum, heroes, pet, attackerType, favor, bruteforceMs);
+            if (first) {
+                return first;
+            }
+            await sleep(500);
+            return startAndSimulateOnce(teamNum, heroes, pet, attackerType, favor, bruteforceMs);
         }
 
         function isNotFoundError(err) {
@@ -1188,7 +1210,8 @@
                 const result = await Send({ calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }] });
                 if (Array.isArray(result.results)) {
                     const dungeonGetInfo = getResponse(result);
-                    if (dungeonGetInfo?.floor?.userData) {
+                    if (dungeonGetInfo) {
+                        lastError = null;
                         return { dungeonGetInfo };
                     }
                     lastError = 'No dungeon data';
@@ -1276,10 +1299,20 @@
                 return false;
             }
 
+            const userData = dungeonGetInfo.floor?.userData;
+            if (!userData) {
+                consecutiveNoWin++;
+                console.warn(`[Dungeon] Missing floor userData, retrying (${consecutiveNoWin}/${NO_WIN_RETRIES})`);
+                if (consecutiveNoWin <= NO_WIN_RETRIES) {
+                    await sleep(1000);
+                    return true;
+                }
+                lastError = 'No dungeon data';
+                return false;
+            }
+
             const states = dungeonGetInfo.states.titans;
             const aliveTitans = getTitans(titansList, states);
-            const userData = dungeonGetInfo.floor.userData;
-
             const heroBattleIndex = userData.findIndex((ud) => ud.attackerType === 'hero');
             if (heroBattleIndex !== -1) {
                 const heroBattle = getHeroTeamForBattle(dungeonGetInfo.states?.heroes);
@@ -1296,6 +1329,12 @@
                     heroBattle.favor
                 );
                 if (!option) {
+                    consecutiveNoWin++;
+                    console.warn(`[Dungeon] Hero battle start/sim failed, retrying (${consecutiveNoWin}/${NO_WIN_RETRIES})`);
+                    if (consecutiveNoWin <= NO_WIN_RETRIES) {
+                        await sleep(1200);
+                        return true;
+                    }
                     lastError = 'Failed to start hero battle (check console for API/BattleCalc details)';
                     endDungeon(lastError);
                     return false;
@@ -1348,8 +1387,12 @@
                     }
                 } else {
                     const elementalOption = await evaluateElementalDoor(teamNum, attackerType, aliveTitans);
-                    if (elementalOption) {
-                        options.push({ option: elementalOption, attackerType });
+                    if (elementalOption?.win) {
+                        options.push({
+                            option: elementalOption,
+                            attackerType,
+                            passesSurvival: elementalOption.passesSurvival !== false,
+                        });
                     } else {
                         options.push(null);
                     }
@@ -1378,30 +1421,56 @@
                     const fallback = getNeutralTitans(aliveTitans);
                     if (fallback.length > 0) {
                         const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType);
-                        options.push(fallbackOption?.win && passesDungeonSurvival(fallbackOption)
-                            ? { option: fallbackOption, attackerType }
+                        options.push(fallbackOption?.win
+                            ? {
+                                option: fallbackOption,
+                                attackerType,
+                                passesSurvival: fallbackOption.passesSurvival !== false && passesDungeonSurvival(fallbackOption),
+                            }
                             : null);
                     } else {
                         options.push(null);
                     }
                     continue;
                 }
-                if (!passesDungeonSurvival(option)) {
-                    if (DUNGEON_VERBOSE) {
-                        console.log(`[Dungeon] ${attackerType} door ${teamNum}: win but failed survival checks`);
-                    }
-                    options.push(null);
-                    continue;
+                if (option.passesSurvival == null) {
+                    option.passesSurvival = passesDungeonSurvival(option);
                 }
-                options.push({ option, attackerType });
+                if (!option.passesSurvival) {
+                    console.warn(`[Dungeon] ${attackerType} door ${teamNum}: win but failed survival checks`);
+                }
+                options.push({ option, attackerType, passesSurvival: option.passesSurvival });
             }
 
-            const valid = options.filter(Boolean);
+            const winning = options.filter((v) => v?.option?.win);
+            const valid = winning.filter((v) => v.passesSurvival !== false);
             if (valid.length === 0) {
-                lastError = 'No winnable battles available';
-                endDungeon(lastError);
-                return false;
+                consecutiveNoWin++;
+                const doorSummary = userData.map((ud, i) => {
+                    const picked = options[i];
+                    if (!picked?.option) return `${ud.attackerType}:none`;
+                    return `${ud.attackerType}:${picked.option.win ? 'win' : 'lose'}${picked.passesSurvival ? '' : '/unsafe'}`;
+                }).join(', ');
+                console.warn(`[Dungeon] No survival-safe door (${consecutiveNoWin}/${NO_WIN_RETRIES}): ${doorSummary}`);
+                if (consecutiveNoWin <= NO_WIN_RETRIES) {
+                    HWHFuncs.setProgress(
+                        `${I18N('DUNGEON')}: retrying floor (${consecutiveNoWin}/${NO_WIN_RETRIES}) ${dungeonActivity}/${maxDungeonActivity}`,
+                        true
+                    );
+                    await sleep(1200);
+                    return true;
+                }
+                if (winning.length > 0) {
+                    console.warn('[Dungeon] Survival checks blocked all doors — using best winning fight instead of stopping');
+                    winning.forEach((v) => { v.passesSurvival = true; });
+                    valid.push(...winning);
+                } else {
+                    lastError = 'No winnable battles available';
+                    endDungeon(lastError);
+                    return false;
+                }
             }
+            consecutiveNoWin = 0;
 
             if (valid.length > 1) {
                 lastDebugString += valid.map((v) => debugString(v.option, v.attackerType)).join(' | ');
@@ -1539,6 +1608,7 @@
             lastStartedTeamNum = -1;
             battleStartTime = 0;
             stepCount = 0;
+            consecutiveNoWin = 0;
             dungeonRunning = true;
             window.HWH_DUNGEON_RUNNING = true;
             timeDungeon = { all: Date.now(), steps: 0 };
@@ -1598,6 +1668,11 @@
             window.HWHClasses.executeDungeon = executeDungeon;
         }
 
+        const dungeonRunTimeoutMs = Math.max(
+            20 * 60 * 1000,
+            Number(window.HWH_DUNGEON_RUN_TIMEOUT_MS) || 10 * 60 * 60 * 1000
+        );
+
         try {
             const hasStealtherDungeon = await waitFor(() => typeof executeDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
             if (hasStealtherDungeon) {
@@ -1606,12 +1681,12 @@
                     new Promise((resolve, reject) => {
                         try {
                             const dung = new executeDungeon(resolve, reject);
-                            dung.start();
+                            Promise.resolve(dung.start()).catch(reject);
                         } catch (e) {
                             reject(e);
                         }
                     }),
-                    20 * 60 * 1000,
+                    dungeonRunTimeoutMs,
                     'Dungeon timed out'
                 );
             }
@@ -1619,11 +1694,12 @@
             const hasNativeDungeon = await waitFor(() => typeof window.testDungeon === 'function', { timeoutMs: 5000, intervalMs: 200 });
             if (hasNativeDungeon) {
                 HWHFuncs.setProgress('Executing: Dungeon (native fallback)', true);
-                return await withTimeout(window.testDungeon(), 20 * 60 * 1000, 'Dungeon timed out');
+                return await withTimeout(window.testDungeon(), dungeonRunTimeoutMs, 'Dungeon timed out');
             }
 
             throw new Error('Dungeon API not ready (missing executeDungeon/testDungeon)');
         } catch (err) {
+            stopDung = true;
             dungeonRunning = false;
             window.HWH_DUNGEON_RUNNING = false;
             setDungeonBattleOpen(false);
