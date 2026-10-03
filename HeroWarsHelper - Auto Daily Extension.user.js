@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.4
+// @version      3.5.8
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.4";
+    const EXTENSION_VERSION = "3.5.8";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2625,11 +2625,8 @@ async function executeGetDailyBonus() {
                     });
                 });
 
-                // Keep original order from API - try opponents one by one as returned
-                // No sorting - will attempt in the order the server provides
-                this.opponents = availableOpponents;
-                console.log(`[OPPONENTS] Processing ${this.opponents.length} opponents in API order (one by one, no sorting)`);
-                console.log('[OPPONENTS] Opponent order:', this.opponents.map(o => ({
+                this.opponents = availableOpponents.sort((a, b) => a.rank - b.rank);
+                console.log(`[OPPONENTS] Highest ranking first (place 1 = top). Order:`, this.opponents.map(o => ({
                     id: o.opponent.id,
                     place: o.rank,
                     power: o.difficulty
@@ -2652,8 +2649,12 @@ async function executeGetDailyBonus() {
                         difficulty: parseInt(opponentData.power) || 0
                     });
                 }
-                this.opponents = availableOpponents;
-                console.log(`[OPPONENTS] Processing ${this.opponents.length} opponents (fallback mode)`);
+                this.opponents = availableOpponents.sort((a, b) => a.rank - b.rank);
+                console.log(`[OPPONENTS] Highest ranking first (fallback). Order:`, this.opponents.map(o => ({
+                    id: o.opponent.id,
+                    place: o.rank,
+                    power: o.difficulty
+                })));
             } else {
                 console.log('[OPPONENTS] No opponents data to process');
                 this.opponents = [];
@@ -2752,33 +2753,25 @@ async function executeGetDailyBonus() {
         }
 
         this.executeBattles = async function() {
-            let battlesAttempted = 0;
             let battlesSkipped = 0;
-            let initialOpponentCount = this.opponents.length;
-            let allySkippedInRow = 0;
-            
-            // Continue trying opponents until we run out of attempts or viable opponents
-            while (battlesAttempted < this.attemptsRemaining && this.opponents.length > 0) {
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+
+            // One real arenaAttack per trigger: try highest rank first, skip unsuitable, stop if none.
+            while (this.opponents.length > 0) {
                 const opponent = this.opponents.shift();
                 const opponentId = opponent.opponent.id;
-                
-                console.log(`[EXECUTE] ===== Processing opponent ${opponentId} (attempt ${battlesAttempted + 1}/${this.attemptsRemaining}, ${this.opponents.length} remaining) =====`);
-                const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
-                setProgress(`${arenaName}: Battle ${battlesAttempted + 1}/${this.attemptsRemaining} - Opponent ${opponentId}`);
+                const place = opponent.rank;
+
+                console.log(`[EXECUTE] Evaluating place ${place} opponent ${opponentId} (${this.opponents.length} remaining)`);
+                setProgress(`${arenaName}: Checking rank ${place} (${opponentId})`);
 
                 try {
                     const allySkipReason = this.getAllySkipReason(opponent);
                     if (allySkipReason) {
                         console.log(`[EXECUTE] Skipping opponent ${opponentId} (${allySkipReason})`);
                         battlesSkipped++;
-                        allySkippedInRow++;
-                        if (allySkippedInRow >= initialOpponentCount && battlesAttempted === 0) {
-                            console.log('[EXECUTE] All opponents are guild/team allies, ending execution');
-                            break;
-                        }
                         continue;
                     }
-                    allySkippedInRow = 0;
 
                     if (this.arenaType === 'grand') {
                         const canAttack = await this.checkTargetRange(opponentId);
@@ -2790,59 +2783,36 @@ async function executeGetDailyBonus() {
                     }
 
                     const result = await this.executeBattle(opponent);
-                    
+
                     if (result.skipped) {
-                        console.log(`[EXECUTE] Battle skipped due to low win rate (${result.winRate?.toFixed(2)}%)`);
+                        console.log(`[EXECUTE] Opponent ${opponentId} not suitable (${result.reason || `win rate ${result.winRate?.toFixed(2)}%`})`);
                         battlesSkipped++;
-                        if (this.opponents.length === 0) {
-                            console.log(`[EXECUTE] No more opponents available, ending execution`);
-                            break;
-                        }
                         continue;
                     }
-                    
-                    // Battle was attempted (not skipped)
-                    battlesAttempted++;
+
                     if (result.win) {
                         this.victories++;
-                        console.log(`[EXECUTE] ✓ Victory against opponent ${opponentId}`);
+                        console.log(`[EXECUTE] ✓ Victory against rank ${place} opponent ${opponentId}`);
                     } else {
-                        console.log(`[EXECUTE] ✗ Defeat against opponent ${opponentId}`);
+                        console.log(`[EXECUTE] ✗ Defeat against rank ${place} opponent ${opponentId}`);
                     }
 
-                    if (battlesAttempted < this.attemptsRemaining) {
-                        await this.refreshOpponents();
-                        initialOpponentCount = this.opponents.length;
-                        allySkippedInRow = 0;
-                        if (this.opponents.length === 0) {
-                            console.log('[EXECUTE] No opponents returned after refresh, ending execution');
-                            break;
-                        }
-                    }
+                    this.end(`Attacked rank ${place}${result.win ? ' (win)' : ' (loss)'}${battlesSkipped > 0 ? `, skipped ${battlesSkipped}` : ''}`);
+                    return;
                 } catch (error) {
                     console.error(`[EXECUTE] Battle error for opponent ${opponentId}:`, error);
-                    battlesAttempted++;
-                    if (battlesAttempted < this.attemptsRemaining) {
-                        await this.refreshOpponents();
-                        initialOpponentCount = this.opponents.length;
-                        allySkippedInRow = 0;
-                    }
+                    battlesSkipped++;
                 }
             }
 
-            const summary = `Completed ${this.victories}/${battlesAttempted} victories${battlesSkipped > 0 ? `, ${battlesSkipped} skipped` : ''}`;
-            console.log(`[EXECUTE] ===== Execution Summary =====`);
-            console.log(`[EXECUTE] Victories: ${this.victories}/${battlesAttempted}`);
-            console.log(`[EXECUTE] Skipped: ${battlesSkipped}`);
-            console.log(`[EXECUTE] =============================`);
-            this.end(summary);
+            this.end(`No suitable opponent${battlesSkipped > 0 ? ` (${battlesSkipped} skipped)` : ''}`);
         }
 
         this.executeBattle = async function(opponent) {
             try {
                 if (!opponent || !opponent.opponent || !opponent.opponent.id) {
                     console.error('[DEMO] Invalid opponent data:', opponent);
-                    return { win: false };
+                    return { win: false, skipped: true, reason: 'invalid opponent data' };
                 }
 
                 const opponentId = opponent.opponent.id;
@@ -2857,23 +2827,35 @@ async function executeGetDailyBonus() {
                 console.log('[DEMO] Opponent team config:', JSON.stringify(opponentTeamConfig, null, 2));
 
                 if (!opponentTeamConfig || !opponentTeamConfig.hasValidTeam) {
-                    console.warn('[DEMO] ⚠️ Cannot get opponent team data, proceeding with attack anyway');
-                    const battleResult = await this.startArenaBattle(opponentId, myTeamConfig);
-                    await this.endArenaBattle(battleResult);
-                    return battleResult;
+                    console.warn('[DEMO] Cannot get opponent team data, skipping as unsuitable');
+                    return { win: false, skipped: true, reason: 'no opponent team data' };
                 }
 
-                // Skip simulation for Grand Arena (demo battles only support single team, not 3-team Grand Arena)
+                let attackTeam = myTeamConfig;
+                let simulationResult;
+
                 if (this.arenaType === 'grand') {
-                    console.log('[DEMO] Grand Arena: Skipping simulation (demo battles do not support 3-team battles), proceeding directly to attack');
-                    const battleResult = await this.startArenaBattle(opponentId, myTeamConfig);
-                    await this.endArenaBattle(battleResult);
-                    return battleResult;
+                    const arrangement = await this.pickGrandTeamArrangement(myTeamConfig, opponentTeamConfig);
+                    if (!arrangement) {
+                        return {
+                            win: false,
+                            skipped: true,
+                            reason: 'no winning arrangement vs visible teams'
+                        };
+                    }
+                    attackTeam = arrangement.team;
+                    simulationResult = {
+                        total: arrangement.testedSlots,
+                        wins: arrangement.slotRates.filter((s) => s.rate > CONSTANTS.WIN_RATE_THRESHOLD).length,
+                        losses: arrangement.slotRates.filter((s) => s.rate <= CONSTANTS.WIN_RATE_THRESHOLD).length,
+                        winRate: arrangement.winRate,
+                        averageBattleTime: 0
+                    };
+                    console.log('[DEMO] Grand arrangement:', arrangement.perm, arrangement.slotRates);
+                } else {
+                    Utils.log('log', '[DEMO] Running demo battle simulations (no attempts consumed)...');
+                    simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig, CONSTANTS.SIMULATION_COUNT);
                 }
-
-                // Step 2: Simulate battles using demoBattles_startBattle (Regular Arena only)
-                Utils.log('log', '[DEMO] Step 2: Running demo battle simulations (no attempts consumed)...');
-                const simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig, CONSTANTS.SIMULATION_COUNT);
                 
                 console.log('[DEMO] Simulation results:', {
                     totalSimulations: simulationResult.total,
@@ -2894,14 +2876,14 @@ async function executeGetDailyBonus() {
                     Utils.log('warn', `[DEMO] ⚠️ Win rate ${simulationResult.winRate.toFixed(2)}% is below ${CONSTANTS.WIN_RATE_THRESHOLD}%, skipping this opponent`);
                     console.log(`[DEMO] ✓ No battle attempt consumed - using demo battles API`);
                     console.log(`[DEMO] Looking for next opponent...`);
-                    return { win: false, skipped: true, winRate: simulationResult.winRate };
+                    return { win: false, skipped: true, winRate: simulationResult.winRate, reason: 'win rate below threshold' };
                 }
 
                 // Step 4: Proceed with actual battle
                 console.log(`[DEMO] ✓ Win rate ${simulationResult.winRate.toFixed(2)}% is above threshold, proceeding with actual attack`);
                 console.log('[DEMO] Step 4: Executing actual battle...');
                 
-                const battleResult = await this.startArenaBattle(opponentId, myTeamConfig);
+                const battleResult = await this.startArenaBattle(opponentId, attackTeam);
                 
                 console.log('[DEMO] Actual battle result:', {
                     win: battleResult.win,
@@ -2915,7 +2897,7 @@ async function executeGetDailyBonus() {
             } catch (error) {
                 console.error('[DEMO] Error in executeBattle:', error);
                 console.error('[DEMO] Error stack:', error.stack);
-                return { win: false };
+                return { win: false, skipped: true, reason: error.message || 'executeBattle error' };
             }
         }
 
@@ -2994,12 +2976,15 @@ async function executeGetDailyBonus() {
                 } catch (e) {
                     console.log('Could not get banners from userInfo, using defaults');
                 }
+                while (banners.length < 3) {
+                    banners.push(banners[banners.length - 1] || 1);
+                }
 
                 return {
                     heroes: heroes,
                     pets: pets,
                     favor: grandFavor,
-                    banners: banners
+                    banners: banners.slice(0, 3)
                 };
             } else {
                 const arenaTeam = teamData.arena || [];
@@ -3058,6 +3043,158 @@ async function executeGetDailyBonus() {
             }
         }
 
+        this.parseGrandLineup = function(team) {
+            if (!team || !Array.isArray(team) || team.length < 5) {
+                return null;
+            }
+            const extractId = (item) => {
+                if (typeof item === 'number') return item;
+                if (item && typeof item === 'object' && item.id) return item.id;
+                return null;
+            };
+            const isPet = (item) => {
+                if (typeof item === 'number') return item >= CONSTANTS.PET_ID_RANGE_MIN && item < CONSTANTS.PET_ID_RANGE_MAX;
+                if (item && typeof item === 'object') {
+                    return item.type === 'pet' || (item.id >= CONSTANTS.PET_ID_RANGE_MIN && item.id < CONSTANTS.PET_ID_RANGE_MAX);
+                }
+                return false;
+            };
+            const heroIds = [];
+            let petId = CONSTANTS.DEFAULT_PET_ID;
+            for (const item of team) {
+                const id = extractId(item);
+                if (!id) continue;
+                if (isPet(item)) {
+                    petId = id;
+                } else if (heroIds.length < 5) {
+                    heroIds.push(id);
+                }
+            }
+            if (heroIds.length !== 5) {
+                return null;
+            }
+            return { heroes: heroIds, pet: petId };
+        }
+
+        this.permute = function(items) {
+            if (items.length <= 1) {
+                return [items.slice()];
+            }
+            const result = [];
+            for (let i = 0; i < items.length; i++) {
+                const rest = items.slice(0, i).concat(items.slice(i + 1));
+                for (const perm of this.permute(rest)) {
+                    result.push([items[i], ...perm]);
+                }
+            }
+            return result;
+        }
+
+        this.simulateTeamMatchup = async function(attack, defence, simulationCount = CONSTANTS.SIMULATION_COUNT) {
+            const mechanic = 'arena';
+            const simulations = [];
+            let parentId = 0;
+            let firstBattleId = null;
+            const matchup = {
+                team: { units: attack.units, pet: attack.pet },
+                banner: attack.banner || 1,
+                favor: attack.favor || {},
+                defenceTeam: { units: defence.units, pet: defence.pet },
+                defenceBanner: defence.banner || 1,
+                defenceFavor: defence.favor || {}
+            };
+            for (let i = 0; i < simulationCount; i++) {
+                try {
+                    const result = await this.runSingleDemoBattle(null, null, mechanic, i, parentId, matchup);
+                    simulations.push(result);
+                    if (i === 0 && result.battleId) {
+                        firstBattleId = result.battleId;
+                        parentId = firstBattleId;
+                    } else if (firstBattleId) {
+                        parentId = firstBattleId;
+                    } else if (result.parentId) {
+                        parentId = result.parentId;
+                    }
+                } catch (error) {
+                    console.error('[DEMO] Grand matchup sim failed:', error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId });
+                }
+            }
+            const wins = simulations.filter((s) => s.win).length;
+            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
+            return { winRate, wins, total: simulations.length };
+        }
+
+        this.pickGrandTeamArrangement = async function(myTeam, oppTeam) {
+            const visibleSlots = oppTeam.visibleSlots || [];
+            if (!visibleSlots.length) {
+                console.log('[DEMO] Opponent has no visible Grand Arena teams');
+                return null;
+            }
+            if (!myTeam?.heroes || myTeam.heroes.length < 3 || !myTeam.pets || myTeam.pets.length < 3) {
+                console.warn('[DEMO] Need 3 of our Grand Arena teams to rearrange');
+                return null;
+            }
+
+            const cache = {};
+            const rateFor = async (myIdx, slot) => {
+                const key = `${myIdx}:${slot}`;
+                if (cache[key] != null) {
+                    return cache[key];
+                }
+                const sim = await this.simulateTeamMatchup({
+                    units: myTeam.heroes[myIdx],
+                    pet: myTeam.pets[myIdx],
+                    banner: myTeam.banners?.[myIdx] || 1,
+                    favor: myTeam.favor || {}
+                }, {
+                    units: oppTeam.heroes[slot],
+                    pet: oppTeam.pets[slot],
+                    banner: oppTeam.banners?.[slot] || 1,
+                    favor: oppTeam.favor || {}
+                });
+                cache[key] = sim.winRate;
+                Utils.log('log', `[DEMO] Our team ${myIdx} vs visible slot ${slot}: ${sim.winRate.toFixed(1)}%`);
+                return sim.winRate;
+            };
+
+            let best = null;
+            for (const perm of this.permute([0, 1, 2])) {
+                const slotRates = [];
+                let ok = true;
+                for (const slot of visibleSlots) {
+                    const myIdx = perm[slot];
+                    const rate = await rateFor(myIdx, slot);
+                    slotRates.push({ slot, myIdx, rate });
+                    if (!(rate > CONSTANTS.WIN_RATE_THRESHOLD)) {
+                        ok = false;
+                    }
+                }
+                const avg = slotRates.reduce((sum, row) => sum + row.rate, 0) / slotRates.length;
+                if (ok && (!best || avg > best.avg)) {
+                    best = { perm, avg, slotRates };
+                }
+            }
+
+            if (!best) {
+                console.log('[DEMO] No permutation beat the win-rate threshold on all visible teams');
+                return null;
+            }
+
+            return {
+                perm: best.perm,
+                winRate: best.avg,
+                slotRates: best.slotRates,
+                testedSlots: visibleSlots.length,
+                team: {
+                    heroes: best.perm.map((i) => myTeam.heroes[i]),
+                    pets: best.perm.map((i) => myTeam.pets[i]),
+                    banners: best.perm.map((i) => myTeam.banners?.[i] || 1),
+                    favor: myTeam.favor || {}
+                }
+            };
+        }
+
         this.getOpponentTeamConfig = function(opponent) {
             console.log('[DEMO] Extracting opponent team configuration...');
             
@@ -3101,72 +3238,40 @@ async function executeGetDailyBonus() {
             };
 
             if (this.arenaType === 'grand') {
-                // Grand Arena: 3 teams
-                // heroes is array of 3 teams, each team is array of 6 objects (5 heroes + 1 pet)
-                if (opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length >= 3) {
-                    const teams = [];
-                    const pets = [];
-                    const favor = {};
+                // Opponent may show 0–3 defense teams. Only parse complete visible lineups.
+                const rawTeams = Array.isArray(opp.heroes) ? opp.heroes : [];
+                const teams = [];
+                const pets = [];
+                const banners = [];
+                const visibleSlots = [];
 
-                    // Extract teams from heroes array
-                    for (let i = 0; i < Math.min(3, opp.heroes.length); i++) {
-                        const team = opp.heroes[i];
-                        if (team && Array.isArray(team) && team.length >= 6) {
-                            // Extract hero IDs (first 5 items)
-                            const heroIds = [];
-                            let petId = 6005; // Default pet
-                            
-                            for (let j = 0; j < team.length; j++) {
-                                const item = team[j];
-                                const id = extractId(item);
-                                
-                                if (id && !isPet(item)) {
-                                    // It's a hero
-                                    if (heroIds.length < 5) {
-                                        heroIds.push(id);
-                                    }
-                                } else if (id && isPet(item)) {
-                                    // It's a pet
-                                    petId = id;
-                                }
-                            }
-
-                            if (heroIds.length === 5) {
-                                teams.push(heroIds);
-                                pets.push(petId);
-                                hasValidTeam = true;
-                            }
-                        }
-                    }
-
-                    // Extract banners (array of 3 banner objects)
-                    const banners = [];
-                    if (opp.banners && Array.isArray(opp.banners)) {
-                        for (let i = 0; i < Math.min(3, opp.banners.length); i++) {
-                            banners.push(extractBannerId(opp.banners[i]));
-                        }
-                    }
-                    // Fill with defaults if needed
-                    while (banners.length < 3) {
-                        banners.push(1);
-                    }
-
-                    if (hasValidTeam) {
-                        config = {
-                            hasValidTeam: true,
-                            heroes: teams,
-                            pets: pets,
-                            banners: banners.slice(0, 3),
-                            favor: favor
-                        };
-                        console.log('[DEMO] Grand Arena config extracted:', {
-                            teams: teams.length,
-                            pets: pets.length,
-                            banners: banners.length
-                        });
+                for (let i = 0; i < 3; i++) {
+                    const parsed = this.parseGrandLineup(rawTeams[i]);
+                    const banner = extractBannerId(opp.banners?.[i]);
+                    if (parsed) {
+                        teams[i] = parsed.heroes;
+                        pets[i] = parsed.pet;
+                        banners[i] = banner;
+                        visibleSlots.push(i);
+                        hasValidTeam = true;
+                    } else {
+                        teams[i] = null;
+                        pets[i] = null;
+                        banners[i] = banner || 1;
                     }
                 }
-            } else {
+
+                if (hasValidTeam) {
+                    config = {
+                        hasValidTeam: true,
+                        heroes: teams,
+                        pets: pets,
+                        banners: banners,
+                        favor: {},
+                        visibleSlots
+                    };
+                    console.log('[DEMO] Grand Arena visible defenses:', visibleSlots.length, 'slots', visibleSlots);
+                }
                 // Regular Arena: 1 team
                 // heroes is array of 6 objects (5 heroes + 1 pet)
                 if (opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length >= 6) {
@@ -3234,7 +3339,9 @@ async function executeGetDailyBonus() {
         }
 
         this.simulateWithDemoBattles = async function(myTeam, opponentTeam, simulationCount = 10) {
-            Utils.log('log', `[DEMO] Starting ${simulationCount} demo battle simulations...`);
+            const teamCount = this.arenaType === 'grand' ? 3 : 1;
+            const totalSimulations = simulationCount * teamCount;
+            Utils.log('log', `[DEMO] Starting ${totalSimulations} demo battle simulations (${teamCount} team(s) x ${simulationCount})...`);
             
             // Note: demoBattles API only supports "arena" mechanic, even for Grand Arena
             const mechanic = 'arena';
@@ -3243,7 +3350,7 @@ async function executeGetDailyBonus() {
             let parentId = 0; // Start with 0 for first battle
             let firstBattleId = null; // Store first battle's ID to use as parentId for subsequent battles
             
-            for (let i = 0; i < simulationCount; i++) {
+            for (let i = 0; i < totalSimulations; i++) {
                 try {
                     // First battle uses parentId=0, subsequent battles use first battle's ID as parentId
                     const result = await this.runSingleDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
@@ -3263,7 +3370,7 @@ async function executeGetDailyBonus() {
                         parentId = result.parentId;
                     }
                 } catch (error) {
-                    console.error(`[DEMO] Simulation ${i + 1} failed:`, error);
+                    console.error(`[DEMO] Simulation ${i + 1}/${totalSimulations} failed:`, error);
                     simulations.push({ win: false, battleTime: 0, error: error.message, parentId: parentId });
                 }
             }
@@ -3289,42 +3396,48 @@ async function executeGetDailyBonus() {
             };
         }
 
-        this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0) {
+        this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0, matchup = null) {
             return new Promise((resolve, reject) => {
                 try {
                     let args = {
                         mechanic: mechanic,
-                        defenceMaxUpgrade: true,  // Use max upgrade for opponent to get accurate simulation
-                        maxUpgrade: true,          // Use max upgrade for our team to get accurate simulation
+                        defenceMaxUpgrade: true,
+                        maxUpgrade: true,
                         defenceBuffs: {},
                         buffs: {},
                         parentId: parentId,
                         entryId: 0
                     };
 
-                    // Handle team configuration based on arena type
-                    // Note: demoBattles API only supports "arena" mechanic
-                    // For Grand Arena, we simulate the first team as a proxy
-                    if (this.arenaType === 'grand') {
-                        // Grand Arena: 3 teams - simulate first team as proxy
-                        // Note: demoBattles_startBattle only simulates one team at a time
-                        // We use the first team as a proxy for overall win probability
-                        const teamIndex = seedOffset % 3; // Rotate through teams for variety
-                        
+                    if (matchup) {
+                        args.defenceTeam = matchup.defenceTeam;
+                        args.defenceBanner = matchup.defenceBanner || 1;
+                        args.defenceBannerStones = {};
+                        args.defenceFavor = matchup.defenceFavor || {};
+                        args.team = matchup.team;
+                        args.banner = matchup.banner || 1;
+                        args.bannerStones = {};
+                        args.favor = matchup.favor || {};
+                    } else if (this.arenaType === 'grand') {
+                        const visibleSlots = opponentTeam.visibleSlots?.length
+                            ? opponentTeam.visibleSlots
+                            : [0, 1, 2].filter((i) => Array.isArray(opponentTeam.heroes?.[i]) && opponentTeam.heroes[i].length);
+                        const teamIndex = visibleSlots.length
+                            ? visibleSlots[seedOffset % visibleSlots.length]
+                            : (seedOffset % 3);
                         args.defenceTeam = {
-                            units: opponentTeam.heroes[teamIndex] || opponentTeam.heroes[0] || [],
-                            pet: opponentTeam.pets[teamIndex] || opponentTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
+                            units: opponentTeam.heroes[teamIndex] || [],
+                            pet: opponentTeam.pets[teamIndex] || CONSTANTS.DEFAULT_PET_ID
                         };
-                        args.defenceBanner = opponentTeam.banners[teamIndex] || opponentTeam.banners[0] || 1;
-                        args.defenceBannerStones = {};  // Required field from HAR file
+                        args.defenceBanner = opponentTeam.banners[teamIndex] || 1;
+                        args.defenceBannerStones = {};
                         args.defenceFavor = opponentTeam.favor || {};
-                        
                         args.team = {
                             units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
                             pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
                         };
                         args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
-                        args.bannerStones = {};  // Required field from HAR file
+                        args.bannerStones = {};
                         args.favor = myTeam.favor || {};
                     } else {
                         // Regular Arena: 1 team
@@ -3636,25 +3749,34 @@ async function executeGetDailyBonus() {
                 if (response.results && response.results[0] && response.results[0].result) {
                     const result = response.results[0].result.response;
                     if (result.battles && result.battles.length > 0) {
-                        const battleData = result.battles[0];
-                        return new Promise((resolve) => {
-                            BattleCalc(battleData, getBattleType(this.arenaType), (calcResult) => {
-                                if (!calcResult || !calcResult.result) {
-                                    console.error('BattleCalc returned invalid result:', calcResult);
-                                    resolve({
-                                        win: false,
-                                        progress: [],
-                                        result: { win: false }
-                                    });
-                                    return;
-                                }
-                                resolve({
-                                    win: calcResult.result.win,
-                                    progress: calcResult.progress,
-                                    result: calcResult.result
-                                });
+                        let wins = 0;
+                        let battleTimer = 0;
+                        let battleTime = 0;
+                        let lastProgress = [];
+                        let lastResult = { win: false };
+                        for (const battleData of result.battles) {
+                            const calcResult = await new Promise((resolveCalc) => {
+                                BattleCalc(battleData, getBattleType(this.arenaType), (calc) => resolveCalc(calc));
                             });
-                        });
+                            if (!calcResult || !calcResult.result) {
+                                console.error('BattleCalc returned invalid result:', calcResult);
+                                continue;
+                            }
+                            if (calcResult.result.win) {
+                                wins++;
+                            }
+                            battleTimer += Number(calcResult.battleTimer) || 0;
+                            battleTime += Number(calcResult.battleTime) || 0;
+                            lastProgress = calcResult.progress || lastProgress;
+                            lastResult = calcResult.result;
+                        }
+                        return {
+                            win: wins >= Math.ceil(result.battles.length / 2),
+                            progress: lastProgress,
+                            result: lastResult,
+                            battleTimer,
+                            battleTime
+                        };
                     }
                 }
             } else {
@@ -3678,14 +3800,18 @@ async function executeGetDailyBonus() {
                                 resolve({
                                     win: false,
                                     progress: [],
-                                    result: { win: false }
+                                    result: { win: false },
+                                    battleTimer: 0,
+                                    battleTime: 0
                                 });
                                 return;
                             }
                             resolve({
                                 win: result.result.win,
                                 progress: result.progress,
-                                result: result.result
+                                result: result.result,
+                                battleTimer: result.battleTimer || 0,
+                                battleTime: result.battleTime || 0
                             });
                         });
                     });
@@ -3696,18 +3822,42 @@ async function executeGetDailyBonus() {
             return {
                 win: true,
                 progress: [],
-                result: { win: true }
+                result: { win: true },
+                battleTimer: 0,
+                battleTime: 0
             };
         }
 
+        this.waitForArenaBattle = async function(battleResult) {
+            const countdownTimer = HWHFuncs.countdownTimer;
+            const getTimer = HWHFuncs.getTimer;
+            let waitSec = Math.ceil(Number(battleResult?.battleTimer) || 0);
+            if (waitSec <= 0) {
+                const rawTime = Number(battleResult?.battleTime) || 0;
+                if (rawTime > 0 && typeof getTimer === 'function') {
+                    waitSec = Math.ceil(getTimer(rawTime));
+                }
+            }
+            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+            if (predictionCards > 0) {
+                waitSec = 0;
+            }
+            if (waitSec > 0) {
+                const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+                console.log(`[ARENA] Waiting ${waitSec}s for battle to finish before next attack`);
+                if (typeof countdownTimer === 'function') {
+                    await countdownTimer(waitSec, `${arenaName}: waiting for battle (${waitSec}s)`);
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, waitSec * 1000));
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+        }
+
         this.endArenaBattle = async function(battleResult) {
-            // Skip stashClient call - battles auto-close and this can cause NotFound errors
-            // The battle popup will close automatically after battle completion
-            // Calling stashClient can trigger errors if the battle type doesn't match
-            console.log('Battle completed, popup will auto-close');
-            
-            // Optional: Add a small delay to ensure battle processing completes
-            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BATTLE_COMPLETE));
+            // Skip stashClient — battles auto-close; stashClient can 404 if type doesn't match.
+            console.log('Battle completed, waiting before next arena attack');
+            await this.waitForArenaBattle(battleResult);
         }
 
         this.end = function(message) {
