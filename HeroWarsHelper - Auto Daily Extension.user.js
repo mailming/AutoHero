@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.10
+// @version      3.5.11
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.10";
+    const EXTENSION_VERSION = "3.5.11";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -6893,22 +6893,6 @@ async function executeGetDailyBonus() {
         });
         autoDailyButton.dataset.extensionButton = 'auto-daily';
         placeMenuRowBefore(getMenuButtonRow(autoDailyButton), actionsButton);
-
-        const dungeonSettingsButton = scriptMenu.addButton({
-            name: 'Dungeon Settings',
-            onClick: () => {
-                if (typeof window.toggleDungeonSettingsGUI === 'function') {
-                    window.toggleDungeonSettingsGUI();
-                } else {
-                    createDungeonSettingsGUI();
-                    window.toggleDungeonSettingsGUI?.();
-                }
-            },
-            title: 'Dungeon team building and tank survival cutoffs',
-            color: 'purple',
-        });
-        dungeonSettingsButton.dataset.extensionButton = 'dungeon-settings';
-        placeMenuRowBefore(getMenuButtonRow(dungeonSettingsButton), actionsButton);
 
         createCustomOthersButton();
 
