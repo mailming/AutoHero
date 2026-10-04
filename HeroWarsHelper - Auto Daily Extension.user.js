@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.15
+// @version      3.5.17
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.15";
+    const EXTENSION_VERSION = "3.5.17";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -6058,6 +6058,88 @@ async function executeGetDailyBonus() {
         await withAutoBattleFlag(() => window.__HWH_runCrossClanWar());
     }
 
+    function getAutoFarmRunner() {
+        const autoFarmButton = window.HWHData?.buttons?.autoFarm;
+        const combineList = autoFarmButton?.combineList;
+        if (Array.isArray(combineList) && typeof combineList[0]?.onClick === 'function') {
+            return () => combineList[0].onClick();
+        }
+
+        const DoYourBestClass = window.HWHClasses?.doYourBest;
+        if (typeof DoYourBestClass !== 'function') return null;
+        try {
+            const instance = new DoYourBestClass(() => {}, () => {});
+            const fn = instance?.functions?.runAutoFarmChecklistTask;
+            if (typeof fn === 'function') {
+                return () => fn.call(instance);
+            }
+        } catch (e) {
+            // AutoFarmer may still be patching doYourBest
+        }
+        return null;
+    }
+
+    async function waitForAutoFarmRunner({ timeoutMs = 5000, intervalMs = 250 } = {}) {
+        const found = await waitFor(() => !!getAutoFarmRunner(), { timeoutMs, intervalMs });
+        return found ? getAutoFarmRunner() : null;
+    }
+
+    async function executeTidyInventoryIfAvailable() {
+        const { HWHClasses, HWHFuncs } = window;
+        const InventoryTidier = HWHClasses?.InventoryTidier;
+        let runner = null;
+        if (typeof InventoryTidier === 'function') {
+            runner = async () => {
+                await new InventoryTidier().runSilent();
+            };
+        } else {
+            try {
+                const instance = typeof HWHClasses?.doYourBest === 'function'
+                    ? new HWHClasses.doYourBest(() => {}, () => {})
+                    : null;
+                const fn = instance?.functions?.tidyInventory;
+                if (typeof fn === 'function') {
+                    runner = () => fn.call(instance);
+                }
+            } catch (e) {
+                // Inventory tidier may not be registered yet
+            }
+        }
+        if (!runner) {
+            console.log('[Auto Daily] Tidy Inventory is not available; skipping auto-start.');
+            return false;
+        }
+        HWHFuncs.setProgress('Executing: Tidy Inventory', true);
+        try {
+            await runner();
+            HWHFuncs.setProgress('Tidy Inventory: Done!', true);
+            return true;
+        } catch (e) {
+            console.error('[Auto Daily] Tidy Inventory auto-start failed:', e);
+            HWHFuncs.setProgress('Tidy Inventory: Error!', true);
+            return false;
+        }
+    }
+
+    async function executeAutoFarmIfAvailable() {
+        const { HWHFuncs } = window;
+        const runner = await waitForAutoFarmRunner();
+        if (!runner) {
+            console.log('[Auto Daily] AutoFarm is not available; skipping auto-start.');
+            return false;
+        }
+        HWHFuncs.setProgress('Executing: Auto Farm', true);
+        try {
+            await runner();
+            HWHFuncs.setProgress('Auto Farm: Done!', true);
+            return true;
+        } catch (e) {
+            console.error('[Auto Daily] AutoFarm auto-start failed:', e);
+            HWHFuncs.setProgress('Auto Farm: Error!', true);
+            return false;
+        }
+    }
+
     /** Migrate legacy single "autoBattle" checkbox into the split battle options. */
     function migrateAutoBattleExecutionState(state) {
         if (!state || !state.autoBattle) return state;
@@ -6751,7 +6833,6 @@ async function executeGetDailyBonus() {
     function scheduleAutoRuns() {
         const doAllChecked = doAllTasks.filter(task => executionState[task.id]);
         const questsAndUpgradeChecked = [...questTasks, ...upgradeTasks].filter(task => executionState[task.id]);
-        if (doAllChecked.length === 0 && questsAndUpgradeChecked.length === 0) return;
 
         // Battle tasks first (in doAllTasks order), then other dailies; dungeon last to avoid API/UI conflicts.
         const autoBattleIdSet = new Set(AUTO_BATTLE_TASK_IDS);
@@ -6782,6 +6863,8 @@ async function executeGetDailyBonus() {
             }
             autoRunInProgress = true;
             try {
+                await executeTidyInventoryIfAvailable();
+                await executeAutoFarmIfAvailable();
                 for (const task of ordered) {
                     if (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
                         console.log('[Auto Daily] Stopping auto-run — dungeon started');
@@ -6794,7 +6877,9 @@ async function executeGetDailyBonus() {
                     await executeSingleTask(task, { fromAutoRun: true });
                     await sleep(500);
                 }
-                HWHFuncs.setProgress('Auto Daily: All selected tasks finished!', true);
+                if (ordered.length > 0) {
+                    HWHFuncs.setProgress('Auto Daily: All selected tasks finished!', true);
+                }
             } catch (e) {
                 console.error('[Auto Daily] Auto-run failed:', e);
                 HWHFuncs.setProgress(`Auto Daily: Stopped (${e.message || 'error'})`, true);
