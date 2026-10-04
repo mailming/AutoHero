@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.11
+// @version      3.5.14
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.11";
+    const EXTENSION_VERSION = "3.5.14";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -1674,35 +1674,23 @@
         );
 
         try {
-            const hasStealtherDungeon = await waitFor(() => typeof executeDungeon === 'function', { timeoutMs: 15000, intervalMs: 200 });
-            if (hasStealtherDungeon) {
-                HWHFuncs.setProgress('Executing: Dungeon (Stealther)', true);
-                return await withTimeout(
-                    new Promise((resolve, reject) => {
-                        try {
-                            const dung = new executeDungeon(resolve, reject);
-                            Promise.resolve(dung.start()).catch(reject);
-                        } catch (e) {
-                            reject(e);
-                        }
-                    }),
-                    dungeonRunTimeoutMs,
-                    'Dungeon timed out'
-                );
-            }
-
-            const hasNativeDungeon = await waitFor(() => typeof window.testDungeon === 'function', { timeoutMs: 5000, intervalMs: 200 });
-            if (hasNativeDungeon) {
-                HWHFuncs.setProgress('Executing: Dungeon (native fallback)', true);
-                return await withTimeout(window.testDungeon(), dungeonRunTimeoutMs, 'Dungeon timed out');
-            }
-
-            throw new Error('Dungeon API not ready (missing executeDungeon/testDungeon)');
+            HWHFuncs.setProgress('Executing: Dungeon (Stealther)', true);
+            return await withTimeout(
+                new Promise((resolve, reject) => {
+                    try {
+                        const dung = new executeDungeon(resolve, reject);
+                        Promise.resolve(dung.start()).catch(reject);
+                    } catch (e) {
+                        reject(e);
+                    }
+                }),
+                dungeonRunTimeoutMs,
+                'Dungeon timed out'
+            );
         } catch (err) {
+            // Signal the in-flight run to stop. Do not clear dungeonRunning here —
+            // start() still owns that flag until its loop actually exits.
             stopDung = true;
-            dungeonRunning = false;
-            window.HWH_DUNGEON_RUNNING = false;
-            setDungeonBattleOpen(false);
             throw err;
         }
     }
@@ -2319,11 +2307,8 @@ async function executeGetDailyBonus() {
 
     // ========== UTILITY FUNCTIONS ==========
     const Utils = {
-        // Cached date for day checks (updated once per execution)
-        currentDate: new Date(),
-        
         getDayOfWeek: function() {
-            return this.currentDate.getDay();
+            return new Date().getDay();
         },
         
         isTitanArenaDay: function() {
@@ -2486,34 +2471,22 @@ async function executeGetDailyBonus() {
                     }
                 }
             } catch (error) {
-                console.log('Could not get user info, using fallback:', error);
+                console.log('Could not get user info:', error);
             }
 
-            // Fallback to placeholder data
-            console.log(`${this.arenaType === 'grand' ? 'Grand Arena' : 'Arena'} GetInfo API not available, using alternative approach`);
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
             this.arenaInfo = {
-                attempts: 1,
+                attempts: 0,
                 rank: 1000,
-                status: 'active',
+                status: 'error',
+                errorMessage: `${arenaName}: could not read attempts`,
                 rivals: [],
                 canUpdateDefenders: false,
                 battleStartTs: 0
             };
-            this.attemptsRemaining = 1;
-            this.opponents = [];
-            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
-            setProgress(`${arenaName}: Initializing...`);
+            this.attemptsRemaining = 0;
+            setProgress(`${arenaName}: could not read attempts`);
             return;
-        }
-
-        this.refreshOpponents = async function() {
-            const detailedOpponents = await this.getArenaOpponents();
-            if (detailedOpponents && (detailedOpponents.array || detailedOpponents.map)) {
-                this.opponentsData = detailedOpponents;
-            } else if (detailedOpponents && typeof detailedOpponents === 'object' && Object.keys(detailedOpponents).length > 0) {
-                this.opponents = detailedOpponents;
-            }
-            this.findEasiestOpponents();
         }
 
         this.getAvailableTeams = async function() {
@@ -2801,7 +2774,8 @@ async function executeGetDailyBonus() {
                     return;
                 } catch (error) {
                     console.error(`[EXECUTE] Battle error for opponent ${opponentId}:`, error);
-                    battlesSkipped++;
+                    this.end(`Stopped after error at rank ${place}: ${error.message || error}`);
+                    return;
                 }
             }
 
@@ -2809,6 +2783,7 @@ async function executeGetDailyBonus() {
         }
 
         this.executeBattle = async function(opponent) {
+            let attackSent = false;
             try {
                 if (!opponent || !opponent.opponent || !opponent.opponent.id) {
                     console.error('[DEMO] Invalid opponent data:', opponent);
@@ -2821,14 +2796,18 @@ async function executeGetDailyBonus() {
                 // Step 1: Get team configurations
                 console.log('[DEMO] Step 1: Getting team configurations...');
                 const myTeamConfig = this.getTeamConfiguration();
-                const opponentTeamConfig = this.getOpponentTeamConfig(opponent);
+                let opponentTeamConfig = this.getOpponentTeamConfig(opponent);
                 
                 console.log('[DEMO] My team config:', JSON.stringify(myTeamConfig, null, 2));
                 console.log('[DEMO] Opponent team config:', JSON.stringify(opponentTeamConfig, null, 2));
 
                 if (!opponentTeamConfig || !opponentTeamConfig.hasValidTeam) {
-                    console.warn('[DEMO] Cannot get opponent team data, skipping as unsuitable');
-                    return { win: false, skipped: true, reason: 'no opponent team data' };
+                    if (this.arenaType !== 'grand') {
+                        console.warn('[DEMO] Cannot get opponent team data, skipping as unsuitable');
+                        return { win: false, skipped: true, reason: 'no opponent team data' };
+                    }
+                    console.log('[DEMO] Grand Arena: no readable defenses — attacking anyway');
+                    opponentTeamConfig = { hasValidTeam: true, visibleSlots: [], heroes: [], pets: [], banners: [], favor: {} };
                 }
 
                 let attackTeam = myTeamConfig;
@@ -2865,8 +2844,10 @@ async function executeGetDailyBonus() {
                     averageBattleTime: simulationResult.averageBattleTime.toFixed(2) + 's'
                 });
 
-                // Step 3: Check win rate threshold
-                const shouldProceed = simulationResult.winRate > CONSTANTS.WIN_RATE_THRESHOLD;
+                // Grand already accepted a 2-of-3 arrangement; Arena still needs overall win rate.
+                const shouldProceed = this.arenaType === 'grand'
+                    ? true
+                    : simulationResult.winRate > CONSTANTS.WIN_RATE_THRESHOLD;
 
                 Utils.log('log', `[DEMO] Step 3: Win rate check (threshold: ${CONSTANTS.WIN_RATE_THRESHOLD}%)`);
                 Utils.log('log', `[DEMO] Win rate: ${simulationResult.winRate.toFixed(2)}%`);
@@ -2882,7 +2863,8 @@ async function executeGetDailyBonus() {
                 // Step 4: Proceed with actual battle
                 console.log(`[DEMO] ✓ Win rate ${simulationResult.winRate.toFixed(2)}% is above threshold, proceeding with actual attack`);
                 console.log('[DEMO] Step 4: Executing actual battle...');
-                
+
+                attackSent = true;
                 const battleResult = await this.startArenaBattle(opponentId, attackTeam);
                 
                 console.log('[DEMO] Actual battle result:', {
@@ -2897,7 +2879,12 @@ async function executeGetDailyBonus() {
             } catch (error) {
                 console.error('[DEMO] Error in executeBattle:', error);
                 console.error('[DEMO] Error stack:', error.stack);
-                return { win: false, skipped: true, reason: error.message || 'executeBattle error' };
+                // After arenaAttack/grandAttack, never treat this as "skip and try next".
+                return {
+                    win: false,
+                    skipped: !attackSent,
+                    reason: error.message || 'executeBattle error'
+                };
             }
         }
 
@@ -2937,8 +2924,7 @@ async function executeGetDailyBonus() {
 
         this.getTeamConfiguration = function() {
             if (!this.teamInfo || !this.teamInfo.teams) {
-                console.error('Team info not available, using fallback configuration');
-                return this.getFallbackTeamConfiguration();
+                throw new Error('Team info not available');
             }
 
             const teamData = this.teamInfo.teams;
@@ -3021,28 +3007,6 @@ async function executeGetDailyBonus() {
             }
         }
 
-        this.getFallbackTeamConfiguration = function() {
-            if (this.arenaType === 'grand') {
-                return {
-                    heroes: [
-                        [58, 1, 64, 13, 55],
-                        [42, 56, 9, 62, 43],
-                        [16, 31, 57, 40, 48]
-                    ],
-                    pets: [6006, 6005, 6004],
-                    favor: {},
-                    banners: [1, 2, 3]
-                };
-            } else {
-                return {
-                    heroes: [57, 31, 55, 40, 16],
-                    pet: 6008,
-                    favor: {},
-                    banners: [1]
-                };
-            }
-        }
-
         this.parseLineup = function(team) {
             if (!team) {
                 return null;
@@ -3088,10 +3052,6 @@ async function executeGetDailyBonus() {
                 return null;
             }
             return { heroes: heroIds, pet: petId };
-        }
-
-        this.parseGrandLineup = function(team) {
-            return this.parseLineup(team);
         }
 
         this.permute = function(items) {
@@ -3144,14 +3104,31 @@ async function executeGetDailyBonus() {
         }
 
         this.pickGrandTeamArrangement = async function(myTeam, oppTeam) {
-            const visibleSlots = oppTeam.visibleSlots || [];
-            if (!visibleSlots.length) {
-                console.log('[DEMO] Opponent has no visible Grand Arena teams');
-                return null;
-            }
             if (!myTeam?.heroes || myTeam.heroes.length < 3 || !myTeam.pets || myTeam.pets.length < 3) {
                 console.warn('[DEMO] Need 3 of our Grand Arena teams to rearrange');
                 return null;
+            }
+
+            const defaultTeam = {
+                heroes: myTeam.heroes.slice(0, 3),
+                pets: myTeam.pets.slice(0, 3),
+                banners: (myTeam.banners || [1, 2, 3]).slice(0, 3),
+                favor: myTeam.favor || {}
+            };
+            while (defaultTeam.banners.length < 3) {
+                defaultTeam.banners.push(defaultTeam.banners[defaultTeam.banners.length - 1] || 1);
+            }
+
+            const visibleSlots = oppTeam.visibleSlots || [];
+            if (!visibleSlots.length) {
+                console.log('[DEMO] No visible Grand Arena teams — attacking with default lineup');
+                return {
+                    perm: [0, 1, 2],
+                    winRate: 100,
+                    slotRates: [],
+                    testedSlots: 0,
+                    team: defaultTeam
+                };
             }
 
             const cache = {};
@@ -3176,26 +3153,31 @@ async function executeGetDailyBonus() {
                 return sim.winRate;
             };
 
+            // 3 visible: need 2 projected wins. 1–2 visible: one passing test is enough.
+            const neededWins = visibleSlots.length >= 3 ? 2 : 1;
             let best = null;
             for (const perm of this.permute([0, 1, 2])) {
                 const slotRates = [];
-                let ok = true;
                 for (const slot of visibleSlots) {
                     const myIdx = perm[slot];
                     const rate = await rateFor(myIdx, slot);
                     slotRates.push({ slot, myIdx, rate });
-                    if (!(rate > CONSTANTS.WIN_RATE_THRESHOLD)) {
-                        ok = false;
-                    }
                 }
-                const avg = slotRates.reduce((sum, row) => sum + row.rate, 0) / slotRates.length;
-                if (ok && (!best || avg > best.avg)) {
-                    best = { perm, avg, slotRates };
+                const passing = slotRates.filter((row) => row.rate > CONSTANTS.WIN_RATE_THRESHOLD);
+                if (passing.length < neededWins) {
+                    continue;
+                }
+                const avg = passing.reduce((sum, row) => sum + row.rate, 0) / passing.length;
+                const better = !best
+                    || passing.length > best.passing
+                    || (passing.length === best.passing && avg > best.avg);
+                if (better) {
+                    best = { perm, avg, slotRates, passing: passing.length };
                 }
             }
 
             if (!best) {
-                console.log('[DEMO] No permutation beat the win-rate threshold on all visible teams');
+                console.log(`[DEMO] No permutation projected ${neededWins} win(s) on visible teams`);
                 return null;
             }
 
@@ -3274,7 +3256,7 @@ async function executeGetDailyBonus() {
                     }
                 }
 
-                if (hasValidTeam && this.arenaType === 'grand') {
+                if (this.arenaType === 'grand') {
                     config = {
                         hasValidTeam: true,
                         heroes: teams,
@@ -3816,14 +3798,7 @@ async function executeGetDailyBonus() {
                 }
             }
 
-            console.log('No battle data found, assuming success');
-            return {
-                win: true,
-                progress: [],
-                result: { win: true },
-                battleTimer: 0,
-                battleTime: 0
-            };
+            throw new Error('Attack response had no battle data');
         }
 
         this.waitForArenaBattle = async function(battleResult) {
@@ -3842,7 +3817,7 @@ async function executeGetDailyBonus() {
             }
             if (waitSec > 0) {
                 const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
-                console.log(`[ARENA] Waiting ${waitSec}s for battle to finish before next attack`);
+                console.log(`[ARENA] Waiting ${waitSec}s for battle to finish`);
                 if (typeof countdownTimer === 'function') {
                     await countdownTimer(waitSec, `${arenaName}: waiting for battle (${waitSec}s)`);
                 } else {
@@ -3859,8 +3834,9 @@ async function executeGetDailyBonus() {
         }
 
         this.end = function(message) {
-            console.log('Arena execution ended:', message);
-            setProgress(`Arena: ${message}`, true);
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            console.log(`${arenaName} execution ended:`, message);
+            setProgress(`${arenaName}: ${message}`, true);
             this.resolve();
         }
     }
@@ -4271,8 +4247,7 @@ async function executeGetDailyBonus() {
 
         this.getArenaTeamConfiguration = function() {
             if (!this.teamInfo || !this.teamInfo.teams) {
-                console.error('Team info not available, using fallback configuration');
-                return this.getFallbackTeamConfiguration();
+                throw new Error('Guild War team info not available');
             }
 
             const teamData = this.teamInfo.teams;
@@ -4313,8 +4288,7 @@ async function executeGetDailyBonus() {
 
         this.getTitanTeamConfiguration = function() {
             if (!this.teamInfo || !this.teamInfo.teams) {
-                console.error('Team info not available, using fallback titan configuration');
-                return this.getFallbackTitanTeamConfiguration();
+                throw new Error('Guild War titan team info not available');
             }
 
             const teamData = this.teamInfo.teams;
@@ -4324,29 +4298,11 @@ async function executeGetDailyBonus() {
             console.log('Titan team from system:', titanTeam);
 
             if (!titanTeam || titanTeam.length < 5) {
-                console.warn('Titan team not properly configured, using fallback');
-                return this.getFallbackTitanTeamConfiguration();
+                throw new Error('Titan team is not configured (need 5 titans)');
             }
 
             return {
                 titans: titanTeam.slice(0, 5)
-            };
-        }
-
-        this.getFallbackTeamConfiguration = function() {
-            console.log('Using fallback team configuration');
-            return {
-                heroes: [46, 57, 40, 16, 65],
-                pet: 6004,
-                favor: {},
-                banners: [1]
-            };
-        }
-
-        this.getFallbackTitanTeamConfiguration = function() {
-            console.log('Using fallback titan team configuration');
-            return {
-                titans: [4033, 4003, 4001, 4032, 4000]
             };
         }
 
@@ -6067,13 +6023,19 @@ async function executeGetDailyBonus() {
         }
     }
 
+    let autoBattleRunCount = 0;
+
     async function withAutoBattleFlag(runner) {
         ensureAutoBattleReady();
+        autoBattleRunCount++;
         window.HWH_AUTOBATTLE_RUNNING = true;
         try {
             await runner();
         } finally {
-            window.HWH_AUTOBATTLE_RUNNING = false;
+            autoBattleRunCount = Math.max(0, autoBattleRunCount - 1);
+            if (autoBattleRunCount === 0) {
+                window.HWH_AUTOBATTLE_RUNNING = false;
+            }
         }
     }
 
@@ -6646,9 +6608,14 @@ async function executeGetDailyBonus() {
             questUI.innerHTML = iconHTML;
         });
     }
-    async function executeSingleTask(task) {
+    async function executeSingleTask(task, options = {}) {
         const { HWHFuncs, Send, HWHClasses } = window;
+        const fromAutoRun = !!options.fromAutoRun;
         const isDungeonTask = task.id === 'testDungeon' || task.id === '10022';
+        if (!fromAutoRun && autoRunInProgress) {
+            HWHFuncs.setProgress(`${task.label}: skipped (auto-run in progress)`, true);
+            return;
+        }
         if (!isDungeonTask && (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN)) {
             HWHFuncs.setProgress(`${task.label}: skipped (dungeon running)`, true);
             return;
@@ -6794,7 +6761,9 @@ async function executeGetDailyBonus() {
 
         // Quest 10022 is "Guild Dungeon" in the quest list; it also triggers dungeon logic.
         const questsNonDungeon = questsAndUpgradeChecked.filter(t => t.id !== '10022');
-        const questsDungeon = questsAndUpgradeChecked.filter(t => t.id === '10022');
+        const questsDungeon = (doAllDungeon.length > 0)
+            ? []
+            : questsAndUpgradeChecked.filter(t => t.id === '10022');
 
         const ordered = [
             ...doAllAutoBattle,
@@ -6822,7 +6791,7 @@ async function executeGetDailyBonus() {
                     if (isDungeonTask && window.HWH_AUTOBATTLE_RUNNING) {
                         await waitForAutoBattleIdle();
                     }
-                    await executeSingleTask(task);
+                    await executeSingleTask(task, { fromAutoRun: true });
                     await sleep(500);
                 }
                 HWHFuncs.setProgress('Auto Daily: All selected tasks finished!', true);
@@ -6896,7 +6865,6 @@ async function executeGetDailyBonus() {
 
         createCustomOthersButton();
 
-        // Merged AutoBattle module (menu buttons + HWHClasses.execute* exports)
         initializeAutoBattle();
 
         applyButtonVisibility();
