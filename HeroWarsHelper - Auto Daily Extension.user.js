@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.14
+// @version      3.5.15
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.14";
+    const EXTENSION_VERSION = "3.5.15";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2844,7 +2844,7 @@ async function executeGetDailyBonus() {
                     averageBattleTime: simulationResult.averageBattleTime.toFixed(2) + 's'
                 });
 
-                // Grand already accepted a 2-of-3 arrangement; Arena still needs overall win rate.
+                // Grand already accepted a 1-visible-pass (or 0-visible default) arrangement; Arena still needs overall win rate.
                 const shouldProceed = this.arenaType === 'grand'
                     ? true
                     : simulationResult.winRate > CONSTANTS.WIN_RATE_THRESHOLD;
@@ -3153,8 +3153,8 @@ async function executeGetDailyBonus() {
                 return sim.winRate;
             };
 
-            // 3 visible: need 2 projected wins. 1–2 visible: one passing test is enough.
-            const neededWins = visibleSlots.length >= 3 ? 2 : 1;
+            // Any visible defenses: one passing sim is enough. None visible: already attacked with default lineup.
+            const neededWins = 1;
             let best = null;
             for (const perm of this.permute([0, 1, 2])) {
                 const slotRates = [];
