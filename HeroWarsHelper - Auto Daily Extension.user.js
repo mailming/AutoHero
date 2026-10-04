@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.17
+// @version      3.5.18
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.17";
+    const EXTENSION_VERSION = "3.5.18";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -6059,12 +6059,8 @@ async function executeGetDailyBonus() {
     }
 
     function getAutoFarmRunner() {
-        const autoFarmButton = window.HWHData?.buttons?.autoFarm;
-        const combineList = autoFarmButton?.combineList;
-        if (Array.isArray(combineList) && typeof combineList[0]?.onClick === 'function') {
-            return () => combineList[0].onClick();
-        }
-
+        // Menu Auto Farm onClick uses source "button" and opens the stamina/activity prompt.
+        // Checklist source skips that prompt and starts the run.
         const DoYourBestClass = window.HWHClasses?.doYourBest;
         if (typeof DoYourBestClass !== 'function') return null;
         try {
@@ -6079,7 +6075,7 @@ async function executeGetDailyBonus() {
         return null;
     }
 
-    async function waitForAutoFarmRunner({ timeoutMs = 5000, intervalMs = 250 } = {}) {
+    async function waitForAutoFarmRunner({ timeoutMs = 15000, intervalMs = 250 } = {}) {
         const found = await waitFor(() => !!getAutoFarmRunner(), { timeoutMs, intervalMs });
         return found ? getAutoFarmRunner() : null;
     }
