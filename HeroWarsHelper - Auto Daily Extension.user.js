@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.28
+// @version      3.5.29
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.28";
+    const EXTENSION_VERSION = "3.5.29";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2421,12 +2421,26 @@ async function executeGetDailyBonus() {
         HWHFuncs.setProgress(text, hide);
     }
 
+    // Helper function for getInput (HWH script menu settings)
+    function getInput(name) {
+        if (HWHFuncs && typeof HWHFuncs.getInput === 'function') {
+            return HWHFuncs.getInput(name);
+        }
+        if (window.getInput && typeof window.getInput === 'function') {
+            return window.getInput(name);
+        }
+        // Sensible defaults matching typical HWH settings
+        if (name === 'countTestBattle') return 5;
+        if (name === 'countAutoBattle') return 10;
+        return 0;
+    }
+
     // Helper function for random
     function random(min, max) {
         return Math.floor(Math.random() * (max - min + 1) + min);
     }
 
-    // Helper function for Send (used in raid nodes)
+    // Helper function for Send (used in raid nodes / ToE)
     function SendRequest(json, callback) {
         if (typeof Send === 'function') {
             Send(json).then(result => {
@@ -2438,6 +2452,11 @@ async function executeGetDailyBonus() {
             console.error('Send function not available');
             if (callback) callback({ error: 'Send function not available' });
         }
+    }
+
+    // Callback-style send compatible with stock HWH ToE flow
+    function send(payload, callback) {
+        SendRequest(typeof payload === 'string' ? payload : JSON.stringify(payload), callback);
     }
 
     // BattleCalc from cheats
@@ -6063,12 +6082,502 @@ async function executeGetDailyBonus() {
         }
     }
 
+    /**
+     * ToE (Titan Arena) with elemental attack-team switching when stuck.
+     * Overrides stock HWHClasses.executeTitanArena (Auto Daily only — does not edit HeroWarsHelper.user.js).
+     * Counters: Fire>Earth>Water>Fire, Light↔Dark; Distortion beaten by classic elements.
+     */
+    function executeTitanArena(resolve, reject) {
+        let titan_arena = [];
+        let finishListBattle = [];
+        let allTitans = [];
+        let triedTeamsByRival = {};
+        let currentRival = 0;
+        let attempts = 0;
+        let isCheckCurrentTier = false;
+        let currTier = 0;
+        let countRivalsTier = 0;
+
+        const TOE_COUNTER_ELEMENT = {
+            water: 'earth',
+            fire: 'water',
+            earth: 'fire',
+            dark: 'light',
+            light: 'dark',
+            distortion: 'water',
+        };
+
+        const callsStart = {
+            calls: [{
+                name: 'titanArenaGetStatus',
+                args: {},
+                ident: 'titanArenaGetStatus'
+            }, {
+                name: 'teamGetAll',
+                args: {},
+                ident: 'teamGetAll'
+            }, {
+                name: 'titanGetAll',
+                args: {},
+                ident: 'titanGetAll'
+            }]
+        };
+
+        this.start = function () {
+            send(callsStart, startTitanArena);
+        };
+
+        function startAgain() {
+            send(callsStart, startTitanArena);
+        }
+
+        function toeTitanElement(id) {
+            id = Number(id);
+            if (id < 4010) return 'water';
+            if (id < 4020) return 'fire';
+            if (id < 4030) return 'earth';
+            if (id < 4040) return 'dark';
+            if (id < 4050) return 'light';
+            if (id < 4060) return 'distortion';
+            return 'unknown';
+        }
+
+        function toeTeamKey(team) {
+            return (team || []).map(Number).filter(Boolean).sort((a, b) => a - b).join(',');
+        }
+
+        function toeGetDefenderIds(battle) {
+            const raw = battle?.defenders?.[0] ?? battle?.defenders ?? {};
+            const ids = [];
+            const pushId = (v) => {
+                const id = Number(v?.id ?? v);
+                if (id >= 4000 && id < 5000) ids.push(id);
+            };
+            if (Array.isArray(raw)) {
+                for (const entry of raw) {
+                    if (entry && typeof entry === 'object' && !Array.isArray(entry) && entry.id == null) {
+                        Object.values(entry).forEach(pushId);
+                    } else {
+                        pushId(entry);
+                    }
+                }
+            } else if (raw && typeof raw === 'object') {
+                Object.values(raw).forEach(pushId);
+            }
+            return ids;
+        }
+
+        function toeDominantElement(ids) {
+            const counts = {};
+            for (const id of ids) {
+                const el = toeTitanElement(id);
+                if (el === 'unknown') continue;
+                counts[el] = (counts[el] || 0) + 1;
+            }
+            let best = null;
+            let bestCount = 0;
+            for (const [el, count] of Object.entries(counts)) {
+                if (count > bestCount) {
+                    best = el;
+                    bestCount = count;
+                }
+            }
+            return best;
+        }
+
+        function toeBuildElementTeam(element) {
+            if (!allTitans.length) return null;
+            const pool = allTitans
+                .filter((t) => toeTitanElement(t.id) === element)
+                .sort((a, b) => (b.power || 0) - (a.power || 0));
+            if (!pool.length) return null;
+            const team = pool.slice(0, 5).map((t) => Number(t.id));
+            if (team.length < 5) {
+                const used = new Set(team);
+                const rest = allTitans
+                    .filter((t) => !used.has(Number(t.id)))
+                    .sort((a, b) => (b.power || 0) - (a.power || 0));
+                for (const t of rest) {
+                    if (team.length >= 5) break;
+                    team.push(Number(t.id));
+                }
+            }
+            return team;
+        }
+
+        function toeCounterTeamCandidates(enemyElement) {
+            const candidates = [];
+            const seen = new Set();
+            const push = (element, team) => {
+                if (!team?.length) return;
+                const key = toeTeamKey(team);
+                if (seen.has(key)) return;
+                seen.add(key);
+                candidates.push({ element, team });
+            };
+
+            const primary = TOE_COUNTER_ELEMENT[enemyElement];
+            if (primary) {
+                push(primary, toeBuildElementTeam(primary));
+            }
+
+            let fallback;
+            if (enemyElement === 'distortion') {
+                fallback = ['fire', 'earth', 'water', 'light', 'dark'];
+            } else if (enemyElement === 'unknown' || !enemyElement) {
+                fallback = ['earth', 'water', 'fire', 'light', 'dark', 'distortion'];
+            } else {
+                fallback = ['water', 'fire', 'earth', 'light', 'dark', 'distortion'];
+            }
+            for (const el of fallback) {
+                if (el === primary) continue;
+                const pureCount = allTitans.filter((t) => toeTitanElement(t.id) === el).length;
+                if (pureCount < 3) continue;
+                push(el, toeBuildElementTeam(el));
+            }
+
+            const strongest = [...allTitans]
+                .sort((a, b) => (b.power || 0) - (a.power || 0))
+                .slice(0, 5)
+                .map((t) => Number(t.id));
+            push('strongest', strongest);
+            return candidates;
+        }
+
+        function trySwitchTitanTeam(battleResult) {
+            if (!allTitans.length) return false;
+            const rivalId = String(currentRival);
+            if (!triedTeamsByRival[rivalId]) {
+                triedTeamsByRival[rivalId] = new Set();
+            }
+            const tried = triedTeamsByRival[rivalId];
+            tried.add(toeTeamKey(titan_arena));
+
+            const battle = battleResult?.battleData || battleResult;
+            const defenderIds = toeGetDefenderIds(battle);
+            const enemyElement = toeDominantElement(defenderIds);
+            console.log('[ToE] Stuck — current team', titan_arena, 'vs', enemyElement || 'unknown', defenderIds);
+
+            const candidates = toeCounterTeamCandidates(enemyElement || 'unknown');
+            for (const { element, team } of candidates) {
+                const key = toeTeamKey(team);
+                if (tried.has(key)) continue;
+                tried.add(key);
+                titan_arena = team;
+                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier} </br>⇄ ${element}`);
+                console.log('[ToE] Switching attack team to', element, team);
+                attempts = +currentRival;
+                titanArenaStartBattle(currentRival);
+                return true;
+            }
+            console.log('[ToE] No more counter teams to try for rival', rivalId);
+            return false;
+        }
+
+        function startTitanArena(data) {
+            if (data?.error || !data?.results) {
+                console.error('[ToE] start failed', data);
+                endTitanArena('start_error', data);
+                return;
+            }
+            const titanArena = data.results[0].result.response;
+            if (titanArena.status === 'disabled') {
+                endTitanArena('disabled', titanArena);
+                return;
+            }
+
+            const teamGetAll = data.results[1].result.response;
+            titan_arena = teamGetAll.titan_arena;
+            const titanGetAllRes = data.results[2]?.result?.response;
+            allTitans = titanGetAllRes ? Object.values(titanGetAllRes) : [];
+
+            checkTier(titanArena);
+        }
+
+        function checkTier(titanArena) {
+            if (titanArena.status === 'peace_time') {
+                endTitanArena('Peace_time', titanArena);
+                return;
+            }
+            currTier = titanArena.tier;
+            if (currTier) {
+                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier}`);
+            }
+
+            if (titanArena.status === 'completed_tier') {
+                titanArenaCompleteTier();
+                return;
+            }
+            if (titanArena.canRaid) {
+                titanArenaStartRaid();
+                return;
+            }
+            if (!isCheckCurrentTier) {
+                checkRivals(titanArena.rivals);
+                return;
+            }
+
+            endTitanArena('Done or not canRaid', titanArena);
+        }
+
+        function checkResultInfo(data) {
+            if (!data?.results) {
+                console.error(data);
+                startAgain();
+                return;
+            }
+            const titanArena = data.results[0].result.response;
+            checkTier(titanArena);
+        }
+
+        function titanArenaCompleteTier() {
+            isCheckCurrentTier = false;
+            send({
+                calls: [{
+                    name: 'titanArenaCompleteTier',
+                    args: {},
+                    ident: 'body'
+                }]
+            }, checkResultInfo);
+        }
+
+        function checkRivals(rivals) {
+            finishListBattle = [];
+            for (const n in rivals) {
+                if (rivals[n].attackScore < 250) {
+                    finishListBattle.push(n);
+                }
+            }
+            console.log('[ToE] checkRivals', finishListBattle);
+            countRivalsTier = finishListBattle.length;
+            roundRivals();
+        }
+
+        function roundRivals() {
+            const countRivals = finishListBattle.length;
+            if (!countRivals) {
+                isCheckCurrentTier = true;
+                titanArenaGetStatus();
+                return;
+            }
+            currentRival = finishListBattle.pop();
+            attempts = +currentRival;
+            titanArenaStartBattle(currentRival);
+        }
+
+        function titanArenaStartBattle(rivalId) {
+            send({
+                calls: [{
+                    name: 'titanArenaStartBattle',
+                    args: {
+                        rivalId: rivalId,
+                        titans: titan_arena
+                    },
+                    ident: 'body'
+                }]
+            }, calcResult);
+        }
+
+        function calcResult(data) {
+            if (!data?.results?.[0]?.result?.response?.battle) {
+                console.error('[ToE] calcResult missing battle', data);
+                roundRivals();
+                return;
+            }
+            const battlesInfo = data.results[0].result.response.battle;
+            if (attempts == currentRival) {
+                preCalcBattle(battlesInfo);
+                return;
+            }
+            if (attempts > 0) {
+                attempts--;
+                calcBattleResult(battlesInfo).then(resultCalcBattle);
+                return;
+            }
+            roundRivals();
+        }
+
+        async function resultCalcBattle(resultBattle) {
+            if (resultBattle.result.win || !attempts) {
+                const { progress, result } = resultBattle;
+                titanArenaEndBattle({
+                    progress,
+                    result,
+                    rivalId: resultBattle.battleData.typeId,
+                });
+                return;
+            }
+            titanArenaStartBattle(resultBattle.battleData.typeId);
+        }
+
+        function getBattleInfo(battle, isRandSeed) {
+            return new Promise(function (res) {
+                battle = structuredClone(battle);
+                if (isRandSeed) {
+                    battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
+                }
+                BattleCalc(battle, 'get_titanClanPvp', (e) => res(e));
+            });
+        }
+
+        function preCalcBattle(battle) {
+            const actions = [getBattleInfo(battle, false)];
+            const countTestBattle = getInput('countTestBattle');
+            for (let i = 0; i < countTestBattle; i++) {
+                actions.push(getBattleInfo(battle, true));
+            }
+            Promise.all(actions).then(resultPreCalcBattle);
+        }
+
+        function resultPreCalcBattle(e) {
+            const wins = e.map((n) => n.result.win);
+            const firstBattle = e.shift();
+            const countWin = wins.reduce((w, s) => w + s, 0);
+            const countTestBattle = getInput('countTestBattle');
+            console.log('[ToE] resultPreCalcBattle', `${countWin}/${countTestBattle}`);
+            if (countWin > 0) {
+                attempts = getInput('countAutoBattle');
+                resultCalcBattle(firstBattle);
+                return;
+            }
+            // 0 predicted wins → switch elemental attack team and retry same rival
+            if (trySwitchTitanTeam(firstBattle)) {
+                return;
+            }
+            attempts = 0;
+            resultCalcBattle(firstBattle);
+        }
+
+        function titanArenaEndBattle(args) {
+            send({
+                calls: [{
+                    name: 'titanArenaEndBattle',
+                    args,
+                    ident: 'body'
+                }]
+            }, resultTitanArenaEndBattle);
+        }
+
+        function resultTitanArenaEndBattle(e) {
+            const attackScore = e.results[0].result.response.attackScore;
+            const numReval = countRivalsTier - finishListBattle.length;
+            setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier} </br>Battles: ${numReval}/${countRivalsTier} - ${attackScore}`);
+            console.log('[ToE] endBattle', numReval + '/' + countRivalsTier, attempts);
+            roundRivals();
+        }
+
+        function titanArenaGetStatus() {
+            send({
+                calls: [{
+                    name: 'titanArenaGetStatus',
+                    args: {},
+                    ident: 'body'
+                }]
+            }, checkResultInfo);
+        }
+
+        function titanArenaStartRaid() {
+            send({
+                calls: [{
+                    name: 'titanArenaStartRaid',
+                    args: {
+                        titans: titan_arena
+                    },
+                    ident: 'body'
+                }]
+            }, calcResults);
+        }
+
+        function calcResults(data) {
+            const battlesInfo = data.results[0].result.response;
+            const { attackers, rivals } = battlesInfo;
+
+            const promises = [];
+            for (const n in rivals) {
+                const rival = rivals[n];
+                promises.push(calcBattleResult({
+                    attackers: attackers,
+                    defenders: [rival.team],
+                    seed: rival.seed,
+                    typeId: n,
+                }));
+            }
+
+            Promise.all(promises).then((results) => {
+                const endResults = {};
+                for (const info of results) {
+                    const id = info.battleData.typeId;
+                    endResults[id] = {
+                        progress: info.progress,
+                        result: info.result,
+                    };
+                }
+                titanArenaEndRaid(endResults);
+            });
+        }
+
+        function calcBattleResult(battleData) {
+            return new Promise(function (res) {
+                BattleCalc(battleData, 'get_titanClanPvp', res);
+            });
+        }
+
+        function titanArenaEndRaid(results) {
+            send({
+                calls: [{
+                    name: 'titanArenaEndRaid',
+                    args: { results },
+                    ident: 'body'
+                }]
+            }, checkRaidResults);
+        }
+
+        function checkRaidResults(data) {
+            const results = data.results[0].result.response.results;
+            let isSucsesRaid = true;
+            for (const i in results) {
+                isSucsesRaid = isSucsesRaid && (results[i].attackScore >= 250);
+            }
+
+            if (isSucsesRaid) {
+                titanArenaCompleteTier();
+            } else {
+                titanArenaGetStatus();
+            }
+        }
+
+        function titanArenaFarmDailyReward() {
+            send({
+                calls: [{
+                    name: 'titanArenaFarmDailyReward',
+                    args: {},
+                    ident: 'body'
+                }]
+            }, () => { console.log('[ToE] Done farm daily reward'); });
+        }
+
+        function endTitanArena(reason, info) {
+            if (!['Peace_time', 'disabled'].includes(reason)) {
+                titanArenaFarmDailyReward();
+            }
+            console.log('[ToE]', reason, info);
+            setProgress(`${I18N('TITAN_ARENA')} completed!`, true);
+            resolve();
+        }
+    }
+
     // Store classes in HWHClasses for consistency
     HWHClasses.executeArena = executeArena;
     HWHClasses.executeGuildWar = executeGuildWar;
     HWHClasses.executeRaidNodes = executeRaidNodes;
     HWHClasses.executeRaidBoss = executeRaidBoss;
     HWHClasses.executeCrossClanWar = executeCrossClanWar;
+    // Override stock ToE with elemental team-switch version (Auto Daily)
+    if (!HWHClasses.__HWH_ORIGINAL_EXECUTE_TITAN_ARENA && HWHClasses.executeTitanArena
+        && HWHClasses.executeTitanArena !== executeTitanArena) {
+        HWHClasses.__HWH_ORIGINAL_EXECUTE_TITAN_ARENA = HWHClasses.executeTitanArena;
+    }
+    HWHClasses.executeTitanArena = executeTitanArena;
 
     // Individual battle functions for manual triggers / Do All
     async function runArena() {
@@ -6131,21 +6640,11 @@ async function executeGetDailyBonus() {
         try {
             if (Utils.isTitanArenaDay()) {
                 HWHFuncs.setProgress('AutoBattle: Running Titan Arena (ToE)...');
-                
-                // Use HWHClasses.executeTitanArena if available, otherwise use local implementation
-                if (window.HWHClasses && window.HWHClasses.executeTitanArena) {
-                    await new Promise((resolve, reject) => {
-                        const titanArena = new window.HWHClasses.executeTitanArena(resolve, reject);
-                        titanArena.start();
-                    });
-                } else {
-                    // Fallback: use testTitanArena function if available
-                    if (window.testTitanArena && typeof window.testTitanArena === 'function') {
-                        await window.testTitanArena();
-                    } else {
-                        throw new Error('Titan Arena execution class not available');
-                    }
-                }
+                // Local executeTitanArena (elemental switch when stuck) is registered on HWHClasses above.
+                await new Promise((resolve, reject) => {
+                    const titanArena = new executeTitanArena(resolve, reject);
+                    titanArena.start();
+                });
                 HWHFuncs.setProgress('AutoBattle: Titan Arena (ToE) complete!', true);
             } else {
                 const dayName = Utils.getDayName(Utils.getDayOfWeek());
