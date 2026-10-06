@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
@@ -47,6 +47,15 @@
         return s.includes('nextersglobal.com') ||
             s.includes('hero-wars.com') ||
             s.includes('/api/');
+    }
+
+    // Noise APIs to skip entirely (e.g. client telemetry)
+    const IGNORED_API_CALLS = new Set(['stashClient']);
+
+    function isIgnoredApiBody(body) {
+        const parsed = typeof body === 'object' && body !== null ? body : safeParseBody(body);
+        if (!parsed || !Array.isArray(parsed.calls) || parsed.calls.length === 0) return false;
+        return parsed.calls.every(c => c && IGNORED_API_CALLS.has(c.name));
     }
 
     function safeParseBody(data) {
@@ -768,7 +777,7 @@
         const url = typeof args[0] === 'string' ? args[0] :
             (args[0] && args[0].url) ? args[0].url : String(args[0]);
         const init = args[1] || {};
-        const capture = shouldCaptureUrl(url);
+        let capture = shouldCaptureUrl(url);
         const requestId = Date.now() + Math.random();
 
         if (capture) {
@@ -781,7 +790,11 @@
                 body: safeParseBody(init.body),
                 timestamp: new Date().toISOString()
             };
-            apiMonitor.addRequest(request);
+            if (isIgnoredApiBody(request.body)) {
+                capture = false;
+            } else {
+                apiMonitor.addRequest(request);
+            }
         }
 
         try {
@@ -867,13 +880,19 @@
     XMLHttpRequest.prototype.send = function(data) {
         const meta = this._apiMonitor;
         if (meta && meta.capture) {
+            const body = safeParseBody(data);
+            if (isIgnoredApiBody(body)) {
+                meta.capture = false;
+                return originalXHRSend.apply(this, [data]);
+            }
+
             apiMonitor.addRequest({
                 id: meta.id,
                 type: 'xhr',
                 method: meta.method,
                 url: meta.url,
                 headers: meta.headers,
-                body: safeParseBody(data),
+                body: body,
                 timestamp: new Date().toISOString()
             });
 
@@ -1097,7 +1116,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.7 loaded (page context, document-start)');
+    console.log('🚀 API Monitor v3.8 loaded (page context, document-start)');
     console.log('📊 Commands: window.apiMonitor.showData() | clearData() | exportData("json") | forceWriteLogs()');
     console.log(`📁 File logging: ${CONFIG.enableFileLogging ? 'ON' : 'OFF (use Export / Write Logs)'} | onlyGameApi: ${CONFIG.onlyGameApi}`);
     
