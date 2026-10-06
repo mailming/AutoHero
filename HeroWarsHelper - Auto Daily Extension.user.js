@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.27
+// @version      3.5.28
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.27";
+    const EXTENSION_VERSION = "3.5.28";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2305,6 +2305,7 @@ async function executeGetDailyBonus() {
             case 'brawl_titan':
             case 'challenge_titan':
             case 'titan_mission':
+            case 'epic_brawl_titan':
                 return 'get_titanPvpManual';
             case 'clan_raid':
             case 'adventure':
@@ -6479,7 +6480,7 @@ async function executeGetDailyBonus() {
     }
 
     async function executeEpicBrawl(options = {}) {
-        const { HWHFuncs, Caller, cheats } = window;
+        const { HWHFuncs, Caller } = window;
         const setProgress = HWHFuncs?.setProgress || (() => {});
         const mode = options.mode || eventSettingsState.epicBrawlMode || 'auto';
 
@@ -6509,9 +6510,10 @@ async function executeGetDailyBonus() {
             return { ok: false, reason: 'no_team', error: resolved.error };
         }
 
-        const Calc = cheats?.BattleCalc;
-        if (!Calc) {
-            setProgress('Cosmic Battle: BattleCalc unavailable', true);
+        // Use window.Calc (Promise + getBattleType). Raw BattleCalc needs a config string or getF crashes.
+        const Calc = window.Calc;
+        if (typeof Calc !== 'function') {
+            setProgress('Cosmic Battle: Calc unavailable (is HeroWarsHelper loaded?)', true);
             return { ok: false, reason: 'no_calc' };
         }
 
@@ -6521,10 +6523,11 @@ async function executeGetDailyBonus() {
         let streak = { progress: 0, nextStage: 0 };
 
         /**
-         * Flow (avoid emerald reroll / refillable 53):
-         * 1) startBattle with whatever target already exists
-         * 2) if "no target" → getEnemy once (first free match), then startBattle
-         * 3) after endBattle, getEnemy to queue the *next* free opponent (only if more attempts remain)
+         * Emerald-safe flow (refillable 53 = reroll):
+         * - Always try startBattle against the current server target (no getEnemy).
+         * - Call getEnemy ONLY when startBattle returns "no target" (first free match).
+         * - Never call getEnemy while a target may still exist (costs ~50 emeralds).
+         * - Do NOT prefetch getEnemy after endBattle — next startBattle will fetch only if needed.
          */
         async function startEpicBrawlBattle(teamArgs) {
             try {
@@ -6534,21 +6537,10 @@ async function executeGetDailyBonus() {
                 if (!/no target/i.test(msg)) {
                     throw e;
                 }
-                console.log('[Auto Daily] Cosmic Battle: no existing target — getEnemy (free first match)');
-                setProgress('Cosmic Battle: finding opponent...', true);
+                console.log('[Auto Daily] Cosmic Battle: no target — getEnemy once (should be free first match)');
+                setProgress('Cosmic Battle: finding opponent (no current target)...', true);
                 await Caller.send('epicBrawl_getEnemy');
                 return Caller.send({ name: 'epicBrawl_startBattle', args: teamArgs });
-            }
-        }
-
-        async function queueNextEpicBrawlEnemy() {
-            try {
-                const enemy = await Caller.send('epicBrawl_getEnemy');
-                console.log('[Auto Daily] Cosmic Battle: queued next enemy after battle', enemy);
-                return enemy;
-            } catch (e) {
-                console.warn('[Auto Daily] Cosmic Battle: getEnemy after battle failed (next startBattle may fetch):', e);
-                return null;
             }
         }
 
@@ -6567,7 +6559,20 @@ async function executeGetDailyBonus() {
                 return { ok: false, reason: 'no_battle' };
             }
 
-            const { progress, result } = await Calc(battle);
+            let calcResult;
+            try {
+                calcResult = await Calc(battle);
+            } catch (e) {
+                console.error('[Auto Daily] Cosmic Battle Calc failed:', e, battle);
+                setProgress(`Cosmic Battle: battle sim failed — ${e?.message || e}`, true);
+                throw e;
+            }
+            const { progress, result } = calcResult || {};
+            if (!progress || !result) {
+                setProgress('Cosmic Battle: Calc returned empty progress/result', true);
+                return { ok: false, reason: 'bad_calc' };
+            }
+
             const [endBattle, winStreak] = await Caller.send([
                 { name: 'epicBrawl_endBattle', args: { progress, result } },
                 'epicBrawl_getWinStreak',
@@ -6590,12 +6595,7 @@ async function executeGetDailyBonus() {
                 `Cosmic Battle (${resolved.kind}): ${wins}W / ${fought} fought, coins ${coins}, streak ${streak.progress}/${streak.nextStage}`,
                 true
             );
-
-            // After a completed fight there is no current target — safe/free getEnemy for the next attempt
-            if (i > 1) {
-                setProgress(`Cosmic Battle: queuing next opponent (${fought}/${attempts})...`, true);
-                await queueNextEpicBrawlEnemy();
-            }
+            // No getEnemy here — next loop iteration startBattle reuses/fetches only if needed.
         }
 
         setProgress(
