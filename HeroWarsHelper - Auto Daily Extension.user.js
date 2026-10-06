@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.18
+// @version      3.5.20
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.18";
+    const EXTENSION_VERSION = "3.5.20";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -27,6 +27,7 @@
     /** Optional override for door comparison only: `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS`. */
     /** Optional override when restarting a non-last door: `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS`. */
     /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (0 = unlimited, Stealther default). */
+    /** Elemental door re-sim attempts (1-20): `window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS` (default 10, Stealther 1.011). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
     const UI_ICON = {
@@ -190,7 +191,7 @@
         HWHFuncs.setProgress('Executing: Expeditions', true);
         return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
     }
-    // Dungeon Algorithm - ported from Hero Wars Stealther 1.006 (Mike Rohsoft)
+    // Dungeon Algorithm - ported from Hero Wars Stealther 1.011 (Mike Rohsoft), with HWH Auto Daily integration
     function executeDungeon(resolve, reject) {
         const { HWHFuncs, Send, BattleCalc, cheats } = window;
         const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
@@ -205,6 +206,7 @@
         const MAX_TIMER_TRIES = window.HWH_DUNGEON_MAX_TIMER_TRIES != null
             ? Math.max(0, Math.min(200, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 0))
             : 0;
+        const MAX_ELEMENTAL_ATTEMPTS = Math.max(1, Math.min(20, Number(window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS) || 10));
         const SIM_YIELD_EVERY = 3;
 
         function syncPredictionCardsFromInventory(invRes) {
@@ -230,11 +232,31 @@
         let lastError = null;
         let lastDebugString = '';
         let lastBattleHandler = null;
+        let lastSimulatedOption = null;
         let lastStartedTeamNum = -1;
         let battleStartTime = 0;
         let stepCount = 0;
         let consecutiveNoWin = 0;
         let timeDungeon = { all: Date.now(), steps: 0 };
+
+        function weightedTitanPower(titan) {
+            const power = titan?.power || 0;
+            const id = Number(titan?.id);
+            if (id === 4004 || id === 4014 || id === 4024) return power * 1.5;
+            if (id === 4003 || id === 4013 || id === 4023) return power * 1.25;
+            return power;
+        }
+
+        // Stealther 1.011 elemental sort: boost glass-cannon / healer-priority titans.
+        function titanPowerSort(a, b) {
+            if (b.id === 4004 || b.id === 4014 || b.id === 4024) {
+                return a.power - b.power * 1.25;
+            }
+            if (b.id === 4003 || b.id === 4013 || b.id === 4023) {
+                return a.power - b.power * 1.1;
+            }
+            return a.power - b.power;
+        }
 
         function getApiResult(result) {
             if (!result) return null;
@@ -592,15 +614,14 @@
                 else if (id < 4050) light.push(titan);
                 else unknown.push(titan);
             }
-            const byPower = (a, b) => (b.power || 0) - (a.power || 0);
             return {
                 all,
-                water: water.sort(byPower),
-                earth: earth.sort(byPower),
-                fire: fire.sort(byPower),
-                dark: dark.sort(byPower),
-                light: light.sort(byPower),
-                elemental: [...dark, ...light, ...unknown].sort(byPower),
+                water: water.sort(titanPowerSort),
+                earth: earth.sort(titanPowerSort),
+                fire: fire.sort(titanPowerSort),
+                dark: dark.sort(titanPowerSort),
+                light: light.sort(titanPowerSort),
+                elemental: [...dark, ...light, ...unknown].sort(titanPowerSort),
             };
         }
 
@@ -622,8 +643,9 @@
             for (const [titanId, state] of Object.entries(states)) {
                 const id = normalize(titanId);
                 if (id < 4010 || id >= 4030 || state.isDead) continue;
-                const diff = state.hp / state.maxHp;
-                if (diff === 1) continue;
+                // Stealther 1.011: prefer low HP+energy targets for heal doors.
+                const diff = (Number(state.hp) + Number(state.energy || 0)) / (Number(state.maxHp) + 1000);
+                if (diff >= 1) continue;
                 allStates.push({ diff, id });
             }
             for (const titan of aliveTitans.water.slice(0, 4)) {
@@ -805,6 +827,46 @@
             return pool;
         }
 
+        function isElementalAttemptBetter(best, option) {
+            if (!option?.win) return false;
+            if (!best) return true;
+            const bestDeads = getDeads(best);
+            const thisDeads = getDeads(option);
+            if (thisDeads !== bestDeads) {
+                return thisDeads < bestDeads;
+            }
+            const bestSafe = best.passesSurvival === true;
+            const thisSafe = option.passesSurvival === true;
+            if (thisSafe !== bestSafe) {
+                return thisSafe;
+            }
+            return (option.state ?? 0) > (best.state ?? 0);
+        }
+
+        // Stealther 1.011: re-sim the same elemental team up to N times; keep lowest deaths / best state.
+        async function simulateElementalTeam(teamNum, heroes, attackerType) {
+            let best = null;
+            let attempts = 0;
+            for (let attempt = 1; attempt <= MAX_ELEMENTAL_ATTEMPTS; attempt++) {
+                if (stopDung || end) break;
+                attempts = attempt;
+                const option = await startAndSimulate(teamNum, heroes, null, attackerType);
+                if (option?.win) {
+                    option.passesSurvival = passesDungeonSurvival(option);
+                }
+                if (isElementalAttemptBetter(best, option)) {
+                    best = option;
+                    if (DUNGEON_VERBOSE) {
+                        console.log(`[Dungeon] ${attackerType} attempt ${attempt}/${MAX_ELEMENTAL_ATTEMPTS}: better candidate dead=${getDeads(option)}`);
+                    }
+                }
+                if (option?.win && getDeads(option) === 0) {
+                    break;
+                }
+            }
+            return { option: best, attempts };
+        }
+
         async function evaluateElementalDoor(teamNum, attackerType, aliveTitans) {
             const pool = getElementalPool(aliveTitans, attackerType);
             if (!pool.length) {
@@ -812,46 +874,33 @@
             }
 
             const maxSize = Math.min(5, pool.length);
+            const heroes = pool.slice(0, maxSize).map((t) => Number(t.id));
+            const { option: fullTeamOption, attempts } = await simulateElementalTeam(teamNum, heroes, attackerType);
+            if (fullTeamOption?.win) {
+                fullTeamOption.elementalAttempts = attempts;
+                return fullTeamOption;
+            }
+
+            // Optional Auto Daily improvement: shrink earth/fire if full team never wins.
             const shouldShrink = titanHealthSettings.shrinkEarthFireTeams !== false
                 && (attackerType === 'earth' || attackerType === 'fire');
-            const minSize = shouldShrink ? Math.min(2, maxSize) : maxSize;
-
-            let bestSafe = null;
-            let bestWin = null;
-            for (let size = maxSize; size >= minSize; size--) {
-                if (stopDung || end) {
-                    break;
-                }
-                const heroes = pool.slice(0, size).map((t) => Number(t.id));
-                const option = await startAndSimulate(teamNum, heroes, null, attackerType);
-                if (!option?.win) {
-                    if (DUNGEON_VERBOSE) {
-                        console.log(`[Dungeon] ${attackerType} size ${size}: no win`);
-                    }
-                    continue;
-                }
-                option.passesSurvival = passesDungeonSurvival(option);
-                if (option.passesSurvival) {
-                    if (!bestSafe || isOptionBetter(bestSafe, option)) {
-                        bestSafe = option;
-                        if (DUNGEON_VERBOSE) {
-                            console.log(`[Dungeon] ${attackerType} size ${size}: accepted candidate`);
-                        }
-                    }
-                    // Full team that passes survival is preferred; stop shrinking early.
-                    if (size === maxSize) {
-                        break;
-                    }
-                } else {
-                    if (DUNGEON_VERBOSE) {
-                        console.log(`[Dungeon] ${attackerType} size ${size}: win but failed survival checks`);
-                    }
-                    if (!bestWin || isOptionBetter(bestWin, option)) {
-                        bestWin = option;
-                    }
-                }
+            if (!shouldShrink || maxSize <= 2) {
+                return null;
             }
-            return bestSafe || bestWin;
+
+            let bestWin = null;
+            for (let size = maxSize - 1; size >= 2; size--) {
+                if (stopDung || end) break;
+                const shrinkHeroes = pool.slice(0, size).map((t) => Number(t.id));
+                const option = await startAndSimulate(teamNum, shrinkHeroes, null, attackerType);
+                if (!option?.win) continue;
+                option.passesSurvival = passesDungeonSurvival(option);
+                if (isElementalAttemptBetter(bestWin, option)) {
+                    bestWin = option;
+                }
+                if (getDeads(option) === 0) break;
+            }
+            return bestWin;
         }
 
         function debugString(option, attackerType) {
@@ -881,10 +930,27 @@
         function isHealingSuccessful(healingTeam, progress, states) {
             const afterHeroes = progress?.[0]?.attackers?.heroes;
             if (!afterHeroes) return false;
+            // Stealther 1.011 uses >= so flat HP after heal still counts as success.
             return healingTeam.filter((id) => id >= 4010).every((id) => {
-                const after = afterHeroes[id];
-                return after && after.hp > (states[id]?.hp || states[String(id)]?.hp || 0);
+                const after = afterHeroes[id] || afterHeroes[String(id)];
+                const beforeHp = states[id]?.hp || states[String(id)]?.hp || 0;
+                return after && after.hp >= beforeHp;
             });
+        }
+
+        async function findHealingOption(teamNum, aliveTitans, states) {
+            for (let index = 0; ; index++) {
+                if (stopDung || end) return null;
+                const healingTeam = getTitansForPotentialHealingTeam(aliveTitans, states, index);
+                if (!healingTeam) return null;
+                const option = await startAndSimulate(teamNum, healingTeam, null, 'neutral');
+                if (!option?.win) continue;
+                const healedCleanly = isHealingSuccessful(healingTeam, option.progress, states)
+                    && getDeads(option) === 0;
+                if (healedCleanly) {
+                    return { heroes: healingTeam, option };
+                }
+            }
         }
 
         function createBattleArgs(teamNum, heroes, pet, favor = {}) {
@@ -901,6 +967,7 @@
         }
 
         async function startAndSimulateOnce(teamNum, heroes, pet, attackerType, favor = {}, bruteforceMs = EVAL_BRUTEFORCE_MS) {
+            lastSimulatedOption = null;
             const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
             const apiResult = getApiResult(raw);
             if (apiResult?.error || apiResult?.validation) {
@@ -940,6 +1007,7 @@
                 if (option?.win) {
                     option.passesSurvival = passesDungeonSurvival(option);
                 }
+                lastSimulatedOption = option;
                 return option;
             } catch (err) {
                 console.warn(`[Dungeon] BattleCalc failed (${attackerType}, team ${teamNum}):`, err);
@@ -1033,12 +1101,14 @@
             await countdownTimer(totalTimer, msg);
         }
 
+        // Stealther 1.011: skip re-sim when the chosen option is already the latest server battle.
         async function executeChosenOption(option, attackerType, doorCount, debug = '', skipRestart = false) {
             if (stopDung || end) {
                 return false;
             }
             let finalOption = option;
-            if (!skipRestart && option.teamNum !== doorCount - 1) {
+            const isLastSimulated = lastSimulatedOption === option;
+            if (!skipRestart && !isLastSimulated) {
                 const restarted = await startAndSimulate(
                     option.teamNum,
                     option.heroes,
@@ -1061,6 +1131,33 @@
                 return false;
             }
             return endBattleOption(finalOption, attackerType);
+        }
+
+        async function evaluateTeam(teamNum, attackerType, aliveTitans, states) {
+            if (attackerType === 'neutral') {
+                if (isAbleToHeal) {
+                    const healing = await findHealingOption(teamNum, aliveTitans, states);
+                    if (healing) {
+                        return { immediate: true, option: healing.option, attackerType };
+                    }
+                }
+                const heroes = getNeutralTitans(aliveTitans, !isAbleToHeal);
+                if (heroes.length === 0) return null;
+                const option = await startAndSimulate(teamNum, heroes, null, attackerType);
+                if (!option?.win) return null;
+                option.passesSurvival = passesDungeonSurvival(option);
+                return { immediate: false, option, attackerType, passesSurvival: option.passesSurvival };
+            }
+
+            const elementalOption = await evaluateElementalDoor(teamNum, attackerType, aliveTitans);
+            if (!elementalOption?.win) return null;
+            return {
+                immediate: false,
+                option: elementalOption,
+                attackerType,
+                attempts: elementalOption.elementalAttempts,
+                passesSurvival: elementalOption.passesSurvival !== false,
+            };
         }
 
         async function endBattleOption(option, attackerType, isRetry = false) {
@@ -1355,115 +1452,45 @@
                 return ok !== false;
             }
 
-            const options = [];
+            const candidates = [];
+            const floorsPassed = dungeonGetInfo.todayFloorsPassed ?? '';
+            lastDebugString += `${floorsPassed} | `;
+
             for (let teamNum = 0; teamNum < userData.length; teamNum++) {
                 if (stopDung) break;
                 const { attackerType } = userData[teamNum];
-                let team = null;
-                let useHealingIndex = 0;
-
-                if (attackerType === 'neutral') {
-                    if (isAbleToHeal) {
-                        let healingTeam = null;
-                        let healingOption = null;
-                        while (true) {
-                            healingTeam = getTitansForPotentialHealingTeam(aliveTitans, states, useHealingIndex);
-                            if (!healingTeam) break;
-                            healingOption = await startAndSimulate(teamNum, healingTeam, null, attackerType);
-                            if (!healingOption?.win) {
-                                useHealingIndex++;
-                                continue;
-                            }
-                            if (isHealingSuccessful(healingTeam, healingOption.progress, states) && getDeads(healingOption) === 0) {
-                                team = { heroes: healingTeam, pet: null, isHealing: true, option: healingOption };
-                                break;
-                            }
-                            useHealingIndex++;
-                        }
-                    }
-                    if (!team) {
-                        const neutralTeam = getNeutralTitans(aliveTitans, !isAbleToHeal);
-                        team = neutralTeam.length > 0 ? { heroes: neutralTeam, pet: null } : null;
-                    }
-                } else {
-                    const elementalOption = await evaluateElementalDoor(teamNum, attackerType, aliveTitans);
-                    if (elementalOption?.win) {
-                        options.push({
-                            option: elementalOption,
-                            attackerType,
-                            passesSurvival: elementalOption.passesSurvival !== false,
-                        });
-                    } else {
-                        options.push(null);
-                    }
-                    continue;
-                }
-
-                if (!team) {
-                    options.push(null);
-                    continue;
-                }
-
-                const option = team.option || (await startAndSimulate(teamNum, team.heroes, team.pet, attackerType, team.favor || {}));
-                if (!option?.win) {
-                    options.push(null);
-                    continue;
-                }
-
-                if (team.isHealing && option.win) {
-                    lastDebugString += debugString(option, attackerType) + ' [heal]';
+                const candidate = await evaluateTeam(teamNum, attackerType, aliveTitans, states);
+                if (candidate?.immediate) {
+                    lastDebugString += debugString(candidate.option, candidate.attackerType) + ' [heal]';
                     if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                    const ok = await executeChosenOption(option, attackerType, userData.length, lastDebugString, true);
+                    const ok = await executeChosenOption(candidate.option, candidate.attackerType, userData.length, lastDebugString, true);
                     timeDungeon.steps += Date.now() - stepStart;
                     return ok !== false;
                 }
-                if (team.isHealing) {
-                    const fallback = getNeutralTitans(aliveTitans);
-                    if (fallback.length > 0) {
-                        const fallbackOption = await startAndSimulate(teamNum, fallback, null, attackerType);
-                        options.push(fallbackOption?.win
-                            ? {
-                                option: fallbackOption,
-                                attackerType,
-                                passesSurvival: fallbackOption.passesSurvival !== false && passesDungeonSurvival(fallbackOption),
-                            }
-                            : null);
-                    } else {
-                        options.push(null);
-                    }
-                    continue;
-                }
-                if (option.passesSurvival == null) {
-                    option.passesSurvival = passesDungeonSurvival(option);
-                }
-                if (!option.passesSurvival) {
-                    console.warn(`[Dungeon] ${attackerType} door ${teamNum}: win but failed survival checks`);
-                }
-                options.push({ option, attackerType, passesSurvival: option.passesSurvival });
+                candidates.push(candidate);
             }
 
-            const winning = options.filter((v) => v?.option?.win);
-            const valid = winning.filter((v) => v.passesSurvival !== false);
+            // Stealther 1.011 ranks by win quality; survival is a soft preference, not a hard stop.
+            const winning = candidates.filter((v) => v?.option?.win);
+            let valid = winning.filter((v) => v.passesSurvival !== false);
             if (valid.length === 0) {
                 consecutiveNoWin++;
                 const doorSummary = userData.map((ud, i) => {
-                    const picked = options[i];
+                    const picked = candidates[i];
                     if (!picked?.option) return `${ud.attackerType}:none`;
                     return `${ud.attackerType}:${picked.option.win ? 'win' : 'lose'}${picked.passesSurvival ? '' : '/unsafe'}`;
                 }).join(', ');
                 console.warn(`[Dungeon] No survival-safe door (${consecutiveNoWin}/${NO_WIN_RETRIES}): ${doorSummary}`);
-                if (consecutiveNoWin <= NO_WIN_RETRIES) {
+                if (winning.length > 0) {
+                    // Prefer Stealther behavior: take a winning door rather than stalling.
+                    valid = winning;
+                } else if (consecutiveNoWin <= NO_WIN_RETRIES) {
                     HWHFuncs.setProgress(
                         `${I18N('DUNGEON')}: retrying floor (${consecutiveNoWin}/${NO_WIN_RETRIES}) ${dungeonActivity}/${maxDungeonActivity}`,
                         true
                     );
                     await sleep(1200);
                     return true;
-                }
-                if (winning.length > 0) {
-                    console.warn('[Dungeon] Survival checks blocked all doors — using best winning fight instead of stopping');
-                    winning.forEach((v) => { v.passesSurvival = true; });
-                    valid.push(...winning);
                 } else {
                     lastError = 'No winnable battles available';
                     endDungeon(lastError);
@@ -1472,15 +1499,19 @@
             }
             consecutiveNoWin = 0;
 
-            if (valid.length > 1) {
-                lastDebugString += valid.map((v) => debugString(v.option, v.attackerType)).join(' | ');
-            } else {
-                lastDebugString += debugString(valid[0].option, valid[0].attackerType);
-            }
+            lastDebugString += valid.map((v) => debugString(v.option, v.attackerType)).join(' | ');
 
             const best = valid.length === 1
                 ? valid[0]
-                : valid.reduce((b, cur) => (isOptionBetter(b?.option, cur?.option) ? cur : b));
+                : valid.reduce((b, cur) => {
+                    // Soft prefer survival-safe doors when quality is otherwise close.
+                    if ((b.passesSurvival === true) !== (cur.passesSurvival === true)
+                        && !isOptionBetter(b.option, cur.option)
+                        && !isOptionBetter(cur.option, b.option)) {
+                        return cur.passesSurvival === true ? cur : b;
+                    }
+                    return isOptionBetter(b.option, cur.option) ? cur : b;
+                });
 
             if (!best?.option) {
                 lastError = 'No best battle found';
@@ -1573,17 +1604,19 @@
                 : Object.values(titanRaw || {}).filter((t) => t && t.id != null);
 
             const layout = getTitans(titansList);
-            const waterPower = layout.water.reduce((a, b) => a + (b.power || 0), 0);
-            const earthPower = layout.earth.reduce((a, b) => a + (b.power || 0), 0);
-            const firePower = layout.fire.reduce((a, b) => a + (b.power || 0), 0);
+            // Stealther 1.011: weight glass-cannon/heal titans when deciding if water can support heal doors.
+            const waterPower = layout.water.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
+            const earthPower = layout.earth.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
+            const firePower = layout.fire.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
             const waterStrongest = waterPower >= earthPower && waterPower >= firePower;
-            const waterWithin25Percent = earthPower <= waterPower * 1.25 && firePower <= waterPower * 1.25;
-            isAbleToHeal = waterStrongest || waterWithin25Percent;
+            const waterWithin50Percent = earthPower <= waterPower * 1.5 && firePower <= waterPower * 1.5;
+            isAbleToHeal = waterStrongest || waterWithin50Percent;
 
             if (DUNGEON_VERBOSE) {
                 console.log('[Dungeon] Water', waterPower, '| Earth', earthPower, '| Fire', firePower, '| canHeal:', isAbleToHeal);
-                console.log('[Dungeon] Starting full dungeon run:', new Date());
+                console.log('[Dungeon] Starting full dungeon run (Stealther 1.011):', new Date());
                 console.log('[Dungeon] Settings:', {
+                    elementalAttempts: MAX_ELEMENTAL_ATTEMPTS,
                     excludeFragileElemental: !!titanHealthSettings.excludeFragileElemental,
                     shrinkEarthFireTeams: titanHealthSettings.shrinkEarthFireTeams !== false,
                     enforceTankSurvival: titanHealthSettings.enforceTankSurvival !== false,
@@ -1605,6 +1638,7 @@
             end = false;
             isRestart = false;
             lastError = null;
+            lastSimulatedOption = null;
             lastStartedTeamNum = -1;
             battleStartTime = 0;
             stepCount = 0;
@@ -1646,8 +1680,103 @@
         };
     }
 
+    const STEALTHER_DUNGEON_ALGORITHM_ID = 'stealther-1.011';
+
+    function installDefaultDungeonAlgorithm({ quiet = false } = {}) {
+        const { HWHClasses, HWHData } = window;
+        if (!HWHClasses || typeof executeDungeon !== 'function') {
+            return false;
+        }
+
+        if (!HWHClasses.__HWH_ORIGINAL_EXECUTE_DUNGEON && HWHClasses.executeDungeon
+            && HWHClasses.executeDungeon !== executeDungeon) {
+            HWHClasses.__HWH_ORIGINAL_EXECUTE_DUNGEON = HWHClasses.executeDungeon;
+        }
+
+        // Default for every HWH dungeon entry point (menu, Do All, quests).
+        HWHClasses.executeDungeon = executeDungeon;
+        HWHClasses.__HWH_DUNGEON_ALGORITHM = STEALTHER_DUNGEON_ALGORITHM_ID;
+        window.HWH_DUNGEON_ALGORITHM = STEALTHER_DUNGEON_ALGORITHM_ID;
+        window.HWHClasses = HWHClasses;
+
+        // Keep menu metadata pointing at Stealther so later UI rebuilds stay on this path.
+        const dungeonButton = HWHData?.buttons?.testDungeon;
+        if (dungeonButton?.combineList?.[0]) {
+            const dungeonAction = dungeonButton.combineList[0];
+            if (!dungeonAction.__stealtherDungeonOnClick) {
+                const previousOnClick = dungeonAction.onClick;
+                dungeonAction.__stealtherDungeonOnClick = true;
+                dungeonAction.onClick = function stealtherDungeonMenuClick(...args) {
+                    installDefaultDungeonAlgorithm({ quiet: true });
+                    if (typeof previousOnClick === 'function') {
+                        return previousOnClick.apply(this, args);
+                    }
+                    return executeTestDungeon();
+                };
+            }
+        }
+
+        // HWH binds click listeners at button creation time; ensure install runs before that handler.
+        const dungeonRow = dungeonButton?.button;
+        if (dungeonRow && dungeonRow.dataset.stealtherRebound !== '1') {
+            const dungeonHalf = dungeonRow.querySelector('.scriptMenu_btnGap.left') || dungeonRow.children?.[0];
+            if (dungeonHalf) {
+                dungeonHalf.addEventListener('click', () => {
+                    installDefaultDungeonAlgorithm({ quiet: true });
+                }, true);
+                dungeonRow.dataset.stealtherRebound = '1';
+            }
+        }
+
+        wrapDoYourBestDungeonFunction();
+
+        if (!quiet && !window.__HWH_STEALTHER_DUNGEON_LOGGED__) {
+            window.__HWH_STEALTHER_DUNGEON_LOGGED__ = true;
+            console.log(`[Auto Daily] Default dungeon algorithm: ${STEALTHER_DUNGEON_ALGORITHM_ID}`);
+        }
+        return true;
+    }
+
+    function wrapDoYourBestDungeonFunction() {
+        const { HWHClasses } = window;
+        const Current = HWHClasses?.doYourBest;
+        if (typeof Current !== 'function' || Current.__wrappedForStealtherDungeon) {
+            return false;
+        }
+
+        class StealtherDoYourBest extends Current {
+            constructor(...args) {
+                super(...args);
+                if (this.functions) {
+                    this.functions.testDungeon = executeTestDungeon;
+                }
+            }
+        }
+        StealtherDoYourBest.__wrappedForStealtherDungeon = true;
+        // Preserve AutoFarmer / other extension markers when present.
+        if (Current.__HWHX_HWHAUTO_PATCHED__) {
+            StealtherDoYourBest.__HWHX_HWHAUTO_PATCHED__ = Current.__HWHX_HWHAUTO_PATCHED__;
+        }
+        HWHClasses.doYourBest = StealtherDoYourBest;
+        return true;
+    }
+
+    function keepDefaultDungeonAlgorithmInstalled() {
+        let tries = 0;
+        const maxTries = 40; // ~20s
+        const timer = setInterval(() => {
+            tries += 1;
+            installDefaultDungeonAlgorithm({ quiet: true });
+            if (tries >= maxTries) {
+                clearInterval(timer);
+            }
+        }, 500);
+    }
+
     async function executeTestDungeon() {
-        const { HWHClasses, HWHFuncs } = window;
+        const { HWHFuncs } = window;
+
+        installDefaultDungeonAlgorithm({ quiet: true });
 
         await waitForAutoBattleIdle();
         if (window.HWH_AUTOBATTLE_RUNNING) {
@@ -1664,17 +1793,13 @@
         dungeonRunning = true;
         window.HWH_DUNGEON_RUNNING = true;
 
-        if (window.HWHClasses && typeof executeDungeon === 'function') {
-            window.HWHClasses.executeDungeon = executeDungeon;
-        }
-
         const dungeonRunTimeoutMs = Math.max(
             20 * 60 * 1000,
             Number(window.HWH_DUNGEON_RUN_TIMEOUT_MS) || 10 * 60 * 60 * 1000
         );
 
         try {
-            HWHFuncs.setProgress('Executing: Dungeon (Stealther)', true);
+            HWHFuncs.setProgress('Executing: Dungeon (Stealther 1.011)', true);
             return await withTimeout(
                 new Promise((resolve, reject) => {
                     try {
@@ -6920,9 +7045,9 @@ async function executeGetDailyBonus() {
         console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
 
-        if (window.HWHClasses) {
-            window.HWHClasses.executeDungeon = executeDungeon;
-        }
+        // Stealther 1.011 is the default dungeon algorithm for all HWH dungeon starts.
+        installDefaultDungeonAlgorithm();
+        keepDefaultDungeonAlgorithmInstalled();
         
         // Create dungeon settings GUI
         if (document.readyState === 'loading') {
@@ -6955,8 +7080,19 @@ async function executeGetDailyBonus() {
         setTimeout(updateQuestStatus, 9000);
         scheduleAutoRuns();
 
-        console.log(`${EXTENSION_NAME} initialized successfully.`);
+        console.log(`${EXTENSION_NAME} initialized successfully. Dungeon default: ${STEALTHER_DUNGEON_ALGORITHM_ID}`);
     }
+
+    // Install as soon as HWHClasses exists so early dungeon clicks already use Stealther.
+    (function earlyDungeonAlgorithmHook() {
+        let tries = 0;
+        const timer = setInterval(() => {
+            tries += 1;
+            if (installDefaultDungeonAlgorithm({ quiet: true }) || tries >= 120) {
+                clearInterval(timer);
+            }
+        }, 250);
+    })();
 
     waitForHWH(maindaily);
 
