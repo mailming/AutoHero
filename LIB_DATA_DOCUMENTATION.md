@@ -39,9 +39,13 @@ Hero definitions and metadata.
 
 #### `titan`
 Titan definitions and metadata.
-- **Structure**: Object with titan IDs as keys (4000+ range)
+- **Structure**: Object with titan IDs as keys (4000–4054+ range)
 - **Usage in code**: `lib.getData('titan')`
-- **Example**: `lib.data.titan[4000]` - Titan with ID 4000
+- **Example**: `lib.data.titan[4000]` (Sigurd), `lib.data.titan[4054]` (Valdur and Echo)
+- **Elements**: `water`, `fire`, `earth`, `dark`, `light`, `distortion`
+- **Types**: `melee`, `range`, `support`, `ultra`, `summoner`
+- **Newer IDs**: 4034 Umbra and Caligo, 4044 Lumira and Apollo, 4051 Alecto, 4054 Valdur and Echo
+- **See**: `TITAN_DATA_DOCUMENTATION.md`
 - **Code references**:
   - Line 12517: `lib.getData('titan')` - Get titan library
 

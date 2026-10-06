@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.22
+// @version      3.5.23
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.22";
+    const EXTENSION_VERSION = "3.5.23";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -604,6 +604,7 @@
             const earth = [];
             const dark = [];
             const light = [];
+            const distortion = [];
             const unknown = [];
             for (const titan of all) {
                 const id = titan.id;
@@ -612,6 +613,7 @@
                 else if (id < 4030) earth.push(titan);
                 else if (id < 4040) dark.push(titan);
                 else if (id < 4050) light.push(titan);
+                else if (id < 4060) distortion.push(titan);
                 else unknown.push(titan);
             }
             return {
@@ -621,7 +623,8 @@
                 fire: fire.sort(titanPowerSort),
                 dark: dark.sort(titanPowerSort),
                 light: light.sort(titanPowerSort),
-                elemental: [...dark, ...light, ...unknown].sort(titanPowerSort),
+                distortion: distortion.sort(titanPowerSort),
+                elemental: [...dark, ...light, ...distortion, ...unknown].sort(titanPowerSort),
             };
         }
 
@@ -699,11 +702,12 @@
                 }
             };
             const elementMap = {
-                water: { max: 4010, special: 4004 },
-                earth: { max: 4030, special: 4034 },
-                fire: { max: 4020, special: 4024 },
-                dark: { max: 4040 },
-                light: { max: 4050 },
+                water: { max: 4010, special: 4004 },      // Tidus and Gelo
+                fire: { max: 4020, special: 4014 },       // Asherona and Pyro
+                earth: { max: 4030, special: 4024 },      // Verdoc and Phyto
+                dark: { max: 4040, special: 4034 },       // Umbra and Caligo
+                light: { max: 4050, special: 4044 },      // Lumira and Apollo
+                distortion: { max: 4060, special: 4054 }, // Valdur and Echo
             };
             for (const titan of aliveTitans.all) {
                 if (result.length >= 4) break;
@@ -714,18 +718,6 @@
                     if (group.includes(elementMap.water.special)) {
                         push(elementMap.water.special);
                         const partner = group.find((x) => x !== elementMap.water.special);
-                        if (partner) push(partner);
-                    } else {
-                        push(id);
-                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
-                            if (result.length < 5) push(other);
-                        }
-                    }
-                } else if (id < elementMap.earth.max) {
-                    const group = aliveTitans.earth.map((t) => normalize(t.id));
-                    if (group.includes(elementMap.earth.special)) {
-                        push(elementMap.earth.special);
-                        const partner = group.find((x) => x !== elementMap.earth.special);
                         if (partner) push(partner);
                     } else {
                         push(id);
@@ -745,14 +737,51 @@
                             if (result.length < 5) push(other);
                         }
                     }
+                } else if (id < elementMap.earth.max) {
+                    const group = aliveTitans.earth.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.earth.special)) {
+                        push(elementMap.earth.special);
+                        const partner = group.find((x) => x !== elementMap.earth.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
+                            if (result.length < 5) push(other);
+                        }
+                    }
                 } else if (id < elementMap.dark.max) {
-                    push(id);
-                    const partner = aliveTitans.dark.map((t) => normalize(t.id)).find((x) => x !== id);
-                    if (partner) push(partner);
+                    const group = aliveTitans.dark.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.dark.special)) {
+                        push(elementMap.dark.special);
+                        const partner = group.find((x) => x !== elementMap.dark.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        const partner = group.find((x) => x !== id);
+                        if (partner) push(partner);
+                    }
                 } else if (id < elementMap.light.max) {
-                    push(id);
-                    const partner = aliveTitans.light.map((t) => normalize(t.id)).find((x) => x !== id);
-                    if (partner) push(partner);
+                    const group = aliveTitans.light.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.light.special)) {
+                        push(elementMap.light.special);
+                        const partner = group.find((x) => x !== elementMap.light.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        const partner = group.find((x) => x !== id);
+                        if (partner) push(partner);
+                    }
+                } else if (id < elementMap.distortion.max) {
+                    const group = (aliveTitans.distortion || []).map((t) => normalize(t.id));
+                    if (group.includes(elementMap.distortion.special)) {
+                        push(elementMap.distortion.special);
+                        const partner = group.find((x) => x !== elementMap.distortion.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        const partner = group.find((x) => x !== id);
+                        if (partner) push(partner);
+                    }
                 }
             }
             if (result.length < 5) {

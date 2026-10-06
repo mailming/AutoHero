@@ -1,4 +1,4 @@
-/** In-game display names for hero/pet IDs (from LIB_HERO_NAME_* / docs + user verification). */
+/** In-game display names for hero/pet/titan IDs (from LIB_*_NAME_* / docs + user verification). */
 
 export const HERO_NAMES = {
     1: 'Aurora', 2: 'Galahad', 3: 'Keira', 4: 'Astaroth', 5: 'Kai', 6: 'Phobos', 7: 'Thea',
@@ -21,11 +21,27 @@ export const PET_NAMES = {
     6011: 'Robin',
 };
 
+export const TITAN_NAMES = {
+    4000: 'Sigurd', 4001: 'Nova', 4002: 'Mairi', 4003: 'Hyperion', 4004: 'Tidus and Gelo',
+    4010: 'Moloch', 4011: 'Vulcan', 4012: 'Ignis', 4013: 'Araji', 4014: 'Asherona and Pyro',
+    4020: 'Angus', 4021: 'Sylva', 4022: 'Avalon', 4023: 'Eden', 4024: 'Verdoc and Phyto',
+    4030: 'Brustar', 4031: 'Keros', 4032: 'Mort', 4033: 'Tenebris', 4034: 'Umbra and Caligo',
+    4040: 'Rigel', 4041: 'Amon', 4042: 'Iyari', 4043: 'Solaris', 4044: 'Lumira and Apollo',
+    4051: 'Alecto', 4054: 'Valdur and Echo',
+};
+
 export function resolveHeroName(id) {
     const n = Number(id);
     if (!Number.isFinite(n)) return String(id);
     if (n >= 6000 && n < 7000) return PET_NAMES[n] || `Pet ${n}`;
+    if (n >= 4000 && n < 5000) return TITAN_NAMES[n] || `Titan ${n}`;
     return HERO_NAMES[n] || `Hero ${n}`;
+}
+
+export function resolveTitanName(id) {
+    const n = Number(id);
+    if (!Number.isFinite(n) || n < 4000 || n >= 5000) return null;
+    return TITAN_NAMES[n] || `Titan ${n}`;
 }
 
 export function resolvePetName(id) {

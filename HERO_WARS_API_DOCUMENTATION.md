@@ -5020,7 +5020,7 @@ Each team configuration is an array where:
 
 - **Heroes**: 1-999 (e.g., 46 = Aurora, 57 = K'arkh, 40 = Jorgen)
 - **Pets**: 6000-6999 (e.g., 6005 = Albus, 6008 = Khorus, 6011 = Robin)
-- **Titans**: 4000-4999 (e.g., 4033 = Hyperion, 4003 = Eden, 4043 = Sigurd)
+- **Titans**: 4000-4999 (e.g., 4000 = Sigurd, 4034 = Umbra and Caligo, 4044 = Lumira and Apollo, 4054 = Valdur and Echo)
 
 ### Usage Patterns
 
@@ -6302,6 +6302,7 @@ The following table provides a reference for Titan IDs used throughout the Hero 
 | 4031 | Keros |
 | 4032 | Mort |
 | 4033 | Tenebris |
+| 4034 | Umbra and Caligo |
 
 #### Light Titans
 
@@ -6311,6 +6312,14 @@ The following table provides a reference for Titan IDs used throughout the Hero 
 | 4041 | Amon |
 | 4042 | Iyari |
 | 4043 | Solaris |
+| 4044 | Lumira and Apollo |
+
+#### Distortion Titans
+
+| ID | Titan Name |
+|----|------------|
+| 4051 | Alecto |
+| 4054 | Valdur and Echo |
 
 ---
 
