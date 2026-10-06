@@ -5019,7 +5019,7 @@ Each team configuration is an array where:
 ### Entity ID Ranges
 
 - **Heroes**: 1-999 (e.g., 46 = Aurora, 57 = K'arkh, 40 = Jorgen)
-- **Pets**: 6000-6999 (e.g., 6008 = Axel, 6004 = Oliver, 6006 = Cain)
+- **Pets**: 6000-6999 (e.g., 6005 = Albus, 6008 = Khorus, 6011 = Robin)
 - **Titans**: 4000-4999 (e.g., 4033 = Hyperion, 4003 = Eden, 4043 = Sigurd)
 
 ### Usage Patterns
@@ -6254,8 +6254,9 @@ The following table provides a reference for Hero IDs used throughout the Hero W
 | 72 | Byrna |
 | 73 | Adam |
 | 74 | Somna |
+| 75 | Eva |
 
-**Note:** For heroes added after this table was written, resolve display names in-game with `cheats.translate('LIB_HERO_NAME_' + id)` (e.g. ID 72 → `"Byrna"`).
+**Note:** For heroes added after this table was written, resolve display names in-game with `cheats.translate('LIB_HERO_NAME_' + id)` (e.g. ID 75 → `"Eva"`).
 
 ---
 

@@ -46,12 +46,21 @@ Titan definitions and metadata.
   - Line 12517: `lib.getData('titan')` - Get titan library
 
 #### `pet`
-Pet definitions and metadata.
-- **Structure**: Object with pet IDs as keys (6000+ range)
+Pet definitions and favor metadata.
+- **Structure**: Object with pet IDs as keys (6000–6999)
 - **Usage in code**: `lib.getData('pet')`
-- **Example**: `lib.data.pet[6000]` - Pet with ID 6000
+- **Example**: `lib.data.pet[6000]` (Fenris), `lib.data.pet[6011]` (Robin)
+- **Key properties**:
+  - `id` (number)
+  - `favorHeroes` (number[]) – hero IDs that receive this pet’s favor
+  - `favorStats` (object[]) – `{ baseStat, multiplier, stat }`
+  - `favorSkill` (object) – `{ baseStat, tier }`
+  - `isPlayable` (number) – `1` = usable
+  - `gachaDate` (string) – release / gacha timestamp
+- **Known pets**: 6000 Fenris … 6009 Vex, **6011 Robin** (see `PET_DATA_DOCUMENTATION.md`)
 - **Code references**:
   - Line 10196: `lib.getData('pet')` - Get pet library
+  - Line 7203: `petLib[petId].favorHeroes.includes(heroId)` - Favor matching
 
 #### `skill`
 Skill definitions and metadata.

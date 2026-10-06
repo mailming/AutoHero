@@ -4,7 +4,7 @@ This document contains a complete list of all heroes defined in the hero data ob
 
 ## Summary
 
-- **Total Heroes**: 74+ (IDs 1–70 in `heroData.txt`; 71+ such as Fluffy, Byrna verified via `LIB_HERO_NAME_{id}` in-game)
+- **Total Heroes**: 75+ (IDs 1–70 and 75 in `heroData.txt`; 71–74 such as Fluffy, Byrna verified via `LIB_HERO_NAME_{id}` in-game)
 - **Corrupted Heroes**: 4 (IDs 7002, 7013, 7015, 7024)
 
 ## Hero List
@@ -85,12 +85,13 @@ This document contains a complete list of all heroes defined in the hero data ob
 | 72 | — | — | — | — |
 | 73 | — | — | — | — |
 | 74 | — | — | — | — |
+| 75 | hero75_eva | agility | back | cutie |
 | 7002 | hero7002_corrupted_galahad | strength | front | warrior |
 | 7013 | hero7013_corrupted_orion | intelligence | back | snob |
 | 7015 | hero7015_corrupted_ginger | agility | back | snob |
 | 7024 | hero7024_corrupted_cleaver | strength | front | warrior |
 
-**IDs 71–74+:** Not in `heroData.txt`. Display names from in-game translations: 71 = Fluffy, 72 = Byrna, 73 = Adam, 74 = Somna.
+**IDs 71–74:** Not in `heroData.txt`. Display names from in-game translations: 71 = Fluffy, 72 = Byrna, 73 = Adam, 74 = Somna. **ID 75 = Eva** is in `heroData.txt` (asset `hero75_eva`).
 
 ## Hero Categories
 
@@ -100,9 +101,9 @@ This document contains a complete list of all heroes defined in the hero data ob
 - Front-line tanks and warriors
 - IDs: 1, 2, 4, 11, 24, 27, 35, 37, 39, 42, 47, 50, 54, 57, 60, 61, 67, 68, 70, 7002, 7024
 
-#### Agility Heroes (20)
+#### Agility Heroes (21)
 - Fast attackers and middle/back line damage dealers
-- IDs: 3, 8, 12, 14, 15, 16, 19, 20, 28, 38, 40, 41, 44, 48, 49, 52, 59, 63, 65
+- IDs: 3, 8, 12, 14, 15, 16, 19, 20, 28, 38, 40, 41, 44, 48, 49, 52, 59, 63, 65, 75
 
 #### Intelligence Heroes (30)
 - Mages, healers, and support heroes
@@ -118,9 +119,9 @@ This document contains a complete list of all heroes defined in the hero data ob
 - Mid-line damage dealers and support
 - IDs: 3, 5, 9, 16, 17, 18, 34, 35, 37, 40, 43, 48, 51, 52, 56, 68, 69
 
-#### Back Line (31)
+#### Back Line (32)
 - Ranged attackers, healers, and support
-- IDs: 6, 7, 8, 10, 13, 14, 15, 19, 20, 22, 23, 26, 29, 30, 31, 32, 33, 44, 46, 55, 57, 58, 62, 63, 64, 66, 7013, 7015
+- IDs: 6, 7, 8, 10, 13, 14, 15, 19, 20, 22, 23, 26, 29, 30, 31, 32, 33, 44, 46, 55, 57, 58, 62, 63, 64, 66, 75, 7013, 7015
 
 ### By Character Type
 
@@ -133,8 +134,8 @@ This document contains a complete list of all heroes defined in the hero data ob
 #### Snob (12)
 - IDs: 5, 11, 12, 13, 15, 16, 17, 27, 30, 32, 33, 53, 64, 7013, 7015
 
-#### Cutie (10)
-- IDs: 8, 14, 22, 23, 31, 34, 39, 40, 42, 63
+#### Cutie (11)
+- IDs: 8, 14, 22, 23, 31, 34, 39, 40, 42, 63, 75
 
 #### Healer (4)
 - IDs: 7, 21, 36, 68

@@ -12,12 +12,13 @@ export const HERO_NAMES = {
     54: 'Tristan', 55: 'Iris', 56: 'Amira', 57: 'Fafnir', 58: 'Aidan', 59: 'Kayla',
     60: 'Mushy and Shroom', 61: 'Julius', 62: 'Polaris', 63: 'Lara Croft', 64: 'Augustus',
     65: 'Ninja Turtles', 66: 'Folio', 67: 'Lyria', 68: 'Guus', 69: 'Cascade', 70: 'Electra von Grave',
-    71: 'Fluffy', 72: 'Byrna', 73: 'Adam', 74: 'Somna',
+    71: 'Fluffy', 72: 'Byrna', 73: 'Adam', 74: 'Somna', 75: 'Eva',
 };
 
 export const PET_NAMES = {
     6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
     6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
+    6011: 'Robin',
 };
 
 export function resolveHeroName(id) {

@@ -28,7 +28,7 @@ export function hwRecruitIconFilename(unitId) {
     if (!Number.isFinite(id) || id <= 0) return null;
     if (id >= 6000 && id < 7000) {
         const suffix = id - 6000;
-        if (suffix < 0 || suffix > 9) return null;
+        if (suffix < 0) return null;
         return `6--${suffix}.png`;
     }
     if (id < 6000) {

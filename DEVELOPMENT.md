@@ -94,6 +94,7 @@ git push origin develop
 - Update README.md for user-facing changes
 - Add technical documentation for complex features
 - Keep CHANGELOG.md updated with releases
+- Pet favor data: see `PET_DATA_DOCUMENTATION.md` (Robin `6011`, etc.)
 
 ## Next Steps
 

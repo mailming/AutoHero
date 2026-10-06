@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.22
+// @version      1.24
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.21';
+    const EXTENSION_VERSION = '1.24';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -193,6 +193,14 @@
     const CONSTANTS = {
         BATTLE_VERSION: 273,
         DEFAULT_PET_ID: 6005,
+        PET_NAMES: {
+            6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
+            6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
+            6011: 'Robin',
+        },
+        HERO_NAMES: {
+            71: 'Fluffy', 72: 'Byrna', 73: 'Adam', 74: 'Somna', 75: 'Eva',
+        },
         DEFAULT_SIMULATIONS: 10,
         DEFAULT_MAX_COMBOS: 40,
         DEFAULT_POOL_SIZE: 12,
@@ -596,7 +604,10 @@
                 // fall through to numeric fallback
             }
 
-            return id >= 6000 && id < 7000 ? `Pet ${id}` : `Hero ${id}`;
+            if (id >= 6000 && id < 7000) {
+                return CONSTANTS.PET_NAMES[id] || `Pet ${id}`;
+            }
+            return CONSTANTS.HERO_NAMES[id] || `Hero ${id}`;
         }
 
         function combinations(items, size, maxCount = Infinity) {

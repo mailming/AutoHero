@@ -381,7 +381,8 @@ window.cheats?.translate('LIB_HERO_NAME_55')  // should return 'Iris'
 | `llm-bridge-server.mjs` | HTTP bridge + training routes |
 | `training-db.mjs` | PostgreSQL schema and queries |
 | `training-view.mjs` | HTML results page |
-| `hero-names.mjs` | Hero/pet ID → name mapping |
+| `hero-names.mjs` | Hero/pet ID → name mapping (includes Robin `6011`) |
+| `PET_DATA_DOCUMENTATION.md` | Pet favor lib (`lib.data.pet`) and Robin details |
 | `loop-arena-training.ps1` | Start loop via PowerShell |
 | `run-arena-training.ps1` | Single training round via PowerShell |
 | `scrape_meta_teams_to_db.py` | Scrape hw-recruit meta teams into PostgreSQL snapshots |

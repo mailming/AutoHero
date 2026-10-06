@@ -421,12 +421,13 @@ The following table provides a complete reference for all playable Hero IDs (typ
 | 72 | Byrna | — | — | — | — |
 | 73 | Adam | — | — | — | — |
 | 74 | Somna | — | — | — | — |
+| 75 | 75_Eva | hero75_eva | back | agility | cutie |
 
-**Total Playable Heroes:** 70 in `heroData.txt`; IDs **71+** (e.g. Fluffy, Byrna) appear in live game data — use translation keys for current names.
+**Total Playable Heroes:** 71 in `heroData.txt` (1–70, 75); IDs **71–74** appear in live game data — use translation keys for current names.
 
 **Note:** Hero names in the game are accessed using translation keys. To get a hero's display name in code:
 ```javascript
-const heroId = 72;
+const heroId = 75;
 const heroName = window.cheats?.translate(`LIB_HERO_NAME_${heroId}`);
 ```
 
@@ -438,6 +439,7 @@ For example:
 - `cheats.translate("LIB_HERO_NAME_72")` returns "Byrna"
 - `cheats.translate("LIB_HERO_NAME_73")` returns "Adam"
 - `cheats.translate("LIB_HERO_NAME_74")` returns "Somna"
+- `cheats.translate("LIB_HERO_NAME_75")` returns "Eva"
 
 ## Related Files
 

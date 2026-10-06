@@ -46,12 +46,13 @@ HERO_NAMES = {
     54: 'Tristan', 55: 'Iris', 56: 'Amira', 57: 'Fafnir', 58: 'Aidan', 59: 'Kayla',
     60: 'Mushy and Shroom', 61: 'Julius', 62: 'Polaris', 63: 'Lara Croft', 64: 'Augustus',
     65: 'Ninja Turtles', 66: 'Folio', 67: 'Lyria', 68: 'Guus', 69: 'Cascade', 70: 'Electra von Grave',
-    71: 'Fluffy', 72: 'Byrna', 73: 'Adam', 74: 'Somna',
+    71: 'Fluffy', 72: 'Byrna', 73: 'Adam', 74: 'Somna', 75: 'Eva',
 }
 
 PET_NAMES = {
     6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
     6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
+    6011: 'Robin',
 }
 
 DEFAULT_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/autohero'
@@ -76,13 +77,14 @@ def resolve_hero_name(hero_id: int) -> str:
 
 
 def parse_pet_filename(base: str) -> int | None:
-    """hw-recruit pet icons: 6--8.png -> 6008 (Khorus), 6--6.png -> 6006 (Axel)."""
+    """hw-recruit pet icons: 6--8.png -> 6008 (Khorus), 6--11.png -> 6011 (Robin)."""
     if '--' not in base:
         return None
     left, right = base.split('--', 1)
     if not left.isdigit() or not right.isdigit():
         return None
-    return int(f'{left}00{right}')
+    # Pets are 6000+N where N is the suffix after 6--
+    return int(left) * 1000 + int(right)
 
 
 def parse_team_images(image_names: list[str]) -> dict[str, Any]:

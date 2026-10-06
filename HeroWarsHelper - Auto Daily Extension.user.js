@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.20
+// @version      3.5.22
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.20";
+    const EXTENSION_VERSION = "3.5.22";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2423,6 +2423,16 @@ async function executeGetDailyBonus() {
         DEFAULT_PET_ID: 6005,
         PET_ID_RANGE_MIN: 6000,
         PET_ID_RANGE_MAX: 7000,
+        // Known pet IDs (6000–6011); Robin = 6011 (gacha 2027-02-01)
+        PET_NAMES: {
+            6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
+            6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
+            6011: 'Robin',
+        },
+        // Newer heroes may lack LIB_HERO_NAME_* until client update
+        HERO_NAMES: {
+            71: 'Fluffy', 72: 'Byrna', 73: 'Adam', 74: 'Somna', 75: 'Eva',
+        },
         DAYS: {
             SUNDAY: 0,
             MONDAY: 1,
@@ -2448,6 +2458,35 @@ async function executeGetDailyBonus() {
         
         getDayName: function(dayOfWeek) {
             return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+        },
+
+        getPetName: function(petId) {
+            const id = Number(petId);
+            if (!Number.isFinite(id) || id < CONSTANTS.PET_ID_RANGE_MIN || id >= CONSTANTS.PET_ID_RANGE_MAX) {
+                return null;
+            }
+            try {
+                const translated = cheats?.translate?.(`LIB_PET_NAME_${id}`);
+                if (translated && translated !== `LIB_PET_NAME_${id}`) return translated;
+            } catch {
+                // fall through
+            }
+            return CONSTANTS.PET_NAMES[id] || `Pet ${id}`;
+        },
+
+        getHeroName: function(heroId) {
+            const id = Number(heroId);
+            if (!Number.isFinite(id) || id <= 0) return null;
+            if (id >= CONSTANTS.PET_ID_RANGE_MIN && id < CONSTANTS.PET_ID_RANGE_MAX) {
+                return this.getPetName(id);
+            }
+            try {
+                const translated = cheats?.translate?.(`LIB_HERO_NAME_${id}`);
+                if (translated && translated !== `LIB_HERO_NAME_${id}`) return translated;
+            } catch {
+                // fall through
+            }
+            return CONSTANTS.HERO_NAMES[id] || `Hero ${id}`;
         },
         
         // Optimized logging - can be disabled in production
