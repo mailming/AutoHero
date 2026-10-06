@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.24
+// @version      3.5.27
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.24";
+    const EXTENSION_VERSION = "3.5.27";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -6401,8 +6401,9 @@ async function executeGetDailyBonus() {
      * Detect Cosmic Battle (epic_brawl) live status via refillable 52 + team slots.
      * Optionally confirms with epicBrawl_getWinStreak.
      */
-    async function checkEpicBrawlStatus() {
+    async function checkEpicBrawlStatus(options = {}) {
         const { Caller } = window;
+        const skipWinStreak = options.skipWinStreak === true;
         const status = {
             live: false,
             attempts: 0,
@@ -6421,15 +6422,17 @@ async function executeGetDailyBonus() {
             status.error = e?.message || String(e);
         }
 
-        try {
-            const winStreak = await Caller.send('epicBrawl_getWinStreak');
-            if (winStreak && !winStreak.error) {
-                status.live = true;
-            }
-        } catch (e) {
-            // Streak call failing while refill is missing → treat as off
-            if (!status.live) {
-                status.error = status.error || e?.message || String(e);
+        if (!skipWinStreak) {
+            try {
+                const winStreak = await Caller.send('epicBrawl_getWinStreak');
+                if (winStreak && !winStreak.error) {
+                    status.live = true;
+                }
+            } catch (e) {
+                // Streak call failing while refill is missing → treat as off
+                if (!status.live) {
+                    status.error = status.error || e?.message || String(e);
+                }
             }
         }
 
@@ -6478,14 +6481,18 @@ async function executeGetDailyBonus() {
     async function executeEpicBrawl(options = {}) {
         const { HWHFuncs, Caller, cheats } = window;
         const setProgress = HWHFuncs?.setProgress || (() => {});
-        const hideProgress = false;
         const mode = options.mode || eventSettingsState.epicBrawlMode || 'auto';
 
         setProgress('Cosmic Battle: checking...', true);
-        const status = await checkEpicBrawlStatus();
+        const status = await checkEpicBrawlStatus({ skipWinStreak: true });
         if (!status.live) {
-            setProgress('Cosmic Battle: OFF (event not live)', true);
-            return { ok: false, reason: 'off' };
+            // Confirm with win-streak only when refillable is missing
+            const confirmed = await checkEpicBrawlStatus({ skipWinStreak: false });
+            if (!confirmed.live) {
+                setProgress('Cosmic Battle: OFF (event not live)', true);
+                return { ok: false, reason: 'off' };
+            }
+            Object.assign(status, confirmed);
         }
 
         const [teamGetAll, teamGetFavor, userGetInfo] = await Caller.send(['teamGetAll', 'teamGetFavor', 'userGetInfo']);
@@ -6513,13 +6520,53 @@ async function executeGetDailyBonus() {
         let coins = 0;
         let streak = { progress: 0, nextStage: 0 };
 
+        /**
+         * Flow (avoid emerald reroll / refillable 53):
+         * 1) startBattle with whatever target already exists
+         * 2) if "no target" → getEnemy once (first free match), then startBattle
+         * 3) after endBattle, getEnemy to queue the *next* free opponent (only if more attempts remain)
+         */
+        async function startEpicBrawlBattle(teamArgs) {
+            try {
+                return await Caller.send({ name: 'epicBrawl_startBattle', args: teamArgs });
+            } catch (e) {
+                const msg = e?.message || String(e);
+                if (!/no target/i.test(msg)) {
+                    throw e;
+                }
+                console.log('[Auto Daily] Cosmic Battle: no existing target — getEnemy (free first match)');
+                setProgress('Cosmic Battle: finding opponent...', true);
+                await Caller.send('epicBrawl_getEnemy');
+                return Caller.send({ name: 'epicBrawl_startBattle', args: teamArgs });
+            }
+        }
+
+        async function queueNextEpicBrawlEnemy() {
+            try {
+                const enemy = await Caller.send('epicBrawl_getEnemy');
+                console.log('[Auto Daily] Cosmic Battle: queued next enemy after battle', enemy);
+                return enemy;
+            } catch (e) {
+                console.warn('[Auto Daily] Cosmic Battle: getEnemy after battle failed (next startBattle may fetch):', e);
+                return null;
+            }
+        }
+
         for (let i = attempts; i > 0; i--) {
-            const [enemy, battleStart] = await Caller.send([
-                'epicBrawl_getEnemy',
-                { name: 'epicBrawl_startBattle', args: resolved.args },
-            ]);
-            void enemy;
+            let battleStart;
+            try {
+                battleStart = await startEpicBrawlBattle(resolved.args);
+            } catch (e) {
+                setProgress(`Cosmic Battle: ${e?.message || e}`, true);
+                throw e;
+            }
+
             const battle = battleStart?.battle || battleStart;
+            if (!battle) {
+                setProgress('Cosmic Battle: no battle data from startBattle', true);
+                return { ok: false, reason: 'no_battle' };
+            }
+
             const { progress, result } = await Calc(battle);
             const [endBattle, winStreak] = await Caller.send([
                 { name: 'epicBrawl_endBattle', args: { progress, result } },
@@ -6537,10 +6584,18 @@ async function executeGetDailyBonus() {
                     console.warn('[Auto Daily] epicBrawl_farmWinStreak failed:', e);
                 }
             }
+
+            const fought = attempts - i + 1;
             setProgress(
-                `Cosmic Battle (${resolved.kind}): ${wins}W / ${attempts - i + 1} fought, coins ${coins}, streak ${streak.progress}/${streak.nextStage}`,
+                `Cosmic Battle (${resolved.kind}): ${wins}W / ${fought} fought, coins ${coins}, streak ${streak.progress}/${streak.nextStage}`,
                 true
             );
+
+            // After a completed fight there is no current target — safe/free getEnemy for the next attempt
+            if (i > 1) {
+                setProgress(`Cosmic Battle: queuing next opponent (${fought}/${attempts})...`, true);
+                await queueNextEpicBrawlEnemy();
+            }
         }
 
         setProgress(
