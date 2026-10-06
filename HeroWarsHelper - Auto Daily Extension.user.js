@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.23
+// @version      3.5.24
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.23";
+    const EXTENSION_VERSION = "3.5.24";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -43,12 +43,14 @@
     let executionState = {};
     let hideButtonsState = {};
     let othersSettingsState = {};
+    let eventSettingsState = {};
     let isProviderActive = false;
     let customOthersButton = null;
     let combinedButton = null;
     let cachedQuestData = null; // Cache for questGetAll results
     let autoRunInProgress = false;
     let dungeonRunning = false;
+    let epicBrawlStatusCache = null;
 
     function setDungeonBattleOpen(isOpen) {
         window.HWH_DUNGEON_BATTLE_OPEN = !!isOpen;
@@ -6375,6 +6377,179 @@ async function executeGetDailyBonus() {
     ];
 
     // --- STATE MANAGEMENT ---
+    function getDefaultEventSettingsState() {
+        return {
+            epicBrawlEnabled: true,
+            epicBrawlMode: 'auto', // 'hero' | 'titan' | 'auto'
+        };
+    }
+
+    function normalizeEventSettingsState(state = {}) {
+        const defaults = getDefaultEventSettingsState();
+        const mode = state.epicBrawlMode;
+        return {
+            epicBrawlEnabled: state.epicBrawlEnabled !== false,
+            epicBrawlMode: (mode === 'hero' || mode === 'titan' || mode === 'auto') ? mode : defaults.epicBrawlMode,
+        };
+    }
+
+    function syncEpicBrawlOthersSetting() {
+        othersSettingsState.EPIC_BRAWL = eventSettingsState.epicBrawlEnabled !== false;
+    }
+
+    /**
+     * Detect Cosmic Battle (epic_brawl) live status via refillable 52 + team slots.
+     * Optionally confirms with epicBrawl_getWinStreak.
+     */
+    async function checkEpicBrawlStatus() {
+        const { Caller } = window;
+        const status = {
+            live: false,
+            attempts: 0,
+            hasHeroTeam: false,
+            hasTitanTeam: false,
+            error: null,
+        };
+        try {
+            const [userGetInfo, teamGetAll] = await Caller.send(['userGetInfo', 'teamGetAll']);
+            const refill = (userGetInfo?.refillable || []).find((n) => Number(n.id) === 52);
+            status.attempts = Number(refill?.amount) || 0;
+            status.hasHeroTeam = !!(teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl'));
+            status.hasTitanTeam = !!(teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl_titan'));
+            status.live = !!refill;
+        } catch (e) {
+            status.error = e?.message || String(e);
+        }
+
+        try {
+            const winStreak = await Caller.send('epicBrawl_getWinStreak');
+            if (winStreak && !winStreak.error) {
+                status.live = true;
+            }
+        } catch (e) {
+            // Streak call failing while refill is missing → treat as off
+            if (!status.live) {
+                status.error = status.error || e?.message || String(e);
+            }
+        }
+
+        epicBrawlStatusCache = status;
+        return status;
+    }
+
+    function resolveEpicBrawlTeam(teamGetAll, teamGetFavor, mode) {
+        const hasHero = teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl');
+        const hasTitan = teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl_titan');
+        let useHero = false;
+        if (mode === 'hero') {
+            if (!hasHero) return { error: 'No Cosmic Battle hero team saved. Fight once manually first.' };
+            useHero = true;
+        } else if (mode === 'titan') {
+            if (!hasTitan) return { error: 'No Cosmic Battle titan team saved. Fight once manually first.' };
+            useHero = false;
+        } else {
+            // auto: prefer heroes (HWH default), else titans
+            if (!hasHero && !hasTitan) {
+                return { error: 'No Cosmic Battle team saved. Fight once manually first.' };
+            }
+            useHero = hasHero;
+        }
+
+        if (useHero) {
+            const team = teamGetAll.epic_brawl || [];
+            return {
+                kind: 'hero',
+                args: {
+                    units: team.filter((e) => e < 1000),
+                    pet: team.filter((e) => e > 6000).pop(),
+                    favor: teamGetFavor?.epic_brawl || {},
+                },
+            };
+        }
+        return {
+            kind: 'titan',
+            args: {
+                units: teamGetAll.epic_brawl_titan,
+                favor: {},
+            },
+        };
+    }
+
+    async function executeEpicBrawl(options = {}) {
+        const { HWHFuncs, Caller, cheats } = window;
+        const setProgress = HWHFuncs?.setProgress || (() => {});
+        const hideProgress = false;
+        const mode = options.mode || eventSettingsState.epicBrawlMode || 'auto';
+
+        setProgress('Cosmic Battle: checking...', true);
+        const status = await checkEpicBrawlStatus();
+        if (!status.live) {
+            setProgress('Cosmic Battle: OFF (event not live)', true);
+            return { ok: false, reason: 'off' };
+        }
+
+        const [teamGetAll, teamGetFavor, userGetInfo] = await Caller.send(['teamGetAll', 'teamGetFavor', 'userGetInfo']);
+        const refill = (userGetInfo?.refillable || []).find((n) => Number(n.id) === 52);
+        const attempts = Number(refill?.amount) || 0;
+        if (!attempts) {
+            setProgress('Cosmic Battle: no attempts left', true);
+            return { ok: false, reason: 'no_attempts' };
+        }
+
+        const resolved = resolveEpicBrawlTeam(teamGetAll, teamGetFavor, mode);
+        if (resolved.error) {
+            setProgress(`Cosmic Battle: ${resolved.error}`, true);
+            return { ok: false, reason: 'no_team', error: resolved.error };
+        }
+
+        const Calc = cheats?.BattleCalc;
+        if (!Calc) {
+            setProgress('Cosmic Battle: BattleCalc unavailable', true);
+            return { ok: false, reason: 'no_calc' };
+        }
+
+        setProgress(`Cosmic Battle (${resolved.kind}): ${attempts} attempt(s)...`, true);
+        let wins = 0;
+        let coins = 0;
+        let streak = { progress: 0, nextStage: 0 };
+
+        for (let i = attempts; i > 0; i--) {
+            const [enemy, battleStart] = await Caller.send([
+                'epicBrawl_getEnemy',
+                { name: 'epicBrawl_startBattle', args: resolved.args },
+            ]);
+            void enemy;
+            const battle = battleStart?.battle || battleStart;
+            const { progress, result } = await Calc(battle);
+            const [endBattle, winStreak] = await Caller.send([
+                { name: 'epicBrawl_endBattle', args: { progress, result } },
+                'epicBrawl_getWinStreak',
+            ]);
+            const resultInfo = endBattle?.result || endBattle || {};
+            streak = winStreak || streak;
+            wins += Number(resultInfo.win) || 0;
+            coins += resultInfo.reward?.coin?.[39] || 0;
+            if (winStreak && winStreak.progress == winStreak.nextStage) {
+                try {
+                    const farm = await Caller.send('epicBrawl_farmWinStreak');
+                    coins += farm?.coin?.[39] || 0;
+                } catch (e) {
+                    console.warn('[Auto Daily] epicBrawl_farmWinStreak failed:', e);
+                }
+            }
+            setProgress(
+                `Cosmic Battle (${resolved.kind}): ${wins}W / ${attempts - i + 1} fought, coins ${coins}, streak ${streak.progress}/${streak.nextStage}`,
+                true
+            );
+        }
+
+        setProgress(
+            `Cosmic Battle done (${resolved.kind}): ${wins}/${attempts} wins, ${coins} coins`,
+            true
+        );
+        return { ok: true, wins, attempts, coins, kind: resolved.kind };
+    }
+
     function getDefaultOthersSettingsState() {
         return othersTasks.reduce((acc, task) => {
             acc[task.id] = true;
@@ -6405,6 +6580,10 @@ async function executeGetDailyBonus() {
             executionState = migrateAutoBattleExecutionState(providerSettings.executionState || {});
             hideButtonsState = providerSettings.hideButtonsState || {};
             othersSettingsState = normalizeOthersSettingsState(providerSettings.othersSettingsState || {});
+            eventSettingsState = normalizeEventSettingsState(providerSettings.eventSettingsState || {});
+            if (!providerSettings.eventSettingsState || providerSettings.eventSettingsState.epicBrawlEnabled === undefined) {
+                eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
+            }
         } else {
             console.log(`${EXTENSION_NAME}: Settings Provider not found. Loading account-specific settings.`);
             isProviderActive = false;
@@ -6413,16 +6592,26 @@ async function executeGetDailyBonus() {
             othersSettingsState = normalizeOthersSettingsState(
                 HWHFuncs.getSaveVal('autoDaily_othersSettingsState', getDefaultOthersSettingsState())
             );
+            eventSettingsState = normalizeEventSettingsState(
+                HWHFuncs.getSaveVal('autoDaily_eventSettingsState', null) || {}
+            );
+            const rawEvents = HWHFuncs.getSaveVal('autoDaily_eventSettingsState', null);
+            if (!rawEvents || rawEvents.epicBrawlEnabled === undefined) {
+                eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
+            }
         }
+        syncEpicBrawlOthersSetting();
     }
 
     function saveAllSettings() {
         const { HWHFuncs } = window;
+        syncEpicBrawlOthersSetting();
         // We only save if the provider is NOT active. The provider is the source of truth when present.
         if (!isProviderActive) {
             HWHFuncs.setSaveVal('autoDaily_executionState', executionState);
             HWHFuncs.setSaveVal('autoDaily_hideButtonsState', hideButtonsState);
             HWHFuncs.setSaveVal('autoDaily_othersSettingsState', othersSettingsState);
+            HWHFuncs.setSaveVal('autoDaily_eventSettingsState', eventSettingsState);
         }
     }
 
@@ -6462,6 +6651,16 @@ async function executeGetDailyBonus() {
             .auto-daily-footer { border-top: 1px solid #ce9767; margin-top: 15px; padding-top: 15px; display: flex; flex-wrap: wrap; gap: 15px 20px; font-size: 14px; align-items: center; }
             .auto-daily-footer a, .auto-daily-footer .sync-button { color: #fce1ac; text-decoration: none; cursor: pointer; background: none; border: none; font-size: 20px; padding: 0; margin-right: 10px; }
             .auto-daily-footer a:hover { text-decoration: underline; }
+            .auto-daily-events-section { border-top: 1px solid #ce9767; padding-top: 12px; }
+            .auto-daily-events-section h2 { text-align: left; margin: 0 0 10px 0; border-bottom: none; padding-bottom: 0; font-size: 18px; }
+            .auto-daily-event-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 5px; border-bottom: 1px solid #4a3422; }
+            .auto-daily-event-row label.event-enable { display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 160px; color: #fce1ac; }
+            .auto-daily-event-row select { background: #2a1a10; color: #fce1ac; border: 1px solid #ce9767; border-radius: 4px; padding: 4px 8px; }
+            .auto-daily-live-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: bold; padding: 3px 10px; border-radius: 12px; min-width: 70px; justify-content: center; }
+            .auto-daily-live-badge.live { background: #1a4a1a; color: #7dffa0; border: 1px solid #3a8a3a; }
+            .auto-daily-live-badge.off { background: #3a1a1a; color: #ff9a9a; border: 1px solid #8a3a3a; }
+            .auto-daily-live-badge.checking { background: #3a3422; color: #fce1ac; border: 1px solid #ce9767; }
+            .auto-daily-event-meta { font-size: 12px; color: #c9a67a; }
             .sync-settings-popup-main, .others-settings-popup-main { min-width: 400px !important; }
             .sync-settings-footer, .others-settings-footer { display: flex; justify-content: space-around; margin-top: 15px; }
         `;
@@ -6485,6 +6684,23 @@ async function executeGetDailyBonus() {
                 <div class="auto-daily-popup-column"><h2>DO ALL</h2><ul class="auto-daily-task-list" id="auto-daily-doall-list"></ul></div>
                 <div class="auto-daily-popup-column"><h2>QUESTS</h2><ul class="auto-daily-task-list" id="auto-daily-quests-list"></ul></div>
                 <div class="auto-daily-popup-column"><h2>UPGRADE</h2><ul class="auto-daily-task-list" id="auto-daily-upgrade-list"></ul></div>
+            </div>
+            <div class="auto-daily-events-section">
+                <h2>EVENTS</h2>
+                <div class="auto-daily-event-row" id="epic-brawl-event-row">
+                    <label class="event-enable">
+                        <input type="checkbox" id="epic-brawl-enabled" ${eventSettingsState.epicBrawlEnabled ? 'checked' : ''}>
+                        <span>Cosmic Battle</span>
+                    </label>
+                    <select id="epic-brawl-mode" title="Team type for Cosmic Battle">
+                        <option value="auto" ${eventSettingsState.epicBrawlMode === 'auto' ? 'selected' : ''}>Auto (hero if set)</option>
+                        <option value="hero" ${eventSettingsState.epicBrawlMode === 'hero' ? 'selected' : ''}>Hero</option>
+                        <option value="titan" ${eventSettingsState.epicBrawlMode === 'titan' ? 'selected' : ''}>Titan</option>
+                    </select>
+                    <span class="auto-daily-live-badge checking" id="epic-brawl-live-badge">…</span>
+                    <span class="auto-daily-event-meta" id="epic-brawl-meta"></span>
+                    <button class="auto-daily-fire-btn" id="epic-brawl-run-btn" title="Run Cosmic Battle now">${UI_ICON.fire}</button>
+                </div>
             </div>
             <div class="auto-daily-footer">
                 <button class="sync-button" id="sync-settings-btn" title="Save/Load Settings">${UI_ICON.save}</button>
@@ -6544,7 +6760,62 @@ async function executeGetDailyBonus() {
             }
         });
         document.getElementById('sync-settings-btn').addEventListener('click', createSyncPopup);
+
+        const epicEnabled = document.getElementById('epic-brawl-enabled');
+        const epicMode = document.getElementById('epic-brawl-mode');
+        const epicRunBtn = document.getElementById('epic-brawl-run-btn');
+        if (epicEnabled) {
+            epicEnabled.addEventListener('change', (e) => {
+                eventSettingsState.epicBrawlEnabled = e.target.checked;
+                saveAllSettings();
+                applyOthersVisibility();
+            });
+        }
+        if (epicMode) {
+            epicMode.addEventListener('change', (e) => {
+                eventSettingsState.epicBrawlMode = e.target.value;
+                saveAllSettings();
+            });
+        }
+        if (epicRunBtn) {
+            epicRunBtn.addEventListener('click', async () => {
+                epicRunBtn.disabled = true;
+                try {
+                    await executeEpicBrawl({ mode: eventSettingsState.epicBrawlMode });
+                    await refreshEpicBrawlStatusUI();
+                } finally {
+                    epicRunBtn.disabled = false;
+                }
+            });
+        }
+        refreshEpicBrawlStatusUI();
         updateQuestStatus();
+    }
+
+    async function refreshEpicBrawlStatusUI() {
+        const badge = document.getElementById('epic-brawl-live-badge');
+        const meta = document.getElementById('epic-brawl-meta');
+        if (!badge) return;
+        badge.className = 'auto-daily-live-badge checking';
+        badge.textContent = '…';
+        if (meta) meta.textContent = 'Checking…';
+        try {
+            const status = await checkEpicBrawlStatus();
+            badge.className = `auto-daily-live-badge ${status.live ? 'live' : 'off'}`;
+            badge.textContent = status.live ? 'LIVE' : 'OFF';
+            const teams = [];
+            if (status.hasHeroTeam) teams.push('hero team');
+            if (status.hasTitanTeam) teams.push('titan team');
+            const parts = [];
+            if (status.live) parts.push(`${status.attempts} attempt${status.attempts === 1 ? '' : 's'}`);
+            if (teams.length) parts.push(teams.join(' + '));
+            else if (status.live) parts.push('no saved team');
+            if (meta) meta.textContent = parts.join(' · ') || (status.error ? `Error: ${status.error}` : '');
+        } catch (e) {
+            badge.className = 'auto-daily-live-badge off';
+            badge.textContent = 'OFF';
+            if (meta) meta.textContent = e?.message || 'Status check failed';
+        }
     }
     function createOthersPopup() {
         if (document.getElementById('others-settings-popup-container')) return;
@@ -6573,17 +6844,22 @@ async function executeGetDailyBonus() {
         popup.addEventListener('change', (e) => {
             if (e.target.type === 'checkbox') {
                 othersSettingsState[e.target.dataset.taskId] = e.target.checked;
+                if (e.target.dataset.taskId === 'EPIC_BRAWL') {
+                    eventSettingsState.epicBrawlEnabled = e.target.checked;
+                }
                 saveAllSettings();
                 applyOthersVisibility();
             }
         });
         document.getElementById('others-select-all').addEventListener('click', () => {
             popup.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; othersSettingsState[cb.dataset.taskId] = true; });
+            eventSettingsState.epicBrawlEnabled = true;
             saveAllSettings();
             applyOthersVisibility();
         });
         document.getElementById('others-select-none').addEventListener('click', () => {
             popup.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; othersSettingsState[cb.dataset.taskId] = false; });
+            eventSettingsState.epicBrawlEnabled = false;
             saveAllSettings();
             applyOthersVisibility();
         });
@@ -6620,7 +6896,7 @@ async function executeGetDailyBonus() {
     }
     function handleExport() {
         const { HWHFuncs } = window;
-        const settingsToExport = { executionState, hideButtonsState, othersSettingsState };
+        const settingsToExport = { executionState, hideButtonsState, othersSettingsState, eventSettingsState };
         const settingsJSON = JSON.stringify(settingsToExport, null, 2);
         const blob = new Blob([settingsJSON], {type: 'application/json'});
         const url = URL.createObjectURL(blob);
@@ -6648,6 +6924,11 @@ async function executeGetDailyBonus() {
                         executionState = migrateAutoBattleExecutionState(importedSettings.executionState);
                         hideButtonsState = importedSettings.hideButtonsState;
                         othersSettingsState = normalizeOthersSettingsState(importedSettings.othersSettingsState);
+                        eventSettingsState = normalizeEventSettingsState(importedSettings.eventSettingsState || {});
+                        if (!importedSettings.eventSettingsState || importedSettings.eventSettingsState.epicBrawlEnabled === undefined) {
+                            eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
+                        }
+                        syncEpicBrawlOthersSetting();
                         saveAllSettings();
                         applyButtonVisibility();
                         applyOthersVisibility();
@@ -6666,7 +6947,7 @@ async function executeGetDailyBonus() {
     function handleSetAsDefault() {
         const { HWHFuncs } = window;
         if (typeof window.setAutoDailySettings === 'function') {
-            const allSettings = { executionState, hideButtonsState, othersSettingsState };
+            const allSettings = { executionState, hideButtonsState, othersSettingsState, eventSettingsState };
             window.setAutoDailySettings(allSettings);
             HWHFuncs.setProgress('Current settings saved as default for the Provider!', true);
         } else {
@@ -7054,6 +7335,14 @@ async function executeGetDailyBonus() {
             try {
                 await executeTidyInventoryIfAvailable();
                 await executeAutoFarmIfAvailable();
+                if (eventSettingsState.epicBrawlEnabled) {
+                    try {
+                        await executeEpicBrawl({ mode: eventSettingsState.epicBrawlMode });
+                        await sleep(500);
+                    } catch (e) {
+                        console.warn('[Auto Daily] Cosmic Battle auto-run failed:', e);
+                    }
+                }
                 for (const task of ordered) {
                     if (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
                         console.log('[Auto Daily] Stopping auto-run — dungeon started');
