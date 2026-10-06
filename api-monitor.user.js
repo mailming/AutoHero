@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.6
+// @version      3.7
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
@@ -878,10 +878,30 @@
             });
 
             this.addEventListener('load', function() {
-                let responseBody = this.responseText;
+                let responseBody;
                 try {
-                    responseBody = JSON.parse(this.responseText);
-                } catch (e) { /* keep text */ }
+                    const rt = this.responseType || '';
+                    if (rt === '' || rt === 'text') {
+                        responseBody = this.responseText;
+                        try { responseBody = JSON.parse(responseBody); } catch (e) { /* keep text */ }
+                    } else if (rt === 'json') {
+                        responseBody = this.response;
+                    } else if (rt === 'arraybuffer') {
+                        const buf = this.response;
+                        try {
+                            const text = new TextDecoder().decode(buf);
+                            try { responseBody = JSON.parse(text); } catch (e) { responseBody = text; }
+                        } catch (e) {
+                            responseBody = `[ArrayBuffer ${buf && buf.byteLength} bytes]`;
+                        }
+                    } else if (rt === 'blob') {
+                        responseBody = `[Blob ${this.response && this.response.size} bytes, type=${this.response && this.response.type}]`;
+                    } else {
+                        responseBody = this.response;
+                    }
+                } catch (e) {
+                    responseBody = `Unable to read response: ${e.message}`;
+                }
 
                 if (typeof responseBody === 'string' && responseBody.length > CONFIG.maxResponseSize) {
                     responseBody = responseBody.substring(0, CONFIG.maxResponseSize) + '...[truncated]';
@@ -1077,7 +1097,7 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.6 loaded (page context, document-start)');
+    console.log('🚀 API Monitor v3.7 loaded (page context, document-start)');
     console.log('📊 Commands: window.apiMonitor.showData() | clearData() | exportData("json") | forceWriteLogs()');
     console.log(`📁 File logging: ${CONFIG.enableFileLogging ? 'ON' : 'OFF (use Export / Write Logs)'} | onlyGameApi: ${CONFIG.onlyGameApi}`);
     
