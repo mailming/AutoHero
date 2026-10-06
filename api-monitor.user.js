@@ -1,22 +1,24 @@
 // ==UserScript==
 // @name         API Monitor
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.6
 // @description  Comprehensive API monitoring with integrated lib.data monitoring for web applications
 // @author       AutoHero Project
 // @match        *://hero-wars.com/*
 // @match        *://www.hero-wars.com/*
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_addStyle
-// @grant        GM_download
+// @match        https://apps-1701433570146040.apps.fbsbx.com/*
+// @run-at       document-start
+// @grant        none
 // @updateURL   https://github.com/mailming/AutoHero/raw/develop/api-monitor.user.js
 // @downloadURL https://github.com/mailming/AutoHero/raw/develop/api-monitor.user.js
 // ==/UserScript==
 
 (function() {
     'use strict';
-    
+
+    // Must run in page context (@grant none). GM_* grants put the script in a
+    // Tampermonkey sandbox, so patching window.fetch/XHR never sees game traffic.
+
     // Configuration
     const CONFIG = {
         maxRequests: 1000,
@@ -24,17 +26,44 @@
         enableUI: true, // Enable UI for testing and debugging
         enableExport: true,
         enableFiltering: true,
+        // Only log Hero Wars / Nexters API traffic (set false to capture everything)
+        onlyGameApi: true,
         logLevel: 'all', // 'all', 'errors', 'requests', 'responses'
-        enableFileLogging: true, // Enable file logging by default
-        logToFileInterval: 3000, // Log to file every 3 seconds (more frequent)
+        enableFileLogging: false, // Manual export only — auto-download every few seconds is blocked by browsers
+        logToFileInterval: 30000, // Only used if enableFileLogging is true
         maxLogFileSize: 10 * 1024 * 1024, // 10MB max log file size
         logFormat: 'json', // 'json', 'text', 'csv'
         // Lib.data monitoring configuration
         enableLibDataMonitoring: false, // Enable lib.data monitoring
         libDataCheckInterval: 3000, // Check lib.data every 3 seconds
         libDataLogChanges: true, // Log lib.data changes to console
-        libDataSaveChanges: true // Save lib.data changes to files
+        libDataSaveChanges: false // Saving every change triggers download spam
     };
+
+    function shouldCaptureUrl(url) {
+        if (!CONFIG.enableFiltering || !CONFIG.onlyGameApi) return true;
+        if (!url) return false;
+        const s = String(url);
+        return s.includes('nextersglobal.com') ||
+            s.includes('hero-wars.com') ||
+            s.includes('/api/');
+    }
+
+    function safeParseBody(data) {
+        if (data == null) return data;
+        if (typeof data === 'string') {
+            try { return JSON.parse(data); } catch (e) { return data; }
+        }
+        if (data instanceof ArrayBuffer) {
+            try {
+                const text = new TextDecoder().decode(data);
+                try { return JSON.parse(text); } catch (e) { return text; }
+            } catch (e) {
+                return `[ArrayBuffer ${data.byteLength} bytes]`;
+            }
+        }
+        return data;
+    }
     
     // Initialize API Monitor - Make it globally accessible
     const apiMonitor = {
@@ -70,7 +99,10 @@
             apiMonitor.stats.totalRequests++;
             
             if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'requests') {
-                console.log('🔵 API_REQUEST:', JSON.stringify(req, null, 2));
+                const calls = req.body && req.body.calls
+                    ? req.body.calls.map(c => c.name).join(', ')
+                    : '';
+                console.log('🔵 API_REQUEST:', req.method, req.url, calls || '');
             }
             
             // Add to pending logs for file writing
@@ -80,7 +112,6 @@
                     data: req,
                     timestamp: new Date().toISOString()
                 });
-                console.log('🔍 DEBUG: Added request to pendingLogs, count =', apiMonitor.pendingLogs.length);
             }
             
             apiMonitor.updateUI();
@@ -96,7 +127,7 @@
             apiMonitor.stats.totalResponses++;
             
             if (CONFIG.logLevel === 'all' || CONFIG.logLevel === 'responses') {
-                console.log('🟢 API_RESPONSE:', JSON.stringify(resp, null, 2));
+                console.log('🟢 API_RESPONSE:', resp.status, resp.statusText, 'reqId=', resp.requestId);
             }
             
             // Add to pending logs for file writing
@@ -106,7 +137,6 @@
                     data: resp,
                     timestamp: new Date().toISOString()
                 });
-                console.log('🔍 DEBUG: Added response to pendingLogs, count =', apiMonitor.pendingLogs.length);
             }
             
             apiMonitor.updateUI();
@@ -161,7 +191,8 @@
                 totalErrors: 0,
                 startTime: Date.now(),
                 logsWritten: 0,
-                lastLogTime: Date.now()
+                lastLogTime: Date.now(),
+                libDataChanges: 0
             };
             apiMonitor.updateUI();
             console.log('🧹 API Monitor data cleared');
@@ -169,20 +200,13 @@
         
         // Write logs to file
         writeLogsToFile: function() {
-            console.log('🔍 DEBUG: writeLogsToFile called');
-            console.log('🔍 DEBUG: enableFileLogging =', CONFIG.enableFileLogging);
-            console.log('🔍 DEBUG: pendingLogs.length =', apiMonitor.pendingLogs.length);
-            
             if (!CONFIG.enableFileLogging || apiMonitor.pendingLogs.length === 0) {
-                console.log('🔍 DEBUG: Skipping file write - logging disabled or no pending logs');
                 return;
             }
             
             try {
-                console.log('🔍 DEBUG: Starting file write process');
                 let logContent = '';
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                console.log('🔍 DEBUG: Generated timestamp =', timestamp);
                 
                 if (CONFIG.logFormat === 'json') {
                     logContent = JSON.stringify({
@@ -212,11 +236,8 @@
                 
                 // Create filename with timestamp
                 const filename = `AutoHero-API-Logs-${timestamp}.${CONFIG.logFormat === 'json' ? 'json' : CONFIG.logFormat === 'csv' ? 'csv' : 'txt'}`;
-                console.log('🔍 DEBUG: Generated filename =', filename);
-                console.log('🔍 DEBUG: Log content length =', logContent.length);
                 
                 // Use proper download method
-                console.log('🔍 DEBUG: Creating download...');
                 const blob = new Blob([logContent], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -227,7 +248,6 @@
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                console.log('🔍 DEBUG: Download created successfully');
                 
                 // Update stats
                 apiMonitor.stats.logsWritten += apiMonitor.pendingLogs.length;
@@ -240,24 +260,20 @@
                 
             } catch (error) {
                 console.error('❌ Error writing logs to file:', error);
-                console.error('🔍 DEBUG: Error details:', error.message, error.stack);
             }
         },
         
         // Force write logs to file immediately
         forceWriteLogs: function() {
-            console.log('🔍 DEBUG: forceWriteLogs called');
-            
             // Get all current data instead of just pending logs
             const allData = apiMonitor.getAllData();
             
             if (allData.requests.length === 0 && allData.responses.length === 0 && allData.errors.length === 0) {
-                console.log('🔍 DEBUG: No data to write - no requests, responses, or errors captured');
+                console.log('📁 No data to write');
                 return;
             }
             
             try {
-                console.log('🔍 DEBUG: Writing all current data to file');
                 let logContent = '';
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                 
@@ -316,11 +332,7 @@
                 }
                 
                 const filename = `AutoHero-API-Logs-${timestamp}.${CONFIG.logFormat === 'json' ? 'json' : CONFIG.logFormat === 'csv' ? 'csv' : 'txt'}`;
-                console.log('🔍 DEBUG: Generated filename =', filename);
-                console.log('🔍 DEBUG: Log content length =', logContent.length);
                 
-                // Use proper download method
-                console.log('🔍 DEBUG: Creating download...');
                 const blob = new Blob([logContent], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -331,7 +343,6 @@
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                console.log('🔍 DEBUG: Download created successfully');
                 
                 // Update stats
                 apiMonitor.stats.logsWritten += 1; // Count as one manual write
@@ -342,7 +353,6 @@
                 
             } catch (error) {
                 console.error('❌ Error writing logs to file:', error);
-                console.error('🔍 DEBUG: Error details:', error.message, error.stack);
             }
         },
         
@@ -746,40 +756,44 @@
         }
     };
     
-    // Make apiMonitor globally accessible
+    // Make apiMonitor globally accessible (page context — works in DevTools console)
     window.apiMonitor = apiMonitor;
-    
-    // Intercept fetch requests
-    const originalFetch = window.fetch;
+
+    // ---- Interception (prototype hooks, same approach as HeroWarsHelper) ----
+    // Replacing window.XMLHttpRequest with a wrapper constructor breaks other
+    // scripts that patch XMLHttpRequest.prototype (including HWH).
+
+    const originalFetch = window.fetch.bind(window);
     window.fetch = async function(...args) {
-        console.log('🔍 DEBUG: Fetch intercepted:', args[0]);
-        console.log('🔍 DEBUG: apiMonitor exists:', typeof window.apiMonitor !== 'undefined');
-        console.log('🔍 DEBUG: CONFIG.logLevel:', CONFIG.logLevel);
+        const url = typeof args[0] === 'string' ? args[0] :
+            (args[0] && args[0].url) ? args[0].url : String(args[0]);
+        const init = args[1] || {};
+        const capture = shouldCaptureUrl(url);
         const requestId = Date.now() + Math.random();
-        const request = {
-            id: requestId,
-            type: 'fetch',
-            url: args[0],
-            method: args[1]?.method || 'GET',
-            headers: args[1]?.headers || {},
-            body: args[1]?.body,
-            timestamp: new Date().toISOString()
-        };
-        
-        console.log('🔍 DEBUG: About to call addRequest with:', request);
-        window.apiMonitor.addRequest(request);
-        console.log('🔍 DEBUG: addRequest completed, total requests:', window.apiMonitor.stats.totalRequests);
-        
+
+        if (capture) {
+            const request = {
+                id: requestId,
+                type: 'fetch',
+                url: url,
+                method: init.method || (args[0] && args[0].method) || 'GET',
+                headers: init.headers || {},
+                body: safeParseBody(init.body),
+                timestamp: new Date().toISOString()
+            };
+            apiMonitor.addRequest(request);
+        }
+
         try {
-            const response = await originalFetch.apply(this, args);
-            
-            // Clone response to read body without consuming it
+            const response = await originalFetch(...args);
+            if (!capture) return response;
+
             const responseClone = response.clone();
             let responseBody;
-            
+
             try {
                 const contentType = response.headers.get('content-type') || '';
-                
+
                 if (contentType.includes('application/json')) {
                     responseBody = await responseClone.json();
                 } else if (contentType.includes('text/')) {
@@ -791,7 +805,6 @@
                 } else if (contentType.includes('audio/')) {
                     responseBody = '[Binary Audio Data]';
                 } else {
-                    // Try to read as text, fallback to array buffer info
                     try {
                         responseBody = await responseClone.text();
                     } catch (e) {
@@ -799,127 +812,132 @@
                         responseBody = `[Binary Data: ${arrayBuffer.byteLength} bytes]`;
                     }
                 }
-                
-                // Limit response size
+
                 if (typeof responseBody === 'string' && responseBody.length > CONFIG.maxResponseSize) {
                     responseBody = responseBody.substring(0, CONFIG.maxResponseSize) + '...[truncated]';
                 }
-                
             } catch (e) {
                 responseBody = `Unable to read response body: ${e.message}`;
             }
-            
-            const responseData = {
+
+            apiMonitor.addResponse({
                 requestId: requestId,
                 status: response.status,
                 statusText: response.statusText,
                 headers: Object.fromEntries(response.headers),
                 body: responseBody,
                 timestamp: new Date().toISOString()
-            };
-            
-            window.apiMonitor.addResponse(responseData);
+            });
             return response;
-            
         } catch (error) {
-            const errorData = {
-                requestId: requestId,
-                error: error.message,
-                stack: error.stack,
-                timestamp: new Date().toISOString()
-            };
-            
-            window.apiMonitor.addError(errorData);
+            if (capture) {
+                apiMonitor.addError({
+                    requestId: requestId,
+                    error: error.message,
+                    stack: error.stack,
+                    timestamp: new Date().toISOString()
+                });
+            }
             throw error;
         }
     };
-    
-    // Intercept XMLHttpRequest
-    const originalXHR = window.XMLHttpRequest;
-    window.XMLHttpRequest = function() {
-        const xhr = new originalXHR();
-        const originalOpen = xhr.open;
-        const originalSend = xhr.send;
-        
-        xhr.open = function(method, url, ...args) {
-            console.log('🔍 DEBUG: XHR intercepted:', method, url);
-            const requestId = Date.now() + Math.random();
-            const request = {
-                id: requestId,
-                type: 'xhr',
-                method: method,
-                url: url,
-                timestamp: new Date().toISOString()
-            };
-            
-            window.apiMonitor.addRequest(request);
-            xhr._requestId = requestId;
-            
-            return originalOpen.apply(this, [method, url, ...args]);
+
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    const originalXHRSend = XMLHttpRequest.prototype.send;
+    const originalXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+
+    XMLHttpRequest.prototype.open = function(method, url, ...args) {
+        this._apiMonitor = {
+            id: Date.now() + Math.random(),
+            method: method,
+            url: url,
+            headers: {},
+            capture: shouldCaptureUrl(url)
         };
-        
-        xhr.send = function(data) {
-            if (data) {
-                console.log('XHR_DATA:', data);
-            }
-            
-            xhr.addEventListener('load', function() {
-                const responseData = {
-                    requestId: xhr._requestId,
-                    status: xhr.status,
-                    statusText: xhr.statusText,
-                    response: xhr.responseText,
-                    headers: {},
-                    timestamp: new Date().toISOString()
-                };
-                
-                // Try to parse response headers
+        return originalXHROpen.apply(this, [method, url, ...args]);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+        if (this._apiMonitor && this._apiMonitor.capture) {
+            this._apiMonitor.headers[name] = value;
+        }
+        return originalXHRSetRequestHeader.apply(this, [name, value]);
+    };
+
+    XMLHttpRequest.prototype.send = function(data) {
+        const meta = this._apiMonitor;
+        if (meta && meta.capture) {
+            apiMonitor.addRequest({
+                id: meta.id,
+                type: 'xhr',
+                method: meta.method,
+                url: meta.url,
+                headers: meta.headers,
+                body: safeParseBody(data),
+                timestamp: new Date().toISOString()
+            });
+
+            this.addEventListener('load', function() {
+                let responseBody = this.responseText;
                 try {
-                    const responseHeaders = xhr.getAllResponseHeaders();
-                    if (responseHeaders) {
-                        responseHeaders.split('\r\n').forEach(line => {
-                            const parts = line.split(': ');
-                            if (parts.length === 2) {
-                                responseData.headers[parts[0]] = parts[1];
+                    responseBody = JSON.parse(this.responseText);
+                } catch (e) { /* keep text */ }
+
+                if (typeof responseBody === 'string' && responseBody.length > CONFIG.maxResponseSize) {
+                    responseBody = responseBody.substring(0, CONFIG.maxResponseSize) + '...[truncated]';
+                }
+
+                const headers = {};
+                try {
+                    const raw = this.getAllResponseHeaders();
+                    if (raw) {
+                        raw.split(/\r?\n/).forEach(line => {
+                            const idx = line.indexOf(':');
+                            if (idx > 0) {
+                                headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
                             }
                         });
                     }
-                } catch (e) {
-                    console.log('Could not parse XHR headers:', e);
-                }
-                
-                window.apiMonitor.addResponse(responseData);
+                } catch (e) { /* ignore */ }
+
+                apiMonitor.addResponse({
+                    requestId: meta.id,
+                    status: this.status,
+                    statusText: this.statusText,
+                    body: responseBody,
+                    headers: headers,
+                    timestamp: new Date().toISOString()
+                });
             });
-            
-            xhr.addEventListener('error', function() {
-                const errorData = {
-                    requestId: xhr._requestId,
+
+            this.addEventListener('error', function() {
+                apiMonitor.addError({
+                    requestId: meta.id,
                     error: 'XHR Error',
                     timestamp: new Date().toISOString()
-                };
-                
-                window.apiMonitor.addError(errorData);
+                });
             });
-            
-            xhr.addEventListener('timeout', function() {
-                const errorData = {
-                    requestId: xhr._requestId,
+
+            this.addEventListener('timeout', function() {
+                apiMonitor.addError({
+                    requestId: meta.id,
                     error: 'XHR Timeout',
                     timestamp: new Date().toISOString()
-                };
-                
-                window.apiMonitor.addError(errorData);
+                });
             });
-            
-            return originalSend.apply(this, [data]);
-        };
-        
-        return xhr;
+        }
+
+        return originalXHRSend.apply(this, [data]);
     };
     
     // Add UI elements when page loads
     function addUI() {
         if (!CONFIG.enableUI) return;
+        if (!document.body) {
+            document.addEventListener('DOMContentLoaded', addUI, { once: true });
+            return;
+        }
+        if (document.getElementById('api-monitor-stats')) return;
         
         // Add stats display
         const statsDiv = document.createElement('div');
@@ -1059,64 +1077,46 @@
     }
     
     // Console commands
-    console.log('🚀 API Monitor v3.5 loaded! (with lib.data monitoring)');
-    console.log('🔍 DEBUG: Script loaded successfully on:', window.location.href);
-    console.log('🔍 DEBUG: CONFIG.enableFileLogging =', CONFIG.enableFileLogging);
-    console.log('🔍 DEBUG: CONFIG.logToFileInterval =', CONFIG.logToFileInterval);
-    console.log('🔍 DEBUG: Auto-logging will start when API requests are detected');
-    console.log('📊 Available commands:');
-    console.log('  - window.apiMonitor.showData() - View all captured data');
-    console.log('  - window.apiMonitor.clearData() - Clear all data');
-    console.log('  - window.apiMonitor.exportData("json") - Export as JSON');
-    console.log('  - window.apiMonitor.exportData("har") - Export as HAR');
-    console.log('  - window.apiMonitor.getAllData() - Get raw data');
-    console.log('📁 File Logging commands:');
-    console.log('  - window.apiMonitor.forceWriteLogs() - Write logs to file immediately');
-    console.log('  - window.apiMonitor.getLogStats() - Get logging statistics');
-    console.log(`  - File logging: ${CONFIG.enableFileLogging ? 'ENABLED' : 'DISABLED'}`);
-    console.log(`  - Log format: ${CONFIG.logFormat}`);
-    console.log(`  - Auto-save interval: ${CONFIG.logToFileInterval}ms`);
-    console.log('🎮 Lib.data monitoring commands:');
-    console.log('  - window.apiMonitor.startLibDataMonitoring() - Start lib.data monitoring');
-    console.log('  - window.apiMonitor.stopLibDataMonitoring() - Stop lib.data monitoring');
-    console.log('  - window.apiMonitor.getLibDataStats() - Get lib.data statistics');
-    console.log('  - window.apiMonitor.forceLibDataCheck() - Force check lib.data now');
-    console.log(`  - Lib.data monitoring: ${CONFIG.enableLibDataMonitoring ? 'ENABLED' : 'DISABLED'}`);
-    console.log(`  - Check interval: ${CONFIG.libDataCheckInterval}ms`);
+    console.log('🚀 API Monitor v3.6 loaded (page context, document-start)');
+    console.log('📊 Commands: window.apiMonitor.showData() | clearData() | exportData("json") | forceWriteLogs()');
+    console.log(`📁 File logging: ${CONFIG.enableFileLogging ? 'ON' : 'OFF (use Export / Write Logs)'} | onlyGameApi: ${CONFIG.onlyGameApi}`);
     
-    // Auto-save data periodically
+    // Auto-save data periodically (localStorage — no GM grants / sandbox)
     setInterval(() => {
-        const data = window.apiMonitor.getAllData();
+        const data = apiMonitor.getAllData();
         if (data.requests.length > 0 || data.responses.length > 0) {
-            GM_setValue('apiMonitorData', data);
+            try {
+                localStorage.setItem('apiMonitorData', JSON.stringify({
+                    stats: data.stats,
+                    requestCount: data.requests.length,
+                    responseCount: data.responses.length,
+                    errorCount: data.errors.length,
+                    timestamp: data.timestamp
+                }));
+            } catch (e) {
+                // Quota exceeded or private mode — ignore
+            }
         }
-    }, 30000); // Save every 30 seconds
+    }, 30000);
     
-    // Auto-write logs to file periodically
+    // Auto-write logs to file periodically (disabled by default)
     if (CONFIG.enableFileLogging) {
         setInterval(() => {
-            console.log('🔍 DEBUG: Auto-logging check - pendingLogs.length =', window.apiMonitor.pendingLogs.length);
-            if (window.apiMonitor.pendingLogs.length > 0) {
-                console.log('🔍 DEBUG: Auto-logging triggered - calling writeLogsToFile');
-                window.apiMonitor.writeLogsToFile();
-            } else {
-                console.log('🔍 DEBUG: Auto-logging skipped - no pending logs');
+            if (apiMonitor.pendingLogs.length > 0) {
+                apiMonitor.writeLogsToFile();
             }
         }, CONFIG.logToFileInterval);
-        
-        console.log(`📁 Auto file logging enabled - writing every ${CONFIG.logToFileInterval}ms`);
+        console.log(`📁 Auto file logging every ${CONFIG.logToFileInterval}ms`);
     }
     
     // Auto-start lib.data monitoring
     if (CONFIG.enableLibDataMonitoring) {
-        // Wait a bit for the page to load, then start monitoring
         setTimeout(() => {
             if (typeof lib !== 'undefined' && lib.data) {
                 console.log('🎯 lib.data detected, auto-starting monitoring...');
                 apiMonitor.startLibDataMonitoring();
             } else {
                 console.log('⏳ Waiting for lib.data to become available...');
-                // Check every second for lib.data
                 const checkInterval = setInterval(() => {
                     if (typeof lib !== 'undefined' && lib.data) {
                         clearInterval(checkInterval);
@@ -1125,29 +1125,7 @@
                     }
                 }, 1000);
             }
-        }, 2000); // Wait 2 seconds after page load
-        
-        console.log(`🎮 Auto lib.data monitoring enabled - will start when lib.data is available`);
+        }, 2000);
     }
-    
-    
-    // Test API interception with some sample requests (ENABLED FOR DEBUGGING)
-    setTimeout(() => {
-        console.log('🔍 DEBUG: Testing API interception...');
-        
-        // Test fetch request
-        fetch('https://httpbin.org/get?test=api-monitor')
-            .then(response => response.json())
-            .then(data => console.log('🔍 DEBUG: Fetch test completed:', data))
-            .catch(error => console.error('🔍 DEBUG: Fetch test failed:', error));
-            
-        // Test XHR request
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', 'https://httpbin.org/get?test=xhr-monitor');
-        xhr.onload = () => console.log('🔍 DEBUG: XHR test completed:', xhr.responseText);
-        xhr.onerror = () => console.error('🔍 DEBUG: XHR test failed');
-        xhr.send();
-        
-    }, 3000);
     
 })();
