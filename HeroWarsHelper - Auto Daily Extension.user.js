@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.29
+// @version      3.5.34
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.29";
+    const EXTENSION_VERSION = "3.5.34";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2469,6 +2469,33 @@ async function executeGetDailyBonus() {
         BATTLE_VERSION: 273,
         DELAY_BETWEEN_BATTLES: 1000,
         DELAY_BATTLE_COMPLETE: 100,
+        /**
+         * Fallback Guild War map (lib.data.clanWar). Forts with tierUnlock unlock the next map tier.
+         * Fort 4 = Bridge (unlocks tier 2); forts 7/8/9 = Fire/Nature/Ice (unlock Citadel tier 3).
+         */
+        GUILD_WAR_FORTIFICATION_FALLBACK: {
+            1: { id: 1, pointReward: 40, tier: 1, tierUnlock: null },
+            2: { id: 2, pointReward: 40, tier: 1, tierUnlock: null },
+            3: { id: 3, pointReward: 40, tier: 1, tierUnlock: null },
+            4: { id: 4, pointReward: 60, tier: 1, tierUnlock: 2 },
+            5: { id: 5, pointReward: 60, tier: 2, tierUnlock: null },
+            6: { id: 6, pointReward: 60, tier: 2, tierUnlock: null },
+            7: { id: 7, pointReward: 60, tier: 2, tierUnlock: 3 },
+            8: { id: 8, pointReward: 60, tier: 2, tierUnlock: 3 },
+            9: { id: 9, pointReward: 60, tier: 2, tierUnlock: 3 },
+            10: { id: 10, pointReward: 120, tier: 3, tierUnlock: null },
+        },
+        GUILD_WAR_SLOT_FALLBACK: {
+            1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3,
+            7: 4, 8: 4, 9: 4, 34: 4,
+            10: 5, 11: 5, 12: 5, 35: 5,
+            13: 6, 14: 6, 15: 6, 36: 6,
+            16: 7, 17: 7, 18: 7, 37: 7,
+            19: 8, 20: 8, 21: 8, 38: 8,
+            22: 9, 23: 9, 24: 9, 39: 9,
+            25: 10, 26: 10, 27: 10, 28: 10, 29: 10, 30: 10, 40: 10,
+            31: 1, 32: 2, 33: 3,
+        },
         ARENA_ATTEMPTS_REFILLABLE_ID: 6,
         GRAND_ARENA_ATTEMPTS_REFILLABLE_ID: 21,
         DEFAULT_PET_ID: 6005,
@@ -4227,7 +4254,7 @@ async function executeGetDailyBonus() {
             if (!this.teamInfo) return 0;
             const source = isTitan ? this.teamInfo.titansById : this.teamInfo.heroesById;
             if (!source) return 0;
-            const unit = source[unitId];
+            const unit = source[unitId] || source[String(unitId)];
             const p = unit && unit.power !== undefined ? Number(unit.power) : 0;
             return Number.isFinite(p) ? p : 0;
         }
@@ -4237,173 +4264,458 @@ async function executeGetDailyBonus() {
             return ids.slice(0, 5).reduce((sum, id) => sum + this.getUnitPower(id, isTitanBattle), 0);
         }
 
-        this.getOpponentSlotPower = function(slotId, isTitanBattle) {
-            if (!this.guildWarInfo || !this.guildWarInfo.enemySlots) return 0;
-            const slotData = this.guildWarInfo.enemySlots[String(slotId)];
-            if (!slotData || !Array.isArray(slotData.team)) return 0;
-
-            const expectedType = isTitanBattle ? 'titan' : 'hero';
-            let sum = 0;
-            for (const memberObj of slotData.team) {
-                if (!memberObj || typeof memberObj !== 'object') continue;
-                const position = Object.keys(memberObj)[0];
-                const unit = memberObj[position];
-                if (!unit || unit.type !== expectedType) continue;
-                const p = unit.power !== undefined ? Number(unit.power) : 0;
-                if (Number.isFinite(p)) sum += p;
+        /** Parse enemySlots.team whether array-of-maps or position-keyed object. */
+        this.parseSlotUnits = function(slotData) {
+            const team = slotData?.team;
+            if (!team) return [];
+            const units = [];
+            const pushUnit = (unit) => {
+                if (unit && unit.id != null) units.push(unit);
+            };
+            if (Array.isArray(team)) {
+                for (const entry of team) {
+                    if (!entry || typeof entry !== 'object') continue;
+                    if (entry.id != null && entry.type) {
+                        pushUnit(entry);
+                    } else {
+                        const pos = Object.keys(entry)[0];
+                        pushUnit(entry[pos]);
+                    }
+                }
+            } else if (typeof team === 'object') {
+                Object.values(team).forEach(pushUnit);
             }
-            return sum;
+            return units;
+        }
+
+        this.getOpponentSlotPower = function(slotId, isTitanBattle) {
+            const slot = this.listAttackableSlots({ includeUnavailable: true })
+                .find((s) => s.slotId === Number(slotId) && s.isTitan === !!isTitanBattle);
+            return slot ? slot.power : 0;
+        }
+
+        /** Load fortification / slot maps from lib.data.clanWar (fallback to CONSTANTS). */
+        this.getClanWarFortMaps = function() {
+            let forts = null;
+            let slots = null;
+            try {
+                const cw = window.lib?.data?.clanWar
+                    || (typeof window.lib?.getData === 'function' ? window.lib.getData('clanWar') : null);
+                if (cw?.fortification) forts = cw.fortification;
+                if (cw?.fortificationSlot) slots = cw.fortificationSlot;
+            } catch (e) {
+                // use fallback
+            }
+            if (!forts || typeof forts !== 'object') {
+                forts = CONSTANTS.GUILD_WAR_FORTIFICATION_FALLBACK;
+            }
+            if (!slots || typeof slots !== 'object') {
+                // Build slot map objects shaped like lib entries for uniform access
+                slots = {};
+                for (const [sid, fid] of Object.entries(CONSTANTS.GUILD_WAR_SLOT_FALLBACK)) {
+                    slots[sid] = { id: Number(sid), fortificationId: fid };
+                }
+            }
+            return { forts, slots };
+        }
+
+        /**
+         * Slot fortification meta from lib maps.
+         * Fort 4 = Bridge; 7/8/9 = Fire/Nature/Ice (any one unlocks Citadel); 10 = Citadel.
+         */
+        this.getSlotFortMeta = function(slotId) {
+            const { forts, slots } = this.getClanWarFortMaps();
+            const slotEntry = slots[slotId] || slots[String(slotId)];
+            const fortificationId = Number(
+                slotEntry?.fortificationId
+                ?? CONSTANTS.GUILD_WAR_SLOT_FALLBACK[slotId]
+                ?? CONSTANTS.GUILD_WAR_SLOT_FALLBACK[String(slotId)]
+                ?? 0
+            );
+            const fort = forts[fortificationId] || forts[String(fortificationId)]
+                || CONSTANTS.GUILD_WAR_FORTIFICATION_FALLBACK[fortificationId]
+                || {};
+            const tierUnlock = fort.tierUnlock == null ? null : Number(fort.tierUnlock);
+            const fortTier = fort.tier == null ? 99 : Number(fort.tier);
+            const hasTierUnlock = Number.isFinite(tierUnlock);
+            return {
+                fortificationId,
+                fortTier,
+                tierUnlock: hasTierUnlock ? tierUnlock : null,
+                hasTierUnlock,
+                isBridge: fortificationId === 4,
+                isBastionUnlock: fortificationId === 7 || fortificationId === 8 || fortificationId === 9,
+                isCitadel: fortificationId === 10,
+            };
+        }
+
+        /** All known slot IDs that belong to a fortification. */
+        this.getSlotIdsForFort = function(fortificationId) {
+            const { slots } = this.getClanWarFortMaps();
+            const ids = [];
+            const fid = Number(fortificationId);
+            for (const [sid, entry] of Object.entries(slots)) {
+                const entryFid = Number(entry?.fortificationId ?? CONSTANTS.GUILD_WAR_SLOT_FALLBACK[sid]);
+                if (entryFid === fid) ids.push(Number(sid));
+            }
+            if (!ids.length) {
+                for (const [sid, entryFid] of Object.entries(CONSTANTS.GUILD_WAR_SLOT_FALLBACK)) {
+                    if (Number(entryFid) === fid) ids.push(Number(sid));
+                }
+            }
+            return ids;
+        }
+
+        /** True when a fort has no living defenders left on any of its slots. */
+        this.isFortBeaten = function(fortificationId) {
+            const enemySlots = this.guildWarInfo?.enemySlots || {};
+            const slotIds = this.getSlotIdsForFort(fortificationId);
+            if (!slotIds.length) return false;
+
+            let sawSlot = false;
+            for (const slotId of slotIds) {
+                const slotData = enemySlots[slotId] || enemySlots[String(slotId)];
+                if (!slotData) continue;
+                sawSlot = true;
+                const units = this.parseSlotUnits(slotData);
+                const alive = units.filter((u) => !u.state || u.state.isDead !== true);
+                const pointsLeft = Math.max(0, (Number(slotData.pointsTotal) || 0) - (Number(slotData.pointsFarmed) || 0));
+                // Still defending if any unit alive and points remain (or points unknown but units alive)
+                if (alive.length > 0 && (pointsLeft > 0 || !slotData.pointsTotal)) {
+                    return false;
+                }
+            }
+            return sawSlot;
+        }
+
+        /**
+         * Strategic priority rank (lower = attack first):
+         * 0 Bridge → 1 Bastions (until any of 7/8/9 beaten) → 1 Citadel (after any bastion beaten)
+         * → 3 everything else (incl. leftover bastions once one is done).
+         */
+        this.getFortPriorityRank = function(slot, warState) {
+            if (slot.isBridge) return 0;
+            if (slot.isBastionUnlock) {
+                return warState.anyBastionBeaten ? 3 : 1;
+            }
+            if (slot.isCitadel) {
+                return warState.anyBastionBeaten ? 1 : 3;
+            }
+            return 3;
+        }
+
+        /**
+         * List GW slots we can consider attacking.
+         * Sorted later by fortification strategy / power.
+         */
+        this.listAttackableSlots = function(opts = {}) {
+            const includeUnavailable = !!opts.includeUnavailable;
+            const enemySlots = this.guildWarInfo?.enemySlots || {};
+            const slots = [];
+
+            for (const [slotKey, slotData] of Object.entries(enemySlots)) {
+                if (!slotData) continue;
+                const slotId = Number(slotData.id != null ? slotData.id : slotKey);
+                if (!Number.isFinite(slotId)) continue;
+
+                if (!includeUnavailable) {
+                    if (slotData.status && slotData.status !== 'ready') continue;
+                    if (slotData.attackerId != null && slotData.attackerId !== 0 && slotData.attackerId !== '0') continue;
+                }
+
+                const units = this.parseSlotUnits(slotData);
+                if (!units.length) continue;
+
+                const alive = units.filter((u) => !u.state || u.state.isDead !== true);
+                if (!alive.length) continue;
+
+                const titanCount = alive.filter((u) => u.type === 'titan').length;
+                const heroCount = alive.filter((u) => u.type === 'hero').length;
+                let isTitan = null;
+                if (titanCount > heroCount) isTitan = true;
+                else if (heroCount > titanCount) isTitan = false;
+                else if (titanCount > 0) isTitan = true;
+                else if (heroCount > 0) isTitan = false;
+                else continue;
+
+                const typedAlive = alive.filter((u) => u.type === (isTitan ? 'titan' : 'hero'));
+                if (typedAlive.length < 3) continue;
+
+                const power = typedAlive.reduce((sum, u) => {
+                    const p = Number(u.power);
+                    return sum + (Number.isFinite(p) ? p : 0);
+                }, 0);
+                const unitIds = typedAlive.map((u) => Number(u.id)).filter((id) => Number.isFinite(id));
+                const pointsLeft = Math.max(0, (Number(slotData.pointsTotal) || 0) - (Number(slotData.pointsFarmed) || 0));
+                const defenderName = slotData.user?.name || slotData.user?.id || '?';
+                const fortMeta = this.getSlotFortMeta(slotId);
+
+                slots.push({
+                    slotId,
+                    isTitan,
+                    power,
+                    unitIds,
+                    pointsLeft,
+                    defenderName,
+                    status: slotData.status,
+                    ...fortMeta,
+                });
+            }
+            return slots;
+        }
+
+        /**
+         * Priority: Bridge → (bastions 7/8/9 until one beaten) → Citadel 10 → all others low.
+         * Demo-sim each; keep those above win-rate threshold until attempts are filled.
+         */
+        this.selectStrongestBeatableSlots = async function(heroTeam, titanTeam, maxTargets) {
+            const bastionForts = [7, 8, 9];
+            const beatenBastions = bastionForts.filter((fid) => this.isFortBeaten(fid));
+            const anyBastionBeaten = beatenBastions.length > 0;
+            const warState = { anyBastionBeaten, beatenBastions };
+
+            const raw = this.listAttackableSlots();
+            // Remaining attackable slots per fort — fewer = closer to beaten
+            const fortRemain = {};
+            for (const s of raw) {
+                const fid = s.fortificationId;
+                fortRemain[fid] = (fortRemain[fid] || 0) + 1;
+            }
+            const citadelAvailable = anyBastionBeaten
+                || raw.some((s) => s.isCitadel);
+
+            const candidates = raw.sort((a, b) => {
+                const ra = this.getFortPriorityRank(a, warState);
+                const rb = this.getFortPriorityRank(b, warState);
+                if (ra !== rb) return ra - rb;
+
+                // High-prio bastions (none beaten yet): finish the closest fort first
+                if (!anyBastionBeaten && a.isBastionUnlock && b.isBastionUnlock) {
+                    const remA = fortRemain[a.fortificationId] ?? 99;
+                    const remB = fortRemain[b.fortificationId] ?? 99;
+                    if (remA !== remB) return remA - remB;
+                }
+
+                // Low-prio band (rank 3): leftover bastions + other forts — closest-to-beaten first
+                // e.g. fort 7 beaten → citadel high; 8/9 and barracks/etc. sorted by fewest slots left
+                if (ra === 3 && rb === 3) {
+                    const remA = fortRemain[a.fortificationId] ?? 99;
+                    const remB = fortRemain[b.fortificationId] ?? 99;
+                    if (remA !== remB) return remA - remB;
+                }
+
+                return b.power - a.power || b.pointsLeft - a.pointsLeft || a.slotId - b.slotId;
+            });
+
+            const bridgeCount = candidates.filter((s) => s.isBridge).length;
+            const bastionCount = candidates.filter((s) => s.isBastionUnlock && this.getFortPriorityRank(s, warState) === 1).length;
+            const citadelCount = candidates.filter((s) => s.isCitadel && this.getFortPriorityRank(s, warState) === 1).length;
+            const lowCount = candidates.filter((s) => this.getFortPriorityRank(s, warState) === 3).length;
+            console.log(
+                `[GUILD_WAR] ${candidates.length} attackable | bastions beaten: [${beatenBastions.join(',') || 'none'}] `
+                + `| citadelAvailable=${citadelAvailable} `
+                + `| prio: bridge=${bridgeCount}, bastion=${bastionCount}, citadel=${citadelCount}, low=${lowCount}`
+            );
+            if (!candidates.length) return [];
+
+            const myHeroPower = this.getMyTeamPower(heroTeam, false);
+            const myTitanPower = this.getMyTeamPower(titanTeam, true);
+            const beatable = [];
+            const limit = Math.max(1, maxTargets || 1);
+
+            for (let i = 0; i < candidates.length; i++) {
+                if (beatable.length >= limit) break;
+                const slot = candidates[i];
+                const myPower = slot.isTitan ? myTitanPower : myHeroPower;
+                const prio = this.getFortPriorityRank(slot, warState);
+                const fortTag = slot.isBridge ? 'BRIDGE'
+                    : slot.isBastionUnlock ? `BASTION fort${slot.fortificationId}${anyBastionBeaten ? ' low' : ''}`
+                    : slot.isCitadel ? `CITADEL${anyBastionBeaten ? '' : ' locked-prio'}`
+                    : `fort${slot.fortificationId}`;
+                const label = `slot ${slot.slotId} [${fortTag} p${prio}] (${slot.isTitan ? 'titan' : 'hero'}, ${slot.defenderName}, pwr ${slot.power})`;
+
+                // Hopeless by power — skip expensive sim
+                if (myPower > 0 && slot.power > 0 && myPower < slot.power * 0.4) {
+                    console.log(`[GUILD_WAR] Skip ${label}: power too low (mine ${myPower})`);
+                    continue;
+                }
+
+                setProgress(`${I18N('GUILD_WAR')}: Sim ${i + 1}/${candidates.length} ${label}`);
+                console.log(`[GUILD_WAR] Simulating ${label}...`);
+
+                try {
+                    let sim;
+                    if (slot.isTitan) {
+                        if (!titanTeam?.titans || titanTeam.titans.length < 5) {
+                            console.warn('[GUILD_WAR] No titan team — skip titan slot', slot.slotId);
+                            continue;
+                        }
+                        sim = await this.simulateGuildWarTitanBattle(
+                            titanTeam,
+                            { titans: slot.unitIds.slice(0, 5) },
+                            CONSTANTS.SIMULATION_COUNT
+                        );
+                    } else {
+                        if (!heroTeam?.heroes || heroTeam.heroes.length < 5) {
+                            console.warn('[GUILD_WAR] No hero team — skip hero slot', slot.slotId);
+                            continue;
+                        }
+                        sim = await this.simulateGuildWarHeroBattle(
+                            heroTeam,
+                            {
+                                heroes: slot.unitIds.slice(0, 5),
+                                pet: CONSTANTS.DEFAULT_PET_ID,
+                                favor: {},
+                                banner: 1,
+                            },
+                            CONSTANTS.SIMULATION_COUNT
+                        );
+                    }
+
+                    console.log(`[GUILD_WAR] ${label}: ${sim.wins}W/${sim.losses}L (${sim.winRate.toFixed(1)}%)`);
+                    if (sim.winRate > CONSTANTS.WIN_RATE_THRESHOLD) {
+                        beatable.push({ ...slot, winRate: sim.winRate });
+                        console.log(`[GUILD_WAR] ✓ Beatable — queued (${beatable.length}/${limit})`);
+                    } else {
+                        console.log(`[GUILD_WAR] ✗ Below ${CONSTANTS.WIN_RATE_THRESHOLD}% — skip`);
+                    }
+                } catch (err) {
+                    console.warn(`[GUILD_WAR] Sim failed for ${label}:`, err);
+                }
+            }
+
+            return beatable;
         }
 
         this.attackDirectSlots = async function() {
-            console.log('Starting direct Guild War attacks on slots 7, 8, 9, 34, 1, and 2...');
-            
-            const slots = [7, 8, 9, 34, 1, 2];
-            const slotNames = {
-                7: 'slot 7 (Titans - Bridge)',
-                8: 'slot 8 (Titans - Bridge)',
-                9: 'slot 9 (Titans - Bridge)',
-                34: 'slot 34 (Titans - Bridge)',
-                1: 'slot 1',
-                2: 'slot 2'
-            };
-            
-            for (let i = 0; i < slots.length; i++) {
-                const slotId = slots[i];
-                
-                // Refresh attempts from API before each attack to get accurate count
+            console.log('[GUILD_WAR] Selecting strongest beatable targets via demo sim...');
+
+            let heroTeam = null;
+            let titanTeam = null;
+            try {
+                heroTeam = this.getHeroTeamConfiguration();
+            } catch (e) {
+                console.warn('[GUILD_WAR] Hero team unavailable:', e.message);
+            }
+            try {
+                titanTeam = this.getTitanTeamConfiguration();
+            } catch (e) {
+                console.warn('[GUILD_WAR] Titan team unavailable:', e.message);
+            }
+            if (!heroTeam && !titanTeam) {
+                this.end('No Guild War attack teams configured (clan_pvp_hero / clan_pvp_titan)');
+                return;
+            }
+
+            await this.refreshGuildWarAttempts();
+            const tries = this.myTries || 0;
+            if (tries <= 0) {
+                this.end('No Guild War attempts remaining');
+                return;
+            }
+
+            setProgress(`${I18N('GUILD_WAR')}: Finding strongest beatable targets (${tries} tries)...`);
+            const targets = await this.selectStrongestBeatableSlots(heroTeam, titanTeam, tries);
+
+            if (!targets.length) {
+                this.end('No beatable Guild War slots found (sim win rate too low)');
+                return;
+            }
+
+            console.log('[GUILD_WAR] Attack order (strongest beatable):',
+                targets.map((t) => `#${t.slotId} ${t.isTitan ? 'T' : 'H'} pwr=${t.power} wr=${t.winRate.toFixed(0)}%`));
+
+            for (let i = 0; i < targets.length; i++) {
+                const target = targets[i];
                 await this.refreshGuildWarAttempts();
-                
-                // Check if we have attempts remaining before each attack
                 if (this.myTries === null || this.myTries === undefined || this.myTries <= 0) {
-                    console.log(`No attempts remaining (myTries: ${this.myTries}), stopping attacks`);
+                    console.log(`[GUILD_WAR] No attempts remaining, stopping`);
                     break;
                 }
-                
+
+                const label = `slot ${target.slotId} (${target.isTitan ? 'titan' : 'hero'}, ${target.defenderName})`;
                 try {
-                    console.log(`Attacking ${slotNames[slotId]}... (${this.myTries} attempts remaining)`);
-                    setProgress(`${I18N('GUILD_WAR')}: Attacking ${slotNames[slotId]} (${this.myTries} attempts)`);
-                    await this.attackSlot(slotId);
+                    console.log(`[GUILD_WAR] Attacking ${label}... (${this.myTries} tries, sim ${target.winRate.toFixed(0)}%)`);
+                    setProgress(`${I18N('GUILD_WAR')}: Attacking ${label} (${this.myTries} tries)`);
+                    await this.attackSlot(target.slotId, { skipSim: true, heroTeam, titanTeam });
                     this.victories++;
-                    console.log(`${slotNames[slotId]} attack completed successfully`);
-                    
-                    // Refresh attempts after successful attack to get updated count
                     await this.refreshGuildWarAttempts();
                 } catch (error) {
-                    console.error(`Error attacking ${slotNames[slotId]}:`, error);
-                    
-                    // Check if this is a skip error (from simulation)
-                    if (error.message && error.message.startsWith('Skipped:')) {
-                        console.log(`[GUILD_WAR] ${slotNames[slotId]} skipped due to low win rate, continuing to next target`);
-                        Utils.log('warn', `Skipped ${slotNames[slotId]}: ${error.message}, continuing to next target`);
-                        // Don't increment victories, just continue
-                    } else {
-                        // Other errors: continue to next slot instead of stopping
-                        Utils.log('warn', `Failed to attack ${slotNames[slotId]}: ${error.message}, continuing to next target`);
-                    }
+                    console.error(`[GUILD_WAR] Error attacking ${label}:`, error);
+                    Utils.log('warn', `Failed to attack ${label}: ${error.message}, continuing`);
                 }
-                
-                // Add delay between attacks (except after the last one)
-                if (i < slots.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+
+                if (i < targets.length - 1) {
+                    await new Promise((resolve) => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
                 }
             }
 
-            // Final refresh to get accurate remaining attempts
             await this.refreshGuildWarAttempts();
             const summary = `Completed ${this.victories} Guild War attacks${this.myTries > 0 ? ` (${this.myTries} attempts remaining)` : ''}`;
             this.end(summary);
         }
 
-        this.attackSlot = async function(slotId) {
+        this.attackSlot = async function(slotId, options = {}) {
             console.log(`Attacking slot ${slotId}...`);
-            
-            // Check if myTries exists and is greater than 0 before attacking
+
             if (this.myTries === null || this.myTries === undefined) {
                 throw new Error('Guild War attempts not available - war may not be active');
             }
-            
             if (this.myTries <= 0) {
                 throw new Error(`No Guild War attempts remaining (myTries: ${this.myTries})`);
             }
-            
-            const isTitanBattle = (slotId === 7 || slotId === 8 || slotId === 9 || slotId === 34);
-            
+
+            const slotMeta = this.listAttackableSlots({ includeUnavailable: true })
+                .find((s) => s.slotId === Number(slotId));
+            const isTitanBattle = slotMeta
+                ? slotMeta.isTitan
+                : (slotId === 7 || slotId === 8 || slotId === 9 || slotId === 34);
+
             let teamConfig;
             if (isTitanBattle) {
-                teamConfig = this.getTitanTeamConfiguration();
-                
+                teamConfig = options.titanTeam || this.getTitanTeamConfiguration();
                 if (!teamConfig.titans || teamConfig.titans.length < 5) {
                     throw new Error('Titan team not properly configured - need at least 5 titans');
                 }
-
-                // Power check BEFORE running expensive simulations / consuming attempts
-                try {
-                    const myPower = this.getMyTeamPower(teamConfig, true);
-                    const oppPower = this.getOpponentSlotPower(slotId, true);
-                    if (myPower > 0 && oppPower > 0 && myPower < (oppPower * 0.5)) {
-                        const msg = `Skipped: Power check failed (my ${myPower} vs enemy ${oppPower})`;
-                        console.log(`[GUILD_WAR_TITAN] ⚠️ ${msg}`);
-                        setProgress(`${I18N('GUILD_WAR')}: Skipping slot ${slotId} (power too low)`);
-                        throw new Error(msg);
-                    }
-                } catch (e) {
-                    // Re-throw explicit skip errors to continue to next slot
-                    if (e?.message && e.message.startsWith('Skipped:')) throw e;
-                    // Otherwise ignore power-check issues and proceed
-                }
-                
-                // Run demo battle simulation for titan battles before attacking
-                console.log(`[GUILD_WAR_TITAN] Running demo battle simulation for slot ${slotId}...`);
-                try {
-                    const opponentTitanTeam = this.getOpponentTitanTeamFromSlot(slotId);
-                    if (opponentTitanTeam && opponentTitanTeam.titans && opponentTitanTeam.titans.length >= 5) {
-                        const simulationResult = await this.simulateGuildWarTitanBattle(teamConfig, opponentTitanTeam, CONSTANTS.SIMULATION_COUNT);
-                        
-                        console.log(`[GUILD_WAR_TITAN] Simulation results: ${simulationResult.wins}W/${simulationResult.losses}L (${simulationResult.winRate.toFixed(2)}% win rate)`);
-                        
-                        // Check win rate threshold
-                        if (simulationResult.winRate <= CONSTANTS.WIN_RATE_THRESHOLD) {
-                            console.log(`[GUILD_WAR_TITAN] ⚠️ Win rate ${simulationResult.winRate.toFixed(2)}% is below ${CONSTANTS.WIN_RATE_THRESHOLD}%, skipping slot ${slotId}`);
-                            setProgress(`${I18N('GUILD_WAR')}: Skipping slot ${slotId} (win rate ${simulationResult.winRate.toFixed(2)}%)`);
-                            throw new Error(`Skipped: Win rate ${simulationResult.winRate.toFixed(2)}% below threshold`);
-                        }
-                        
-                        console.log(`[GUILD_WAR_TITAN] ✓ Win rate ${simulationResult.winRate.toFixed(2)}% is above threshold, proceeding with attack`);
-                    } else {
-                        console.warn(`[GUILD_WAR_TITAN] ⚠️ Cannot get opponent titan team data for slot ${slotId}, proceeding with attack anyway`);
-                    }
-                } catch (error) {
-                    if (error.message && error.message.startsWith('Skipped:')) {
-                        // Re-throw skip errors to continue to next slot
-                        throw error;
-                    }
-                    console.warn(`[GUILD_WAR_TITAN] Simulation error for slot ${slotId}:`, error);
-                    console.log(`[GUILD_WAR_TITAN] Proceeding with attack despite simulation error`);
-                }
             } else {
-                teamConfig = this.getArenaTeamConfiguration();
-                
+                teamConfig = options.heroTeam || this.getHeroTeamConfiguration();
                 if (!teamConfig.heroes || teamConfig.heroes.length < 5) {
-                    throw new Error('Arena team not properly configured - need at least 5 heroes');
-                }
-
-                // Power check before attacking hero slot
-                try {
-                    const myPower = this.getMyTeamPower(teamConfig, false);
-                    const oppPower = this.getOpponentSlotPower(slotId, false);
-                    if (myPower > 0 && oppPower > 0 && myPower < (oppPower * 0.5)) {
-                        const msg = `Skipped: Power check failed (my ${myPower} vs enemy ${oppPower})`;
-                        console.log(`[GUILD_WAR] ⚠️ ${msg}`);
-                        setProgress(`${I18N('GUILD_WAR')}: Skipping slot ${slotId} (power too low)`);
-                        throw new Error(msg);
-                    }
-                } catch (e) {
-                    if (e?.message && e.message.startsWith('Skipped:')) throw e;
+                    throw new Error('Hero team not properly configured - need at least 5 heroes');
                 }
             }
 
-            let attackArgs = {
+            // Re-sim only if caller did not already evaluate this slot
+            if (!options.skipSim) {
+                const myPower = this.getMyTeamPower(teamConfig, isTitanBattle);
+                const oppPower = slotMeta?.power || 0;
+                if (myPower > 0 && oppPower > 0 && myPower < (oppPower * 0.5)) {
+                    throw new Error(`Skipped: Power check failed (my ${myPower} vs enemy ${oppPower})`);
+                }
+                if (isTitanBattle) {
+                    const oppTeam = { titans: (slotMeta?.unitIds || []).slice(0, 5) };
+                    if (oppTeam.titans.length >= 5) {
+                        const sim = await this.simulateGuildWarTitanBattle(teamConfig, oppTeam, CONSTANTS.SIMULATION_COUNT);
+                        if (sim.winRate <= CONSTANTS.WIN_RATE_THRESHOLD) {
+                            throw new Error(`Skipped: Win rate ${sim.winRate.toFixed(2)}% below threshold`);
+                        }
+                    }
+                } else {
+                    const oppTeam = {
+                        heroes: (slotMeta?.unitIds || []).slice(0, 5),
+                        pet: CONSTANTS.DEFAULT_PET_ID,
+                        favor: {},
+                        banner: 1,
+                    };
+                    if (oppTeam.heroes.length >= 5) {
+                        const sim = await this.simulateGuildWarHeroBattle(teamConfig, oppTeam, CONSTANTS.SIMULATION_COUNT);
+                        if (sim.winRate <= CONSTANTS.WIN_RATE_THRESHOLD) {
+                            throw new Error(`Skipped: Win rate ${sim.winRate.toFixed(2)}% below threshold`);
+                        }
+                    }
+                }
+            }
+
+            const attackArgs = {
                 slotId: slotId,
                 heroes: isTitanBattle ? teamConfig.titans.slice(0, 5) : teamConfig.heroes.slice(0, 5)
             };
@@ -4416,19 +4728,15 @@ async function executeGetDailyBonus() {
                 attackArgs.banner = teamConfig.banners && teamConfig.banners.length > 0 ? teamConfig.banners[0] : 1;
             }
 
-            const calls = [
-                {
-                    name: "clanWarAttack",
-                    args: attackArgs,
-                    context: {
-                        actionTs: Utils.getActionTs()
-                    },
-                    ident: "body"
-                }
-            ];
+            const calls = [{
+                name: 'clanWarAttack',
+                args: attackArgs,
+                context: { actionTs: Utils.getActionTs() },
+                ident: 'body'
+            }];
 
-            const response = await Send(JSON.stringify({calls}));
-            
+            const response = await Send(JSON.stringify({ calls }));
+
             if (response.error) {
                 if (response.error.name === 'NotAvailable') {
                     throw new Error('Guild War is not currently available');
@@ -4453,52 +4761,62 @@ async function executeGetDailyBonus() {
             }
 
             console.log(`Slot ${slotId} attack completed successfully`);
-            
-            // Note: myTries will be refreshed from API after attack, don't manually decrement
-            // to avoid desync with server-side value
-            
             return result;
         }
 
-        this.getArenaTeamConfiguration = function() {
+        /** Prefer Guild War hero attack team; fall back to Arena. */
+        this.getHeroTeamConfiguration = function() {
             if (!this.teamInfo || !this.teamInfo.teams) {
                 throw new Error('Guild War team info not available');
             }
 
             const teamData = this.teamInfo.teams;
-            const favorData = this.teamInfo.favor;
+            const favorData = this.teamInfo.favor || {};
 
-            const arenaTeam = teamData.arena || [];
-            const arenaFavor = favorData.arena || {};
+            const gwTeam = teamData.clan_pvp_hero || teamData.arena || [];
+            const gwFavor = favorData.clan_pvp_hero || favorData.arena || {};
 
-            console.log('Arena team from system:', arenaTeam);
-            console.log('Arena favor from system:', arenaFavor);
+            console.log('[GUILD_WAR] Hero attack team:', gwTeam, '(source:', teamData.clan_pvp_hero ? 'clan_pvp_hero' : 'arena', ')');
 
             let heroes = [];
             let pet = null;
+            if (gwTeam && gwTeam.length >= 6) {
+                heroes = gwTeam.slice(0, 5).map(Number);
+                pet = Number(gwTeam[5]);
+            } else if (gwTeam && gwTeam.length >= 5) {
+                heroes = gwTeam.slice(0, 5).map(Number);
+                pet = CONSTANTS.DEFAULT_PET_ID;
+            }
 
-            if (arenaTeam && arenaTeam.length >= 6) {
-                heroes = arenaTeam.slice(0, 5);
-                pet = arenaTeam[5];
+            if (heroes.length < 5) {
+                throw new Error('Hero team is not configured (need 5 heroes in clan_pvp_hero or arena)');
+            }
+            if (!pet || pet < CONSTANTS.PET_ID_RANGE_MIN) {
+                pet = CONSTANTS.DEFAULT_PET_ID;
             }
 
             let banners = [1];
             try {
                 const userInfo = getUserInfo();
                 if (userInfo && userInfo.banner) {
-                    banners = typeof userInfo.banner === 'number' ? [userInfo.banner] : 
-                             Array.isArray(userInfo.banner) ? userInfo.banner : [1];
+                    banners = typeof userInfo.banner === 'number' ? [userInfo.banner]
+                        : Array.isArray(userInfo.banner) ? userInfo.banner : [1];
                 }
             } catch (e) {
                 console.log('Could not get banner from userInfo, using default');
             }
 
             return {
-                heroes: heroes,
-                pet: pet,
-                favor: arenaFavor,
-                banners: banners
+                heroes,
+                pet,
+                favor: gwFavor,
+                banners,
             };
+        }
+
+        // Back-compat alias
+        this.getArenaTeamConfiguration = function() {
+            return this.getHeroTeamConfiguration();
         }
 
         this.getTitanTeamConfiguration = function() {
@@ -4507,56 +4825,146 @@ async function executeGetDailyBonus() {
             }
 
             const teamData = this.teamInfo.teams;
-
             const titanTeam = teamData.clan_pvp_titan || teamData.titan_arena || [];
 
-            console.log('Titan team from system:', titanTeam);
+            console.log('[GUILD_WAR] Titan attack team:', titanTeam);
 
             if (!titanTeam || titanTeam.length < 5) {
                 throw new Error('Titan team is not configured (need 5 titans)');
             }
 
             return {
-                titans: titanTeam.slice(0, 5)
+                titans: titanTeam.slice(0, 5).map(Number)
             };
         }
 
         this.getOpponentTitanTeamFromSlot = function(slotId) {
-            if (!this.guildWarInfo || !this.guildWarInfo.enemySlots) {
-                console.warn('[GUILD_WAR_TITAN] No enemy slots data available');
+            const slot = this.listAttackableSlots({ includeUnavailable: true })
+                .find((s) => s.slotId === Number(slotId) && s.isTitan);
+            if (!slot || slot.unitIds.length < 5) {
+                console.warn(`[GUILD_WAR_TITAN] No titan team data for slot ${slotId}`);
                 return null;
             }
-            
-            const slotData = this.guildWarInfo.enemySlots[slotId.toString()];
-            if (!slotData || !slotData.team || !Array.isArray(slotData.team)) {
-                console.warn(`[GUILD_WAR_TITAN] No team data found for slot ${slotId}`);
-                return null;
-            }
-            
-            // Extract titan IDs from team array
-            // Team structure: [{"1": {id: 4033, ...}}, {"2": {id: 4003, ...}}, ...]
-            const titanIds = [];
-            for (const memberObj of slotData.team) {
-                if (memberObj && typeof memberObj === 'object') {
-                    // Get the first key (position) and extract the titan object
-                    const position = Object.keys(memberObj)[0];
-                    const titan = memberObj[position];
-                    if (titan && titan.id && titan.type === 'titan') {
-                        titanIds.push(titan.id);
+            return { titans: slot.unitIds.slice(0, 5) };
+        }
+
+        this.simulateGuildWarHeroBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
+            Utils.log('log', `[GUILD_WAR_HERO] Starting ${simulationCount} demo battle simulations...`);
+            const mechanic = 'arena';
+            const simulations = [];
+            let parentId = 0;
+            let firstBattleId = null;
+
+            for (let i = 0; i < simulationCount; i++) {
+                try {
+                    const result = await this.runSingleGuildWarHeroDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
+                    simulations.push(result);
+                    if (i === 0 && result.battleId) {
+                        firstBattleId = result.battleId;
+                        parentId = firstBattleId;
+                    } else if (i > 0 && firstBattleId) {
+                        parentId = firstBattleId;
+                    } else if (result.parentId) {
+                        parentId = result.parentId;
                     }
+                } catch (error) {
+                    console.error(`[GUILD_WAR_HERO] Simulation ${i + 1} failed:`, error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId });
                 }
             }
-            
-            if (titanIds.length < 5) {
-                console.warn(`[GUILD_WAR_TITAN] Only found ${titanIds.length} titans in slot ${slotId}, need 5`);
-                return null;
-            }
-            
-            console.log(`[GUILD_WAR_TITAN] Extracted opponent titan team from slot ${slotId}:`, titanIds);
-            
+
+            const wins = simulations.filter((s) => s.win).length;
+            const losses = simulations.length - wins;
+            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
+            Utils.log('log', `[GUILD_WAR_HERO] Simulation complete: ${wins}W/${losses}L (${winRate.toFixed(1)}% win rate)`);
             return {
-                titans: titanIds.slice(0, 5)
+                total: simulations.length,
+                wins,
+                losses,
+                winRate,
+                simulations,
             };
+        }
+
+        this.runSingleGuildWarHeroDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0) {
+            const self = this;
+            return new Promise((resolve, reject) => {
+                try {
+                    const args = {
+                        mechanic,
+                        defenceMaxUpgrade: true,
+                        defenceTeam: {
+                            units: opponentTeam.heroes || [],
+                            pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID,
+                        },
+                        defenceBanner: opponentTeam.banner || 1,
+                        defenceBannerStones: {},
+                        defenceFavor: opponentTeam.favor || {},
+                        maxUpgrade: true,
+                        team: {
+                            units: myTeam.heroes || [],
+                            pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID,
+                        },
+                        banner: (myTeam.banners && myTeam.banners[0]) || 1,
+                        bannerStones: {},
+                        favor: myTeam.favor || {},
+                        defenceBuffs: {},
+                        buffs: {},
+                        parentId,
+                        entryId: 0,
+                    };
+
+                    if (!args.team.units.length || !args.defenceTeam.units.length) {
+                        reject(new Error('Invalid hero team for GW demo battle'));
+                        return;
+                    }
+
+                    const calls = [{
+                        name: 'demoBattles_startBattle',
+                        args,
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: 'body',
+                    }];
+
+                    Send(JSON.stringify({ calls }))
+                        .then((response) => {
+                            if (response.error) {
+                                reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
+                                return;
+                            }
+                            const responseData = response.results?.[0]?.result?.response;
+                            const battleData = responseData?.battle || responseData;
+                            if (!battleData) {
+                                reject(new Error('No battle data in API response'));
+                                return;
+                            }
+
+                            const battleType = battleData?.type ?? mechanic;
+                            const battleConfigType = getBattleType(battleType);
+                            BattleCalc(battleData, battleConfigType, (calcResult) => {
+                                if (!Utils.isValidBattleResult(calcResult)) {
+                                    resolve({ win: false, battleTime: 0, error: 'Invalid calculation result', parentId });
+                                    return;
+                                }
+                                const win = !!calcResult.result.win;
+                                const battleTime = calcResult.battleTime || 0;
+                                self.endGuildWarTitanDemoBattle(calcResult, battleData)
+                                    .then((endBattleResult) => {
+                                        const battleId = endBattleResult?.battleId;
+                                        let nextParentId = parentId;
+                                        if (parentId === 0 && battleId) nextParentId = battleId;
+                                        else if (parentId !== 0) nextParentId = parentId;
+                                        else if (endBattleResult?.parentId) nextParentId = endBattleResult.parentId;
+                                        resolve({ win, battleTime, result: calcResult, parentId: nextParentId, battleId });
+                                    })
+                                    .catch(() => resolve({ win, battleTime, result: calcResult, parentId, battleId: null }));
+                            });
+                        })
+                        .catch(reject);
+                } catch (error) {
+                    reject(error);
+                }
+            });
         }
 
         this.simulateGuildWarTitanBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
