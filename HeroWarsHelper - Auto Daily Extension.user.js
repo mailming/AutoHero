@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.34
+// @version      3.5.35
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.34";
+    const EXTENSION_VERSION = "3.5.35";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -4264,18 +4264,31 @@ async function executeGetDailyBonus() {
             return ids.slice(0, 5).reduce((sum, id) => sum + this.getUnitPower(id, isTitanBattle), 0);
         }
 
+        /** Infer unit type when API omits `type` (pets 6xxx, titans 4xxx). */
+        this.inferUnitType = function(unit) {
+            if (!unit || unit.id == null) return null;
+            if (unit.type) return unit.type;
+            const id = Number(unit.id);
+            if (!Number.isFinite(id)) return null;
+            if (id >= CONSTANTS.PET_ID_RANGE_MIN && id < CONSTANTS.PET_ID_RANGE_MAX) return 'pet';
+            if (id >= 4000 && id < 5000) return 'titan';
+            return 'hero';
+        }
+
         /** Parse enemySlots.team whether array-of-maps or position-keyed object. */
         this.parseSlotUnits = function(slotData) {
             const team = slotData?.team;
             if (!team) return [];
             const units = [];
             const pushUnit = (unit) => {
-                if (unit && unit.id != null) units.push(unit);
+                if (!unit || unit.id == null) return;
+                const type = this.inferUnitType(unit);
+                units.push(type && !unit.type ? { ...unit, type } : unit);
             };
             if (Array.isArray(team)) {
                 for (const entry of team) {
                     if (!entry || typeof entry !== 'object') continue;
-                    if (entry.id != null && entry.type) {
+                    if (entry.id != null) {
                         pushUnit(entry);
                     } else {
                         const pos = Object.keys(entry)[0];
@@ -4378,7 +4391,10 @@ async function executeGetDailyBonus() {
                 if (!slotData) continue;
                 sawSlot = true;
                 const units = this.parseSlotUnits(slotData);
-                const alive = units.filter((u) => !u.state || u.state.isDead !== true);
+                const alive = units.filter((u) => {
+                    const t = u.type || this.inferUnitType(u);
+                    return t !== 'pet' && (!u.state || u.state.isDead !== true);
+                });
                 const pointsLeft = Math.max(0, (Number(slotData.pointsTotal) || 0) - (Number(slotData.pointsFarmed) || 0));
                 // Still defending if any unit alive and points remain (or points unknown but units alive)
                 if (alive.length > 0 && (pointsLeft > 0 || !slotData.pointsTotal)) {
@@ -4389,45 +4405,99 @@ async function executeGetDailyBonus() {
         }
 
         /**
+         * Bridge beaten → tier 2; any Fire/Nature/Ice bastion beaten → tier 3 (Citadel).
+         * Also honors fort.tierUnlock from lib maps.
+         */
+        this.getGuildWarState = function() {
+            const bastionForts = [7, 8, 9];
+            const beatenBastions = bastionForts.filter((fid) => this.isFortBeaten(fid));
+            const anyBastionBeaten = beatenBastions.length > 0;
+            const bridgeBeaten = this.isFortBeaten(4);
+            let maxUnlockedTier = 1;
+            if (bridgeBeaten) maxUnlockedTier = Math.max(maxUnlockedTier, 2);
+            if (anyBastionBeaten) maxUnlockedTier = Math.max(maxUnlockedTier, 3);
+
+            try {
+                const { forts } = this.getClanWarFortMaps();
+                for (const [fid, fort] of Object.entries(forts || {})) {
+                    if (!this.isFortBeaten(Number(fid))) continue;
+                    const unlock = fort?.tierUnlock == null ? null : Number(fort.tierUnlock);
+                    if (Number.isFinite(unlock)) maxUnlockedTier = Math.max(maxUnlockedTier, unlock);
+                }
+            } catch (e) {
+                // keep derived unlocks
+            }
+
+            return { anyBastionBeaten, beatenBastions, bridgeBeaten, maxUnlockedTier };
+        }
+
+        /**
          * Strategic priority rank (lower = attack first):
          * 0 Bridge → 1 Bastions (until any of 7/8/9 beaten) → 1 Citadel (after any bastion beaten)
-         * → 3 everything else (incl. leftover bastions once one is done).
+         * → 3 everything else on unlocked tiers (leftover bastions / barracks once priorities done)
+         * → 9 locked-tier / locked citadel (should not happen if API status is correct).
          */
         this.getFortPriorityRank = function(slot, warState) {
+            if (slot.fortTier > warState.maxUnlockedTier) return 9;
             if (slot.isBridge) return 0;
             if (slot.isBastionUnlock) {
                 return warState.anyBastionBeaten ? 3 : 1;
             }
             if (slot.isCitadel) {
-                return warState.anyBastionBeaten ? 1 : 3;
+                return warState.anyBastionBeaten ? 1 : 9;
             }
             return 3;
         }
 
         /**
          * List GW slots we can consider attacking.
-         * Sorted later by fortification strategy / power.
+         * Accepts partially cleared defenses (1+ living hero/titan) — common after bastions fall.
          */
         this.listAttackableSlots = function(opts = {}) {
             const includeUnavailable = !!opts.includeUnavailable;
+            const diagnose = !!opts.diagnose;
             const enemySlots = this.guildWarInfo?.enemySlots || {};
             const slots = [];
+            const skip = {
+                total: 0, notReady: 0, busy: 0, noTeam: 0, allDead: 0,
+                noCombatUnits: 0, noPoints: 0, attackable: 0,
+            };
 
             for (const [slotKey, slotData] of Object.entries(enemySlots)) {
-                if (!slotData) continue;
+                if (!slotData || typeof slotData !== 'object') continue;
                 const slotId = Number(slotData.id != null ? slotData.id : slotKey);
                 if (!Number.isFinite(slotId)) continue;
+                skip.total++;
 
                 if (!includeUnavailable) {
-                    if (slotData.status && slotData.status !== 'ready') continue;
-                    if (slotData.attackerId != null && slotData.attackerId !== 0 && slotData.attackerId !== '0') continue;
+                    if (slotData.status && slotData.status !== 'ready') {
+                        skip.notReady++;
+                        continue;
+                    }
+                    if (slotData.attackerId != null && slotData.attackerId !== 0 && slotData.attackerId !== '0') {
+                        skip.busy++;
+                        continue;
+                    }
                 }
 
                 const units = this.parseSlotUnits(slotData);
-                if (!units.length) continue;
+                if (!units.length) {
+                    skip.noTeam++;
+                    continue;
+                }
 
                 const alive = units.filter((u) => !u.state || u.state.isDead !== true);
-                if (!alive.length) continue;
+                if (!alive.length) {
+                    skip.allDead++;
+                    continue;
+                }
+
+                const pointsLeft = Math.max(0, (Number(slotData.pointsTotal) || 0) - (Number(slotData.pointsFarmed) || 0));
+                // If points are known and fully farmed, nothing left to attack
+                if (slotData.pointsTotal != null && pointsLeft <= 0) {
+                    skip.noPoints++;
+                    continue;
+                }
 
                 const titanCount = alive.filter((u) => u.type === 'titan').length;
                 const heroCount = alive.filter((u) => u.type === 'hero').length;
@@ -4436,17 +4506,23 @@ async function executeGetDailyBonus() {
                 else if (heroCount > titanCount) isTitan = false;
                 else if (titanCount > 0) isTitan = true;
                 else if (heroCount > 0) isTitan = false;
-                else continue;
+                else {
+                    skip.noCombatUnits++;
+                    continue;
+                }
 
+                // Keep 1+ living defenders — partially cleared slots are still valid targets
                 const typedAlive = alive.filter((u) => u.type === (isTitan ? 'titan' : 'hero'));
-                if (typedAlive.length < 3) continue;
+                if (!typedAlive.length) {
+                    skip.noCombatUnits++;
+                    continue;
+                }
 
                 const power = typedAlive.reduce((sum, u) => {
                     const p = Number(u.power);
                     return sum + (Number.isFinite(p) ? p : 0);
                 }, 0);
                 const unitIds = typedAlive.map((u) => Number(u.id)).filter((id) => Number.isFinite(id));
-                const pointsLeft = Math.max(0, (Number(slotData.pointsTotal) || 0) - (Number(slotData.pointsFarmed) || 0));
                 const defenderName = slotData.user?.name || slotData.user?.id || '?';
                 const fortMeta = this.getSlotFortMeta(slotId);
 
@@ -4458,33 +4534,50 @@ async function executeGetDailyBonus() {
                     pointsLeft,
                     defenderName,
                     status: slotData.status,
+                    aliveCount: typedAlive.length,
                     ...fortMeta,
                 });
+                skip.attackable++;
+            }
+
+            if (diagnose) {
+                console.log(
+                    `[GUILD_WAR] Slot scan: total=${skip.total}, notReady=${skip.notReady}, busy=${skip.busy}, `
+                    + `noTeam=${skip.noTeam}, allDead=${skip.allDead}, noPoints=${skip.noPoints}, `
+                    + `noCombat=${skip.noCombatUnits}, attackable=${skip.attackable}`
+                );
             }
             return slots;
         }
 
         /**
-         * Priority: Bridge → (bastions 7/8/9 until one beaten) → Citadel 10 → all others low.
+         * Priority: Bridge → bastions 7/8/9 (until one beaten) → Citadel → low-priority leftovers.
+         * After tier unlocks (bridge→T2, bastion→T3), unlocked-tier low targets are included.
          * Demo-sim each; keep those above win-rate threshold until attempts are filled.
          */
         this.selectStrongestBeatableSlots = async function(heroTeam, titanTeam, maxTargets) {
-            const bastionForts = [7, 8, 9];
-            const beatenBastions = bastionForts.filter((fid) => this.isFortBeaten(fid));
-            const anyBastionBeaten = beatenBastions.length > 0;
-            const warState = { anyBastionBeaten, beatenBastions };
+            const warState = this.getGuildWarState();
+            const { anyBastionBeaten, beatenBastions, bridgeBeaten, maxUnlockedTier } = warState;
 
-            const raw = this.listAttackableSlots();
+            const raw = this.listAttackableSlots({ diagnose: true });
             // Remaining attackable slots per fort — fewer = closer to beaten
             const fortRemain = {};
             for (const s of raw) {
                 const fid = s.fortificationId;
                 fortRemain[fid] = (fortRemain[fid] || 0) + 1;
             }
-            const citadelAvailable = anyBastionBeaten
-                || raw.some((s) => s.isCitadel);
 
-            const candidates = raw.sort((a, b) => {
+            // Prefer unlocked-tier slots; if none (API quirks), fall back to all ready slots
+            let pool = raw.filter((s) => s.fortTier <= maxUnlockedTier);
+            if (!pool.length && raw.length) {
+                console.warn(
+                    `[GUILD_WAR] No slots on unlocked tiers (maxTier=${maxUnlockedTier}); `
+                    + `falling back to all ${raw.length} ready slots`
+                );
+                pool = raw.slice();
+            }
+
+            const candidates = pool.sort((a, b) => {
                 const ra = this.getFortPriorityRank(a, warState);
                 const rb = this.getFortPriorityRank(b, warState);
                 if (ra !== rb) return ra - rb;
@@ -4496,9 +4589,8 @@ async function executeGetDailyBonus() {
                     if (remA !== remB) return remA - remB;
                 }
 
-                // Low-prio band (rank 3): leftover bastions + other forts — closest-to-beaten first
-                // e.g. fort 7 beaten → citadel high; 8/9 and barracks/etc. sorted by fewest slots left
-                if (ra === 3 && rb === 3) {
+                // Low-prio / leftovers: finish closest fort, then strongest remaining
+                if (ra >= 3 && rb >= 3) {
                     const remA = fortRemain[a.fortificationId] ?? 99;
                     const remB = fortRemain[b.fortificationId] ?? 99;
                     if (remA !== remB) return remA - remB;
@@ -4507,13 +4599,14 @@ async function executeGetDailyBonus() {
                 return b.power - a.power || b.pointsLeft - a.pointsLeft || a.slotId - b.slotId;
             });
 
-            const bridgeCount = candidates.filter((s) => s.isBridge).length;
+            const bridgeCount = candidates.filter((s) => this.getFortPriorityRank(s, warState) === 0).length;
             const bastionCount = candidates.filter((s) => s.isBastionUnlock && this.getFortPriorityRank(s, warState) === 1).length;
             const citadelCount = candidates.filter((s) => s.isCitadel && this.getFortPriorityRank(s, warState) === 1).length;
             const lowCount = candidates.filter((s) => this.getFortPriorityRank(s, warState) === 3).length;
             console.log(
-                `[GUILD_WAR] ${candidates.length} attackable | bastions beaten: [${beatenBastions.join(',') || 'none'}] `
-                + `| citadelAvailable=${citadelAvailable} `
+                `[GUILD_WAR] ${candidates.length} attackable | bridgeBeaten=${bridgeBeaten} `
+                + `| bastions beaten: [${beatenBastions.join(',') || 'none'}] `
+                + `| maxUnlockedTier=${maxUnlockedTier} `
                 + `| prio: bridge=${bridgeCount}, bastion=${bastionCount}, citadel=${citadelCount}, low=${lowCount}`
             );
             if (!candidates.length) return [];
@@ -4530,13 +4623,25 @@ async function executeGetDailyBonus() {
                 const prio = this.getFortPriorityRank(slot, warState);
                 const fortTag = slot.isBridge ? 'BRIDGE'
                     : slot.isBastionUnlock ? `BASTION fort${slot.fortificationId}${anyBastionBeaten ? ' low' : ''}`
-                    : slot.isCitadel ? `CITADEL${anyBastionBeaten ? '' : ' locked-prio'}`
+                    : slot.isCitadel ? `CITADEL${anyBastionBeaten ? '' : ' locked'}`
                     : `fort${slot.fortificationId}`;
-                const label = `slot ${slot.slotId} [${fortTag} p${prio}] (${slot.isTitan ? 'titan' : 'hero'}, ${slot.defenderName}, pwr ${slot.power})`;
+                const label = `slot ${slot.slotId} [${fortTag} p${prio} t${slot.fortTier}] `
+                    + `(${slot.isTitan ? 'titan' : 'hero'}, ${slot.defenderName}, pwr ${slot.power}, alive ${slot.aliveCount})`;
 
                 // Hopeless by power — skip expensive sim
                 if (myPower > 0 && slot.power > 0 && myPower < slot.power * 0.4) {
                     console.log(`[GUILD_WAR] Skip ${label}: power too low (mine ${myPower})`);
+                    continue;
+                }
+
+                // Partial defenses (<5): demo teams are unreliable — accept if we clearly outgun remnants
+                if (slot.unitIds.length < 5) {
+                    if (myPower > 0 && slot.power > 0 && myPower >= slot.power * 0.75) {
+                        beatable.push({ ...slot, winRate: 85 });
+                        console.log(`[GUILD_WAR] ✓ Partial defense outgunned — queued (${beatable.length}/${limit}) ${label}`);
+                        continue;
+                    }
+                    console.log(`[GUILD_WAR] Skip ${label}: partial defense, power not decisive (mine ${myPower})`);
                     continue;
                 }
 
@@ -4615,10 +4720,15 @@ async function executeGetDailyBonus() {
             }
 
             setProgress(`${I18N('GUILD_WAR')}: Finding strongest beatable targets (${tries} tries)...`);
+            const readyCount = this.listAttackableSlots().length;
             const targets = await this.selectStrongestBeatableSlots(heroTeam, titanTeam, tries);
 
             if (!targets.length) {
-                this.end('No beatable Guild War slots found (sim win rate too low)');
+                if (!readyCount) {
+                    this.end('No attackable Guild War slots left (all cleared, busy, or locked)');
+                } else {
+                    this.end('No beatable Guild War slots found (sim win rate too low)');
+                }
                 return;
             }
 
@@ -4841,7 +4951,7 @@ async function executeGetDailyBonus() {
         this.getOpponentTitanTeamFromSlot = function(slotId) {
             const slot = this.listAttackableSlots({ includeUnavailable: true })
                 .find((s) => s.slotId === Number(slotId) && s.isTitan);
-            if (!slot || slot.unitIds.length < 5) {
+            if (!slot || !slot.unitIds.length) {
                 console.warn(`[GUILD_WAR_TITAN] No titan team data for slot ${slotId}`);
                 return null;
             }
