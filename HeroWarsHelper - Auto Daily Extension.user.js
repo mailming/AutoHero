@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.35
+// @version      3.5.36
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.35";
+    const EXTENSION_VERSION = "3.5.36";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2466,7 +2466,8 @@ async function executeGetDailyBonus() {
     const CONSTANTS = {
         WIN_RATE_THRESHOLD: 70,
         SIMULATION_COUNT: 10,
-        BATTLE_VERSION: 273,
+        // Captured from in-game titan demoBattles_endBattle progress.v (2026-10-09)
+        BATTLE_VERSION: 296,
         DELAY_BETWEEN_BATTLES: 1000,
         DELAY_BATTLE_COMPLETE: 100,
         /**
@@ -4958,6 +4959,64 @@ async function executeGetDailyBonus() {
             return { titans: slot.unitIds.slice(0, 5) };
         }
 
+        /** Titan element from lib.data.titan or ID range. */
+        this.getTitanElementById = function(titanId) {
+            const id = Number(titanId);
+            if (!Number.isFinite(id)) return null;
+            try {
+                const t = window.lib?.data?.titan?.[id] || window.lib?.data?.titan?.[String(id)]
+                    || (typeof window.lib?.getData === 'function' ? window.lib.getData('titan')?.[id] : null);
+                if (t?.element) return String(t.element).toLowerCase();
+            } catch (e) {
+                // fall through to ranges
+            }
+            if (id >= 4050 && id < 4060) return 'distortion';
+            if (id >= 4040 && id < 4050) return 'light';
+            if (id >= 4030 && id < 4040) return 'dark';
+            if (id >= 4020 && id < 4030) return 'earth';
+            if (id >= 4010 && id < 4020) return 'fire';
+            if (id >= 4000 && id < 4010) return 'water';
+            return null;
+        }
+
+        /**
+         * Spirit args for GW titan demoBattles_startBattle.
+         * Elements follow team composition; skills stay {} so spirits are ignored in the request.
+         */
+        this.getGuildWarTitanSpiritArgs = function(attackTitanIds, defenceTitanIds) {
+            const countElements = (ids) => {
+                const counts = {};
+                const order = [];
+                for (const id of ids || []) {
+                    const el = this.getTitanElementById(id);
+                    if (!el) continue;
+                    if (!counts[el]) {
+                        counts[el] = 0;
+                        order.push(el);
+                    }
+                    counts[el] += 1;
+                }
+                return Object.keys(counts).sort((a, b) => {
+                    if (counts[b] !== counts[a]) return counts[b] - counts[a];
+                    return order.indexOf(a) - order.indexOf(b);
+                });
+            };
+
+            const atkRanked = countElements(attackTitanIds);
+            const defRanked = countElements(defenceTitanIds);
+            const firstSpiritElement = atkRanked[0] || 'dark';
+            const secondSpiritElement = atkRanked[1] || (firstSpiritElement === 'water' ? 'dark' : 'water');
+
+            return {
+                firstSpiritElement,
+                firstSpiritSkills: {},
+                secondSpiritElement,
+                secondSpiritSkills: {},
+                defenceFirstSpiritElement: defRanked[0] || firstSpiritElement,
+                defenceFirstSpiritSkills: {},
+            };
+        }
+
         this.simulateGuildWarHeroBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
             Utils.log('log', `[GUILD_WAR_HERO] Starting ${simulationCount} demo battle simulations...`);
             const mechanic = 'arena';
@@ -5135,53 +5194,44 @@ async function executeGetDailyBonus() {
         this.runSingleGuildWarTitanDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0) {
             return new Promise((resolve, reject) => {
                 try {
-                    // Get element spirits from user info (default to dark/water if not available)
-                    let firstSpiritElement = 'dark';
-                    let secondSpiritElement = 'water';
-                    let defenceFirstSpiritElement = 'earth';
-                    
-                    try {
-                        const userInfo = getUserInfo();
-                        // Try to get element spirits from userInfo if available
-                        // For now, use defaults
-                    } catch (e) {
-                        // Use defaults
+                    const attackUnits = (myTeam.titans || []).map(Number).filter((id) => Number.isFinite(id));
+                    const defenceUnits = (opponentTeam.titans || []).map(Number).filter((id) => Number.isFinite(id));
+                    if (!attackUnits.length) {
+                        reject(new Error('Invalid team configuration: missing or empty titan units'));
+                        return;
                     }
-                    
-                    let args = {
+                    if (!defenceUnits.length) {
+                        reject(new Error('Invalid defence team configuration: missing or empty titan units'));
+                        return;
+                    }
+
+                    // maxUpgrade=false (real attacker stats), defenceMaxUpgrade=true.
+                    // Spirit *skills* stay {} so spirits are ignored on the demo request.
+                    const spiritArgs = this.getGuildWarTitanSpiritArgs(attackUnits, defenceUnits);
+                    if (seedOffset === 0 && parentId === 0) {
+                        console.log('[GUILD_WAR_TITAN] Demo args (empty spirit skills):', spiritArgs,
+                            '| attack', attackUnits, '| defence', defenceUnits);
+                    }
+
+                    const args = {
                         mechanic: mechanic,
                         defenceMaxUpgrade: true,
                         defenceTeam: {
-                            units: opponentTeam.titans || []
+                            units: defenceUnits
                         },
                         defenceFavor: {},
-                        maxUpgrade: true,
+                        maxUpgrade: false,
                         team: {
-                            units: myTeam.titans || []
+                            units: attackUnits
                         },
                         favor: {},
                         defenceBuffs: {},
                         buffs: {},
-                        firstSpiritElement: firstSpiritElement,
-                        firstSpiritSkills: {},
-                        secondSpiritElement: secondSpiritElement,
-                        secondSpiritSkills: {},
-                        defenceFirstSpiritElement: defenceFirstSpiritElement,
-                        defenceFirstSpiritSkills: {},
+                        ...spiritArgs,
                         parentId: parentId,
                         entryId: 0
                     };
-                    
-                    // Validate required fields
-                    if (!args.team || !args.team.units || args.team.units.length === 0) {
-                        reject(new Error('Invalid team configuration: missing or empty titan units'));
-                        return;
-                    }
-                    if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
-                        reject(new Error('Invalid defence team configuration: missing or empty titan units'));
-                        return;
-                    }
-                    
+
                     const calls = [{
                         name: "demoBattles_startBattle",
                         args: args,
@@ -5190,9 +5240,7 @@ async function executeGetDailyBonus() {
                         },
                         ident: "body"
                     }];
-                    
-                    const startTime = Date.now();
-                    
+
                     Send(JSON.stringify({calls}))
                         .then(response => {
                             if (response.error) {
@@ -5200,26 +5248,26 @@ async function executeGetDailyBonus() {
                                 reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
                                 return;
                             }
-                            
+
                             if (!response.results || !response.results[0] || !response.results[0].result) {
                                 console.error('[GUILD_WAR_TITAN] Invalid API response structure');
                                 reject(new Error('Invalid demo battle API response'));
                                 return;
                             }
-                            
+
                             const responseData = response.results[0].result.response;
                             const battleData = responseData?.battle || responseData;
-                            
+
                             if (!battleData) {
                                 console.error('[GUILD_WAR_TITAN] No battle data found in response');
                                 reject(new Error('No battle data in API response'));
                                 return;
                             }
-                            
-                            // Calculate battle result using BattleCalc
+
+                            // Calculate with the same config HWH uses for clan_pvp_titan
                             const battleType = battleData?.type ?? mechanic;
                             const battleConfigType = getBattleType(battleType);
-                            
+
                             BattleCalc(battleData, battleConfigType, (calcResult) => {
                                 if (!Utils.isValidBattleResult(calcResult)) {
                                     Utils.log('error', '[GUILD_WAR_TITAN] BattleCalc returned invalid result');
@@ -5231,31 +5279,24 @@ async function executeGetDailyBonus() {
                                     });
                                     return;
                                 }
-                                
+
                                 const battleTime = calcResult.battleTime || 0;
-                                const win = calcResult.result.win || false;
-                                
-                                // Call demoBattles_endBattle to get battleId for parentId chaining
-                                const self = this;
-                                self.endGuildWarTitanDemoBattle(calcResult, battleData)
+                                const win = !!calcResult.result.win;
+
+                                this.endGuildWarTitanDemoBattle(calcResult, battleData)
                                     .then(endBattleResult => {
                                         const extractedParentId = endBattleResult?.parentId;
                                         const battleId = endBattleResult?.battleId;
-                                        
-                                        // Strategy: For first battle, use its ID as parentId for subsequent battles
+
                                         let nextParentId = parentId;
-                                        
                                         if (parentId === 0 && battleId) {
-                                            // First battle: use its ID as parentId for next battle
                                             nextParentId = battleId;
                                         } else if (parentId !== 0) {
-                                            // Subsequent battle: keep using the first battle's ID
                                             nextParentId = parentId;
                                         } else if (extractedParentId && extractedParentId !== 0) {
-                                            // Fallback: use parentId from endBattle response
                                             nextParentId = extractedParentId;
                                         }
-                                        
+
                                         resolve({
                                             win: win,
                                             battleTime: battleTime,
@@ -5290,16 +5331,15 @@ async function executeGetDailyBonus() {
         this.endGuildWarTitanDemoBattle = async function(calcResult, battleData) {
             return new Promise((resolve, reject) => {
                 try {
-                    // Prepare progress data from battle calculation result
-                    const progress = calcResult.progress || [];
-                    
-                    // Ensure progress array has at least one entry
+                    // Prefer BattleCalc progress; pad only if missing
+                    const progress = Array.isArray(calcResult.progress) ? calcResult.progress.slice() : [];
+                    const seed = battleData?.seed || Math.floor(Math.random() * 1000000000);
+
                     if (progress.length === 0 && calcResult.result) {
-                        // Create minimal progress entry from result
                         progress.push({
                             v: CONSTANTS.BATTLE_VERSION,
                             b: 0,
-                            seed: battleData?.seed || Math.floor(Math.random() * 1000000000),
+                            seed,
                             attackers: {
                                 input: [],
                                 heroes: {}
@@ -5309,12 +5349,19 @@ async function executeGetDailyBonus() {
                                 heroes: {}
                             }
                         });
+                    } else {
+                        // Keep seed aligned with startBattle; ensure version present
+                        for (const entry of progress) {
+                            if (!entry || typeof entry !== 'object') continue;
+                            if (entry.seed == null) entry.seed = seed;
+                            if (entry.v == null) entry.v = CONSTANTS.BATTLE_VERSION;
+                        }
                     }
-                    
+
                     const endBattleArgs = {
                         result: {
-                            win: calcResult.result.win || false,
-                            stars: calcResult.result.stars || 0
+                            win: !!calcResult.result?.win,
+                            stars: calcResult.result?.stars || (calcResult.result?.win ? 1 : 0)
                         },
                         progress: progress
                     };

@@ -1059,16 +1059,19 @@ const parentId = endBattleData.results[0].result.response.battle.parentId;
 
 Guild War titan demo battles allow you to simulate titan battles for Guild War slots without consuming attack attempts. This is useful for testing titan team compositions against enemy defenses before committing to an actual attack.
 
+**Captured source (2026-10-09):** in-game Demo Battles titan tab → `api-monitor-1791562352443.json` / `api-monitor-1791561776175.json`. Sanitized extract: [`titan-demo-api-sample.json`](titan-demo-api-sample.json).
+
 ### Key Differences from Hero Battles
 
 - **Mechanic:** Use `"clan_pvp_titan"` for Guild War titan battles or `"clan_global_pvp_titan"` for Clash of Worlds titan battles (instead of `"arena"` or `"grandArena"`)
 - **No Pets/Banners:** Titans do not use pets, banners, or favor pets
-- **Element Spirits:** Titans use element spirits instead of pets
+- **Element Spirits:** Titans use element spirits instead of pets (with `elemental` / `primal` skill IDs)
 - **Unit Type:** All units are titans (type `"titan"`), not heroes
+- **Defenders shape:** `battle.defenders` is an **array** of one team object (keyed by titan ID); `battle.attackers` is a flat object keyed by titan ID
 
 ### Request Example: Guild War Titan Demo Battle
 
-**Request Body:**
+**Request Body** (captured; attacker uses real stats, defense max-upgraded):
 ```json
 {
   "calls": [
@@ -1078,27 +1081,33 @@ Guild War titan demo battles allow you to simulate titan battles for Guild War s
         "mechanic": "clan_pvp_titan",
         "defenceMaxUpgrade": true,
         "defenceTeam": {
-          "units": [4021, 4023, 4024, 4022, 4020]
+          "units": [4003, 4002, 4004, 4001, 4000]
         },
         "defenceFavor": {},
-        "maxUpgrade": true,
+        "maxUpgrade": false,
         "team": {
-          "units": [4033, 4003, 4001, 4032, 4000]
+          "units": [4033, 4034, 4004, 4032, 4000]
         },
         "favor": {},
         "defenceBuffs": {},
         "buffs": {},
         "firstSpiritElement": "dark",
-        "firstSpiritSkills": {},
+        "firstSpiritSkills": {
+          "elemental": 4510,
+          "primal": 4507
+        },
         "secondSpiritElement": "water",
-        "secondSpiritSkills": {},
-        "defenceFirstSpiritElement": "earth",
+        "secondSpiritSkills": {
+          "elemental": 4510,
+          "primal": 4514
+        },
+        "defenceFirstSpiritElement": "water",
         "defenceFirstSpiritSkills": {},
         "parentId": 0,
         "entryId": 0
       },
       "context": {
-        "actionTs": 887192
+        "actionTs": 233104
       },
       "ident": "body"
     }
@@ -1112,29 +1121,33 @@ Guild War titan demo battles allow you to simulate titan battles for Guild War s
 - `mechanic`: `"clan_pvp_titan"` or `"clan_global_pvp_titan"` - **Required** - Battle mechanic type for titan battles
   - `"clan_pvp_titan"` - Guild War titan battles
   - `"clan_global_pvp_titan"` - Clash of Worlds titan battles
-- `defenceMaxUpgrade`: Boolean - Whether to apply maximum upgrades to defense team
+- `defenceMaxUpgrade`: Boolean - Whether to apply maximum upgrades to defense team (captured: `true`)
 - `defenceTeam`: Object - Defender titan team configuration
-  - `units`: Array<Number> - Array of 5 titan IDs (e.g., `[4021, 4023, 4024, 4022, 4020]`)
+  - `units`: Array<Number> - Array of 5 titan IDs (e.g., `[4003, 4002, 4004, 4001, 4000]`)
   - **Note:** No `pet` field for titans
 - `defenceFavor`: Object - Empty object `{}` (titans don't use favor pets)
-- `maxUpgrade`: Boolean - Whether to apply maximum upgrades to attacker team
+- `maxUpgrade`: Boolean - Whether to max-upgrade the attacker team (captured client uses `false` for own real stats)
 - `team`: Object - Attacker titan team configuration
-  - `units`: Array<Number> - Array of 5 titan IDs (e.g., `[4033, 4003, 4001, 4032, 4000]`)
+  - `units`: Array<Number> - Array of 5 titan IDs (e.g., `[4033, 4034, 4004, 4032, 4000]`)
   - **Note:** No `pet` field for titans
 - `favor`: Object - Empty object `{}` (titans don't use favor pets)
 - `defenceBuffs`: Object - Empty object `{}` (no buffs for defense)
 - `buffs`: Object - Empty object `{}` (no buffs for attackers)
-- `firstSpiritElement`: String - First element spirit element for attacker (e.g., `"dark"`, `"water"`, `"earth"`, `"fire"`, `"light"`)
-- `firstSpiritSkills`: Object - First element spirit skills (usually empty `{}`)
-- `secondSpiritElement`: String - Second element spirit element for attacker (e.g., `"water"`)
-- `secondSpiritSkills`: Object - Second element spirit skills (usually empty `{}`)
-- `defenceFirstSpiritElement`: String - First element spirit element for defender (e.g., `"earth"`)
-- `defenceFirstSpiritSkills`: Object - Defense first element spirit skills (usually empty `{}`)
+- `firstSpiritElement`: String - First element spirit for attacker (`"dark"`, `"water"`, `"earth"`, `"fire"`, `"light"`)
+- `firstSpiritSkills`: Object - Spirit skill picks for first spirit
+  - `elemental`: Number - Elemental spirit skill ID (captured: `4510`)
+  - `primal`: Number - Primal spirit skill ID (captured: `4507` for dark)
+  - **Note:** In-game client sends real skill IDs; empty `{}` is accepted but under-specifies spirits
+- `secondSpiritElement`: String - Second element spirit for attacker (e.g., `"water"`)
+- `secondSpiritSkills`: Object - Same shape as `firstSpiritSkills` (captured: `elemental: 4510`, `primal: 4514`)
+- `defenceFirstSpiritElement`: String - Defender first spirit element (e.g., `"water"`)
+- `defenceFirstSpiritSkills`: Object - Defender spirit skills (often `{}` when `defenceMaxUpgrade` is true)
 - `parentId`: Number - Parent battle ID for retries
   - **First Battle**: Use `0` to start a new battle session
   - **Subsequent Battles**: Use the `battle.id` from the **first battle's** `endBattle` response (not `battle.parentId`)
   - **Important**: All retry battles should use the same `parentId` (the first battle's ID) to link them together
   - **Extraction**: Get from `response.results[0].result.response.battle.id` after the first battle's `endBattle` call
+  - **Captured:** first `endBattle` → `battle.id = 104254436`; retries used `parentId: 104254436`
 - `entryId`: Number - Entry ID (usually `0`)
 
 **Note:** The following fields are **NOT used** for titan battles:
@@ -1145,135 +1158,64 @@ Guild War titan demo battles allow you to simulate titan battles for Guild War s
 
 ### Response Example: Guild War Titan Demo Battle
 
-**Response Structure:**
+**Response Structure** (trimmed; full unit list in `titan-demo-api-sample.json`):
 ```json
 {
-  "date": 1764606641.3391621,
+  "date": 1791561705.847,
   "results": [
     {
       "ident": "body",
       "result": {
         "response": {
           "battle": {
-            "userId": "35979991",
-            "typeId": "35979991",
+            "userId": "62211320",
+            "typeId": "62211320",
             "attackers": {
-              "4033": {
-                "id": 4033,
-                "xp": 1009660,
+              "4000": {
+                "id": 4000,
                 "level": 130,
                 "star": 6,
-                "skills": {
-                  "4034": 130,
-                  "4035": 130
-                },
-                "power": 292009,
-                "skins": {
-                  "10019": 60,
-                  "10038": 60
-                },
-                "currentSkin": 0,
-                "artifacts": [
-                  {
-                    "level": 130,
-                    "star": 6
-                  },
-                  {
-                    "level": 130,
-                    "star": 6
-                  },
-                  {
-                    "level": 130,
-                    "star": 6
-                  }
-                ],
-                "scale": 0.8,
+                "power": 235294,
                 "type": "titan",
-                "perks": [6, 5],
-                "anticrit": 1,
-                "antidodge": 1,
-                "hp": 11762805.93,
-                "physicalAttack": 1029700.37,
-                "elementArmor": 405627,
-                "elementAttack": 479475,
-                "elementSpiritPower": 2655135,
-                "element": "dark",
+                "element": "water",
                 "elementSpiritLevel": 130,
                 "elementSpiritStar": 6,
-                "elementSpiritSkills": [],
-                "elementAffinityPower": 487.5,
-                "skin": 0,
+                "elementSpiritSkills": [
+                  { "skillId": 4510, "level": 3, "tierScale": 0.5 },
+                  { "skillId": 4514, "level": 3, "tierScale": 6 }
+                ],
                 "state": {
-                  "hp": 11762805,
+                  "hp": 13154377,
                   "energy": 0,
                   "isDead": false,
-                  "maxHp": 11762805
+                  "maxHp": 13154377
                 }
               }
-              // ... more titans
             },
             "defenders": [
               {
-                "4021": {
-                  "id": 4021,
-                  "xp": 1009660,
+                "4000": {
+                  "id": 4000,
                   "level": 130,
                   "star": 6,
-                  "skills": {
-                    "4021": 130
-                  },
-                  "power": 221937,
-                  "skins": {
-                    "10010": 60,
-                    "10031": 60,
-                    "10050": 60
-                  },
-                  "currentSkin": 0,
-                  "artifacts": [
-                    {
-                      "level": 130,
-                      "star": 6
-                    },
-                    {
-                      "level": 130,
-                      "star": 6
-                    },
-                    {
-                      "level": 130,
-                      "star": 6
-                    }
-                  ],
-                  "scale": 0.8,
+                  "power": 221975,
                   "type": "titan",
-                  "perks": [6],
-                  "anticrit": 1,
-                  "antidodge": 1,
-                  "hp": 12942563.01,
-                  "physicalAttack": 895975.85,
-                  "elementArmor": 146547,
-                  "elementAttack": 709635,
-                  "elementSpiritPower": 7659015,
-                  "element": "earth",
-                  "elementSpiritLevel": 130,
-                  "elementSpiritStar": 6,
+                  "element": "water",
                   "elementSpiritSkills": [],
-                  "elementAffinityPower": 487.5,
-                  "skin": 0,
                   "state": {
-                    "hp": 12942563,
+                    "hp": 13154377,
                     "energy": 0,
                     "isDead": false,
-                    "maxHp": 12942563
+                    "maxHp": 13154377
                   }
                 }
-                // ... more titans
               }
             ],
             "effects": [],
             "reward": [],
-            "startTime": 1764606641,
-            "seed": 1187705384,
-            "type": "clan_pvp_titan"  // or "clan_global_pvp_titan" for Clash of Worlds battles
+            "startTime": 1791561705,
+            "seed": 1788424103,
+            "type": "clan_pvp_titan"
           }
         }
       }
@@ -1325,7 +1267,7 @@ Titan objects in the response have the following structure:
 
 ### Ending a Guild War Titan Demo Battle
 
-**Request Body:**
+**Request Body** (captured win; `seed` must match `startBattle`):
 ```json
 {
   "calls": [
@@ -1333,53 +1275,36 @@ Titan objects in the response have the following structure:
       "name": "demoBattles_endBattle",
       "args": {
         "result": {
-          "win": false,
-          "stars": 0
+          "win": true,
+          "stars": 1
         },
         "progress": [
           {
-            "v": 273,
+            "v": 296,
             "b": 0,
-            "seed": -1979921791,
+            "seed": 1788424103,
             "attackers": {
-              "input": [],
-              "heroes": {}
+              "input": ["auto", 0, 0, "auto", 0, 0],
+              "heroes": {
+                "4004": { "hp": 7115103, "energy": 431, "isDead": false },
+                "4033": { "hp": 11570108, "energy": 513, "isDead": false },
+                "4034": {
+                  "hp": 10987252,
+                  "energy": 508,
+                  "isDead": false,
+                  "extra": { "titanSummonerStartEnergy": 1 }
+                }
+              }
             },
             "defenders": {
               "input": [],
-              "heroes": {
-                "4020": {
-                  "hp": 1612514,
-                  "energy": 200,
-                  "isDead": false
-                },
-                "4021": {
-                  "hp": 8751684,
-                  "energy": 761,
-                  "isDead": false
-                },
-                "4022": {
-                  "hp": 5767391,
-                  "energy": 200,
-                  "isDead": false
-                },
-                "4023": {
-                  "hp": 10277969,
-                  "energy": 500,
-                  "isDead": false
-                },
-                "4024": {
-                  "hp": 12250433,
-                  "energy": 720,
-                  "isDead": false
-                }
-              }
+              "heroes": {}
             }
           }
         ]
       },
       "context": {
-        "actionTs": 897677
+        "actionTs": 240458
       },
       "ident": "body"
     }
@@ -1387,12 +1312,51 @@ Titan objects in the response have the following structure:
 }
 ```
 
-**Note:** For titan battles, the `heroes` field in `progress` contains titan IDs (not hero IDs), but the field name remains `heroes` for compatibility.
+**Note:** For titan battles, the `heroes` field in `progress` still holds titan IDs/state (field name is always `heroes`). Summoner titans may include `extra.titanSummonerStartEnergy`.
+
+**Response Body** (captured; use `battle.id` as `parentId` for retries):
+```json
+{
+  "results": [
+    {
+      "ident": "body",
+      "result": {
+        "response": {
+          "replay": {
+            "userId": "62211320",
+            "typeId": "62211320",
+            "seed": 1788424103,
+            "type": "clan_pvp_titan",
+            "result": { "win": true, "stars": 1 }
+          },
+          "battle": {
+            "id": 104254436,
+            "parentId": 0,
+            "userId": 62211320,
+            "replayId": "1791561705736353539",
+            "mechanic": "clan_pvp_titan",
+            "hash": "MTEyYTg1ZDU0MzQ0YTU4OWE0ZGI5YzAzODFjY2VjYjBhZmM1M2UyNg==",
+            "data": {
+              "entryId": 0,
+              "attackMax": false,
+              "defenceMax": true,
+              "win": true,
+              "attack": { "powerSum": 1231238, "units": { "...": "trimmed" }, "banner": null },
+              "defence": { "powerSum": 1078578, "units": { "...": "trimmed" }, "banner": null }
+            },
+            "ctime": 1791561713
+          }
+        }
+      }
+    }
+  ]
+}
+```
 
 ### Example Usage: Guild War Titan Demo Battle
 
 ```javascript
-// Start a Guild War titan demo battle
+// Start a Guild War titan demo battle (shape matches in-game client capture)
 const startBattleRequest = {
   calls: [{
     name: "demoBattles_startBattle",
@@ -1400,21 +1364,21 @@ const startBattleRequest = {
       mechanic: "clan_pvp_titan",  // Use "clan_global_pvp_titan" for Clash of Worlds battles
       defenceMaxUpgrade: true,
       defenceTeam: {
-        units: [4021, 4023, 4024, 4022, 4020]  // Earth titans
+        units: [4003, 4002, 4004, 4001, 4000]  // Water titans
       },
       defenceFavor: {},
-      maxUpgrade: true,
+      maxUpgrade: false,  // client uses real attacker stats
       team: {
-        units: [4033, 4003, 4001, 4032, 4000]  // Dark/Water titans
+        units: [4033, 4034, 4004, 4032, 4000]  // Dark/Water titans
       },
       favor: {},
       defenceBuffs: {},
       buffs: {},
       firstSpiritElement: "dark",
-      firstSpiritSkills: {},
+      firstSpiritSkills: { elemental: 4510, primal: 4507 },
       secondSpiritElement: "water",
-      secondSpiritSkills: {},
-      defenceFirstSpiritElement: "earth",
+      secondSpiritSkills: { elemental: 4510, primal: 4514 },
+      defenceFirstSpiritElement: "water",
       defenceFirstSpiritSkills: {},
       parentId: 0,
       entryId: 0
@@ -1436,8 +1400,8 @@ const startBattleData = await startBattleResponse.json();
 // Extract battle seed and titan data
 const battle = startBattleData.results[0].result.response.battle;
 const seed = battle.seed;
-const attackerTitans = battle.attackers;
-const defenderTitans = battle.defenders[0];
+const attackerTitans = battle.attackers;       // object keyed by titanId
+const defenderTitans = battle.defenders[0];    // first (only) defender team object
 
 // Simulate battle and get final state
 // ... (battle simulation logic) ...
@@ -1448,26 +1412,22 @@ const endBattleRequest = {
     name: "demoBattles_endBattle",
     args: {
       result: {
-        win: false,
-        stars: 0
+        win: true,
+        stars: 1
       },
       progress: [{
-        v: 273,
+        v: 296,
         b: 0,
         seed: seed,  // Must match startBattle seed
         attackers: {
-          input: [],
-          heroes: {}  // Empty if all attackers dead
+          input: ["auto", 0, 0, "auto", 0, 0],
+          heroes: {
+            // surviving titan states (field name remains "heroes")
+          }
         },
         defenders: {
           input: [],
-          heroes: {
-            "4020": { hp: 1612514, energy: 200, isDead: false },
-            "4021": { hp: 8751684, energy: 761, isDead: false },
-            "4022": { hp: 5767391, energy: 200, isDead: false },
-            "4023": { hp: 10277969, energy: 500, isDead: false },
-            "4024": { hp: 12250433, energy: 720, isDead: false }
-          }
+          heroes: {}  // empty when all defenders dead
         }
       }]
     },
@@ -1500,48 +1460,32 @@ For retry battles, use the `battle.id` from the **first battle's** `endBattle` r
 
 ```javascript
 // After completing the first battle and extracting firstBattleId (see above)
+// Captured example: firstBattleId === 104254436
 
-// Retry battle 1 - use firstBattleId as parentId
 const retryBattleRequest1 = {
   calls: [{
     name: "demoBattles_startBattle",
     args: {
-      mechanic: "clan_pvp_titan",  // Use "clan_global_pvp_titan" for Clash of Worlds battles
+      mechanic: "clan_pvp_titan",
       defenceMaxUpgrade: true,
       defenceTeam: {
-        units: [4021, 4023, 4024, 4022, 4020]
+        units: [4003, 4002, 4004, 4001, 4000]
       },
       defenceFavor: {},
-      maxUpgrade: true,
+      maxUpgrade: false,
       team: {
-        units: [4033, 4003, 4001, 4032, 4000]
+        units: [4033, 4034, 4004, 4032, 4000]
       },
       favor: {},
       defenceBuffs: {},
       buffs: {},
       firstSpiritElement: "dark",
-      firstSpiritSkills: {},
+      firstSpiritSkills: { elemental: 4510, primal: 4507 },
       secondSpiritElement: "water",
-      secondSpiritSkills: {},
-      defenceFirstSpiritElement: "earth",
+      secondSpiritSkills: { elemental: 4510, primal: 4514 },
+      defenceFirstSpiritElement: "water",
       defenceFirstSpiritSkills: {},
       parentId: firstBattleId,  // Use battle.id from first battle's endBattle response
-      entryId: 0
-    },
-    context: {
-      actionTs: Date.now()
-    },
-    ident: "body"
-  }]
-};
-
-// Retry battle 2 - also use the same firstBattleId
-const retryBattleRequest2 = {
-  calls: [{
-    name: "demoBattles_startBattle",
-    args: {
-      // ... same args as above ...
-      parentId: firstBattleId,  // Same firstBattleId for all retries
       entryId: 0
     },
     context: {
@@ -1563,6 +1507,7 @@ const retryBattleRequest2 = {
 
 **Dark Titans:**
 - `4033` - Hyperion
+- `4034` - Umbra and Caligo (Summoner)
 - `4032` - Araji
 - `4030` - Keros
 - `4031` - Ignis
@@ -1572,6 +1517,7 @@ const retryBattleRequest2 = {
 - `4001` - Angus
 - `4000` - Sigurd
 - `4002` - Moloch
+- `4004` - Tidus and Gelo (Summoner)
 
 **Earth Titans:**
 - `4021` - Eden
@@ -1594,11 +1540,12 @@ const retryBattleRequest2 = {
 
 - **No Resource Consumption:** Demo battles do not consume Guild War attack attempts
 - **Testing Only:** Results are for testing purposes only and do not affect actual Guild War standings
-- **Element Spirits:** Titans use element spirits instead of pets, specified via `firstSpiritElement`, `secondSpiritElement`, etc.
+- **Element Spirits:** Send `firstSpiritElement` / `secondSpiritElement` plus `elemental`/`primal` skill IDs (see capture)
 - **No Banners:** Titans do not use banners or banner stones
 - **No Favor Pets:** Titans do not use favor pets (always use empty `{}` for `favor` and `defenceFavor`)
 - **Scale Factor:** Titans typically use a scale factor of `0.8` (vs `1.0` for heroes)
 - **Battle Type:** Response `type` field will be `"clan_pvp_titan"` for Guild War titan battles, or `"clan_global_pvp_titan"` for Clash of Worlds titan battles
+- **Sample file:** See [`titan-demo-api-sample.json`](titan-demo-api-sample.json) for the sanitized start/end request+response pair
 
 ### Retrying a Battle Simulation
 
