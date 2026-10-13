@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.36
+// @version      3.5.37
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.36";
+    const EXTENSION_VERSION = "3.5.37";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -44,6 +44,7 @@
     let hideButtonsState = {};
     let othersSettingsState = {};
     let eventSettingsState = {};
+    let battleSimSettingsState = {};
     let isProviderActive = false;
     let customOthersButton = null;
     let combinedButton = null;
@@ -3565,6 +3566,7 @@ async function executeGetDailyBonus() {
             const teamCount = this.arenaType === 'grand' ? 3 : 1;
             const totalSimulations = simulationCount * teamCount;
             Utils.log('log', `[DEMO] Starting ${totalSimulations} demo battle simulations (${teamCount} team(s) x ${simulationCount})...`);
+            Utils.log('log', `[DEMO] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
             
             // Note: demoBattles API only supports "arena" mechanic, even for Grand Arena
             const mechanic = 'arena';
@@ -3622,10 +3624,11 @@ async function executeGetDailyBonus() {
         this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0, matchup = null) {
             return new Promise((resolve, reject) => {
                 try {
+                    const attackMaxUpgrade = getSimAttackMaxUpgrade();
                     let args = {
                         mechanic: mechanic,
                         defenceMaxUpgrade: true,
-                        maxUpgrade: true,
+                        maxUpgrade: attackMaxUpgrade,
                         defenceBuffs: {},
                         buffs: {},
                         parentId: parentId,
@@ -5019,6 +5022,7 @@ async function executeGetDailyBonus() {
 
         this.simulateGuildWarHeroBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
             Utils.log('log', `[GUILD_WAR_HERO] Starting ${simulationCount} demo battle simulations...`);
+            Utils.log('log', `[GUILD_WAR_HERO] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
             const mechanic = 'arena';
             const simulations = [];
             let parentId = 0;
@@ -5059,6 +5063,7 @@ async function executeGetDailyBonus() {
             const self = this;
             return new Promise((resolve, reject) => {
                 try {
+                    const attackMaxUpgrade = getSimAttackMaxUpgrade();
                     const args = {
                         mechanic,
                         defenceMaxUpgrade: true,
@@ -5069,7 +5074,7 @@ async function executeGetDailyBonus() {
                         defenceBanner: opponentTeam.banner || 1,
                         defenceBannerStones: {},
                         defenceFavor: opponentTeam.favor || {},
-                        maxUpgrade: true,
+                        maxUpgrade: attackMaxUpgrade,
                         team: {
                             units: myTeam.heroes || [],
                             pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID,
@@ -5138,6 +5143,7 @@ async function executeGetDailyBonus() {
 
         this.simulateGuildWarTitanBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
             Utils.log('log', `[GUILD_WAR_TITAN] Starting ${simulationCount} demo battle simulations...`);
+            Utils.log('log', `[GUILD_WAR_TITAN] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
             
             const mechanic = 'clan_pvp_titan';
             
@@ -5205,12 +5211,14 @@ async function executeGetDailyBonus() {
                         return;
                     }
 
-                    // maxUpgrade=false (real attacker stats), defenceMaxUpgrade=true.
+                    // maxUpgrade from BATTLE SIM checkbox; defenceMaxUpgrade=true.
                     // Spirit *skills* stay {} so spirits are ignored on the demo request.
+                    const attackMaxUpgrade = getSimAttackMaxUpgrade();
                     const spiritArgs = this.getGuildWarTitanSpiritArgs(attackUnits, defenceUnits);
                     if (seedOffset === 0 && parentId === 0) {
                         console.log('[GUILD_WAR_TITAN] Demo args (empty spirit skills):', spiritArgs,
-                            '| attack', attackUnits, '| defence', defenceUnits);
+                            '| attack', attackUnits, '| defence', defenceUnits,
+                            '| maxUpgrade', attackMaxUpgrade);
                     }
 
                     const args = {
@@ -5220,7 +5228,7 @@ async function executeGetDailyBonus() {
                             units: defenceUnits
                         },
                         defenceFavor: {},
-                        maxUpgrade: false,
+                        maxUpgrade: attackMaxUpgrade,
                         team: {
                             units: attackUnits
                         },
@@ -7458,6 +7466,25 @@ async function executeGetDailyBonus() {
         };
     }
 
+    function getDefaultBattleSimSettingsState() {
+        return {
+            // Pre-fight demoBattles maxUpgrade for our attack team (Arena / GA / Guild War).
+            attackMaxPower: true,
+        };
+    }
+
+    function normalizeBattleSimSettingsState(state = {}) {
+        return {
+            // Default on (legacy behavior). Explicit false = current hero/titan power.
+            attackMaxPower: state.attackMaxPower !== false,
+        };
+    }
+
+    /** demoBattles `maxUpgrade` for our attack team: true = max power, false = current power. */
+    function getSimAttackMaxUpgrade() {
+        return battleSimSettingsState.attackMaxPower !== false;
+    }
+
     function syncEpicBrawlOthersSetting() {
         othersSettingsState.EPIC_BRAWL = eventSettingsState.epicBrawlEnabled !== false;
     }
@@ -7700,6 +7727,7 @@ async function executeGetDailyBonus() {
             hideButtonsState = providerSettings.hideButtonsState || {};
             othersSettingsState = normalizeOthersSettingsState(providerSettings.othersSettingsState || {});
             eventSettingsState = normalizeEventSettingsState(providerSettings.eventSettingsState || {});
+            battleSimSettingsState = normalizeBattleSimSettingsState(providerSettings.battleSimSettingsState || {});
             if (!providerSettings.eventSettingsState || providerSettings.eventSettingsState.epicBrawlEnabled === undefined) {
                 eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
             }
@@ -7713,6 +7741,9 @@ async function executeGetDailyBonus() {
             );
             eventSettingsState = normalizeEventSettingsState(
                 HWHFuncs.getSaveVal('autoDaily_eventSettingsState', null) || {}
+            );
+            battleSimSettingsState = normalizeBattleSimSettingsState(
+                HWHFuncs.getSaveVal('autoDaily_battleSimSettingsState', null) || {}
             );
             const rawEvents = HWHFuncs.getSaveVal('autoDaily_eventSettingsState', null);
             if (!rawEvents || rawEvents.epicBrawlEnabled === undefined) {
@@ -7731,6 +7762,7 @@ async function executeGetDailyBonus() {
             HWHFuncs.setSaveVal('autoDaily_hideButtonsState', hideButtonsState);
             HWHFuncs.setSaveVal('autoDaily_othersSettingsState', othersSettingsState);
             HWHFuncs.setSaveVal('autoDaily_eventSettingsState', eventSettingsState);
+            HWHFuncs.setSaveVal('autoDaily_battleSimSettingsState', battleSimSettingsState);
         }
     }
 
@@ -7821,6 +7853,16 @@ async function executeGetDailyBonus() {
                     <button class="auto-daily-fire-btn" id="epic-brawl-run-btn" title="Run Cosmic Battle now">${UI_ICON.fire}</button>
                 </div>
             </div>
+            <div class="auto-daily-events-section">
+                <h2>BATTLE SIM</h2>
+                <div class="auto-daily-event-row">
+                    <label class="event-enable" title="Pre-fight demo battles for Arena, Grand Arena, and Guild War">
+                        <input type="checkbox" id="sim-attack-max-power" ${battleSimSettingsState.attackMaxPower !== false ? 'checked' : ''}>
+                        <span>Attack team max power</span>
+                    </label>
+                    <span class="auto-daily-event-meta">On = max upgrades in sims. Off = your current power. (Arena / Grand Arena / Guild War)</span>
+                </div>
+            </div>
             <div class="auto-daily-footer">
                 <button class="sync-button" id="sync-settings-btn" title="Save/Load Settings">${UI_ICON.save}</button>
                 <label><input type="checkbox" id="hide-doall-btn" ${hideButtonsState.doAll ? 'checked' : ''}> Hide 'Do All'</label>
@@ -7905,6 +7947,13 @@ async function executeGetDailyBonus() {
                 } finally {
                     epicRunBtn.disabled = false;
                 }
+            });
+        }
+        const simAttackMaxPower = document.getElementById('sim-attack-max-power');
+        if (simAttackMaxPower) {
+            simAttackMaxPower.addEventListener('change', (e) => {
+                battleSimSettingsState.attackMaxPower = !!e.target.checked;
+                saveAllSettings();
             });
         }
         refreshEpicBrawlStatusUI();
@@ -8015,7 +8064,7 @@ async function executeGetDailyBonus() {
     }
     function handleExport() {
         const { HWHFuncs } = window;
-        const settingsToExport = { executionState, hideButtonsState, othersSettingsState, eventSettingsState };
+        const settingsToExport = { executionState, hideButtonsState, othersSettingsState, eventSettingsState, battleSimSettingsState };
         const settingsJSON = JSON.stringify(settingsToExport, null, 2);
         const blob = new Blob([settingsJSON], {type: 'application/json'});
         const url = URL.createObjectURL(blob);
@@ -8044,6 +8093,7 @@ async function executeGetDailyBonus() {
                         hideButtonsState = importedSettings.hideButtonsState;
                         othersSettingsState = normalizeOthersSettingsState(importedSettings.othersSettingsState);
                         eventSettingsState = normalizeEventSettingsState(importedSettings.eventSettingsState || {});
+                        battleSimSettingsState = normalizeBattleSimSettingsState(importedSettings.battleSimSettingsState || {});
                         if (!importedSettings.eventSettingsState || importedSettings.eventSettingsState.epicBrawlEnabled === undefined) {
                             eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
                         }
@@ -8066,7 +8116,7 @@ async function executeGetDailyBonus() {
     function handleSetAsDefault() {
         const { HWHFuncs } = window;
         if (typeof window.setAutoDailySettings === 'function') {
-            const allSettings = { executionState, hideButtonsState, othersSettingsState, eventSettingsState };
+            const allSettings = { executionState, hideButtonsState, othersSettingsState, eventSettingsState, battleSimSettingsState };
             window.setAutoDailySettings(allSettings);
             HWHFuncs.setProgress('Current settings saved as default for the Provider!', true);
         } else {
