@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            AutoAdventureExt
 // @namespace       AutoAdventureExt
-// @version         0.1.0
+// @version         0.1.1
 // @license         Copyright ZingerY & orb
 // @description     Extension for Hero Wars Helper. Modifies the adventure button to use predefined paths directly within the script, allowing modification before starting. HeroWarsHelper
 // @author          ZingerY & CR3 Cappu Red + Pizza Clan (Modified by AI)
@@ -27,7 +27,7 @@
     }, 200);
 
     function initializeExtension() {
-        console.log('%cAuto Adventure Extension (v0.1.0) loaded', 'color: green');
+        console.log('%cAuto Adventure Extension (v0.1.1) loaded', 'color: green');
 
         // Inject custom styles for popup buttons
         function injectCustomStyles() {
@@ -766,6 +766,124 @@
             }
         }
 
+        function parsePathString(pathStr) {
+            if (!pathStr || typeof pathStr !== 'string') return [];
+            return pathStr.split(',')
+                .map(p => parseInt(String(p).trim(), 10))
+                .filter(p => !Number.isNaN(p));
+        }
+
+        function buildAdjacency(graphPaths) {
+            const adj = new Map();
+            const link = (from, to) => {
+                if (!adj.has(from)) adj.set(from, []);
+                const list = adj.get(from);
+                if (!list.includes(to)) list.push(to);
+            };
+            for (const edge of graphPaths || []) {
+                const from = +edge.from_id;
+                const to = +edge.to_id;
+                if (Number.isNaN(from) || Number.isNaN(to)) continue;
+                link(from, to);
+                link(to, from);
+            }
+            return adj;
+        }
+
+        // Shortest route from start to any goal node, including both ends.
+        function shortestRoute(adj, start, goals) {
+            const startId = +start;
+            if (goals.has(startId)) return [startId];
+            const prev = new Map([[startId, null]]);
+            const queue = [startId];
+            while (queue.length) {
+                const cur = queue.shift();
+                for (const next of adj.get(cur) || []) {
+                    if (prev.has(next)) continue;
+                    prev.set(next, cur);
+                    if (goals.has(next)) {
+                        const route = [next];
+                        let node = next;
+                        while (prev.get(node) != null) {
+                            node = prev.get(node);
+                            route.push(node);
+                        }
+                        route.reverse();
+                        return route;
+                    }
+                    queue.push(next);
+                }
+            }
+            return null;
+        }
+
+        // Path the runner should walk now: from the current node, forward along the
+        // intended route, and no longer than the moves still available. A longer path
+        // makes the base runner stop and ask whether to continue.
+        function buildResumePath(intended, currentNode, turnsLeft, graphPaths) {
+            const node = +currentNode;
+            // First visit matches the base runner, so a failed step is retried
+            // instead of skipping ahead to a later visit of the same node.
+            let idx = intended.indexOf(node);
+            let prefix = [];
+            if (idx === -1) {
+                const route = shortestRoute(buildAdjacency(graphPaths), node, new Set(intended));
+                if (!route) return null;
+                idx = intended.indexOf(route[route.length - 1]);
+                prefix = route.slice(0, -1);
+            }
+
+            let resume = prefix.concat(intended.slice(idx));
+            const maxNodes = turnsLeft + 1;
+            if (resume.length > maxNodes) {
+                resume = resume.slice(0, maxNodes);
+            }
+            return resume.length >= 2 ? resume : null;
+        }
+
+        function getPathCandidates(mapIdent) {
+            const saved = parsePathString(getSaveVal(`adventurePath:${mapIdent}`, ''));
+            const fallback = parsePathString(defaultWays.adventure[mapIdent]?.default?.path || '');
+            const candidates = [];
+            if (saved.length >= 2) candidates.push(saved);
+            if (fallback.length >= 2 && fallback.join(',') !== saved.join(',')) {
+                candidates.push(fallback);
+            }
+            return candidates;
+        }
+
+        function chooseResumePath(mapIdent, currentNode, turnsLeft, graphPaths) {
+            const candidates = getPathCandidates(mapIdent);
+            const node = +currentNode;
+
+            // Already on a known path: keep walking that one. Standing on its last
+            // node means the route is finished, so don't switch to another path.
+            for (const intended of candidates) {
+                if (!intended.includes(node)) continue;
+                const resume = buildResumePath(intended, node, turnsLeft, graphPaths);
+                return resume ? { intended, resume } : null;
+            }
+
+            for (const intended of candidates) {
+                const resume = buildResumePath(intended, node, turnsLeft, graphPaths);
+                if (resume) return { intended, resume };
+            }
+            return null;
+        }
+
+        function runAdventureOnPath(path) {
+            class AutoResumeAdventure extends ExtCombinedAdventureStorm {
+                async getPath() {
+                    return path;
+                }
+            }
+
+            return new Promise((resolve, reject) => {
+                const adventure = new AutoResumeAdventure(resolve, reject);
+                adventure.start('default').catch(reject);
+            });
+        }
+
         // Run adventure with default path
         async function runAdventureWithDefaultPath() {
             try {
@@ -785,36 +903,50 @@
                 }
 
                 const defaultPathStr = currentAdventureWays.default.path.trim();
-                if (!defaultPathStr) {
-                    throw new Error(`Default path is empty for map: ${mapIdent}`);
-                }
-
-                const path = defaultPathStr.split(',')
-                    .map(p => p.trim())
-                    .filter(p => p.length > 0)
-                    .map(p => parseInt(p))
-                    .filter(p => !isNaN(p));
-                
+                const path = parsePathString(defaultPathStr);
                 if (path.length < 2) {
                     throw new Error(`Invalid default path: ${defaultPathStr}`);
                 }
 
                 console.log(`Using default path for ${mapIdent}:`, path);
-
-                class AutoDefaultAdventure extends ExtCombinedAdventureStorm {
-                    async getPath() {
-                        return path;
-                    }
-                }
-
-                return new Promise((resolve, reject) => {
-                    const adventure = new AutoDefaultAdventure(resolve, reject);
-                    adventure.start('default').catch(reject);
-                });
+                setSaveVal(`adventurePath:${mapIdent}`, path.join(','));
+                return runAdventureOnPath(path);
             } catch (error) {
                 console.error('Error running adventure with default path:', error);
                 throw error;
             }
+        }
+
+        // On load, a live adventure with moves left is resumed instead of abandoned.
+        async function tryContinueLiveAdventure() {
+            const adventureInfo = await getAdventureInfo();
+            const currentUserId = await getCurrentUserId();
+            if (!adventureInfo || !currentUserId) return false;
+
+            const userData = adventureInfo.users?.[currentUserId];
+            if (!userData || userData.left === true) return false;
+
+            const turnsLeft = parseInt(userData.turnsLeft, 10) || 0;
+            const currentNode = parseInt(userData.currentNode, 10);
+            if (turnsLeft <= 0 || Number.isNaN(currentNode)) {
+                console.log(`%cAdventure is live but no moves left (turnsLeft=${userData.turnsLeft})`, 'color: yellow');
+                return false;
+            }
+
+            const mapIdent = adventureInfo.mapIdent;
+            const chosen = mapIdent
+                ? chooseResumePath(mapIdent, currentNode, turnsLeft, adventureInfo.paths)
+                : null;
+            if (!chosen) {
+                console.log(`%cAdventure is live at node ${currentNode} with ${turnsLeft} moves, but no path can be continued`, 'color: yellow');
+                return false;
+            }
+
+            console.log(`%cAdventure live at node ${currentNode} with ${turnsLeft} moves. Continuing: ${chosen.resume.join(',')}`, 'color: green');
+            setProgress(`Continuing adventure from node ${currentNode} (${turnsLeft} moves)...`, false);
+            setSaveVal(`adventurePath:${mapIdent}`, chosen.intended.join(','));
+            await runAdventureOnPath(chosen.resume);
+            return true;
         }
 
         // Function to start adventure with level input
@@ -915,9 +1047,39 @@
         // Auto-execute adventure raid or start logic
         async function autoAdventureRaidOrStart() {
             try {
+                setProgress('Checking if an adventure is live...', false);
+                const adventureStatus = await checkAdventureStatus();
+
+                if (adventureStatus.hasActive) {
+                    if (adventureStatus.adventureInfo && adventureStatus.currentUserId) {
+                        try {
+                            await collectAllRewards(adventureStatus.adventureInfo, adventureStatus.currentUserId);
+                        } catch (rewardError) {
+                            console.error('Reward collection failed, still checking whether the path can continue:', rewardError);
+                        }
+                    }
+
+                    if (adventureStatus.otherPlayersLeft) {
+                        console.log('%cAdventure active with other 2 players left. Ending adventure...', 'color: orange');
+                        setProgress('Other players left. Ending adventure...', false);
+                        try {
+                            await endAdventure(true); // Force end since other players left
+                            console.log('%cAdventure ended successfully', 'color: green');
+                            setProgress('Adventure ended successfully', true);
+                        } catch (endError) {
+                            console.error('%cFailed to end adventure:', 'color: red', endError);
+                            setProgress(`Failed to end adventure: ${endError.message}`, true);
+                            throw endError; // Re-throw to be caught by outer try-catch
+                        }
+                        return;
+                    }
+
+                    if (await tryContinueLiveAdventure()) {
+                        return;
+                    }
+                }
+
                 setProgress('Checking adventure raid availability...', false);
-                
-                // Check if can raid adventure
                 const canRaid = await canRaidAdventure();
                 if (canRaid.canRaid) {
                     console.log(`%cCan raid adventure ${canRaid.adventureId}`, 'color: green');
@@ -927,53 +1089,26 @@
                     return;
                 }
 
-                // Check adventure status and portal charges
-                setProgress('Checking portal charges and adventure status...', false);
-                const [portalCharge, adventureStatus] = await Promise.all([
-                    getPortalCharge(),
-                    checkAdventureStatus()
-                ]);
-
-                // Collect rewards if adventure is active
-                if (adventureStatus.hasActive && adventureStatus.adventureInfo && adventureStatus.currentUserId) {
-                    await collectAllRewards(adventureStatus.adventureInfo, adventureStatus.currentUserId);
-                }
-
-                // If other players left, end adventure
-                if (adventureStatus.hasActive && adventureStatus.otherPlayersLeft) {
-                    console.log('%cAdventure active with other 2 players left. Ending adventure...', 'color: orange');
-                    setProgress('Other players left. Ending adventure...', false);
-                    try {
-                        await endAdventure(true); // Force end since other players left
-                        console.log('%cAdventure ended successfully', 'color: green');
-                        setProgress('Adventure ended successfully', true);
-                    } catch (endError) {
-                        console.error('%cFailed to end adventure:', 'color: red', endError);
-                        setProgress(`Failed to end adventure: ${endError.message}`, true);
-                        throw endError; // Re-throw to be caught by outer try-catch
-                    }
+                if (adventureStatus.hasActive) {
+                    console.log('%cAdventure already active', 'color: yellow');
+                    setProgress('Adventure already active', true);
                     return;
                 }
 
-                // Start new adventure if portal charges available
-                if (portalCharge > 0 && !adventureStatus.hasActive) {
+                const portalCharge = await getPortalCharge();
+                if (portalCharge > 0) {
                     console.log(`%cPortal charges available (${portalCharge}) and no active adventure. Starting new adventure...`, 'color: green');
                     const adventureId = getSaveVal('adventureId', 13);
                     setProgress(`Starting adventure ${adventureId}...`, false);
                     await startNewAdventure(adventureId);
                     await new Promise(resolve => setTimeout(resolve, 1000));
-                    
+
                     setProgress('Running adventure with default path...', false);
                     await runAdventureWithDefaultPath();
                     setProgress('Adventure started and running', true);
                 } else {
-                    if (portalCharge === 0) {
-                        console.log('%cNo portal charges available', 'color: yellow');
-                        setProgress('No portal charges available', true);
-                    } else if (adventureStatus.hasActive) {
-                        console.log('%cAdventure already active', 'color: yellow');
-                        setProgress('Adventure already active', true);
-                    }
+                    console.log('%cNo portal charges available', 'color: yellow');
+                    setProgress('No portal charges available', true);
                 }
             } catch (error) {
                 console.error('Auto adventure raid/start error:', error);
