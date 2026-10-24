@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.39
+// @version      3.5.41
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.39";
+    const EXTENSION_VERSION = "3.5.41";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2505,8 +2505,9 @@ async function executeGetDailyBonus() {
     const CONSTANTS = {
         WIN_RATE_THRESHOLD: 70,
         SIMULATION_COUNT: 10,
-        // Captured from in-game titan demoBattles_endBattle progress.v (2026-10-09)
+        // Arena endBattle fallback. Titan demo endBattle uses 298 (capture 2026-10-24).
         BATTLE_VERSION: 296,
+        TITAN_BATTLE_VERSION: 298,
         DELAY_BETWEEN_BATTLES: 1000,
         DELAY_BATTLE_COMPLETE: 100,
         /**
@@ -2624,6 +2625,108 @@ async function executeGetDailyBonus() {
             return result && result.result && typeof result.result.win === 'boolean';
         }
     };
+
+    // Arena lineups arrive as id lists, {id} objects, id-keyed maps, or [id, level, ...] tuples.
+    function parseArenaLineup(team, explicitPet, petMin = 6000, petMax = 7000) {
+        if (team == null) {
+            return null;
+        }
+
+        let pairs;
+        if (Array.isArray(team)) {
+            pairs = team.map((item) => [null, item]);
+        } else if (typeof team === 'object') {
+            pairs = Object.entries(team);
+        } else {
+            return null;
+        }
+        if (!pairs.length) {
+            return null;
+        }
+
+        if (!Array.isArray(team)) {
+            const wrapped = team.units || team.heroes || team.heroIds || team.list || team.lineup;
+            if (wrapped && wrapped !== team) {
+                const parsedWrapped = parseArenaLineup(wrapped, explicitPet ?? team.pet ?? team.petId, petMin, petMax);
+                if (parsedWrapped) {
+                    return parsedWrapped;
+                }
+            }
+        }
+
+        const values = pairs.map(([, item]) => item);
+        const allTuples = values.every((item) => Array.isArray(item) && (typeof item[0] === 'number' || typeof item[0] === 'string'));
+        if (allTuples) {
+            pairs = values.map((item) => [item[0], { id: item[0] }]);
+        } else if (values.some((item) => Array.isArray(item))) {
+            return null;
+        }
+
+        const slotKeyed = pairs.every(([key], index) => key == null || String(key) === String(index));
+        const readId = (item) => {
+            if (typeof item === 'number' && Number.isFinite(item) && item > 0) {
+                return item;
+            }
+            if (typeof item === 'string' && /^\d+$/.test(item.trim())) {
+                return parseInt(item.trim(), 10);
+            }
+            if (!item || typeof item !== 'object') {
+                return null;
+            }
+            const nested = [item.hero, item.state, item.unit].find((value) => value && typeof value === 'object');
+            const raw = item.id ?? item.heroId ?? item.hero_id ?? item.unitId ?? item.unit_id
+                ?? item.petId ?? item.pet_id ?? item.typeId ?? item.libId
+                ?? (typeof item.hero === 'number' || typeof item.hero === 'string' ? item.hero : null)
+                ?? (typeof item.type === 'number' ? item.type : null)
+                ?? nested?.id ?? nested?.heroId ?? nested?.hero_id ?? nested?.unitId;
+            const n = Number(raw);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        };
+        const toId = (key, item) => {
+            const direct = readId(item);
+            if (direct) {
+                return direct;
+            }
+            if (slotKeyed) {
+                return null;
+            }
+            const keyNum = Number(key);
+            return Number.isFinite(keyNum) && keyNum > 0 ? keyNum : null;
+        };
+
+        const isPet = (item, id) => {
+            if (item && typeof item === 'object' && String(item.type || '').toLowerCase() === 'pet') {
+                return true;
+            }
+            return id >= petMin && id < petMax;
+        };
+
+        const heroIds = [];
+        let petId = null;
+        for (const [key, item] of pairs) {
+            const id = toId(key, item);
+            if (!id) {
+                continue;
+            }
+            if (isPet(item, id)) {
+                petId = id;
+            } else if (heroIds.length < 5) {
+                heroIds.push(id);
+            }
+        }
+
+        const explicitId = Number(explicitPet && typeof explicitPet === 'object' ? (explicitPet.id ?? explicitPet.petId) : explicitPet);
+        if (Number.isFinite(explicitId) && explicitId >= petMin && explicitId < petMax) {
+            petId = explicitId;
+        }
+        if (!petId) {
+            petId = 6005;
+        }
+        if (heroIds.length !== 5) {
+            return null;
+        }
+        return { heroes: heroIds, pet: petId };
+    }
 
     // ========== EXECUTE ARENA CLASS ==========
     function executeArena(resolve, reject) {
@@ -2833,7 +2936,22 @@ async function executeGetDailyBonus() {
                     throw new Error(`Invalid API response structure for ${apiName}`);
                 }
 
-                const opponents = response.results[0].result.response;
+                let opponents = response.results[0].result.response;
+                if (opponents && !Array.isArray(opponents) && typeof opponents === 'object') {
+                    const wrapped = [opponents.enemies, opponents.list, opponents.users, opponents.opponents, opponents.data]
+                        .find((value) => Array.isArray(value));
+                    if (wrapped) {
+                        opponents = wrapped;
+                    } else {
+                        const values = Object.values(opponents).filter((value) => (
+                            value && typeof value === 'object' && !Array.isArray(value)
+                            && (value.userId != null || value.heroes || value.team || value.heroIds || value.defenceTeam)
+                        ));
+                        if (values.length) {
+                            opponents = values;
+                        }
+                    }
+                }
                 console.log('Detailed opponents info:', opponents);
 
                 // Return both map (for lookup) and array (for order preservation)
@@ -2868,11 +2986,12 @@ async function executeGetDailyBonus() {
                 this.opponentsData.array.forEach(opponentData => {
                     availableOpponents.push({
                         opponent: {
+                            ...opponentData,
                             id: opponentData.userId ?? opponentData.id,
                             power: parseInt(opponentData.power) || 0,
                             place: parseInt(opponentData.place) || 1000,
-                            heroes: opponentData.heroes || [],
-                            banners: opponentData.banners || [],
+                            heroes: opponentData.heroes ?? opponentData.heroIds ?? opponentData.team?.heroes ?? opponentData.team?.units ?? [],
+                            banners: opponentData.banners || (opponentData.banner != null ? [opponentData.banner] : []),
                             user: opponentData.user || {}
                         },
                         rank: parseInt(opponentData.place) || 1000,
@@ -2893,11 +3012,12 @@ async function executeGetDailyBonus() {
                 for (const [opponentId, opponentData] of Object.entries(this.opponents)) {
                     availableOpponents.push({
                         opponent: {
-                            id: opponentId,
+                            ...opponentData,
+                            id: opponentData.userId ?? opponentData.id ?? opponentId,
                             power: parseInt(opponentData.power) || 0,
                             place: parseInt(opponentData.place) || 1000,
-                            heroes: opponentData.heroes || [],
-                            banners: opponentData.banners || [],
+                            heroes: opponentData.heroes ?? opponentData.heroIds ?? opponentData.team?.heroes ?? opponentData.team?.units ?? [],
+                            banners: opponentData.banners || (opponentData.banner != null ? [opponentData.banner] : []),
                             user: opponentData.user || {}
                         },
                         rank: parseInt(opponentData.place) || 1000,
@@ -3290,51 +3410,37 @@ async function executeGetDailyBonus() {
             }
         }
 
-        this.parseLineup = function(team) {
-            if (!team) {
-                return null;
-            }
-            const list = Array.isArray(team) ? team : (typeof team === 'object' ? Object.values(team) : []);
-            if (!list.length || Array.isArray(list[0])) {
-                return null;
-            }
-            const toId = (item) => {
-                if (typeof item === 'number' && Number.isFinite(item) && item > 0) {
-                    return item;
-                }
-                if (typeof item === 'string' && /^\d+$/.test(item.trim())) {
-                    return parseInt(item.trim(), 10);
-                }
-                if (item && typeof item === 'object') {
-                    const raw = item.id ?? item.heroId ?? item.unitId ?? item.petId;
-                    const n = Number(raw);
-                    return Number.isFinite(n) && n > 0 ? n : null;
-                }
-                return null;
-            };
-            const isPet = (item, id) => {
-                if (item && typeof item === 'object' && String(item.type || '').toLowerCase() === 'pet') {
-                    return true;
-                }
-                return id >= CONSTANTS.PET_ID_RANGE_MIN && id < CONSTANTS.PET_ID_RANGE_MAX;
-            };
-            const heroIds = [];
-            let petId = CONSTANTS.DEFAULT_PET_ID;
-            for (const item of list) {
-                const id = toId(item);
-                if (!id) {
-                    continue;
-                }
-                if (isPet(item, id)) {
-                    petId = id;
-                } else if (heroIds.length < 5) {
-                    heroIds.push(id);
+        this.parseLineup = function(team, explicitPet) {
+            return parseArenaLineup(team, explicitPet, CONSTANTS.PET_ID_RANGE_MIN, CONSTANTS.PET_ID_RANGE_MAX);
+        }
+
+        this.opponentLineupSources = function(opp) {
+            const pet = opp.pet ?? opp.petId ?? opp.team?.pet ?? opp.team?.petId
+                ?? opp.defenceTeam?.pet ?? opp.defence?.pet ?? opp.squad?.pet;
+            return [
+                ['heroes', opp.heroes],
+                ['heroIds', opp.heroIds],
+                ['team', Array.isArray(opp.team) ? opp.team : null],
+                ['team.units', opp.team?.units],
+                ['team.heroes', opp.team?.heroes],
+                ['defenceTeam', Array.isArray(opp.defenceTeam) ? opp.defenceTeam : null],
+                ['defenceTeam.units', opp.defenceTeam?.units],
+                ['defence.units', opp.defence?.units],
+                ['squad.heroes', opp.squad?.heroes || opp.squad?.units],
+                ['units', opp.units],
+                ['lineup', opp.lineup]
+            ].map(([name, source]) => ({ name, source, pet }));
+        }
+
+        this.readOpponentLineup = function(opp) {
+            for (const { name, source, pet } of this.opponentLineupSources(opp)) {
+                const parsed = this.parseLineup(source, pet);
+                if (parsed) {
+                    console.log(`[DEMO] Opponent lineup read from ${name}:`, parsed.heroes, 'pet', parsed.pet);
+                    return parsed;
                 }
             }
-            if (heroIds.length !== 5) {
-                return null;
-            }
-            return { heroes: heroIds, pet: petId };
+            return null;
         }
 
         this.permute = function(items) {
@@ -3486,7 +3592,8 @@ async function executeGetDailyBonus() {
             const rawHeroes = Array.isArray(opp.heroes)
                 ? opp.heroes
                 : (opp.heroes && typeof opp.heroes === 'object' ? Object.values(opp.heroes) : []);
-            const looksNested = rawHeroes.some((entry) => Array.isArray(entry));
+            const nestedTeams = rawHeroes.filter((entry) => Array.isArray(entry) && entry.length >= 5 && !Array.isArray(entry[0]) && typeof entry[0] !== 'number' && typeof entry[0] !== 'string');
+            const looksNested = nestedTeams.length > 0;
 
             if (this.arenaType === 'grand' || looksNested) {
                 const teams = [];
@@ -3495,7 +3602,7 @@ async function executeGetDailyBonus() {
                 const visibleSlots = [];
 
                 if (!looksNested) {
-                    const parsed = this.parseLineup(rawHeroes);
+                    const parsed = this.readOpponentLineup(opp);
                     if (parsed) {
                         teams[0] = parsed.heroes;
                         pets[0] = parsed.pet;
@@ -3541,7 +3648,7 @@ async function executeGetDailyBonus() {
                     };
                 }
             } else {
-                const parsed = this.parseLineup(rawHeroes);
+                const parsed = this.readOpponentLineup(opp);
                 const bannerId = extractBannerId(opp.banners?.[0] ?? opp.banner);
                 if (parsed) {
                     hasValidTeam = true;
@@ -3568,12 +3675,15 @@ async function executeGetDailyBonus() {
             if (!hasValidTeam) {
                 console.warn('[DEMO] Could not extract valid opponent team configuration');
                 console.log('[DEMO] Opponent data structure:', {
+                    keys: Object.keys(opp),
                     hasHeroes: !!opp.heroes,
                     heroesType: opp.heroes ? (Array.isArray(opp.heroes) ? 'array' : typeof opp.heroes) : 'none',
-                    heroesLength: opp.heroes ? (Array.isArray(opp.heroes) ? opp.heroes.length : 'N/A') : 0,
+                    heroesLength: opp.heroes ? (Array.isArray(opp.heroes) ? opp.heroes.length : Object.keys(opp.heroes).length) : 0,
                     firstHeroType: opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length > 0 
                         ? (typeof opp.heroes[0]) : 'N/A',
-                    hasBanners: !!opp.banners
+                    firstHero: Array.isArray(opp.heroes) ? opp.heroes[0] : opp.heroes,
+                    hasBanners: !!opp.banners,
+                    pet: opp.pet ?? opp.team?.pet ?? null
                 });
                 console.log('[DEMO] Full opponent data:', JSON.stringify(opp, null, 2));
             } else {
@@ -4502,6 +4612,7 @@ async function executeGetDailyBonus() {
                     isTitan,
                     power,
                     unitIds,
+                    units: typedAlive,
                     pointsLeft,
                     defenderName,
                     status: slotData.status,
@@ -4628,7 +4739,7 @@ async function executeGetDailyBonus() {
                         }
                         sim = await this.simulateGuildWarTitanBattle(
                             titanTeam,
-                            { titans: slot.unitIds.slice(0, 5) },
+                            { titans: slot.unitIds.slice(0, 5), units: slot.units },
                             CONSTANTS.SIMULATION_COUNT
                         );
                     } else {
@@ -4773,7 +4884,10 @@ async function executeGetDailyBonus() {
                     throw new Error(`Skipped: Power check failed (my ${myPower} vs enemy ${oppPower})`);
                 }
                 if (isTitanBattle) {
-                    const oppTeam = { titans: (slotMeta?.unitIds || []).slice(0, 5) };
+                    const oppTeam = {
+                        titans: (slotMeta?.unitIds || []).slice(0, 5),
+                        units: slotMeta?.units,
+                    };
                     if (oppTeam.titans.length >= 5) {
                         const sim = await this.simulateGuildWarTitanBattle(teamConfig, oppTeam, CONSTANTS.SIMULATION_COUNT);
                         if (sim.winRate <= CONSTANTS.WIN_RATE_THRESHOLD) {
@@ -4926,7 +5040,7 @@ async function executeGetDailyBonus() {
                 console.warn(`[GUILD_WAR_TITAN] No titan team data for slot ${slotId}`);
                 return null;
             }
-            return { titans: slot.unitIds.slice(0, 5) };
+            return { titans: slot.unitIds.slice(0, 5), units: slot.units };
         }
 
         /** Titan element from lib.data.titan or ID range. */
@@ -4949,42 +5063,118 @@ async function executeGetDailyBonus() {
             return null;
         }
 
+        /** lib.data.titanSpirit labels a skill as elemental or primal when the field is present. */
+        this.spiritSkillKind = function(skillId) {
+            try {
+                const root = window.lib?.data?.titanSpirit
+                    || (typeof window.lib?.getData === 'function' ? window.lib.getData('titanSpirit') : null);
+                const skills = root?.skills || root;
+                const skill = skills?.[skillId] || skills?.[String(skillId)];
+                if (!skill || typeof skill !== 'object') return null;
+                const label = String(skill.type || skill.group || skill.category || skill.kind || skill.slot || '').toLowerCase();
+                if (label.includes('primal')) return 'primal';
+                if (label.includes('element')) return 'elemental';
+            } catch (e) {
+                // fall through to list order
+            }
+            return null;
+        }
+
+        /** elementSpiritSkills is [elemental, primal] on captured titan demo battles. */
+        this.spiritSkillPair = function(unit) {
+            const list = Array.isArray(unit?.elementSpiritSkills) ? unit.elementSpiritSkills : [];
+            const ids = list
+                .map((entry) => Number(entry?.skillId ?? entry?.id))
+                .filter((id) => Number.isFinite(id) && id > 0);
+            if (ids.length < 2) return null;
+            let elemental = null;
+            let primal = null;
+            for (const id of ids) {
+                const kind = this.spiritSkillKind(id);
+                if (kind === 'elemental' && elemental == null) elemental = id;
+                if (kind === 'primal' && primal == null) primal = id;
+            }
+            if (elemental == null) elemental = ids[0];
+            if (primal == null) primal = ids.find((id) => id !== elemental);
+            if (!elemental || !primal) return null;
+            return { elemental, primal };
+        }
+
+        this.rankTitanElements = function(ids) {
+            const counts = {};
+            const order = [];
+            for (const id of ids || []) {
+                const el = this.getTitanElementById(id);
+                if (!el) continue;
+                if (!counts[el]) {
+                    counts[el] = 0;
+                    order.push(el);
+                }
+                counts[el] += 1;
+            }
+            return Object.keys(counts).sort((a, b) => {
+                if (counts[b] !== counts[a]) return counts[b] - counts[a];
+                return order.indexOf(a) - order.indexOf(b);
+            });
+        }
+
+        this.skillsForElement = function(element, ids, units, useOwnedTitans) {
+            for (const id of ids || []) {
+                if (this.getTitanElementById(id) !== element) continue;
+                const listed = (units || []).find((unit) => Number(unit?.id) === Number(id));
+                const fromSlot = this.spiritSkillPair(listed);
+                if (fromSlot) return fromSlot;
+                if (!useOwnedTitans) continue;
+                const owned = this.teamInfo?.titansById?.[id] || this.teamInfo?.titansById?.[String(id)];
+                const fromOwned = this.spiritSkillPair(owned);
+                if (fromOwned) return fromOwned;
+            }
+            return null;
+        }
+
         /**
          * Spirit args for GW titan demoBattles_startBattle.
-         * Elements follow team composition; skills stay {} so spirits are ignored in the request.
+         * Up to two elements that are actually on the team. A mono-element team sends one spirit.
+         * Skill ids come from the unit's elementSpiritSkills (enemy slot, or our titanGetAll for the attack).
          */
-        this.getGuildWarTitanSpiritArgs = function(attackTitanIds, defenceTitanIds) {
-            const countElements = (ids) => {
-                const counts = {};
-                const order = [];
-                for (const id of ids || []) {
-                    const el = this.getTitanElementById(id);
-                    if (!el) continue;
-                    if (!counts[el]) {
-                        counts[el] = 0;
-                        order.push(el);
-                    }
-                    counts[el] += 1;
+        this.getGuildWarTitanSpiritArgs = function(attackTitanIds, defenceTitanIds, defenceUnits) {
+            const atkRanked = this.rankTitanElements(attackTitanIds).slice(0, 2);
+            const defRanked = this.rankTitanElements(defenceTitanIds).slice(0, 2);
+            const args = {};
+            const put = (elementKey, skillsKey, element, skills) => {
+                if (!element) return;
+                args[elementKey] = element;
+                if (skills) {
+                    args[skillsKey] = skills;
+                } else {
+                    console.warn(`[GUILD_WAR_TITAN] No spirit skill ids for ${elementKey} (${element})`);
                 }
-                return Object.keys(counts).sort((a, b) => {
-                    if (counts[b] !== counts[a]) return counts[b] - counts[a];
-                    return order.indexOf(a) - order.indexOf(b);
-                });
             };
-
-            const atkRanked = countElements(attackTitanIds);
-            const defRanked = countElements(defenceTitanIds);
-            const firstSpiritElement = atkRanked[0] || 'dark';
-            const secondSpiritElement = atkRanked[1] || (firstSpiritElement === 'water' ? 'dark' : 'water');
-
-            return {
-                firstSpiritElement,
-                firstSpiritSkills: {},
-                secondSpiritElement,
-                secondSpiritSkills: {},
-                defenceFirstSpiritElement: defRanked[0] || firstSpiritElement,
-                defenceFirstSpiritSkills: {},
-            };
+            put(
+                'firstSpiritElement',
+                'firstSpiritSkills',
+                atkRanked[0],
+                this.skillsForElement(atkRanked[0], attackTitanIds, null, true)
+            );
+            put(
+                'secondSpiritElement',
+                'secondSpiritSkills',
+                atkRanked[1],
+                this.skillsForElement(atkRanked[1], attackTitanIds, null, true)
+            );
+            put(
+                'defenceFirstSpiritElement',
+                'defenceFirstSpiritSkills',
+                defRanked[0],
+                this.skillsForElement(defRanked[0], defenceTitanIds, defenceUnits, false)
+            );
+            put(
+                'defenceSecondSpiritElement',
+                'defenceSecondSpiritSkills',
+                defRanked[1],
+                this.skillsForElement(defRanked[1], defenceTitanIds, defenceUnits, false)
+            );
+            return args;
         }
 
         this.simulateGuildWarHeroBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
@@ -5179,11 +5369,10 @@ async function executeGetDailyBonus() {
                     }
 
                     // maxUpgrade from BATTLE SIM checkbox; defenceMaxUpgrade=true.
-                    // Spirit *skills* stay {} so spirits are ignored on the demo request.
                     const attackMaxUpgrade = getSimAttackMaxUpgrade();
-                    const spiritArgs = this.getGuildWarTitanSpiritArgs(attackUnits, defenceUnits);
+                    const spiritArgs = this.getGuildWarTitanSpiritArgs(attackUnits, defenceUnits, opponentTeam.units);
                     if (seedOffset === 0 && parentId === 0) {
-                        console.log('[GUILD_WAR_TITAN] Demo args (empty spirit skills):', spiritArgs,
+                        console.log('[GUILD_WAR_TITAN] Demo spirit args:', spiritArgs,
                             '| attack', attackUnits, '| defence', defenceUnits,
                             '| maxUpgrade', attackMaxUpgrade);
                     }
@@ -5306,13 +5495,18 @@ async function executeGetDailyBonus() {
         this.endGuildWarTitanDemoBattle = async function(calcResult, battleData) {
             return new Promise((resolve, reject) => {
                 try {
-                    // Prefer BattleCalc progress; pad only if missing
+                    // startBattle.seed is unsigned. endBattle progress.seed is that value as a signed int32.
+                    const toSignedSeed = (value) => {
+                        const n = Number(value);
+                        if (!Number.isFinite(n)) return value;
+                        return n | 0;
+                    };
                     const progress = Array.isArray(calcResult.progress) ? calcResult.progress.slice() : [];
-                    const seed = battleData?.seed || Math.floor(Math.random() * 1000000000);
+                    const seed = toSignedSeed(battleData?.seed ?? Math.floor(Math.random() * 1000000000));
 
                     if (progress.length === 0 && calcResult.result) {
                         progress.push({
-                            v: CONSTANTS.BATTLE_VERSION,
+                            v: CONSTANTS.TITAN_BATTLE_VERSION,
                             b: 0,
                             seed,
                             attackers: {
@@ -5325,11 +5519,10 @@ async function executeGetDailyBonus() {
                             }
                         });
                     } else {
-                        // Keep seed aligned with startBattle; ensure version present
                         for (const entry of progress) {
                             if (!entry || typeof entry !== 'object') continue;
-                            if (entry.seed == null) entry.seed = seed;
-                            if (entry.v == null) entry.v = CONSTANTS.BATTLE_VERSION;
+                            entry.seed = toSignedSeed(entry.seed == null ? battleData?.seed : entry.seed);
+                            if (entry.v == null) entry.v = CONSTANTS.TITAN_BATTLE_VERSION;
                         }
                     }
 
