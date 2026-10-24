@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.37
+// @version      3.5.39
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.37";
+    const EXTENSION_VERSION = "3.5.39";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -27,7 +27,7 @@
     /** Optional override for door comparison only: `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS`. */
     /** Optional override when restarting a non-last door: `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS`. */
     /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (0 = unlimited, Stealther default). */
-    /** Elemental door re-sim attempts (1-20): `window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS` (default 10, Stealther 1.011). */
+    /** Elemental door re-sim attempts (1-20): `window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS` (default 10, Stealther 1.012). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
     const UI_ICON = {
@@ -194,12 +194,13 @@
         HWHFuncs.setProgress('Executing: Expeditions', true);
         return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
     }
-    // Dungeon Algorithm - ported from Hero Wars Stealther 1.011 (Mike Rohsoft), with HWH Auto Daily integration
+    // Dungeon Algorithm - ported from Hero Wars Stealther 1.012 (Mike Rohsoft), with HWH Auto Daily integration
     function executeDungeon(resolve, reject) {
         const { HWHFuncs, Send, BattleCalc, cheats } = window;
         const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
 
         const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
+        const LOG_PREDICTION_CARDS = typeof window !== 'undefined' && window.HWH_LOG_PREDICTION_CARDS === true;
         const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
         const BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_BRUTEFORCE_MS) || 60000));
         const EVAL_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || BRUTEFORCE_MS));
@@ -219,6 +220,23 @@
                 window.HWHData.countPredictionCard = n;
             }
             return n;
+        }
+
+        function getOracleCards() {
+            return Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+        }
+
+        function consumeOracleCard() {
+            if (!window.HWHData) return 0;
+            const n = getOracleCards();
+            if (n <= 0) return 0;
+            window.HWHData.countPredictionCard = n - 1;
+            return window.HWHData.countPredictionCard;
+        }
+
+        // Stealther 1.012: prediction cards (consumable 81) only for hero doors.
+        function shouldUseOracleCard(attackerType) {
+            return attackerType === 'hero' && getOracleCards() > 0;
         }
 
         let dungeonActivity = 0;
@@ -242,7 +260,9 @@
         let consecutiveNoWin = 0;
         let timeDungeon = { all: Date.now(), steps: 0 };
 
-        function weightedTitanPower(titan) {
+        // Stealther 1.012: glass-cannon x1.5 / healer-priority x1.25 for sort + heal-power checks.
+        // Computed (not in-place mutate) so repeated getTitans() calls do not compound.
+        function effectiveTitanPower(titan) {
             const power = titan?.power || 0;
             const id = Number(titan?.id);
             if (id === 4004 || id === 4014 || id === 4024) return power * 1.5;
@@ -250,15 +270,8 @@
             return power;
         }
 
-        // Stealther 1.011 elemental sort: boost glass-cannon / healer-priority titans.
         function titanPowerSort(a, b) {
-            if (b.id === 4004 || b.id === 4014 || b.id === 4024) {
-                return a.power - b.power * 1.25;
-            }
-            if (b.id === 4003 || b.id === 4013 || b.id === 4023) {
-                return a.power - b.power * 1.1;
-            }
-            return a.power - b.power;
+            return effectiveTitanPower(a) - effectiveTitanPower(b);
         }
 
         function getApiResult(result) {
@@ -689,7 +702,7 @@
             }
             const result = [];
             const used = new Set();
-            const waterPower = aliveTitans.water.reduce((sum, hero) => hero.power + sum, 0);
+            const waterPower = aliveTitans.water.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
             if (waterPower > 500000 && aliveTitans.water.length >= 4) {
                 for (const waterTitan of aliveTitans.water) {
                     if (result.length === 4) break;
@@ -1118,10 +1131,6 @@
         }
 
         async function waitForBattleFullTimer(option, debug = '') {
-            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
-            if (predictionCards > 0) {
-                return;
-            }
             const totalTimer = Math.ceil(option.timer ?? getTimer(option.battleTime ?? 0));
             if (totalTimer <= 0) {
                 return;
@@ -1133,7 +1142,26 @@
             await countdownTimer(totalTimer, msg);
         }
 
-        // Stealther 1.011: skip re-sim when the chosen option is already the latest server battle.
+        // Stealther 1.012: hero doors can spend a prediction card to skip the wait and end with isRaid.
+        async function waitOrUseOracleCard(option, attackerType, debug = '') {
+            if (shouldUseOracleCard(attackerType)) {
+                const before = getOracleCards();
+                const left = consumeOracleCard();
+                if (DUNGEON_VERBOSE || LOG_PREDICTION_CARDS) {
+                    console.log(`[Dungeon] Oracle/prediction card used (${before} -> ${left})`, debug || '');
+                }
+                setProgress(
+                    `${I18N('DUNGEON')}: \uD83C\uDCCF ${left} | ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`,
+                    true
+                );
+                await sleep(0);
+                return true;
+            }
+            await waitForBattleFullTimer(option, debug);
+            return false;
+        }
+
+        // Stealther 1.012: skip re-sim when the chosen option is already the latest server battle.
         async function executeChosenOption(option, attackerType, doorCount, debug = '', skipRestart = false) {
             if (stopDung || end) {
                 return false;
@@ -1158,11 +1186,11 @@
                 lastDebugString += debugString(restarted, attackerType) + ' [restart]';
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
             }
-            await waitForBattleFullTimer(finalOption, debug);
+            const useOracleCard = await waitOrUseOracleCard(finalOption, attackerType, debug);
             if (stopDung || end) {
                 return false;
             }
-            return endBattleOption(finalOption, attackerType);
+            return endBattleOption(finalOption, attackerType, false, useOracleCard);
         }
 
         async function evaluateTeam(teamNum, attackerType, aliveTitans, states) {
@@ -1192,7 +1220,7 @@
             };
         }
 
-        async function endBattleOption(option, attackerType, isRetry = false) {
+        async function endBattleOption(option, attackerType, isRetry = false, useOracleCard = false) {
             if (!option?.result?.win) {
                 endDungeon('Hero or Titan may have died in battle!', option);
                 return false;
@@ -1201,8 +1229,8 @@
                 result: option.result,
                 progress: option.progress,
             };
-            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
-            if (predictionCards > 0) {
+            // Stealther 1.012: isRaid only when a prediction card was spent for a hero door.
+            if (useOracleCard) {
                 args.isRaid = true;
             }
 
@@ -1306,8 +1334,8 @@
                 lastError = 'NotFound recovery failed (could not restart battle)';
                 return false;
             }
-            await waitForBattleFullTimer(refreshed);
-            return endBattleOption(refreshed, attackerType, true);
+            const useOracleCard = await waitOrUseOracleCard(refreshed, attackerType);
+            return endBattleOption(refreshed, attackerType, true, useOracleCard);
         }
 
         async function checkTalent(dungeonInfo) {
@@ -1475,11 +1503,11 @@
                 }
                 lastDebugString += debugString(option, 'hero');
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                await waitForBattleFullTimer(option, lastDebugString);
+                const useOracleCard = await waitOrUseOracleCard(option, 'hero', lastDebugString);
                 if (stopDung || end) {
                     return false;
                 }
-                const ok = await endBattleOption(option, 'hero');
+                const ok = await endBattleOption(option, 'hero', false, useOracleCard);
                 timeDungeon.steps += Date.now() - stepStart;
                 return ok !== false;
             }
@@ -1636,17 +1664,18 @@
                 : Object.values(titanRaw || {}).filter((t) => t && t.id != null);
 
             const layout = getTitans(titansList);
-            // Stealther 1.011: weight glass-cannon/heal titans when deciding if water can support heal doors.
-            const waterPower = layout.water.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
-            const earthPower = layout.earth.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
-            const firePower = layout.fire.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
+            // Stealther 1.012: effective power already applies glass-cannon/healer weights.
+            const waterPower = layout.water.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            const earthPower = layout.earth.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            const firePower = layout.fire.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
             const waterStrongest = waterPower >= earthPower && waterPower >= firePower;
             const waterWithin50Percent = earthPower <= waterPower * 1.5 && firePower <= waterPower * 1.5;
             isAbleToHeal = waterStrongest || waterWithin50Percent;
 
             if (DUNGEON_VERBOSE) {
                 console.log('[Dungeon] Water', waterPower, '| Earth', earthPower, '| Fire', firePower, '| canHeal:', isAbleToHeal);
-                console.log('[Dungeon] Starting full dungeon run (Stealther 1.011):', new Date());
+                console.log('[Dungeon] Oracle/prediction cards:', getOracleCards());
+                console.log('[Dungeon] Starting full dungeon run (Stealther 1.012):', new Date());
                 console.log('[Dungeon] Settings:', {
                     elementalAttempts: MAX_ELEMENTAL_ATTEMPTS,
                     excludeFragileElemental: !!titanHealthSettings.excludeFragileElemental,
@@ -1831,7 +1860,7 @@
         );
 
         try {
-            HWHFuncs.setProgress('Executing: Dungeon (Stealther 1.011)', true);
+            HWHFuncs.setProgress('Executing: Dungeon (Stealther 1.012)', true);
             return await withTimeout(
                 new Promise((resolve, reject) => {
                     try {
@@ -2431,9 +2460,18 @@ async function executeGetDailyBonus() {
             return window.getInput(name);
         }
         // Sensible defaults matching typical HWH settings
-        if (name === 'countTestBattle') return 5;
+        if (name === 'countTestBattle') return 10;
         if (name === 'countAutoBattle') return 10;
         return 0;
+    }
+
+    // Main-menu "Number of test fights" (countTestBattle). Each sample is a local BattleCalc.
+    function getTestFightCount() {
+        const raw = parseInt(getInput('countTestBattle'), 10);
+        if (!Number.isFinite(raw) || raw < 1) {
+            return 10;
+        }
+        return raw;
     }
 
     // Helper function for random
@@ -3035,7 +3073,8 @@ async function executeGetDailyBonus() {
                 }
 
                 const opponentId = opponent.opponent.id;
-                console.log(`[DEMO] ===== Starting demo battle simulation for opponent ${opponentId} =====`);
+                this.demoApiCount = 0;
+                console.log(`[Arena pre-check] ===== Opponent ${opponentId}: 1 server demo per matchup, then local BattleCalc =====`);
 
                 // Step 1: Get team configurations
                 console.log('[DEMO] Step 1: Getting team configurations...');
@@ -3076,8 +3115,8 @@ async function executeGetDailyBonus() {
                     };
                     console.log('[DEMO] Grand arrangement:', arrangement.perm, arrangement.slotRates);
                 } else {
-                    Utils.log('log', '[DEMO] Running demo battle simulations (no attempts consumed)...');
-                    simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig, CONSTANTS.SIMULATION_COUNT);
+                    Utils.log('log', `[DEMO] Running ${getTestFightCount()} local test fights (no attempts consumed)...`);
+                    simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig);
                 }
                 
                 console.log('[DEMO] Simulation results:', {
@@ -3312,11 +3351,8 @@ async function executeGetDailyBonus() {
             return result;
         }
 
-        this.simulateTeamMatchup = async function(attack, defence, simulationCount = CONSTANTS.SIMULATION_COUNT) {
+        this.simulateTeamMatchup = async function(attack, defence) {
             const mechanic = 'arena';
-            const simulations = [];
-            let parentId = 0;
-            let firstBattleId = null;
             const matchup = {
                 team: { units: attack.units, pet: attack.pet },
                 banner: attack.banner || 1,
@@ -3325,26 +3361,11 @@ async function executeGetDailyBonus() {
                 defenceBanner: defence.banner || 1,
                 defenceFavor: defence.favor || {}
             };
-            for (let i = 0; i < simulationCount; i++) {
-                try {
-                    const result = await this.runSingleDemoBattle(null, null, mechanic, i, parentId, matchup);
-                    simulations.push(result);
-                    if (i === 0 && result.battleId) {
-                        firstBattleId = result.battleId;
-                        parentId = firstBattleId;
-                    } else if (firstBattleId) {
-                        parentId = firstBattleId;
-                    } else if (result.parentId) {
-                        parentId = result.parentId;
-                    }
-                } catch (error) {
-                    console.error('[DEMO] Grand matchup sim failed:', error);
-                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId });
-                }
-            }
-            const wins = simulations.filter((s) => s.win).length;
-            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
-            return { winRate, wins, total: simulations.length };
+            const battleData = await this.fetchDemoBattle(null, null, mechanic, 0, 0, matchup);
+            const summary = await this.runLocalTestFights(battleData, mechanic, getTestFightCount());
+            const calcResult = summary.simulations.find((sample) => sample.result)?.result;
+            await this.closeDemoBattle(calcResult, battleData);
+            return { winRate: summary.winRate, wins: summary.wins, total: summary.total };
         }
 
         this.pickGrandTeamArrangement = async function(myTeam, oppTeam) {
@@ -3562,251 +3583,197 @@ async function executeGetDailyBonus() {
             return config;
         }
 
-        this.simulateWithDemoBattles = async function(myTeam, opponentTeam, simulationCount = 10) {
-            const teamCount = this.arenaType === 'grand' ? 3 : 1;
-            const totalSimulations = simulationCount * teamCount;
-            Utils.log('log', `[DEMO] Starting ${totalSimulations} demo battle simulations (${teamCount} team(s) x ${simulationCount})...`);
+        this.simulateWithDemoBattles = async function(myTeam, opponentTeam) {
+            const simulationCount = getTestFightCount();
+            Utils.log('log', `[DEMO] One server battle, then ${simulationCount} local test fights`);
             Utils.log('log', `[DEMO] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
-            
-            // Note: demoBattles API only supports "arena" mechanic, even for Grand Arena
+
+            // demoBattles builds the battle. Later samples only change the seed locally.
             const mechanic = 'arena';
-
-            const simulations = [];
-            let parentId = 0; // Start with 0 for first battle
-            let firstBattleId = null; // Store first battle's ID to use as parentId for subsequent battles
-            
-            for (let i = 0; i < totalSimulations; i++) {
-                try {
-                    // First battle uses parentId=0, subsequent battles use first battle's ID as parentId
-                    const result = await this.runSingleDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
-                    simulations.push(result);
-                    
-                    // For first battle: store the battle ID to use as parentId for subsequent battles
-                    if (i === 0 && result.battleId) {
-                        firstBattleId = result.battleId;
-                        parentId = firstBattleId;
-                    }
-                    // For subsequent battles: use the first battle's ID as parentId
-                    else if (i > 0 && firstBattleId) {
-                        parentId = firstBattleId;
-                    }
-                    // Fallback: try to extract parentId from endBattle response
-                    else if (result.parentId !== undefined && result.parentId !== null && result.parentId !== 0) {
-                        parentId = result.parentId;
-                    }
-                } catch (error) {
-                    console.error(`[DEMO] Simulation ${i + 1}/${totalSimulations} failed:`, error);
-                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId: parentId });
-                }
-            }
-
-            // Calculate statistics
-            const wins = simulations.filter(s => s.win).length;
-            const losses = simulations.length - wins;
-            const winRate = (wins / simulations.length) * 100;
-            const battleTimes = simulations.map(s => s.battleTime).filter(t => t > 0);
-            const averageBattleTime = battleTimes.length > 0 
-                ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length 
-                : 0;
-
-            Utils.log('log', `[DEMO] Simulation complete: ${wins}W/${losses}L (${winRate.toFixed(1)}% win rate)`);
-
-            return {
-                total: simulations.length,
-                wins: wins,
-                losses: losses,
-                winRate: winRate,
-                averageBattleTime: averageBattleTime,
-                simulations: simulations
-            };
+            const battleData = await this.fetchDemoBattle(myTeam, opponentTeam, mechanic, 0, 0, null);
+            const summary = await this.runLocalTestFights(battleData, mechanic, simulationCount);
+            const calcResult = summary.simulations.find((sample) => sample.result)?.result;
+            await this.closeDemoBattle(calcResult, battleData);
+            return summary;
         }
 
-        this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0, matchup = null) {
+        this.calcBattleCopy = function(battleData, mechanic, seed) {
             return new Promise((resolve, reject) => {
+                const battle = structuredClone(battleData);
+                if (seed != null) {
+                    battle.seed = seed;
+                }
+                const battleType = battle?.effects?.battleConfig ?? battle?.type ?? mechanic;
+                const battleConfigType = getBattleType(battleType);
                 try {
-                    const attackMaxUpgrade = getSimAttackMaxUpgrade();
-                    let args = {
-                        mechanic: mechanic,
-                        defenceMaxUpgrade: true,
-                        maxUpgrade: attackMaxUpgrade,
-                        defenceBuffs: {},
-                        buffs: {},
-                        parentId: parentId,
-                        entryId: 0
-                    };
-
-                    if (matchup) {
-                        args.defenceTeam = matchup.defenceTeam;
-                        args.defenceBanner = matchup.defenceBanner || 1;
-                        args.defenceBannerStones = {};
-                        args.defenceFavor = matchup.defenceFavor || {};
-                        args.team = matchup.team;
-                        args.banner = matchup.banner || 1;
-                        args.bannerStones = {};
-                        args.favor = matchup.favor || {};
-                    } else if (this.arenaType === 'grand') {
-                        const visibleSlots = opponentTeam.visibleSlots?.length
-                            ? opponentTeam.visibleSlots
-                            : [0, 1, 2].filter((i) => Array.isArray(opponentTeam.heroes?.[i]) && opponentTeam.heroes[i].length);
-                        const teamIndex = visibleSlots.length
-                            ? visibleSlots[seedOffset % visibleSlots.length]
-                            : (seedOffset % 3);
-                        args.defenceTeam = {
-                            units: opponentTeam.heroes[teamIndex] || [],
-                            pet: opponentTeam.pets[teamIndex] || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.defenceBanner = opponentTeam.banners[teamIndex] || 1;
-                        args.defenceBannerStones = {};
-                        args.defenceFavor = opponentTeam.favor || {};
-                        args.team = {
-                            units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
-                            pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
-                        args.bannerStones = {};
-                        args.favor = myTeam.favor || {};
-                    } else {
-                        // Regular Arena: 1 team
-                        args.defenceTeam = {
-                            units: opponentTeam.heroes || [],
-                            pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.defenceBanner = opponentTeam.banner || 1;
-                        args.defenceBannerStones = {};  // Required field from HAR file
-                        args.defenceFavor = opponentTeam.favor || {};
-                        
-                        args.team = {
-                            units: myTeam.heroes || [],
-                            pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.banner = myTeam.banners[0] || 1;
-                        args.bannerStones = {};  // Required field from HAR file
-                        args.favor = myTeam.favor || {};
-                    }
-
-                    // Validate required fields before making API call
-                    if (!args.team || !args.team.units || args.team.units.length === 0) {
-                        reject(new Error('Invalid team configuration: missing or empty hero units'));
-                        return;
-                    }
-                    if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
-                        reject(new Error('Invalid defence team configuration: missing or empty hero units'));
-                        return;
-                    }
-                    if (!args.team.pet || typeof args.team.pet !== 'number') {
-                        reject(new Error('Invalid team pet: must be a number'));
-                        return;
-                    }
-                    if (!args.defenceTeam.pet || typeof args.defenceTeam.pet !== 'number') {
-                        reject(new Error('Invalid defence team pet: must be a number'));
-                        return;
-                    }
-
-                    const calls = [{
-                        name: "demoBattles_startBattle",
-                        args: args,
-                        context: {
-                            actionTs: Utils.getActionTs()
-                        },
-                        ident: "body"
-                    }];
-
-                    const startTime = Date.now();
-                    
-                    Send(JSON.stringify({calls}))
-                        .then(response => {
-                            if (response.error) {
-                                console.error('[DEMO] API error:', response.error);
-                                reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
-                                return;
-                            }
-
-                            if (!response.results || !response.results[0] || !response.results[0].result) {
-                                console.error('[DEMO] Invalid API response structure');
-                                reject(new Error('Invalid demo battle API response'));
-                                return;
-                            }
-
-                            const responseData = response.results[0].result.response;
-                            // Battle data is nested under 'battle' property
-                            const battleData = responseData?.battle || responseData;
-
-                            if (!battleData) {
-                                console.error('[DEMO] No battle data found in response');
-                                reject(new Error('No battle data in API response'));
-                                return;
-                            }
-
-                            // Calculate battle result using BattleCalc
-                            const battleType = battleData?.effects?.battleConfig ?? battleData?.type ?? mechanic;
-                            const battleConfigType = getBattleType(battleType);
-                            
-                            BattleCalc(battleData, battleConfigType, (calcResult) => {
-                                if (!Utils.isValidBattleResult(calcResult)) {
-                                    Utils.log('error', '[DEMO] BattleCalc returned invalid result');
-                                    resolve({
-                                        win: false,
-                                        battleTime: 0,
-                                        error: 'Invalid calculation result',
-                                        parentId: parentId
-                                    });
-                                    return;
-                                }
-
-                                const battleTime = calcResult.battleTime || 0;
-                                const win = calcResult.result.win || false;
-
-                                // Call demoBattles_endBattle to get battleId for parentId chaining
-                                // Strategy: Use first battle's ID as parentId for all subsequent battles
-                                const self = this;
-                                self.endDemoBattle(calcResult, battleData)
-                                    .then(endBattleResult => {
-                                        const extractedParentId = endBattleResult?.parentId;
-                                        const battleId = endBattleResult?.battleId;
-                                        
-                                        // Strategy: For first battle, use its ID as parentId for subsequent battles
-                                        let nextParentId = parentId;
-                                        
-                                        if (parentId === 0 && battleId) {
-                                            // First battle: use its ID as parentId for next battle
-                                            nextParentId = battleId;
-                                        } else if (parentId !== 0) {
-                                            // Subsequent battle: keep using the first battle's ID
-                                            nextParentId = parentId;
-                                        } else if (extractedParentId && extractedParentId !== 0) {
-                                            // Fallback: use parentId from endBattle response
-                                            nextParentId = extractedParentId;
-                                        }
-                                        
-                                        resolve({
-                                            win: win,
-                                            battleTime: battleTime,
-                                            result: calcResult,
-                                            parentId: nextParentId,
-                                            battleId: battleId
-                                        });
-                                    })
-                                    .catch(endError => {
-                                        Utils.log('warn', '[DEMO] Failed to call endBattle:', endError);
-                                        resolve({
-                                            win: win,
-                                            battleTime: battleTime,
-                                            result: calcResult,
-                                            parentId: parentId,
-                                            battleId: null
-                                        });
-                                    });
-                            });
-                        })
-                        .catch(error => {
-                            console.error('[DEMO] Error in demo battle:', error);
-                            reject(error);
+                    BattleCalc(battle, battleConfigType, (calcResult) => {
+                        if (!Utils.isValidBattleResult(calcResult)) {
+                            resolve({ win: false, battleTime: 0, error: 'Invalid calculation result' });
+                            return;
+                        }
+                        resolve({
+                            win: !!calcResult.result?.win,
+                            battleTime: calcResult.battleTime || 0,
+                            result: calcResult
                         });
+                    });
                 } catch (error) {
-                    console.error('[DEMO] Error preparing demo battle:', error);
                     reject(error);
                 }
             });
+        }
+
+        this.runLocalTestFights = async function(battleData, mechanic, count) {
+            const total = Math.max(1, count);
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            const serverSeed = battleData?.seed;
+            const simulations = [];
+            console.log(`[Arena pre-check] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
+            for (let i = 0; i < total; i++) {
+                // First sample keeps the server seed. Each later sample gets its own copy and seed.
+                const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + random(0, 1e3) + i;
+                const usedSeed = seed == null ? serverSeed : seed;
+                setProgress(`${arenaName}: BattleCalc local ${i + 1}/${total}`);
+                try {
+                    const sample = await this.calcBattleCopy(battleData, mechanic, seed);
+                    simulations.push(sample);
+                    console.log(`[Arena pre-check] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
+                } catch (error) {
+                    console.error(`[Arena pre-check] BattleCalc local ${i + 1}/${total} failed:`, error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message });
+                }
+            }
+            const wins = simulations.filter((s) => s.win).length;
+            const losses = simulations.length - wins;
+            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
+            const battleTimes = simulations.map((s) => s.battleTime).filter((t) => t > 0);
+            const averageBattleTime = battleTimes.length
+                ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length
+                : 0;
+            const summary = `${arenaName}: BattleCalc local ${wins}W/${losses}L (${winRate.toFixed(0)}% of ${simulations.length})`;
+            console.log(`[Arena pre-check] ${summary}. Server demo calls this matchup: 1.`);
+            setProgress(summary);
+            return {
+                total: simulations.length,
+                wins,
+                losses,
+                winRate,
+                averageBattleTime,
+                simulations
+            };
+        }
+
+        this.closeDemoBattle = async function(calcResult, battleData) {
+            if (!calcResult?.result) {
+                return null;
+            }
+            try {
+                return await this.endDemoBattle(calcResult, battleData);
+            } catch (error) {
+                Utils.log('warn', '[DEMO] Failed to call endBattle:', error);
+                return null;
+            }
+        }
+
+        this.fetchDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0, matchup = null) {
+            const attackMaxUpgrade = getSimAttackMaxUpgrade();
+            const args = {
+                mechanic: mechanic,
+                defenceMaxUpgrade: true,
+                maxUpgrade: attackMaxUpgrade,
+                defenceBuffs: {},
+                buffs: {},
+                parentId: parentId,
+                entryId: 0
+            };
+
+            if (matchup) {
+                args.defenceTeam = matchup.defenceTeam;
+                args.defenceBanner = matchup.defenceBanner || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = matchup.defenceFavor || {};
+                args.team = matchup.team;
+                args.banner = matchup.banner || 1;
+                args.bannerStones = {};
+                args.favor = matchup.favor || {};
+            } else if (this.arenaType === 'grand') {
+                const visibleSlots = opponentTeam.visibleSlots?.length
+                    ? opponentTeam.visibleSlots
+                    : [0, 1, 2].filter((i) => Array.isArray(opponentTeam.heroes?.[i]) && opponentTeam.heroes[i].length);
+                const teamIndex = visibleSlots.length
+                    ? visibleSlots[seedOffset % visibleSlots.length]
+                    : (seedOffset % 3);
+                args.defenceTeam = {
+                    units: opponentTeam.heroes[teamIndex] || [],
+                    pet: opponentTeam.pets[teamIndex] || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.defenceBanner = opponentTeam.banners[teamIndex] || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = opponentTeam.favor || {};
+                args.team = {
+                    units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
+                    pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
+                args.bannerStones = {};
+                args.favor = myTeam.favor || {};
+            } else {
+                args.defenceTeam = {
+                    units: opponentTeam.heroes || [],
+                    pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.defenceBanner = opponentTeam.banner || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = opponentTeam.favor || {};
+                args.team = {
+                    units: myTeam.heroes || [],
+                    pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.banner = myTeam.banners[0] || 1;
+                args.bannerStones = {};
+                args.favor = myTeam.favor || {};
+            }
+
+            if (!args.team || !args.team.units || args.team.units.length === 0) {
+                throw new Error('Invalid team configuration: missing or empty hero units');
+            }
+            if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
+                throw new Error('Invalid defence team configuration: missing or empty hero units');
+            }
+            if (!args.team.pet || typeof args.team.pet !== 'number') {
+                throw new Error('Invalid team pet: must be a number');
+            }
+            if (!args.defenceTeam.pet || typeof args.defenceTeam.pet !== 'number') {
+                throw new Error('Invalid defence team pet: must be a number');
+            }
+
+            this.demoApiCount = (this.demoApiCount || 0) + 1;
+            console.log(`[Arena pre-check] demoBattles_startBattle API #${this.demoApiCount} (server builds this matchup once)`);
+            const response = await Send(JSON.stringify({
+                calls: [{
+                    name: "demoBattles_startBattle",
+                    args: args,
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }]
+            }));
+
+            if (response.error) {
+                console.error('[DEMO] API error:', response.error);
+                throw new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`);
+            }
+            if (!response.results || !response.results[0] || !response.results[0].result) {
+                console.error('[DEMO] Invalid API response structure');
+                throw new Error('Invalid demo battle API response');
+            }
+
+            const responseData = response.results[0].result.response;
+            const battleData = responseData?.battle || responseData;
+            if (!battleData) {
+                console.error('[DEMO] No battle data found in response');
+                throw new Error('No battle data in API response');
+            }
+            return battleData;
         }
 
         this.endDemoBattle = async function(calcResult, battleData) {
@@ -8571,7 +8538,7 @@ async function executeGetDailyBonus() {
         console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
 
-        // Stealther 1.011 is the default dungeon algorithm for all HWH dungeon starts.
+        // Stealther 1.012 is the default dungeon algorithm for all HWH dungeon starts.
         installDefaultDungeonAlgorithm();
         keepDefaultDungeonAlgorithmInstalled();
         
