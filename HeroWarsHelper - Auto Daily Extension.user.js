@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.37
+// @version      3.5.38
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.37";
+    const EXTENSION_VERSION = "3.5.38";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -27,7 +27,7 @@
     /** Optional override for door comparison only: `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS`. */
     /** Optional override when restarting a non-last door: `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS`. */
     /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (0 = unlimited, Stealther default). */
-    /** Elemental door re-sim attempts (1-20): `window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS` (default 10, Stealther 1.011). */
+    /** Elemental door re-sim attempts (1-20): `window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS` (default 10, Stealther 1.012). */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
     const UI_ICON = {
@@ -194,12 +194,13 @@
         HWHFuncs.setProgress('Executing: Expeditions', true);
         return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
     }
-    // Dungeon Algorithm - ported from Hero Wars Stealther 1.011 (Mike Rohsoft), with HWH Auto Daily integration
+    // Dungeon Algorithm - ported from Hero Wars Stealther 1.012 (Mike Rohsoft), with HWH Auto Daily integration
     function executeDungeon(resolve, reject) {
         const { HWHFuncs, Send, BattleCalc, cheats } = window;
         const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
 
         const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
+        const LOG_PREDICTION_CARDS = typeof window !== 'undefined' && window.HWH_LOG_PREDICTION_CARDS === true;
         const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
         const BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_BRUTEFORCE_MS) || 60000));
         const EVAL_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || BRUTEFORCE_MS));
@@ -219,6 +220,23 @@
                 window.HWHData.countPredictionCard = n;
             }
             return n;
+        }
+
+        function getOracleCards() {
+            return Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+        }
+
+        function consumeOracleCard() {
+            if (!window.HWHData) return 0;
+            const n = getOracleCards();
+            if (n <= 0) return 0;
+            window.HWHData.countPredictionCard = n - 1;
+            return window.HWHData.countPredictionCard;
+        }
+
+        // Stealther 1.012: prediction cards (consumable 81) only for hero doors.
+        function shouldUseOracleCard(attackerType) {
+            return attackerType === 'hero' && getOracleCards() > 0;
         }
 
         let dungeonActivity = 0;
@@ -242,7 +260,9 @@
         let consecutiveNoWin = 0;
         let timeDungeon = { all: Date.now(), steps: 0 };
 
-        function weightedTitanPower(titan) {
+        // Stealther 1.012: glass-cannon x1.5 / healer-priority x1.25 for sort + heal-power checks.
+        // Computed (not in-place mutate) so repeated getTitans() calls do not compound.
+        function effectiveTitanPower(titan) {
             const power = titan?.power || 0;
             const id = Number(titan?.id);
             if (id === 4004 || id === 4014 || id === 4024) return power * 1.5;
@@ -250,15 +270,8 @@
             return power;
         }
 
-        // Stealther 1.011 elemental sort: boost glass-cannon / healer-priority titans.
         function titanPowerSort(a, b) {
-            if (b.id === 4004 || b.id === 4014 || b.id === 4024) {
-                return a.power - b.power * 1.25;
-            }
-            if (b.id === 4003 || b.id === 4013 || b.id === 4023) {
-                return a.power - b.power * 1.1;
-            }
-            return a.power - b.power;
+            return effectiveTitanPower(a) - effectiveTitanPower(b);
         }
 
         function getApiResult(result) {
@@ -689,7 +702,7 @@
             }
             const result = [];
             const used = new Set();
-            const waterPower = aliveTitans.water.reduce((sum, hero) => hero.power + sum, 0);
+            const waterPower = aliveTitans.water.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
             if (waterPower > 500000 && aliveTitans.water.length >= 4) {
                 for (const waterTitan of aliveTitans.water) {
                     if (result.length === 4) break;
@@ -1118,10 +1131,6 @@
         }
 
         async function waitForBattleFullTimer(option, debug = '') {
-            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
-            if (predictionCards > 0) {
-                return;
-            }
             const totalTimer = Math.ceil(option.timer ?? getTimer(option.battleTime ?? 0));
             if (totalTimer <= 0) {
                 return;
@@ -1133,7 +1142,26 @@
             await countdownTimer(totalTimer, msg);
         }
 
-        // Stealther 1.011: skip re-sim when the chosen option is already the latest server battle.
+        // Stealther 1.012: hero doors can spend a prediction card to skip the wait and end with isRaid.
+        async function waitOrUseOracleCard(option, attackerType, debug = '') {
+            if (shouldUseOracleCard(attackerType)) {
+                const before = getOracleCards();
+                const left = consumeOracleCard();
+                if (DUNGEON_VERBOSE || LOG_PREDICTION_CARDS) {
+                    console.log(`[Dungeon] Oracle/prediction card used (${before} -> ${left})`, debug || '');
+                }
+                setProgress(
+                    `${I18N('DUNGEON')}: \uD83C\uDCCF ${left} | ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`,
+                    true
+                );
+                await sleep(0);
+                return true;
+            }
+            await waitForBattleFullTimer(option, debug);
+            return false;
+        }
+
+        // Stealther 1.012: skip re-sim when the chosen option is already the latest server battle.
         async function executeChosenOption(option, attackerType, doorCount, debug = '', skipRestart = false) {
             if (stopDung || end) {
                 return false;
@@ -1158,11 +1186,11 @@
                 lastDebugString += debugString(restarted, attackerType) + ' [restart]';
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
             }
-            await waitForBattleFullTimer(finalOption, debug);
+            const useOracleCard = await waitOrUseOracleCard(finalOption, attackerType, debug);
             if (stopDung || end) {
                 return false;
             }
-            return endBattleOption(finalOption, attackerType);
+            return endBattleOption(finalOption, attackerType, false, useOracleCard);
         }
 
         async function evaluateTeam(teamNum, attackerType, aliveTitans, states) {
@@ -1192,7 +1220,7 @@
             };
         }
 
-        async function endBattleOption(option, attackerType, isRetry = false) {
+        async function endBattleOption(option, attackerType, isRetry = false, useOracleCard = false) {
             if (!option?.result?.win) {
                 endDungeon('Hero or Titan may have died in battle!', option);
                 return false;
@@ -1201,8 +1229,8 @@
                 result: option.result,
                 progress: option.progress,
             };
-            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
-            if (predictionCards > 0) {
+            // Stealther 1.012: isRaid only when a prediction card was spent for a hero door.
+            if (useOracleCard) {
                 args.isRaid = true;
             }
 
@@ -1306,8 +1334,8 @@
                 lastError = 'NotFound recovery failed (could not restart battle)';
                 return false;
             }
-            await waitForBattleFullTimer(refreshed);
-            return endBattleOption(refreshed, attackerType, true);
+            const useOracleCard = await waitOrUseOracleCard(refreshed, attackerType);
+            return endBattleOption(refreshed, attackerType, true, useOracleCard);
         }
 
         async function checkTalent(dungeonInfo) {
@@ -1475,11 +1503,11 @@
                 }
                 lastDebugString += debugString(option, 'hero');
                 if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                await waitForBattleFullTimer(option, lastDebugString);
+                const useOracleCard = await waitOrUseOracleCard(option, 'hero', lastDebugString);
                 if (stopDung || end) {
                     return false;
                 }
-                const ok = await endBattleOption(option, 'hero');
+                const ok = await endBattleOption(option, 'hero', false, useOracleCard);
                 timeDungeon.steps += Date.now() - stepStart;
                 return ok !== false;
             }
@@ -1636,17 +1664,18 @@
                 : Object.values(titanRaw || {}).filter((t) => t && t.id != null);
 
             const layout = getTitans(titansList);
-            // Stealther 1.011: weight glass-cannon/heal titans when deciding if water can support heal doors.
-            const waterPower = layout.water.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
-            const earthPower = layout.earth.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
-            const firePower = layout.fire.reduce((sum, titan) => sum + weightedTitanPower(titan), 0);
+            // Stealther 1.012: effective power already applies glass-cannon/healer weights.
+            const waterPower = layout.water.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            const earthPower = layout.earth.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            const firePower = layout.fire.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
             const waterStrongest = waterPower >= earthPower && waterPower >= firePower;
             const waterWithin50Percent = earthPower <= waterPower * 1.5 && firePower <= waterPower * 1.5;
             isAbleToHeal = waterStrongest || waterWithin50Percent;
 
             if (DUNGEON_VERBOSE) {
                 console.log('[Dungeon] Water', waterPower, '| Earth', earthPower, '| Fire', firePower, '| canHeal:', isAbleToHeal);
-                console.log('[Dungeon] Starting full dungeon run (Stealther 1.011):', new Date());
+                console.log('[Dungeon] Oracle/prediction cards:', getOracleCards());
+                console.log('[Dungeon] Starting full dungeon run (Stealther 1.012):', new Date());
                 console.log('[Dungeon] Settings:', {
                     elementalAttempts: MAX_ELEMENTAL_ATTEMPTS,
                     excludeFragileElemental: !!titanHealthSettings.excludeFragileElemental,
@@ -1831,7 +1860,7 @@
         );
 
         try {
-            HWHFuncs.setProgress('Executing: Dungeon (Stealther 1.011)', true);
+            HWHFuncs.setProgress('Executing: Dungeon (Stealther 1.012)', true);
             return await withTimeout(
                 new Promise((resolve, reject) => {
                     try {
@@ -8571,7 +8600,7 @@ async function executeGetDailyBonus() {
         console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
 
-        // Stealther 1.011 is the default dungeon algorithm for all HWH dungeon starts.
+        // Stealther 1.012 is the default dungeon algorithm for all HWH dungeon starts.
         installDefaultDungeonAlgorithm();
         keepDefaultDungeonAlgorithmInstalled();
         
