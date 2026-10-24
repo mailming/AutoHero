@@ -2460,9 +2460,18 @@ async function executeGetDailyBonus() {
             return window.getInput(name);
         }
         // Sensible defaults matching typical HWH settings
-        if (name === 'countTestBattle') return 5;
+        if (name === 'countTestBattle') return 10;
         if (name === 'countAutoBattle') return 10;
         return 0;
+    }
+
+    // Main-menu "Number of test fights" (countTestBattle). Each sample is a local BattleCalc.
+    function getTestFightCount() {
+        const raw = parseInt(getInput('countTestBattle'), 10);
+        if (!Number.isFinite(raw) || raw < 1) {
+            return 10;
+        }
+        return raw;
     }
 
     // Helper function for random
@@ -3105,8 +3114,8 @@ async function executeGetDailyBonus() {
                     };
                     console.log('[DEMO] Grand arrangement:', arrangement.perm, arrangement.slotRates);
                 } else {
-                    Utils.log('log', '[DEMO] Running demo battle simulations (no attempts consumed)...');
-                    simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig, CONSTANTS.SIMULATION_COUNT);
+                    Utils.log('log', `[DEMO] Running ${getTestFightCount()} local test fights (no attempts consumed)...`);
+                    simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig);
                 }
                 
                 console.log('[DEMO] Simulation results:', {
@@ -3341,11 +3350,8 @@ async function executeGetDailyBonus() {
             return result;
         }
 
-        this.simulateTeamMatchup = async function(attack, defence, simulationCount = CONSTANTS.SIMULATION_COUNT) {
+        this.simulateTeamMatchup = async function(attack, defence) {
             const mechanic = 'arena';
-            const simulations = [];
-            let parentId = 0;
-            let firstBattleId = null;
             const matchup = {
                 team: { units: attack.units, pet: attack.pet },
                 banner: attack.banner || 1,
@@ -3354,26 +3360,11 @@ async function executeGetDailyBonus() {
                 defenceBanner: defence.banner || 1,
                 defenceFavor: defence.favor || {}
             };
-            for (let i = 0; i < simulationCount; i++) {
-                try {
-                    const result = await this.runSingleDemoBattle(null, null, mechanic, i, parentId, matchup);
-                    simulations.push(result);
-                    if (i === 0 && result.battleId) {
-                        firstBattleId = result.battleId;
-                        parentId = firstBattleId;
-                    } else if (firstBattleId) {
-                        parentId = firstBattleId;
-                    } else if (result.parentId) {
-                        parentId = result.parentId;
-                    }
-                } catch (error) {
-                    console.error('[DEMO] Grand matchup sim failed:', error);
-                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId });
-                }
-            }
-            const wins = simulations.filter((s) => s.win).length;
-            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
-            return { winRate, wins, total: simulations.length };
+            const battleData = await this.fetchDemoBattle(null, null, mechanic, 0, 0, matchup);
+            const summary = await this.runLocalTestFights(battleData, mechanic, getTestFightCount());
+            const calcResult = summary.simulations.find((sample) => sample.result)?.result;
+            await this.closeDemoBattle(calcResult, battleData);
+            return { winRate: summary.winRate, wins: summary.wins, total: summary.total };
         }
 
         this.pickGrandTeamArrangement = async function(myTeam, oppTeam) {
@@ -3591,251 +3582,188 @@ async function executeGetDailyBonus() {
             return config;
         }
 
-        this.simulateWithDemoBattles = async function(myTeam, opponentTeam, simulationCount = 10) {
-            const teamCount = this.arenaType === 'grand' ? 3 : 1;
-            const totalSimulations = simulationCount * teamCount;
-            Utils.log('log', `[DEMO] Starting ${totalSimulations} demo battle simulations (${teamCount} team(s) x ${simulationCount})...`);
+        this.simulateWithDemoBattles = async function(myTeam, opponentTeam) {
+            const simulationCount = getTestFightCount();
+            Utils.log('log', `[DEMO] One server battle, then ${simulationCount} local test fights`);
             Utils.log('log', `[DEMO] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
-            
-            // Note: demoBattles API only supports "arena" mechanic, even for Grand Arena
+
+            // demoBattles builds the battle. Later samples only change the seed locally.
             const mechanic = 'arena';
-
-            const simulations = [];
-            let parentId = 0; // Start with 0 for first battle
-            let firstBattleId = null; // Store first battle's ID to use as parentId for subsequent battles
-            
-            for (let i = 0; i < totalSimulations; i++) {
-                try {
-                    // First battle uses parentId=0, subsequent battles use first battle's ID as parentId
-                    const result = await this.runSingleDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
-                    simulations.push(result);
-                    
-                    // For first battle: store the battle ID to use as parentId for subsequent battles
-                    if (i === 0 && result.battleId) {
-                        firstBattleId = result.battleId;
-                        parentId = firstBattleId;
-                    }
-                    // For subsequent battles: use the first battle's ID as parentId
-                    else if (i > 0 && firstBattleId) {
-                        parentId = firstBattleId;
-                    }
-                    // Fallback: try to extract parentId from endBattle response
-                    else if (result.parentId !== undefined && result.parentId !== null && result.parentId !== 0) {
-                        parentId = result.parentId;
-                    }
-                } catch (error) {
-                    console.error(`[DEMO] Simulation ${i + 1}/${totalSimulations} failed:`, error);
-                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId: parentId });
-                }
-            }
-
-            // Calculate statistics
-            const wins = simulations.filter(s => s.win).length;
-            const losses = simulations.length - wins;
-            const winRate = (wins / simulations.length) * 100;
-            const battleTimes = simulations.map(s => s.battleTime).filter(t => t > 0);
-            const averageBattleTime = battleTimes.length > 0 
-                ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length 
-                : 0;
-
-            Utils.log('log', `[DEMO] Simulation complete: ${wins}W/${losses}L (${winRate.toFixed(1)}% win rate)`);
-
-            return {
-                total: simulations.length,
-                wins: wins,
-                losses: losses,
-                winRate: winRate,
-                averageBattleTime: averageBattleTime,
-                simulations: simulations
-            };
+            const battleData = await this.fetchDemoBattle(myTeam, opponentTeam, mechanic, 0, 0, null);
+            const summary = await this.runLocalTestFights(battleData, mechanic, simulationCount);
+            const calcResult = summary.simulations.find((sample) => sample.result)?.result;
+            await this.closeDemoBattle(calcResult, battleData);
+            return summary;
         }
 
-        this.runSingleDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0, matchup = null) {
+        this.calcBattleCopy = function(battleData, mechanic, seed) {
             return new Promise((resolve, reject) => {
+                const battle = structuredClone(battleData);
+                if (seed != null) {
+                    battle.seed = seed;
+                }
+                const battleType = battle?.effects?.battleConfig ?? battle?.type ?? mechanic;
+                const battleConfigType = getBattleType(battleType);
                 try {
-                    const attackMaxUpgrade = getSimAttackMaxUpgrade();
-                    let args = {
-                        mechanic: mechanic,
-                        defenceMaxUpgrade: true,
-                        maxUpgrade: attackMaxUpgrade,
-                        defenceBuffs: {},
-                        buffs: {},
-                        parentId: parentId,
-                        entryId: 0
-                    };
-
-                    if (matchup) {
-                        args.defenceTeam = matchup.defenceTeam;
-                        args.defenceBanner = matchup.defenceBanner || 1;
-                        args.defenceBannerStones = {};
-                        args.defenceFavor = matchup.defenceFavor || {};
-                        args.team = matchup.team;
-                        args.banner = matchup.banner || 1;
-                        args.bannerStones = {};
-                        args.favor = matchup.favor || {};
-                    } else if (this.arenaType === 'grand') {
-                        const visibleSlots = opponentTeam.visibleSlots?.length
-                            ? opponentTeam.visibleSlots
-                            : [0, 1, 2].filter((i) => Array.isArray(opponentTeam.heroes?.[i]) && opponentTeam.heroes[i].length);
-                        const teamIndex = visibleSlots.length
-                            ? visibleSlots[seedOffset % visibleSlots.length]
-                            : (seedOffset % 3);
-                        args.defenceTeam = {
-                            units: opponentTeam.heroes[teamIndex] || [],
-                            pet: opponentTeam.pets[teamIndex] || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.defenceBanner = opponentTeam.banners[teamIndex] || 1;
-                        args.defenceBannerStones = {};
-                        args.defenceFavor = opponentTeam.favor || {};
-                        args.team = {
-                            units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
-                            pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
-                        args.bannerStones = {};
-                        args.favor = myTeam.favor || {};
-                    } else {
-                        // Regular Arena: 1 team
-                        args.defenceTeam = {
-                            units: opponentTeam.heroes || [],
-                            pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.defenceBanner = opponentTeam.banner || 1;
-                        args.defenceBannerStones = {};  // Required field from HAR file
-                        args.defenceFavor = opponentTeam.favor || {};
-                        
-                        args.team = {
-                            units: myTeam.heroes || [],
-                            pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID
-                        };
-                        args.banner = myTeam.banners[0] || 1;
-                        args.bannerStones = {};  // Required field from HAR file
-                        args.favor = myTeam.favor || {};
-                    }
-
-                    // Validate required fields before making API call
-                    if (!args.team || !args.team.units || args.team.units.length === 0) {
-                        reject(new Error('Invalid team configuration: missing or empty hero units'));
-                        return;
-                    }
-                    if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
-                        reject(new Error('Invalid defence team configuration: missing or empty hero units'));
-                        return;
-                    }
-                    if (!args.team.pet || typeof args.team.pet !== 'number') {
-                        reject(new Error('Invalid team pet: must be a number'));
-                        return;
-                    }
-                    if (!args.defenceTeam.pet || typeof args.defenceTeam.pet !== 'number') {
-                        reject(new Error('Invalid defence team pet: must be a number'));
-                        return;
-                    }
-
-                    const calls = [{
-                        name: "demoBattles_startBattle",
-                        args: args,
-                        context: {
-                            actionTs: Utils.getActionTs()
-                        },
-                        ident: "body"
-                    }];
-
-                    const startTime = Date.now();
-                    
-                    Send(JSON.stringify({calls}))
-                        .then(response => {
-                            if (response.error) {
-                                console.error('[DEMO] API error:', response.error);
-                                reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
-                                return;
-                            }
-
-                            if (!response.results || !response.results[0] || !response.results[0].result) {
-                                console.error('[DEMO] Invalid API response structure');
-                                reject(new Error('Invalid demo battle API response'));
-                                return;
-                            }
-
-                            const responseData = response.results[0].result.response;
-                            // Battle data is nested under 'battle' property
-                            const battleData = responseData?.battle || responseData;
-
-                            if (!battleData) {
-                                console.error('[DEMO] No battle data found in response');
-                                reject(new Error('No battle data in API response'));
-                                return;
-                            }
-
-                            // Calculate battle result using BattleCalc
-                            const battleType = battleData?.effects?.battleConfig ?? battleData?.type ?? mechanic;
-                            const battleConfigType = getBattleType(battleType);
-                            
-                            BattleCalc(battleData, battleConfigType, (calcResult) => {
-                                if (!Utils.isValidBattleResult(calcResult)) {
-                                    Utils.log('error', '[DEMO] BattleCalc returned invalid result');
-                                    resolve({
-                                        win: false,
-                                        battleTime: 0,
-                                        error: 'Invalid calculation result',
-                                        parentId: parentId
-                                    });
-                                    return;
-                                }
-
-                                const battleTime = calcResult.battleTime || 0;
-                                const win = calcResult.result.win || false;
-
-                                // Call demoBattles_endBattle to get battleId for parentId chaining
-                                // Strategy: Use first battle's ID as parentId for all subsequent battles
-                                const self = this;
-                                self.endDemoBattle(calcResult, battleData)
-                                    .then(endBattleResult => {
-                                        const extractedParentId = endBattleResult?.parentId;
-                                        const battleId = endBattleResult?.battleId;
-                                        
-                                        // Strategy: For first battle, use its ID as parentId for subsequent battles
-                                        let nextParentId = parentId;
-                                        
-                                        if (parentId === 0 && battleId) {
-                                            // First battle: use its ID as parentId for next battle
-                                            nextParentId = battleId;
-                                        } else if (parentId !== 0) {
-                                            // Subsequent battle: keep using the first battle's ID
-                                            nextParentId = parentId;
-                                        } else if (extractedParentId && extractedParentId !== 0) {
-                                            // Fallback: use parentId from endBattle response
-                                            nextParentId = extractedParentId;
-                                        }
-                                        
-                                        resolve({
-                                            win: win,
-                                            battleTime: battleTime,
-                                            result: calcResult,
-                                            parentId: nextParentId,
-                                            battleId: battleId
-                                        });
-                                    })
-                                    .catch(endError => {
-                                        Utils.log('warn', '[DEMO] Failed to call endBattle:', endError);
-                                        resolve({
-                                            win: win,
-                                            battleTime: battleTime,
-                                            result: calcResult,
-                                            parentId: parentId,
-                                            battleId: null
-                                        });
-                                    });
-                            });
-                        })
-                        .catch(error => {
-                            console.error('[DEMO] Error in demo battle:', error);
-                            reject(error);
+                    BattleCalc(battle, battleConfigType, (calcResult) => {
+                        if (!Utils.isValidBattleResult(calcResult)) {
+                            resolve({ win: false, battleTime: 0, error: 'Invalid calculation result' });
+                            return;
+                        }
+                        resolve({
+                            win: !!calcResult.result?.win,
+                            battleTime: calcResult.battleTime || 0,
+                            result: calcResult
                         });
+                    });
                 } catch (error) {
-                    console.error('[DEMO] Error preparing demo battle:', error);
                     reject(error);
                 }
             });
+        }
+
+        this.runLocalTestFights = async function(battleData, mechanic, count) {
+            const total = Math.max(1, count);
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            const simulations = [];
+            for (let i = 0; i < total; i++) {
+                // First sample keeps the server seed. Each later sample gets its own copy and seed.
+                const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + random(0, 1e3) + i;
+                setProgress(`${arenaName}: test fight ${i + 1}/${total}`);
+                try {
+                    simulations.push(await this.calcBattleCopy(battleData, mechanic, seed));
+                } catch (error) {
+                    console.error(`[DEMO] Local test fight ${i + 1}/${total} failed:`, error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message });
+                }
+            }
+            const wins = simulations.filter((s) => s.win).length;
+            const losses = simulations.length - wins;
+            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
+            const battleTimes = simulations.map((s) => s.battleTime).filter((t) => t > 0);
+            const averageBattleTime = battleTimes.length
+                ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length
+                : 0;
+            Utils.log('log', `[DEMO] Local test fights: ${wins}W/${losses}L (${winRate.toFixed(1)}% of ${simulations.length})`);
+            return {
+                total: simulations.length,
+                wins,
+                losses,
+                winRate,
+                averageBattleTime,
+                simulations
+            };
+        }
+
+        this.closeDemoBattle = async function(calcResult, battleData) {
+            if (!calcResult?.result) {
+                return null;
+            }
+            try {
+                return await this.endDemoBattle(calcResult, battleData);
+            } catch (error) {
+                Utils.log('warn', '[DEMO] Failed to call endBattle:', error);
+                return null;
+            }
+        }
+
+        this.fetchDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0, matchup = null) {
+            const attackMaxUpgrade = getSimAttackMaxUpgrade();
+            const args = {
+                mechanic: mechanic,
+                defenceMaxUpgrade: true,
+                maxUpgrade: attackMaxUpgrade,
+                defenceBuffs: {},
+                buffs: {},
+                parentId: parentId,
+                entryId: 0
+            };
+
+            if (matchup) {
+                args.defenceTeam = matchup.defenceTeam;
+                args.defenceBanner = matchup.defenceBanner || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = matchup.defenceFavor || {};
+                args.team = matchup.team;
+                args.banner = matchup.banner || 1;
+                args.bannerStones = {};
+                args.favor = matchup.favor || {};
+            } else if (this.arenaType === 'grand') {
+                const visibleSlots = opponentTeam.visibleSlots?.length
+                    ? opponentTeam.visibleSlots
+                    : [0, 1, 2].filter((i) => Array.isArray(opponentTeam.heroes?.[i]) && opponentTeam.heroes[i].length);
+                const teamIndex = visibleSlots.length
+                    ? visibleSlots[seedOffset % visibleSlots.length]
+                    : (seedOffset % 3);
+                args.defenceTeam = {
+                    units: opponentTeam.heroes[teamIndex] || [],
+                    pet: opponentTeam.pets[teamIndex] || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.defenceBanner = opponentTeam.banners[teamIndex] || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = opponentTeam.favor || {};
+                args.team = {
+                    units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
+                    pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
+                args.bannerStones = {};
+                args.favor = myTeam.favor || {};
+            } else {
+                args.defenceTeam = {
+                    units: opponentTeam.heroes || [],
+                    pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.defenceBanner = opponentTeam.banner || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = opponentTeam.favor || {};
+                args.team = {
+                    units: myTeam.heroes || [],
+                    pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.banner = myTeam.banners[0] || 1;
+                args.bannerStones = {};
+                args.favor = myTeam.favor || {};
+            }
+
+            if (!args.team || !args.team.units || args.team.units.length === 0) {
+                throw new Error('Invalid team configuration: missing or empty hero units');
+            }
+            if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
+                throw new Error('Invalid defence team configuration: missing or empty hero units');
+            }
+            if (!args.team.pet || typeof args.team.pet !== 'number') {
+                throw new Error('Invalid team pet: must be a number');
+            }
+            if (!args.defenceTeam.pet || typeof args.defenceTeam.pet !== 'number') {
+                throw new Error('Invalid defence team pet: must be a number');
+            }
+
+            const response = await Send(JSON.stringify({
+                calls: [{
+                    name: "demoBattles_startBattle",
+                    args: args,
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }]
+            }));
+
+            if (response.error) {
+                console.error('[DEMO] API error:', response.error);
+                throw new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`);
+            }
+            if (!response.results || !response.results[0] || !response.results[0].result) {
+                console.error('[DEMO] Invalid API response structure');
+                throw new Error('Invalid demo battle API response');
+            }
+
+            const responseData = response.results[0].result.response;
+            const battleData = responseData?.battle || responseData;
+            if (!battleData) {
+                console.error('[DEMO] No battle data found in response');
+                throw new Error('No battle data in API response');
+            }
+            return battleData;
         }
 
         this.endDemoBattle = async function(calcResult, battleData) {
