@@ -21382,7 +21382,7 @@ self.onmessage = (event) => {
 			const view = model.campaign;
 			const selected = view?.plan.find((item) => item.target.opponent.id === opponentId);
 			if (!view || !selected) return;
-			if (model.settings.confirmAttack && typeof globalThis.confirm === "function" && !globalThis.confirm("Attack "" + selected.target.opponent.name + "" with the calculated lineup?")) return;
+			if (model.settings.confirmAttack && typeof globalThis.confirm === "function" && !globalThis.confirm(`Attack "${selected.target.opponent.name}" with the calculated lineup?`)) return;
 			await run(async (signal) => {
 				if (signal.aborted) return;
 				model.attackState = "attacking";
@@ -25750,11 +25750,11 @@ self.onmessage = (event) => {
 		else if (getRankFrame) resolveArtwork(getRankFrame(rank, unitKind, unit.id), attachFrame);
 		if (favorPetId && favorPetId > 0) {
 			const badge = el("div", { className: "hwhbl-unit-patron" });
-			if (unitKind !== "hero") badge.setAttribute("data-hwhx-native-title", `Patron: ${favorPetName || `питомец #${favorPetId}`}`);
+			if (unitKind !== "hero") badge.setAttribute("data-hwhx-native-title", `Patron: ${favorPetName || `pet #${favorPetId}`}`);
 			if (getIcon) resolveArtwork(getIcon(favorPetId, "pet"), (url) => appendArtwork(badge, url, "hwhbl-unit-patron-avatar"));
 			container.appendChild(badge);
 		}
-		const patronSuffix = favorPetId && favorPetId > 0 ? `\nPatron: ${favorPetName || `питомец #${favorPetId}`}` : "";
+		const patronSuffix = favorPetId && favorPetId > 0 ? `\nPatron: ${favorPetName || `pet #${favorPetId}`}` : "";
 		const tooltip = unitKind !== "hero" && getTooltip ? formatBattleLabUnitTooltip(getTooltip(unit, unitKind)) : null;
 		if (unitKind !== "hero") container.setAttribute("data-hwhx-native-title", (tooltip || `#${unit.id}\nLevel: ${Number.isFinite(level) ? level : "—"}\nStars: ${stars}${isUsed ? "\nAlready used in Asgard" : ""}`) + patronSuffix);
 		return container;
@@ -27279,7 +27279,7 @@ self.onmessage = (event) => {
 			}
 		}));
 		teamsSection.appendChild(el("div", {
-			text: ""Fill empty slots" fills empty hero and pet cells. Selected fighters and patrons stay locked; clear selection first to replace them via search.",
+			text: "\"Fill empty slots\" fills empty hero and pet cells. Selected fighters and patrons stay locked; clear selection first to replace them via search.",
 			style: {
 				color: "var(--hwhbl-text-muted)",
 				fontSize: "12px",
