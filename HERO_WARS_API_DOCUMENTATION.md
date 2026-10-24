@@ -1980,29 +1980,227 @@ Send(JSON.stringify({
 
 ---
 
-### Epic Brawl
+### Epic Brawl (Cosmic Battle)
 
-#### epicBrawl_endBattle
+Cosmic Battle is the titan Epic Brawl. Captured 2026-10-24 from `api-monitor-1792852486386.json` (win) and `api-monitor-1792852539498.json` (loss). Battle `type` is `"epic_brawl_titan"`.
 
-End an epic brawl battle.
+Flow:
+
+1. `epicBrawl_getEnemy` loads the current opponent.
+2. `epicBrawl_startBattle` starts the fight with 5 titan ids. The client does not send spirit elements; the server attaches each titan's equipped `elementSpiritSkills`.
+3. `epicBrawl_endBattle` reports the local result. The client batches `epicBrawl_getWinStreak` in the same request.
+
+There is no `parentId`. This is a real battle, not `demoBattles_*`.
+
+#### epicBrawl_getEnemy
+
+Load the matched Cosmic Battle opponent. No arguments.
 
 **Request:**
 ```javascript
 Send(JSON.stringify({
   calls: [{
-    name: "epicBrawl_endBattle",
-    args: {
-      progress: {},
-      result: {}
-    },
-    ident: "epicBrawl_endBattle"
+    name: "epicBrawl_getEnemy",
+    args: {},
+    ident: "body"
   }]
 }))
 ```
 
+**Response** (`results[].ident` is `"body"`). `defence.units` is keyed by titan id. These unit objects have `element` and `elementSpiritSkills` and do not include `type` or `state`. `defence.banner` is `null`.
+
+```javascript
+{
+  rating: 2412,
+  power: 270281,
+  defence: {
+    powerSum: 1198208,
+    banner: null,
+    units: {
+      "4022": {
+        id: 4022,
+        level: 130,
+        star: 6,
+        power: 220216,
+        element: "earth",
+        elementSpiritLevel: 130,
+        elementSpiritStar: 6,
+        elementSpiritSkills: [
+          { skillId: 4511, level: 6, tierScale: 0.825 },
+          { skillId: 4508, level: 5, tierScale: 100 }
+        ]
+      }
+      // plus 4023, 4024 (earth) and 4043, 4044 (light) in the win capture
+    }
+  },
+  user: {
+    id: "<opponent user id>",
+    name: "<opponent name>",
+    level: "130",
+    avatarId: "<id>",
+    frameId: "<id>",
+    clanId: "<id>",
+    clanTitle: "<clan>",
+    clanIcon: {},
+    serverId: "<server>"
+  }
+}
+```
+
+| Field | Win capture | Loss capture |
+| --- | --- | --- |
+| `rating` | 2412 | 2510 |
+| `power` | 270281 | 225186 |
+| `defence.powerSum` | 1198208 | 1085250 |
+| Defence titans | 4022, 4023, 4024 earth; 4043, 4044 light | 4020–4024 earth |
+
+`power` and `defence.powerSum` are different numbers. `elementSpiritSkills[0]` is the elemental skill and `[1]` is the primal skill, same order as titan demo battles.
+
+#### epicBrawl_startBattle
+
+Start the Cosmic Battle with the selected titan team.
+
+**Request** (both captures; the loss capture batched this after `stashClient`, so its `ident` was `"group_1_body"`):
+```javascript
+Send(JSON.stringify({
+  calls: [{
+    name: "epicBrawl_startBattle",
+    args: {
+      units: [4012, 4033, 4013, 4034, 4010], // Ignis, Tenebris, Araji, Umbra and Caligo, Moloch
+      favor: {}
+    },
+    ident: "body"
+  }]
+}))
+```
+
+**Args:**
+- `units`: Array of 5 titan ids. No pet and no banner.
+- `favor`: Empty object `{}` in both captures.
+
+**Response:**
+```javascript
+{
+  battle: {
+    type: "epic_brawl_titan",
+    seed: 2590509368,          // number; the loss fight used 3643878770
+    startTime: 1792852409,
+    attackers: {
+      "4010": {
+        id: 4010, type: "titan", element: "fire", elementSpiritLevel: 106,
+        elementSpiritSkills: [
+          { skillId: 4509, level: 3, tierScale: 0.5 },
+          { skillId: 4507, level: 3, tierScale: 40 }
+        ]
+      },
+      "4033": {
+        id: 4033, type: "titan", element: "dark", elementSpiritLevel: 128,
+        elementSpiritSkills: [
+          { skillId: 4510, level: 5, tierScale: 0.75 },
+          { skillId: 4507, level: 3, tierScale: 40 }
+        ]
+      }
+      // also 4012, 4013 (fire, same skills as 4010) and 4034 (dark, same skills as 4033)
+    },
+    defenders: [
+      {
+        "1": { id: 4044, type: "titan", element: "light", state: { hp: 11261286, energy: 0, isDead: false, maxHp: 11261286 } },
+        "2": { id: 4023, type: "titan", element: "earth", state: { hp: 15405533, energy: 0, isDead: false, maxHp: 15405533 } }
+        // slots "3".."5" hold the rest of the defence
+      }
+    ],
+    effects: [],
+    reward: []
+  },
+  endTime: 1792852589          // startTime + 180 seconds
+}
+```
+
+Attacker keys are titan ids. Defender keys are slots `"1"` through `"5"`, and each object has its own `id`. Fire attackers came back with skills `4509` / `4507`. Dark attackers came back with `4510` / `4507`. Those skills were not in the request. Attackers have no `state`; each defender includes `state`.
+
+`endTime - startTime` was 180 seconds on both fights.
+
+#### epicBrawl_endBattle
+
+Submit the local battle result. Progress version is `298`. `progress.seed` is `battle.seed` as a signed 32-bit integer (`2590509368` becomes `-1704457928`; `3643878770` becomes `-651088526`).
+
+**Win request:**
+```javascript
+Send(JSON.stringify({
+  calls: [{
+    name: "epicBrawl_endBattle",
+    args: {
+      result: { win: true, stars: 1 },
+      progress: [{
+        v: 298,
+        b: 0,
+        seed: -1704457928,
+        attackers: {
+          input: [],
+          heroes: {
+            "4033": { hp: 4383347, energy: 1000, isDead: false }
+          }
+        },
+        defenders: { input: [], heroes: {} }
+      }]
+    },
+    ident: "group_1_body"
+  }, {
+    name: "epicBrawl_getWinStreak",
+    args: {},
+    ident: "group_1_epicBrawl_getWinStreak"
+  }]
+}))
+```
+
+The `heroes` field still holds titans. On the win, `attackers.heroes` is keyed by titan id and lists only the survivor (`4033`). `defenders.heroes` is `{}` when the whole defence is dead.
+
+**Loss request** uses the same shape with `result: { win: false, stars: 0 }`. `attackers.heroes` is `{}`. `defenders.heroes` is keyed by slot, not titan id, and lists only survivors:
+
+```javascript
+defenders: {
+  input: [],
+  heroes: {
+    "1": { hp: 1082969, energy: 800, isDead: false },
+    "2": { hp: 3436495, energy: 1000, isDead: false },
+    "3": { hp: 5725804, energy: 400, isDead: false }
+  }
+}
+```
+
+The loss capture's surviving slots were `"1"`, `"2"`, and `"3"`.
+
+**Response** (`ident` `"group_1_body"` when batched):
+```javascript
+{
+  replay: {
+    type: "epic_brawl_titan",
+    seed: "2590509368",       // start seed as a string
+    result: { win: true, stars: 1, serverVersion: 298 }
+  },
+  result: {
+    win: true,
+    reward: { coin: { "65": 220 } },
+    points: 100,
+    oldRating: 2413,
+    replayCost: null
+  }
+}
+```
+
+| `result` field | Win | Loss |
+| --- | --- | --- |
+| `win` | `true` | `false` |
+| `reward` | `{ coin: { "65": 220 } }` | `null` |
+| `points` | `100` | `-100` |
+| `oldRating` | `2413` | `2513` |
+| `replayCost` | `null` | `{ starmoney: 350 }` |
+
+`oldRating` is the rating before this fight. It was not the same number as `epicBrawl_getEnemy.rating` (`2412` before the win, `2510` before the loss).
+
 #### epicBrawl_getWinStreak
 
-Get epic brawl win streak information.
+Read the win streak. Both captures sent it in the same request as `epicBrawl_endBattle`, with `ident` `"group_1_epicBrawl_getWinStreak"`.
 
 **Request:**
 ```javascript
@@ -2015,9 +2213,16 @@ Send(JSON.stringify({
 }))
 ```
 
+**Response:**
+```javascript
+{ progress: 2, farmedStage: 0, nextStage: 3 }
+```
+
+After the win, `progress` was `2`. After the loss, `progress` was `0`. `farmedStage` stayed `0` and `nextStage` stayed `3`.
+
 #### epicBrawl_farmWinStreak
 
-Farm epic brawl win streak rewards.
+Farm epic brawl win streak rewards. Not part of these two captures.
 
 **Request:**
 ```javascript
