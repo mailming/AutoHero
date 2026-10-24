@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.41
+// @version      3.5.42
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.41";
+    const EXTENSION_VERSION = "3.5.42";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -3235,8 +3235,38 @@ async function executeGetDailyBonus() {
                     };
                     console.log('[DEMO] Grand arrangement:', arrangement.perm, arrangement.slotRates);
                 } else {
-                    Utils.log('log', `[DEMO] Running ${getTestFightCount()} local test fights (no attempts consumed)...`);
-                    simulationResult = await this.simulateWithDemoBattles(myTeamConfig, opponentTeamConfig);
+                    const grandTeams = this.listGrandArenaAttackTeams();
+                    const candidates = grandTeams.length ? grandTeams : [myTeamConfig];
+                    if (!grandTeams.length) {
+                        console.warn('[DEMO] No Grand Arena teams configured; testing the Arena team only');
+                    }
+                    let chosen = null;
+                    for (let i = 0; i < candidates.length; i++) {
+                        const candidate = candidates[i];
+                        const label = candidate.index != null ? `Grand team ${candidate.index + 1}` : 'Arena team';
+                        Utils.log('log', `[DEMO] ${label} (${i + 1}/${candidates.length}) vs opponent ${opponentId}: ${getTestFightCount()} local test fights`);
+                        setProgress(`Arena: ${label} ${i + 1}/${candidates.length}`);
+                        const sample = await this.simulateWithDemoBattles(candidate, opponentTeamConfig);
+                        console.log(`[DEMO] ${label}: ${sample.wins}W/${sample.losses}L (${sample.winRate.toFixed(1)}%)`);
+                        if (sample.winRate > CONSTANTS.WIN_RATE_THRESHOLD) {
+                            chosen = { team: candidate, simulationResult: sample, label };
+                            break;
+                        }
+                        console.log(`[DEMO] ${label} below ${CONSTANTS.WIN_RATE_THRESHOLD}%, ${i + 1 < candidates.length ? 'trying the next Grand team' : 'no Grand teams left'}`);
+                    }
+                    if (!chosen) {
+                        return {
+                            win: false,
+                            skipped: true,
+                            winRate: 0,
+                            reason: grandTeams.length
+                                ? `all ${grandTeams.length} Grand Arena teams below threshold`
+                                : 'arena team below threshold'
+                        };
+                    }
+                    attackTeam = chosen.team;
+                    simulationResult = chosen.simulationResult;
+                    console.log(`[DEMO] Using ${chosen.label} for the attack`);
                 }
                 
                 console.log('[DEMO] Simulation results:', {
@@ -3323,6 +3353,65 @@ async function executeGetDailyBonus() {
                 console.error('Error checking target range:', error);
                 return false;
             }
+        }
+
+        this.listGrandArenaAttackTeams = function() {
+            const grandTeams = this.teamInfo?.teams?.grand || [];
+            const grandFavor = this.teamInfo?.favor?.grand || {};
+            let banners = [];
+            try {
+                const userInfo = getUserInfo();
+                if (Array.isArray(userInfo?.banners) && userInfo.banners.length) {
+                    banners = userInfo.banners.slice(0, 3);
+                } else if (typeof userInfo?.banners === 'number') {
+                    banners = [userInfo.banners, userInfo.banners, userInfo.banners];
+                } else if (typeof userInfo?.banner === 'number') {
+                    banners = [userInfo.banner, userInfo.banner, userInfo.banner];
+                } else if (Array.isArray(userInfo?.banner) && userInfo.banner.length) {
+                    banners = [userInfo.banner[0], userInfo.banner[0], userInfo.banner[0]];
+                }
+            } catch (e) {
+                console.log('[DEMO] Could not read banners for Grand Arena teams');
+            }
+            while (banners.length < 3) {
+                banners.push(banners[banners.length - 1] || 1);
+            }
+
+            const favorFor = (index, heroes) => {
+                let source = grandFavor;
+                if (Array.isArray(grandFavor)) {
+                    source = grandFavor[index] || {};
+                } else if (grandFavor && typeof grandFavor === 'object') {
+                    const nested = grandFavor[index] ?? grandFavor[String(index)];
+                    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+                        source = nested;
+                    }
+                }
+                const favor = {};
+                for (const id of heroes) {
+                    const petId = source?.[id] ?? source?.[String(id)];
+                    if (petId) favor[String(id)] = Number(petId);
+                }
+                return favor;
+            };
+
+            const teams = [];
+            for (let i = 0; i < grandTeams.length; i++) {
+                const raw = grandTeams[i];
+                if (!Array.isArray(raw) || raw.length < 6) continue;
+                const heroes = raw.slice(0, 5).map(Number).filter((id) => Number.isFinite(id) && id > 0 && id < 6000);
+                const pet = Number(raw[5]);
+                if (heroes.length !== 5 || !Number.isFinite(pet) || pet < CONSTANTS.PET_ID_RANGE_MIN) continue;
+                teams.push({
+                    index: i,
+                    heroes,
+                    pet,
+                    favor: favorFor(i, heroes),
+                    banners: [banners[i] || 1]
+                });
+            }
+            console.log(`[DEMO] Grand Arena attack teams: ${teams.length}`, teams.map((team) => team.heroes));
+            return teams;
         }
 
         this.getTeamConfiguration = function() {
