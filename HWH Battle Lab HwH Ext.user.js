@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           HWH Battle Lab HwH Ext
 // @namespace      HeroWarsHelper.BattleLab
-// @version        0.2.363
+// @version        0.2.364
 // @description    Battle lab for opponents, simulations, best teams, and local battle history.
 // @author         Askja
 // @match          https://www.hero-wars.com/*
@@ -9720,7 +9720,7 @@
 	}
 	function buildBattleLabTerritoryCapture(calls, response, owner, createdAt = (/* @__PURE__ */ new Date()).toISOString()) {
 		return {
-			version: "0.2.363",
+			version: "0.2.364",
 			createdAt,
 			calls: calls.map((call) => ({
 				name: call.name,
@@ -14595,7 +14595,7 @@
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(phase, {
-			version: "0.2.363",
+			version: "0.2.364",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			phase,
 			error: getErrorMessage(error),
@@ -19326,7 +19326,7 @@ self.onmessage = (event) => {
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(`campaign:${options.mode}`, {
-			version: "0.2.363",
+			version: "0.2.364",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			mode: options.mode,
 			phase: options.phase,
@@ -31883,7 +31883,7 @@ self.onmessage = (event) => {
 	function readBattleLabUserscriptInfo() {
 		return {
 			name: "HWH Battle Lab",
-			version: "0.2.363",
+			version: "0.2.364",
 			author: "Askja"
 		};
 	}
