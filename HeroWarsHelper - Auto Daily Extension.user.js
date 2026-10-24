@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.38
+// @version      3.5.39
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.38";
+    const EXTENSION_VERSION = "3.5.39";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -3073,7 +3073,8 @@ async function executeGetDailyBonus() {
                 }
 
                 const opponentId = opponent.opponent.id;
-                console.log(`[DEMO] ===== Starting demo battle simulation for opponent ${opponentId} =====`);
+                this.demoApiCount = 0;
+                console.log(`[Arena pre-check] ===== Opponent ${opponentId}: 1 server demo per matchup, then local BattleCalc =====`);
 
                 // Step 1: Get team configurations
                 console.log('[DEMO] Step 1: Getting team configurations...');
@@ -3625,15 +3626,20 @@ async function executeGetDailyBonus() {
         this.runLocalTestFights = async function(battleData, mechanic, count) {
             const total = Math.max(1, count);
             const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            const serverSeed = battleData?.seed;
             const simulations = [];
+            console.log(`[Arena pre-check] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
             for (let i = 0; i < total; i++) {
                 // First sample keeps the server seed. Each later sample gets its own copy and seed.
                 const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + random(0, 1e3) + i;
-                setProgress(`${arenaName}: test fight ${i + 1}/${total}`);
+                const usedSeed = seed == null ? serverSeed : seed;
+                setProgress(`${arenaName}: BattleCalc local ${i + 1}/${total}`);
                 try {
-                    simulations.push(await this.calcBattleCopy(battleData, mechanic, seed));
+                    const sample = await this.calcBattleCopy(battleData, mechanic, seed);
+                    simulations.push(sample);
+                    console.log(`[Arena pre-check] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
                 } catch (error) {
-                    console.error(`[DEMO] Local test fight ${i + 1}/${total} failed:`, error);
+                    console.error(`[Arena pre-check] BattleCalc local ${i + 1}/${total} failed:`, error);
                     simulations.push({ win: false, battleTime: 0, error: error.message });
                 }
             }
@@ -3644,7 +3650,9 @@ async function executeGetDailyBonus() {
             const averageBattleTime = battleTimes.length
                 ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length
                 : 0;
-            Utils.log('log', `[DEMO] Local test fights: ${wins}W/${losses}L (${winRate.toFixed(1)}% of ${simulations.length})`);
+            const summary = `${arenaName}: BattleCalc local ${wins}W/${losses}L (${winRate.toFixed(0)}% of ${simulations.length})`;
+            console.log(`[Arena pre-check] ${summary}. Server demo calls this matchup: 1.`);
+            setProgress(summary);
             return {
                 total: simulations.length,
                 wins,
@@ -3739,6 +3747,8 @@ async function executeGetDailyBonus() {
                 throw new Error('Invalid defence team pet: must be a number');
             }
 
+            this.demoApiCount = (this.demoApiCount || 0) + 1;
+            console.log(`[Arena pre-check] demoBattles_startBattle API #${this.demoApiCount} (server builds this matchup once)`);
             const response = await Send(JSON.stringify({
                 calls: [{
                     name: "demoBattles_startBattle",
