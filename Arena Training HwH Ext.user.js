@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.24
+// @version      1.25
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.24';
+    const EXTENSION_VERSION = '1.25';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -82,11 +82,14 @@
         return true;
     }
 
-    const registerSettingsInterval = setInterval(() => {
-        if (registerSettingsCheckbox()) {
-            clearInterval(registerSettingsInterval);
-        }
-    }, 50);
+    let registerSettingsInterval = null;
+    if (typeof window !== 'undefined') {
+        registerSettingsInterval = setInterval(() => {
+            if (registerSettingsCheckbox()) {
+                clearInterval(registerSettingsInterval);
+            }
+        }, 50);
+    }
 
     function ensureSettingsCheckboxUI(HWHFuncs) {
         registerSettingsCheckbox();
@@ -211,15 +214,172 @@
         DEFAULT_META_TEAMS_LIMIT: 0,
     };
 
-    const waitForHWH = setInterval(() => {
-        if (window.HWHClasses?.ScriptMenu && window.Send && window.cheats?.BattleCalc && window.HWHFuncs) {
-            const scriptMenu = window.HWHClasses.ScriptMenu.getInst();
-            if (scriptMenu?.mainMenu) {
-                clearInterval(waitForHWH);
-                initializeExtension();
+    function getTestFightCount(readInput, fallback) {
+        const raw = parseInt(typeof readInput === 'function' ? readInput('countTestBattle') : readInput, 10);
+        if (Number.isFinite(raw) && raw >= 1) {
+            return raw;
+        }
+        const fallbackCount = parseInt(fallback, 10);
+        if (Number.isFinite(fallbackCount) && fallbackCount >= 1) {
+            return fallbackCount;
+        }
+        return CONSTANTS.DEFAULT_SIMULATIONS;
+    }
+
+    function randomInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1) + min);
+    }
+
+    async function calcBattleCopy(battleData, seed, battleCalc, resolveBattleType, isValidBattleResult) {
+        const battle = structuredClone(battleData);
+        if (seed != null) {
+            battle.seed = seed;
+        }
+        const battleType = battle?.effects?.battleConfig ?? battle?.type ?? 'arena';
+        return new Promise((resolve, reject) => {
+            try {
+                battleCalc(battle, resolveBattleType(battleType), (calcResult) => {
+                    if (!isValidBattleResult(calcResult)) {
+                        resolve({ win: false, battleTime: 0, error: 'Invalid calculation result' });
+                        return;
+                    }
+                    resolve({
+                        win: !!calcResult.result?.win,
+                        battleTime: calcResult.battleTime || 0,
+                        result: calcResult,
+                    });
+                });
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    // One demoBattles_startBattle, then `count` local BattleCalc samples on copies of that battle.
+    async function runLocalSeededDemo(options) {
+        const {
+            send,
+            battleCalc,
+            getBattleType,
+            isValidBattleResult,
+            endDemo,
+            myTeam,
+            opponentTeam,
+            battleOptions = {},
+            count,
+            log = () => {},
+            setProgress = () => {},
+            isStopped = () => false,
+            nextRandom = randomInt,
+            getActionTs = () => Date.now(),
+            throwIfSendError = () => {},
+            defaultPetId = CONSTANTS.DEFAULT_PET_ID,
+        } = options;
+
+        const total = Math.max(1, count);
+        const maxUpgrade = battleOptions.maxUpgrade !== false;
+        const args = {
+            mechanic: 'arena',
+            defenceMaxUpgrade: true,
+            maxUpgrade,
+            defenceBuffs: {},
+            buffs: {},
+            parentId: 0,
+            entryId: 0,
+            defenceTeam: {
+                units: opponentTeam.heroes,
+                pet: opponentTeam.pet || defaultPetId,
+            },
+            defenceBanner: opponentTeam.banner || 1,
+            defenceBannerStones: {},
+            defenceFavor: opponentTeam.favor || {},
+            team: {
+                units: myTeam.heroes,
+                pet: myTeam.pet || defaultPetId,
+            },
+            banner: myTeam.banners?.[0] || 1,
+            bannerStones: {},
+            favor: myTeam.favor || {},
+        };
+
+        log('[Arena Training] demoBattles_startBattle API #1 (server builds this matchup once)');
+        const startResponse = await send({
+            calls: [{
+                name: 'demoBattles_startBattle',
+                args,
+                context: { actionTs: getActionTs() },
+                ident: 'body',
+            }],
+        });
+
+        if (startResponse?.error) {
+            throw new Error(`${startResponse.error.name}: ${startResponse.error.description}`);
+        }
+        throwIfSendError(startResponse, 'demoBattles_startBattle');
+
+        const responseData = startResponse.results?.[0]?.result?.response;
+        const battleData = responseData?.battle || responseData;
+        if (!battleData) {
+            throw new Error('No battle data in demoBattles_startBattle response');
+        }
+
+        const serverSeed = battleData.seed;
+        const simulations = [];
+        log(`[Arena Training] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
+        for (let i = 0; i < total; i++) {
+            if (isStopped()) break;
+            const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + nextRandom(0, 1e3) + i;
+            const usedSeed = seed == null ? serverSeed : seed;
+            setProgress(`Arena Training: BattleCalc local ${i + 1}/${total}`);
+            try {
+                const sample = await calcBattleCopy(battleData, seed, battleCalc, getBattleType, isValidBattleResult);
+                simulations.push(sample);
+                log(`[Arena Training] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
+            } catch (error) {
+                console.error(`[Arena Training] BattleCalc local ${i + 1}/${total} failed:`, error);
+                simulations.push({ win: false, battleTime: 0, error: error.message });
             }
         }
-    }, 200);
+
+        const calcResult = simulations.find((sample) => sample.result)?.result;
+        if (calcResult && endDemo) {
+            await endDemo(calcResult, battleData);
+        }
+
+        const wins = simulations.filter((sample) => sample.win).length;
+        const losses = simulations.length - wins;
+        const battleTimes = simulations.map((sample) => sample.battleTime).filter((time) => time > 0);
+        const averageBattleTime = battleTimes.length
+            ? battleTimes.reduce((sum, time) => sum + time, 0) / battleTimes.length
+            : 0;
+        const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
+        const summary = `Arena Training: BattleCalc local ${wins}W/${losses}L (${winRate.toFixed(0)}% of ${simulations.length})`;
+        log(`[Arena Training] ${summary}. Server demo calls this matchup: 1.`);
+        setProgress(summary);
+
+        return {
+            total: simulations.length,
+            wins,
+            losses,
+            winRate,
+            averageBattleTime,
+            simulations,
+            serverSeed,
+        };
+    }
+
+    let waitForHWH = null;
+    if (typeof window !== 'undefined') {
+        waitForHWH = setInterval(() => {
+            if (window.HWHClasses?.ScriptMenu && window.Send && window.cheats?.BattleCalc && window.HWHFuncs) {
+                const scriptMenu = window.HWHClasses.ScriptMenu.getInst();
+                if (scriptMenu?.mainMenu) {
+                    clearInterval(waitForHWH);
+                    initializeExtension();
+                }
+            }
+        }, 200);
+    }
 
     function initializeExtension() {
         const { HWHClasses, HWHFuncs, Send, cheats, lib } = window;
@@ -1052,108 +1212,31 @@
             };
         }
 
-        async function runSingleDemoBattle(myTeam, opponentTeam, parentId = 0, battleOptions = {}) {
-            const maxUpgrade = battleOptions.maxUpgrade !== false;
-            const args = {
-                mechanic: 'arena',
-                defenceMaxUpgrade: true,
-                maxUpgrade,
-                defenceBuffs: {},
-                buffs: {},
-                parentId,
-                entryId: 0,
-                defenceTeam: {
-                    units: opponentTeam.heroes,
-                    pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID,
-                },
-                defenceBanner: opponentTeam.banner || 1,
-                defenceBannerStones: {},
-                defenceFavor: opponentTeam.favor || {},
-                team: {
-                    units: myTeam.heroes,
-                    pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID,
-                },
-                banner: myTeam.banners?.[0] || 1,
-                bannerStones: {},
-                favor: myTeam.favor || {},
-            };
-
-            const startResponse = await Send({
-                calls: [{
-                    name: 'demoBattles_startBattle',
-                    args,
-                    context: { actionTs: getActionTs() },
-                    ident: 'body',
-                }],
-            });
-
-            if (startResponse?.error) {
-                throw new Error(`${startResponse.error.name}: ${startResponse.error.description}`);
-            }
-            throwIfSendError(startResponse, 'demoBattles_startBattle');
-
-            const responseData = startResponse.results?.[0]?.result?.response;
-            const battleData = responseData?.battle || responseData;
-            if (!battleData) {
-                throw new Error('No battle data in demoBattles_startBattle response');
-            }
-
-            const calcResult = await new Promise((resolve) => {
-                const battleType = battleData?.effects?.battleConfig ?? battleData?.type ?? 'arena';
-                BattleCalc(battleData, getBattleType(battleType), (result) => resolve(result));
-            });
-
-            if (!isValidBattleResult(calcResult)) {
-                return { win: false, battleTime: 0, parentId };
-            }
-
-            const endInfo = await endDemoBattle(calcResult, battleData);
-            const nextParentId = parentId === 0
-                ? (endInfo.battleId || endInfo.parentId || 0)
-                : parentId;
-
-            return {
-                win: !!calcResult.result.win,
-                battleTime: calcResult.battleTime || 0,
-                parentId: nextParentId,
-            };
+        function resolveTestFightCount(explicitFallback) {
+            return getTestFightCount(
+                (name) => HWHFuncs.getInput?.(name),
+                explicitFallback || CONSTANTS.DEFAULT_SIMULATIONS
+            );
         }
 
         async function simulateTeam(myTeam, opponentTeam, simulationCount, battleOptions = {}) {
-            const simulations = [];
-            let parentId = 0;
-            let firstBattleId = null;
-
-            for (let i = 0; i < simulationCount; i++) {
-                if (stopRequested) break;
-                const result = await runSingleDemoBattle(
-                    myTeam,
-                    opponentTeam,
-                    i === 0 ? 0 : (firstBattleId || parentId),
-                    battleOptions
-                );
-                simulations.push(result);
-                if (i === 0 && result.parentId) {
-                    firstBattleId = result.parentId;
-                    parentId = result.parentId;
-                }
-            }
-
-            const wins = simulations.filter((s) => s.win).length;
-            const losses = simulations.length - wins;
-            const battleTimes = simulations.map((s) => s.battleTime).filter((t) => t > 0);
-            const averageBattleTime = battleTimes.length
-                ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length
-                : 0;
-
-            return {
-                total: simulations.length,
-                wins,
-                losses,
-                winRate: simulations.length ? (wins / simulations.length) * 100 : 0,
-                averageBattleTime,
-                simulations,
-            };
+            const count = resolveTestFightCount(simulationCount);
+            return runLocalSeededDemo({
+                send: Send,
+                battleCalc: BattleCalc,
+                getBattleType,
+                isValidBattleResult,
+                endDemo: endDemoBattle,
+                myTeam,
+                opponentTeam,
+                battleOptions,
+                count,
+                log: (message) => console.log(message),
+                setProgress: (message) => HWHFuncs.setProgress(message),
+                isStopped: () => stopRequested,
+                getActionTs,
+                throwIfSendError,
+            });
         }
 
         function resolveBanner(userInfo, teams) {
@@ -2020,7 +2103,7 @@
                 const sessionSuffix = maxUpgrade ? 'max' : 'user';
                 const sessionId = `arena_train_${Date.now()}_${sessionSuffix}`;
                 const startedAt = new Date().toISOString();
-                const simulationsPerCombo = options.simulationsPerCombo || CONSTANTS.DEFAULT_SIMULATIONS;
+                const simulationsPerCombo = resolveTestFightCount(options.simulationsPerCombo);
                 const targetWinRate = Number(options.targetWinRate ?? CONSTANTS.DEFAULT_TARGET_WIN_RATE);
                 const searchUntilTarget = options.searchUntilTarget !== false;
 
@@ -2385,5 +2468,16 @@
         } catch (error) {
             HWHFuncs.setProgress(`Arena Training error: ${error.message}`, true);
         }
+    }
+    const reseedApi = {
+        getTestFightCount,
+        calcBattleCopy,
+        runLocalSeededDemo,
+    };
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = reseedApi;
+    }
+    if (typeof process !== 'undefined' && process.release?.name === 'node') {
+        globalThis.__arenaTrainingReseedTest = reseedApi;
     }
 })();
