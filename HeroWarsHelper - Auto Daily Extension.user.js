@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.45
+// @version      3.5.47
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.45";
+    const EXTENSION_VERSION = "3.5.47";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2535,7 +2535,7 @@ async function executeGetDailyBonus() {
         return 0;
     }
 
-    /** True when HWHAutoFixBattleExt AutoFix checkbox is on (raid-boss damage search via checkChangeSend). */
+    /** True when HWHAutoFixBattleExt AutoFix checkbox is on. */
     function isHwhAutoFixEnabled() {
         try {
             if (typeof HWHFuncs?.isChecked === 'function' && HWHFuncs.isChecked('autoFixIt')) {
@@ -2543,9 +2543,75 @@ async function executeGetDailyBonus() {
             }
         } catch (_) { /* ignore */ }
         try {
-            return !!window.HWHData?.checkboxes?.autoFixIt?.cbox?.checked;
+            const box = window.HWHData?.checkboxes?.autoFixIt;
+            if (box?.cbox) return !!box.cbox.checked;
+            // Before menu paint, fall back to persisted checkbox default/storage.
+            if (typeof HWHFuncs?.getSaveVal === 'function') {
+                const saved = HWHFuncs.getSaveVal('autoFixIt', null);
+                if (saved !== null && saved !== undefined) return !!saved;
+            }
+            return !!box?.default;
         } catch (_) {
             return false;
+        }
+    }
+
+    /**
+     * AutoFix ext's battleLog search needs a live Scheduler timeline (manual fights).
+     * Auto Daily only runs Calc, so that path no-ops. Use HWH BestOrWinFixBattle /
+     * BossFixBattle instead — they search timers from Calc battleLogs.
+     */
+    async function salvageWithHwhFixBattle(battleData, options = {}) {
+        const {
+            mode = 'pvp', // 'pvp' | 'boss'
+            label = 'AutoFix',
+            durationMs = 120000,
+            maxCount = 500,
+        } = options;
+        if (!battleData) {
+            return null;
+        }
+        const FixClass = mode === 'boss'
+            ? window.HWHClasses?.BossFixBattle
+            : window.HWHClasses?.BestOrWinFixBattle;
+        if (typeof FixClass !== 'function') {
+            console.warn(`[${label}] HWH FixBattle class unavailable — salvage skipped`);
+            return null;
+        }
+
+        const clone = structuredClone(battleData);
+        const endTime = Math.max(Date.now() + Math.min(durationMs, 180000), Date.now() + 30000);
+        clone.endTime = endTime;
+        setProgress(`${label}: AutoFix searching...`, true);
+        console.log(`[${label}] Running local HWH FixBattle salvage (${mode})`);
+
+        try {
+            const bFix = new FixClass(clone, true);
+            const fixed = await bFix.start(endTime, maxCount);
+            if (!fixed) return null;
+            if (mode === 'boss') {
+                if (!(fixed.value > 0) || !fixed.result || !fixed.progress) return null;
+                return {
+                    win: !!fixed.result.win,
+                    result: fixed.result,
+                    progress: fixed.progress,
+                    value: fixed.value,
+                    salvaged: true,
+                };
+            }
+            // PvP / Cosmic / GW: only accept a flipped win (loss with better score still loses).
+            if (!fixed.result?.win || !fixed.progress) return null;
+            console.log(`[${label}] AutoFix salvaged a win`);
+            return {
+                win: true,
+                result: fixed.result,
+                progress: fixed.progress,
+                value: fixed.value,
+                salvaged: true,
+            };
+        } catch (err) {
+            console.warn(`[${label}] AutoFix salvage failed:`, err);
+            return null;
         }
     }
 
@@ -5285,15 +5351,30 @@ async function executeGetDailyBonus() {
                 throw new Error('clanWarAttack did not return a usable battle snapshot for AutoFix endBattle');
             }
 
-            const battleResult = await this.calculateGuildWarBattleResult(battleData, isTitanBattle);
-            console.log(
-                `[GUILD_WAR] Slot ${slotId} Calc: ${battleResult.win ? 'WIN' : 'LOSS'}`
-                + (battleResult.win ? '' : ' (AutoFix may salvage on endBattle)')
-            );
+            let battleResult = await this.calculateGuildWarBattleResult(battleData, isTitanBattle);
+            console.log(`[GUILD_WAR] Slot ${slotId} Calc: ${battleResult.win ? 'WIN' : 'LOSS'}`);
+
+            // Local HWH FixBattle (Calc battleLogs) — AutoFix ext live-log path does not work for Auto Daily.
+            if (!battleResult.win) {
+                const salvaged = await salvageWithHwhFixBattle(battleData, {
+                    mode: 'pvp',
+                    label: 'GUILD_WAR',
+                    durationMs: 120000,
+                    maxCount: 500,
+                });
+                if (salvaged?.win) {
+                    battleResult = {
+                        win: true,
+                        result: salvaged.result,
+                        progress: salvaged.progress,
+                        battleData,
+                    };
+                }
+            }
 
             const ended = await this.endGuildWarBattle(battleResult, true);
             console.log(`Slot ${slotId} attack completed (${ended.win ? 'WIN' : 'LOSS/unknown'})`);
-            return { win: ended.win, result: ended.response, calc: battleResult };
+            return { win: ended.win || battleResult.win, result: ended.response, calc: battleResult };
         }
 
         /** Prefer Guild War hero attack team; fall back to Arena. */
@@ -6447,7 +6528,30 @@ async function executeGetDailyBonus() {
                     const favor = this.favorTeams[teamIndex];
 
                     const battleData = await this.startBossBattle(heroes, pet, favor);
-                    const battleResult = await this.calculateBattleResult(battleData);
+                    let battleResult = await this.calculateBattleResult(battleData);
+
+                    // Local BossFixBattle before end — AutoFix ext needs live battleLog Auto Daily never fills.
+                    if (useAutoFix) {
+                        const baseline = prepareRaidBossProgressForAutoFix(battleResult.progress);
+                        const salvaged = await salvageWithHwhFixBattle(battleData, {
+                            mode: 'boss',
+                            label: 'Raid Boss',
+                            durationMs: 160000,
+                            maxCount: 1000,
+                        });
+                        if (salvaged?.progress && salvaged.value > (baseline.damage || 0)) {
+                            battleResult = {
+                                win: salvaged.win,
+                                result: salvaged.result,
+                                progress: salvaged.progress,
+                                battleData,
+                            };
+                            console.log(
+                                `[Raid Boss] AutoFix damage ${baseline.damage} → ${salvaged.value}`
+                            );
+                        }
+                    }
+
                     await this.endBossBattle(battleResult, useAutoFix);
 
                     this.attacksCompleted++;
@@ -8133,7 +8237,17 @@ async function executeGetDailyBonus() {
             return { ok: false, reason: 'no_calc' };
         }
 
-        setProgress(`Cosmic Battle (${resolved.kind}): ${attempts} attempt(s)...`, true);
+        const useAutoFix = isHwhAutoFixEnabled();
+        if (useAutoFix) {
+            console.log('[Cosmic Battle] HWH AutoFix on — losses on epicBrawl_endBattle will be salvaged');
+        }
+
+        setProgress(
+            useAutoFix
+                ? `Cosmic Battle (${resolved.kind}): ${attempts} attempt(s), AutoFix...`
+                : `Cosmic Battle (${resolved.kind}): ${attempts} attempt(s)...`,
+            true
+        );
         let wins = 0;
         let coins = 0;
         let streak = { progress: 0, nextStage: 0 };
@@ -8160,6 +8274,19 @@ async function executeGetDailyBonus() {
             }
         }
 
+        function alignEpicBrawlProgressSeed(battle, progress) {
+            const expectedSeed = Number(battle?.seed);
+            if (!Number.isFinite(expectedSeed) || !Array.isArray(progress)) {
+                return progress;
+            }
+            for (const entry of progress) {
+                if (entry && entry.seed == null) {
+                    entry.seed = expectedSeed;
+                }
+            }
+            return progress;
+        }
+
         for (let i = attempts; i > 0; i--) {
             let battleStart;
             try {
@@ -8183,19 +8310,56 @@ async function executeGetDailyBonus() {
                 setProgress(`Cosmic Battle: battle sim failed — ${e?.message || e}`, true);
                 throw e;
             }
-            const { progress, result } = calcResult || {};
+            let { progress, result } = calcResult || {};
             if (!progress || !result) {
                 setProgress('Cosmic Battle: Calc returned empty progress/result', true);
                 return { ok: false, reason: 'bad_calc' };
             }
 
-            const [endBattle, winStreak] = await Caller.send([
-                { name: 'epicBrawl_endBattle', args: { progress, result } },
-                'epicBrawl_getWinStreak',
-            ]);
+            progress = alignEpicBrawlProgressSeed(battle, progress);
+            let calcWin = !!result.win;
+
+            // AutoFix ext hooks endBattle using a live Scheduler battleLog Auto Daily never fills,
+            // so salvage here with HWH BestOrWinFixBattle (uses Calc battleLogs) before send.
+            if (useAutoFix && !calcWin) {
+                const salvaged = await salvageWithHwhFixBattle(battle, {
+                    mode: 'pvp',
+                    label: `Cosmic Battle (${resolved.kind})`,
+                    durationMs: 120000,
+                    maxCount: 500,
+                });
+                if (salvaged?.win) {
+                    result = salvaged.result;
+                    progress = alignEpicBrawlProgressSeed(battle, salvaged.progress);
+                    calcWin = true;
+                }
+            }
+
+            // When AutoFix is on, send endBattle alone (clearer progress; avoid batching with streak).
+            let endBattle;
+            let winStreak;
+            if (useAutoFix) {
+                endBattle = await Caller.send({
+                    name: 'epicBrawl_endBattle',
+                    args: { progress, result },
+                });
+                try {
+                    winStreak = await Caller.send('epicBrawl_getWinStreak');
+                } catch (e) {
+                    console.warn('[Auto Daily] epicBrawl_getWinStreak failed after AutoFix end:', e);
+                    winStreak = streak;
+                }
+            } else {
+                [endBattle, winStreak] = await Caller.send([
+                    { name: 'epicBrawl_endBattle', args: { progress, result } },
+                    'epicBrawl_getWinStreak',
+                ]);
+            }
+
             const resultInfo = endBattle?.result || endBattle || {};
             streak = winStreak || streak;
-            wins += Number(resultInfo.win) || 0;
+            const serverWin = resultInfo.win != null ? Number(resultInfo.win) : (calcWin ? 1 : 0);
+            wins += serverWin || 0;
             coins += resultInfo.reward?.coin?.[39] || 0;
             if (winStreak && winStreak.progress == winStreak.nextStage) {
                 try {
@@ -8218,7 +8382,7 @@ async function executeGetDailyBonus() {
             `Cosmic Battle done (${resolved.kind}): ${wins}/${attempts} wins, ${coins} coins`,
             true
         );
-        return { ok: true, wins, attempts, coins, kind: resolved.kind };
+        return { ok: true, wins, attempts, coins, kind: resolved.kind, autoFix: useAutoFix };
     }
 
     function getDefaultOthersSettingsState() {
