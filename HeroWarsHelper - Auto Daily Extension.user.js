@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.43
+// @version      3.5.45
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.43";
+    const EXTENSION_VERSION = "3.5.45";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2535,6 +2535,52 @@ async function executeGetDailyBonus() {
         return 0;
     }
 
+    /** True when HWHAutoFixBattleExt AutoFix checkbox is on (raid-boss damage search via checkChangeSend). */
+    function isHwhAutoFixEnabled() {
+        try {
+            if (typeof HWHFuncs?.isChecked === 'function' && HWHFuncs.isChecked('autoFixIt')) {
+                return true;
+            }
+        } catch (_) { /* ignore */ }
+        try {
+            return !!window.HWHData?.checkboxes?.autoFixIt?.cbox?.checked;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /**
+     * HWHAutoFixBattleExt reads progress[0].defenders.heroes[1].extra on clanRaid_endBossBattle.
+     * Normalize string/"1" keys so AutoFix can measure and improve damage.
+     */
+    function prepareRaidBossProgressForAutoFix(progress) {
+        const wave = progress?.[0];
+        const heroes = wave?.defenders?.heroes;
+        if (!heroes || typeof heroes !== 'object') {
+            return { ok: false, damage: 0, progress };
+        }
+        const boss = heroes[1] || heroes['1'];
+        if (!boss) {
+            return { ok: false, damage: 0, progress };
+        }
+        if (!heroes[1]) {
+            heroes[1] = boss;
+        }
+        const extra = boss.extra || {};
+        if (typeof extra.damageTaken !== 'number') {
+            extra.damageTaken = Number(extra.damageTaken) || 0;
+        }
+        if (typeof extra.damageTakenNextLevel !== 'number') {
+            extra.damageTakenNextLevel = Number(extra.damageTakenNextLevel) || 0;
+        }
+        boss.extra = extra;
+        return {
+            ok: true,
+            damage: extra.damageTaken + extra.damageTakenNextLevel,
+            progress,
+        };
+    }
+
     // Main-menu "Number of test fights" (countTestBattle). Each sample is a local BattleCalc.
     function getTestFightCount() {
         const raw = parseInt(getInput('countTestBattle'), 10);
@@ -4796,7 +4842,7 @@ async function executeGetDailyBonus() {
          * After tier unlocks (bridge→T2, bastion→T3), unlocked-tier low targets are included.
          * Demo-sim each; keep those above win-rate threshold until attempts are filled.
          */
-        this.selectStrongestBeatableSlots = async function(heroTeam, titanTeam, maxTargets) {
+        this.selectStrongestBeatableSlots = async function(heroTeam, titanTeam, maxTargets, options = {}) {
             const warState = this.getGuildWarState();
             const { anyBastionBeaten, beatenBastions, bridgeBeaten, maxUnlockedTier } = warState;
 
@@ -4852,6 +4898,15 @@ async function executeGetDailyBonus() {
             );
             if (!candidates.length) return [];
 
+            // With AutoFix, accept lower pre-sim WR so borderline losses can be salvaged on endBattle.
+            const useAutoFix = !!options.useAutoFix;
+            const winThreshold = useAutoFix
+                ? Math.min(CONSTANTS.WIN_RATE_THRESHOLD, 25)
+                : CONSTANTS.WIN_RATE_THRESHOLD;
+            if (useAutoFix) {
+                console.log(`[GUILD_WAR] AutoFix target threshold: ${winThreshold}% (default ${CONSTANTS.WIN_RATE_THRESHOLD}%)`);
+            }
+
             const myHeroPower = this.getMyTeamPower(heroTeam, false);
             const myTitanPower = this.getMyTeamPower(titanTeam, true);
             const beatable = [];
@@ -4869,15 +4924,17 @@ async function executeGetDailyBonus() {
                 const label = `slot ${slot.slotId} [${fortTag} p${prio} t${slot.fortTier}] `
                     + `(${slot.isTitan ? 'titan' : 'hero'}, ${slot.defenderName}, pwr ${slot.power}, alive ${slot.aliveCount})`;
 
-                // Hopeless by power — skip expensive sim
-                if (myPower > 0 && slot.power > 0 && myPower < slot.power * 0.4) {
+                // Hopeless by power — skip expensive sim (slightly looser with AutoFix)
+                const powerFloor = useAutoFix ? 0.3 : 0.4;
+                if (myPower > 0 && slot.power > 0 && myPower < slot.power * powerFloor) {
                     console.log(`[GUILD_WAR] Skip ${label}: power too low (mine ${myPower})`);
                     continue;
                 }
 
                 // Partial defenses (<5): demo teams are unreliable — accept if we clearly outgun remnants
                 if (slot.unitIds.length < 5) {
-                    if (myPower > 0 && slot.power > 0 && myPower >= slot.power * 0.75) {
+                    const partialRatio = useAutoFix ? 0.6 : 0.75;
+                    if (myPower > 0 && slot.power > 0 && myPower >= slot.power * partialRatio) {
                         beatable.push({ ...slot, winRate: 85 });
                         console.log(`[GUILD_WAR] ✓ Partial defense outgunned — queued (${beatable.length}/${limit}) ${label}`);
                         continue;
@@ -4919,11 +4976,11 @@ async function executeGetDailyBonus() {
                     }
 
                     console.log(`[GUILD_WAR] ${label}: ${sim.wins}W/${sim.losses}L (${sim.winRate.toFixed(1)}%)`);
-                    if (sim.winRate > CONSTANTS.WIN_RATE_THRESHOLD) {
+                    if (sim.winRate > winThreshold) {
                         beatable.push({ ...slot, winRate: sim.winRate });
                         console.log(`[GUILD_WAR] ✓ Beatable — queued (${beatable.length}/${limit})`);
                     } else {
-                        console.log(`[GUILD_WAR] ✗ Below ${CONSTANTS.WIN_RATE_THRESHOLD}% — skip`);
+                        console.log(`[GUILD_WAR] ✗ Below ${winThreshold}% — skip`);
                     }
                 } catch (err) {
                     console.warn(`[GUILD_WAR] Sim failed for ${label}:`, err);
@@ -4960,9 +5017,18 @@ async function executeGetDailyBonus() {
                 return;
             }
 
-            setProgress(`${I18N('GUILD_WAR')}: Finding strongest beatable targets (${tries} tries)...`);
+            const useAutoFix = isHwhAutoFixEnabled();
+            if (useAutoFix) {
+                console.log('[GUILD_WAR] HWH AutoFix on — using clanWarAttack → Calc → clanWarEndBattle');
+            }
+
+            setProgress(
+                useAutoFix
+                    ? `${I18N('GUILD_WAR')}: Finding targets (${tries} tries, AutoFix)...`
+                    : `${I18N('GUILD_WAR')}: Finding strongest beatable targets (${tries} tries)...`
+            );
             const readyCount = this.listAttackableSlots().length;
-            const targets = await this.selectStrongestBeatableSlots(heroTeam, titanTeam, tries);
+            const targets = await this.selectStrongestBeatableSlots(heroTeam, titanTeam, tries, { useAutoFix });
 
             if (!targets.length) {
                 if (!readyCount) {
@@ -4987,9 +5053,20 @@ async function executeGetDailyBonus() {
                 const label = `slot ${target.slotId} (${target.isTitan ? 'titan' : 'hero'}, ${target.defenderName})`;
                 try {
                     console.log(`[GUILD_WAR] Attacking ${label}... (${this.myTries} tries, sim ${target.winRate.toFixed(0)}%)`);
-                    setProgress(`${I18N('GUILD_WAR')}: Attacking ${label} (${this.myTries} tries)`);
-                    await this.attackSlot(target.slotId, { skipSim: true, heroTeam, titanTeam });
-                    this.victories++;
+                    setProgress(
+                        useAutoFix
+                            ? `${I18N('GUILD_WAR')}: Attacking ${label} (AutoFix, ${this.myTries} tries)`
+                            : `${I18N('GUILD_WAR')}: Attacking ${label} (${this.myTries} tries)`
+                    );
+                    const outcome = await this.attackSlot(target.slotId, {
+                        skipSim: true,
+                        heroTeam,
+                        titanTeam,
+                        useAutoFix,
+                    });
+                    if (outcome?.win !== false) {
+                        this.victories++;
+                    }
                     await this.refreshGuildWarAttempts();
                 } catch (error) {
                     console.error(`[GUILD_WAR] Error attacking ${label}:`, error);
@@ -5006,8 +5083,87 @@ async function executeGetDailyBonus() {
             this.end(summary);
         }
 
+        this.extractGuildWarBattle = function(attackResponse) {
+            const apiResult = attackResponse?.results?.[0]?.result;
+            const response = apiResult?.response ?? apiResult;
+            if (!response) return null;
+            return response.battle || response.replay || response;
+        }
+
+        this.calculateGuildWarBattleResult = async function(battleData, isTitanBattle) {
+            const typeHint = battleData?.type
+                || (isTitanBattle ? 'clan_pvp_titan' : 'clan_pvp');
+            const battleConfigType = getBattleType(typeHint);
+            return new Promise((resolve, reject) => {
+                BattleCalc(battleData, battleConfigType, (calcResult) => {
+                    if (!calcResult || !calcResult.result || !calcResult.progress) {
+                        reject(new Error('Invalid Guild War BattleCalc result'));
+                        return;
+                    }
+                    // Keep progress seed aligned with the started battle (required by clanWarEndBattle).
+                    const expectedSeed = Number(battleData?.seed);
+                    if (Number.isFinite(expectedSeed) && Array.isArray(calcResult.progress)) {
+                        for (const entry of calcResult.progress) {
+                            if (entry && entry.seed == null) {
+                                entry.seed = expectedSeed;
+                            }
+                        }
+                    }
+                    resolve({
+                        win: !!calcResult.result.win,
+                        progress: calcResult.progress,
+                        result: calcResult.result,
+                        battleData,
+                    });
+                });
+            });
+        }
+
+        this.endGuildWarBattle = async function(battleResult, useAutoFix = false) {
+            if (useAutoFix && !battleResult.win) {
+                setProgress(`${I18N('GUILD_WAR')}: AutoFix searching (Calc loss)...`, true);
+                console.log('[GUILD_WAR] Calc loss — submitting clanWarEndBattle for AutoFix salvage');
+            }
+
+            const calls = [{
+                name: 'clanWarEndBattle',
+                args: {
+                    result: battleResult.result || {
+                        win: !!battleResult.win,
+                        stars: battleResult.result?.stars || 0,
+                    },
+                    progress: battleResult.progress,
+                },
+                context: { actionTs: Utils.getActionTs() },
+                ident: 'body',
+            }];
+
+            // When AutoFix is on, HWHAutoFixBattleExt rewrites loss payloads inside this Send.
+            const response = await Send(JSON.stringify({ calls }));
+            if (response.error) {
+                throw new Error(
+                    `clanWarEndBattle failed: ${response.error.name} - ${response.error.description || ''}`
+                );
+            }
+
+            const endResponse = response.results?.[0]?.result?.response
+                ?? response.results?.[0]?.result
+                ?? null;
+            let won = !!battleResult.win;
+            if (endResponse?.win != null) {
+                won = !!endResponse.win;
+            } else if (endResponse?.result?.win != null) {
+                won = !!endResponse.result.win;
+            } else if (useAutoFix && !battleResult.win) {
+                // AutoFix may have flipped the payload; end response shape varies — treat as unknown win.
+                console.log('[GUILD_WAR] AutoFix path finished after Calc loss (server outcome not parsed)');
+            }
+            return { win: won, response: endResponse };
+        }
+
         this.attackSlot = async function(slotId, options = {}) {
             console.log(`Attacking slot ${slotId}...`);
+            const useAutoFix = options.useAutoFix === true || (options.useAutoFix == null && isHwhAutoFixEnabled());
 
             if (this.myTries === null || this.myTries === undefined) {
                 throw new Error('Guild War attempts not available - war may not be active');
@@ -5035,6 +5191,10 @@ async function executeGetDailyBonus() {
                 }
             }
 
+            const winThreshold = useAutoFix
+                ? Math.min(CONSTANTS.WIN_RATE_THRESHOLD, 25)
+                : CONSTANTS.WIN_RATE_THRESHOLD;
+
             // Re-sim only if caller did not already evaluate this slot
             if (!options.skipSim) {
                 const myPower = this.getMyTeamPower(teamConfig, isTitanBattle);
@@ -5049,7 +5209,7 @@ async function executeGetDailyBonus() {
                     };
                     if (oppTeam.titans.length >= 5) {
                         const sim = await this.simulateGuildWarTitanBattle(teamConfig, oppTeam, CONSTANTS.SIMULATION_COUNT);
-                        if (sim.winRate <= CONSTANTS.WIN_RATE_THRESHOLD) {
+                        if (sim.winRate <= winThreshold) {
                             throw new Error(`Skipped: Win rate ${sim.winRate.toFixed(2)}% below threshold`);
                         }
                     }
@@ -5062,7 +5222,7 @@ async function executeGetDailyBonus() {
                     };
                     if (oppTeam.heroes.length >= 5) {
                         const sim = await this.simulateGuildWarHeroBattle(teamConfig, oppTeam, CONSTANTS.SIMULATION_COUNT);
-                        if (sim.winRate <= CONSTANTS.WIN_RATE_THRESHOLD) {
+                        if (sim.winRate <= winThreshold) {
                             throw new Error(`Skipped: Win rate ${sim.winRate.toFixed(2)}% below threshold`);
                         }
                     }
@@ -5114,8 +5274,26 @@ async function executeGetDailyBonus() {
                 throw new Error('Invalid attack response - no result data');
             }
 
-            console.log(`Slot ${slotId} attack completed successfully`);
-            return result;
+            // Legacy one-shot path when AutoFix is off (previous Auto Daily behavior).
+            if (!useAutoFix) {
+                console.log(`Slot ${slotId} attack completed successfully`);
+                return { win: true, result };
+            }
+
+            const battleData = this.extractGuildWarBattle(response);
+            if (!battleData?.attackers || battleData.seed == null) {
+                throw new Error('clanWarAttack did not return a usable battle snapshot for AutoFix endBattle');
+            }
+
+            const battleResult = await this.calculateGuildWarBattleResult(battleData, isTitanBattle);
+            console.log(
+                `[GUILD_WAR] Slot ${slotId} Calc: ${battleResult.win ? 'WIN' : 'LOSS'}`
+                + (battleResult.win ? '' : ' (AutoFix may salvage on endBattle)')
+            );
+
+            const ended = await this.endGuildWarBattle(battleResult, true);
+            console.log(`Slot ${slotId} attack completed (${ended.win ? 'WIN' : 'LOSS/unknown'})`);
+            return { win: ended.win, result: ended.response, calc: battleResult };
         }
 
         /** Prefer Guild War hero attack team; fall back to Arena. */
@@ -6246,27 +6424,35 @@ async function executeGetDailyBonus() {
 
         this.attackBoss = async function() {
             const maxAttacks = Math.min(5, this.bossAttempts);
-            
+            const useAutoFix = isHwhAutoFixEnabled();
+            if (useAutoFix) {
+                console.log('[Raid Boss] HWH AutoFix is on — endBattle will run AutoFix damage search before send');
+            }
+
             for (let i = 0; i < maxAttacks; i++) {
                 if (this.bossAttempts <= 0) {
                     break;
                 }
 
-                setProgress(`Raid Boss: Attack ${i + 1}/${maxAttacks}`);
-                
+                setProgress(
+                    useAutoFix
+                        ? `Raid Boss: Attack ${i + 1}/${maxAttacks} (AutoFix enabled)`
+                        : `Raid Boss: Attack ${i + 1}/${maxAttacks}`
+                );
+
                 try {
                     const teamIndex = i % this.heroTeams.length;
                     const heroes = this.heroTeams[teamIndex];
                     const pet = this.pets[teamIndex];
                     const favor = this.favorTeams[teamIndex];
-                    
+
                     const battleData = await this.startBossBattle(heroes, pet, favor);
                     const battleResult = await this.calculateBattleResult(battleData);
-                    await this.endBossBattle(battleResult);
-                    
+                    await this.endBossBattle(battleResult, useAutoFix);
+
                     this.attacksCompleted++;
                     this.bossAttempts--;
-                    
+
                     if (i < maxAttacks - 1) {
                         await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
                     }
@@ -6275,7 +6461,7 @@ async function executeGetDailyBonus() {
                     break; // Stop on error to avoid wasting attempts
                 }
             }
-            
+
             this.end(`Completed ${this.attacksCompleted} boss attacks`);
         }
 
@@ -6293,11 +6479,11 @@ async function executeGetDailyBonus() {
             }];
 
             const response = await Send(JSON.stringify({calls}));
-            
+
             if (response.error) {
                 throw new Error(`Start boss battle failed: ${response.error.name} - ${response.error.description}`);
             }
-            
+
             if (!response.results || !response.results[0] || !response.results[0].result) {
                 throw new Error('Invalid start boss battle response');
             }
@@ -6307,6 +6493,7 @@ async function executeGetDailyBonus() {
                 throw new Error('No battle data in response');
             }
 
+            // HWHAutoFixBattleExt caches this start via checkChangeResponse (lastBattleInfo + endTime).
             return battleData.battle;
         }
 
@@ -6328,24 +6515,43 @@ async function executeGetDailyBonus() {
             });
         }
 
-        this.endBossBattle = async function(battleResult) {
+        this.endBossBattle = async function(battleResult, useAutoFix = false) {
+            const prepared = prepareRaidBossProgressForAutoFix(battleResult.progress);
+            if (useAutoFix) {
+                if (!prepared.ok) {
+                    console.warn('[Raid Boss] AutoFix on, but boss damage progress is missing — AutoFix may no-op/error');
+                } else {
+                    setProgress(
+                        `Raid Boss: AutoFix searching (baseline ${prepared.damage.toLocaleString()})...`,
+                        true
+                    );
+                    console.log('[Raid Boss] Baseline damage before AutoFix:', prepared.damage);
+                }
+            }
+
+            // Full result + normalized progress so HWHAutoFixBattleExt can rewrite args on checkChangeSend.
             const calls = [{
                 name: "clanRaid_endBossBattle",
                 args: {
-                    result: {
+                    result: battleResult.result || {
                         win: battleResult.win,
-                        stars: battleResult.result.stars || 0
+                        stars: battleResult.result?.stars || 0
                     },
-                    progress: battleResult.progress
+                    progress: prepared.progress
                 },
                 context: { actionTs: Utils.getActionTs() },
                 ident: "group_1_body"
             }];
 
+            // Send is awaited through HWH; when AutoFix is checked it blocks here while searching.
             const response = await Send(JSON.stringify({calls}));
-            
+
             if (response.error) {
                 throw new Error(`End boss battle failed: ${response.error.name} - ${response.error.description}`);
+            }
+
+            if (useAutoFix) {
+                console.log('[Raid Boss] endBossBattle finished (AutoFix ran inside HWH send hook if installed)');
             }
         }
 
