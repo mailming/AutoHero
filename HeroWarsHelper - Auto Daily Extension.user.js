@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.42
+// @version      3.5.43
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,12 +15,13 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.42";
+    const EXTENSION_VERSION = "3.5.43";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
     /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
     /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
+    /** Disable hero-door prediction cards: `window.HWH_DUNGEON_USE_ORACLE_CARDS = false`. */
     /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES` (default 10). */
     /** Step delay between floors ms: `window.HWH_DUNGEON_STEP_DELAY_MS` (default 100). */
     /** Brute-force budget ms per battle sim: `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000, Stealther default). */
@@ -226,17 +227,34 @@
             return Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
         }
 
-        function consumeOracleCard() {
-            if (!window.HWHData) return 0;
-            const n = getOracleCards();
-            if (n <= 0) return 0;
-            window.HWHData.countPredictionCard = n - 1;
-            return window.HWHData.countPredictionCard;
+        // Stealther 1.012: prediction cards (consumable 81) only for hero doors.
+        // Do NOT decrement here — HWH's dungeonEndBattle interceptor decrements when isRaid is sent.
+        // Pre-decrementing makes HWH strip isRaid, and Auto Daily does not set lastDungeonBattleData,
+        // so the request ends instantly and the server returns "abnormal speed".
+        function shouldUseOracleCard(attackerType) {
+            if (window.HWH_DUNGEON_USE_ORACLE_CARDS === false) {
+                return false;
+            }
+            return attackerType === 'hero' && getOracleCards() > 0;
         }
 
-        // Stealther 1.012: prediction cards (consumable 81) only for hero doors.
-        function shouldUseOracleCard(attackerType) {
-            return attackerType === 'hero' && getOracleCards() > 0;
+        function isAbnormalSpeedError(err) {
+            const text = typeof err === 'string'
+                ? err
+                : [
+                    err?.description,
+                    err?.title,
+                    err?.name,
+                    err?.message,
+                    typeof err === 'object' ? JSON.stringify(err) : '',
+                ].filter(Boolean).join(' ');
+            return /abnormal\s*speed|third[-\s]?party|disable.*third/i.test(text);
+        }
+
+        function formatDungeonError(err) {
+            if (err == null || err === '') return '';
+            if (typeof err === 'string') return err;
+            return err.description || err.title || err.name || err.message || JSON.stringify(err);
         }
 
         let dungeonActivity = 0;
@@ -1091,6 +1109,11 @@
                 ...battle,
                 battleData: battle.battleData ?? battleData,
             };
+            const battleTime = Number(wrapped.battleTime ?? handlerResult.timer ?? 0) || 0;
+            // Prefer BattleCalc battleTimer (subscription-adjusted); fall back to getTimer(battleTime).
+            const battleTimer = Number(wrapped.battleTimer) > 0
+                ? Number(wrapped.battleTimer)
+                : (typeof getTimer === 'function' ? getTimer(battleTime) : battleTime);
             return {
                 teamNum,
                 heroes,
@@ -1098,8 +1121,9 @@
                 favor,
                 result: wrapped.result,
                 progress: wrapped.progress,
-                timer: getTimer(wrapped.battleTime ?? handlerResult.timer ?? 0),
-                battleTime: wrapped.battleTime,
+                timer: battleTimer,
+                battleTime,
+                battleTimer,
                 simTimer: battle.timer ?? battle.battleTime ?? handlerResult.timer ?? 0,
                 win: wrapped.result?.win,
                 state: handler.getState(wrapped),
@@ -1130,13 +1154,39 @@
             return wrapBattleOption(teamNum, heroes, pet, favor, battle, battleData, handler, handlerResult);
         }
 
+        function getRequiredBattleWaitSec(option) {
+            const add = Math.max(0, Number(window.addBattleTimer) || 4);
+            const battleTimer = Number(option?.battleTimer);
+            const optionTimer = Number(option?.timer);
+            const fromGetTimer = typeof getTimer === 'function'
+                ? Number(getTimer(Number(option?.battleTime) || 0))
+                : 0;
+            let need = 0;
+            if (Number.isFinite(battleTimer) && battleTimer > 0) {
+                need = battleTimer;
+            } else if (Number.isFinite(optionTimer) && optionTimer > 0) {
+                need = optionTimer;
+            } else if (Number.isFinite(fromGetTimer) && fromGetTimer > 0) {
+                need = fromGetTimer;
+            }
+            // Match HWH dungeonEndBattle interceptor: battleTimer + addBattleTimer, min ~4s.
+            return Math.max(4, Math.ceil(need + add));
+        }
+
         async function waitForBattleFullTimer(option, debug = '') {
-            const totalTimer = Math.ceil(option.timer ?? getTimer(option.battleTime ?? 0));
+            // Server checks wall-clock since dungeonStartBattle; credit time spent simulating.
+            const required = getRequiredBattleWaitSec(option);
+            const startedAt = battleStartTime > 0 ? battleStartTime : Date.now();
+            const elapsed = Math.max(0, Math.ceil((Date.now() - startedAt) / 1000));
+            const totalTimer = Math.max(0, required - elapsed);
             if (totalTimer <= 0) {
+                if (DUNGEON_VERBOSE) {
+                    console.log('[Dungeon] battle wait skipped (elapsed', elapsed, 's >= required', required, 's)', debug || '');
+                }
                 return;
             }
             if (DUNGEON_VERBOSE) {
-                console.log('[Dungeon] battle wait:', totalTimer, 's', debug || '');
+                console.log('[Dungeon] battle wait:', totalTimer, 's (required', required, 'elapsed', elapsed, ')', debug || '');
             }
             const msg = `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`;
             await countdownTimer(totalTimer, msg);
@@ -1145,13 +1195,12 @@
         // Stealther 1.012: hero doors can spend a prediction card to skip the wait and end with isRaid.
         async function waitOrUseOracleCard(option, attackerType, debug = '') {
             if (shouldUseOracleCard(attackerType)) {
-                const before = getOracleCards();
-                const left = consumeOracleCard();
+                const cards = getOracleCards();
                 if (DUNGEON_VERBOSE || LOG_PREDICTION_CARDS) {
-                    console.log(`[Dungeon] Oracle/prediction card used (${before} -> ${left})`, debug || '');
+                    console.log(`[Dungeon] Using prediction card via isRaid (${cards} available; HWH will decrement)`, debug || '');
                 }
                 setProgress(
-                    `${I18N('DUNGEON')}: \uD83C\uDCCF ${left} | ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`,
+                    `${I18N('DUNGEON')}: \uD83C\uDCCF ${cards} | ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`,
                     true
                 );
                 await sleep(0);
@@ -1242,6 +1291,13 @@
                 if (!isRetry && isNotFoundError(err)) {
                     return retryEndBattleAfterNotFound(option, attackerType);
                 }
+                if (isAbnormalSpeedError(err)) {
+                    endDungeon(
+                        'Dungeon stopped: abnormal completion speed (server anti-cheat). Wait for battle timers / disable third-party tools.',
+                        formatDungeonError(err)
+                    );
+                    return false;
+                }
                 endDungeon('errorRequest', err);
                 return false;
             }
@@ -1256,6 +1312,13 @@
                     return true;
                 }
                 setBattleOpen(false);
+                if (isAbnormalSpeedError(e.error)) {
+                    endDungeon(
+                        'Dungeon stopped: abnormal completion speed (server anti-cheat). Wait for battle timers / disable third-party tools.',
+                        formatDungeonError(e.error)
+                    );
+                    return false;
+                }
                 endDungeon('errorRequest', e.error);
                 return false;
             }
@@ -1285,6 +1348,13 @@
                     return true;
                 }
                 setBattleOpen(false);
+                if (isAbnormalSpeedError(result.error)) {
+                    endDungeon(
+                        'Dungeon stopped: abnormal completion speed (server anti-cheat). Wait for battle timers / disable third-party tools.',
+                        formatDungeonError(result.error)
+                    );
+                    return false;
+                }
                 endDungeon('errorBattleResult', result.error);
                 return false;
             }
