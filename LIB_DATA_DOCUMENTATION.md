@@ -6,18 +6,200 @@
 
 ## Access Methods
 
+Run these in the **browser DevTools console** on the Hero Wars page after HeroWarsHelper has loaded (`window.lib` exists).
+
 ### Direct Access
 ```javascript
-// Access data directly
+// Prefer window.lib (userscript / extension context)
+const lib = window.lib;
+
 const heroData = lib.data.hero;
 const missionData = lib.data.mission;
 ```
 
 ### Using getData Method
 ```javascript
-// Access data using getData method (recommended)
+// Access data using getData method (recommended — safer if a key is missing)
 const heroData = lib.getData('hero');
 const missionData = lib.getData('mission');
+const clanWar = lib.getData('clanWar');
+```
+
+### Quick availability check
+```javascript
+const lib = window.lib;
+console.log('lib ready:', !!lib, 'keys:', lib ? Object.keys(lib.data || {}).length : 0);
+```
+
+---
+
+## Browser Console Cookbook (inspect `lib.data`)
+
+### 1. List all top-level `lib.data` keys
+```javascript
+const lib = window.lib;
+console.log(Object.keys(lib.data).sort());
+// or with sizes:
+Object.keys(lib.data).sort().forEach((k) => {
+  const v = lib.data[k];
+  const n = v && typeof v === 'object' ? Object.keys(v).length : '-';
+  console.log(k, n);
+});
+```
+
+### 2. Pretty-print one category
+```javascript
+const lib = window.lib;
+console.log(lib.getData('clanWar'));
+console.table(Object.values(lib.getData('clanWar').fortification || {}));
+```
+
+### 3. Guild War fortifications + slot → fort map
+Useful for Auto Daily GW priority (Bridge / Bastions / Citadel).
+
+```javascript
+const lib = window.lib;
+const cw = lib.getData('clanWar') || lib.data.clanWar;
+
+// Fort definitions: id, pointReward, tier, tierUnlock
+console.log('fortification', cw.fortification);
+console.table(Object.values(cw.fortification));
+
+// Slot definitions: id, fortificationId, type ('hero'|'titan'), league
+console.log('fortificationSlot', cw.fortificationSlot);
+console.table(Object.values(cw.fortificationSlot));
+
+// Forts that unlock the next map tier (Bridge, Fire/Nature/Ice, …)
+Object.values(cw.fortification)
+  .filter((f) => f.tierUnlock != null)
+  .forEach((f) => console.log(`fort ${f.id} unlocks tier ${f.tierUnlock}`, f));
+
+// All slot IDs for a fort (e.g. Bridge = 4, Bastions = 7/8/9, Citadel = 10)
+function slotsForFort(fortId) {
+  return Object.values(cw.fortificationSlot)
+    .filter((s) => Number(s.fortificationId) === Number(fortId))
+    .map((s) => s.id);
+}
+console.log('Bridge slots', slotsForFort(4));
+console.log('Bastion 7/8/9', [7, 8, 9].map((id) => ({ fort: id, slots: slotsForFort(id) })));
+console.log('Citadel slots', slotsForFort(10));
+```
+
+**Typical mapping (verify in console — Gold league adds `league: 1` slots):**
+
+| Fort ID | Role | `tierUnlock` | Example slots |
+|--------:|------|--------------|---------------|
+| 4 | Bridge | 2 | 7, 8, 9, 34 |
+| 7 / 8 / 9 | Fire / Nature / Ice bastions | 3 | 16–24, 37–39 |
+| 10 | Citadel | null | 25–30, 40 |
+
+### 4. Clash of Worlds (`crossClanWar`) lib data
+```javascript
+const lib = window.lib;
+const cow = lib.getData('crossClanWar') || lib.data.crossClanWar;
+console.log(Object.keys(cow || {}));
+console.log('fortification', cow?.fortification);
+console.log('fortificationSlot', cow?.fortificationSlot);
+console.log('division / league / rule', cow?.division, cow?.league, cow?.rule);
+```
+
+### 5. Live Clash of Worlds status (API, not lib)
+`lib.data` is static config. War status needs `Send` / `Caller`:
+
+```javascript
+const r = await Send(JSON.stringify({
+  calls: [{ name: 'crossClanWar_getInfo', args: {}, ident: 'body' }]
+}));
+const info = r.results[0].result.response;
+if (!info.war) {
+  console.log('No active Clash of Worlds war');
+} else {
+  console.log('Enemy:', info.war.enemyClan?.title);
+  console.log('Tries:', info.war.myTries);
+  console.log('Points:', info.war.points, 'vs', info.war.enemyPoints);
+}
+
+const m = await Send(JSON.stringify({
+  calls: [{ name: 'crossClanWar_getAttackMap', args: {}, ident: 'body' }]
+}));
+console.log('targets', m.results[0].result.response.targets);
+```
+
+### 6. Live Guild War status (API)
+```javascript
+const r = await Send(JSON.stringify({
+  calls: [{ name: 'clanWarGetInfo', args: {}, ident: 'clanWarGetInfo' }]
+}));
+const gw = r.results[0].result.response;
+console.log('active?', 'myTries' in gw, 'myTries=', gw.myTries);
+console.log('enemySlots count', Object.keys(gw.enemySlots || {}).length);
+```
+
+### 7. Titans / heroes by element or id
+```javascript
+const lib = window.lib;
+const titans = lib.getData('titan');
+
+// One titan
+console.log(4000, titans[4000]);
+
+// Group titans by element
+const byEl = {};
+for (const t of Object.values(titans)) {
+  (byEl[t.element] ||= []).push(t.id);
+}
+console.log(byEl);
+
+// Resolve display name (needs cheats / HWH)
+const name = (id) => window.cheats?.translate?.('LIB_TITAN_NAME_' + id) || id;
+Object.values(titans).slice(0, 5).forEach((t) => console.log(t.id, name(t.id), t.element));
+```
+
+### 8. Search lib keys / nested property names
+```javascript
+const lib = window.lib;
+const needle = 'fortification'; // change me
+Object.keys(lib.data)
+  .filter((k) => k.toLowerCase().includes(needle.toLowerCase()))
+  .forEach((k) => console.log(k));
+
+// Find which categories have a given nested key
+function findCategoriesWithKey(key) {
+  return Object.keys(lib.data).filter((k) => {
+    const v = lib.data[k];
+    return v && typeof v === 'object' && key in v;
+  });
+}
+console.log(findCategoriesWithKey('fortificationSlot'));
+```
+
+### 9. Copy a slice to clipboard for pasting into docs / chat
+```javascript
+const lib = window.lib;
+const payload = {
+  fortification: lib.data.clanWar.fortification,
+  fortificationSlot: lib.data.clanWar.fortificationSlot,
+};
+copy(JSON.stringify(payload, null, 2)); // Chromium DevTools helper
+console.log('Copied to clipboard');
+```
+
+### 10. Helper: dump any `lib.getData(id)` safely
+```javascript
+function dumpLib(id, { table = false } = {}) {
+  const lib = window.lib;
+  if (!lib) return console.error('window.lib not ready');
+  const data = typeof lib.getData === 'function' ? lib.getData(id) : lib.data?.[id];
+  if (data == null) return console.error('Unknown lib key:', id);
+  console.log(id, data);
+  if (table && typeof data === 'object') {
+    const vals = Array.isArray(data) ? data : Object.values(data);
+    if (vals.every((v) => v && typeof v === 'object')) console.table(vals);
+  }
+  return data;
+}
+dumpLib('clanWar', { table: false });
+dumpLib('titan');
 ```
 
 ## Data Structure
@@ -183,7 +365,16 @@ Clan definitions.
 #### `clanWar`
 Guild War definitions.
 - **Structure**: Object with `fortification`, `fortificationSlot`, `league` properties
-- **Usage in code**: `lib.data.clanWar`
+- **Usage in code**: `lib.data.clanWar` / `lib.getData('clanWar')`
+- **`fortification[id]`**: `{ id, pointReward, tier, tierUnlock }`
+  - `tier` — map zone (1 = outer, 2 = mid, 3 = citadel)
+  - `tierUnlock` — when this fort is fully captured, unlocks that tier (`null` = does not unlock a tier)
+  - Fort **4** (Bridge): `tierUnlock: 2`
+  - Forts **7 / 8 / 9** (Bastion of Fire / Gates of Nature / Bastion of Ice): `tierUnlock: 3`
+  - Fort **10** (Citadel): high `pointReward`, no `tierUnlock`
+- **`fortificationSlot[id]`**: `{ id, fortificationId, type: 'hero'|'titan', league }`
+  - `league: null` = base slots; `league: 1` = Gold-league extra slots (e.g. Bridge slot 34)
+- **See also**: Browser Console Cookbook above; Auto Daily GW targeting uses these maps
 
 #### `clanRaid`
 Clan Raid definitions.
@@ -706,21 +897,24 @@ const phase = Object.values(libInvasion.phase).find(
 
 ## Notes
 
-1. **Data Loading**: The library data is loaded asynchronously from a JSON file. Ensure `lib.data` is available before accessing it.
+1. **Data Loading**: The library data is loaded asynchronously from a JSON file. Ensure `lib.data` / `window.lib` is available before accessing it (wait for HWH / game load).
 
 2. **Data Structure**: Most data is organized as objects with numeric or string IDs as keys, making it easy to look up specific entities.
 
 3. **Nested Properties**: Many categories contain nested objects with additional properties. Explore the structure in the browser console to understand the full data model.
 
-4. **Dynamic Updates**: The library data may be updated by the game server, so the structure and available properties may change over time.
+4. **Dynamic Updates**: The library data may be updated by the game server, so the structure and available properties may change over time. Prefer reading from `lib` at runtime over hardcoding IDs.
 
 5. **Performance**: For frequently accessed data, consider caching references to avoid repeated lookups.
 
 6. **Type Safety**: The data structure is not strictly typed, so always check for property existence before accessing nested properties.
 
+7. **lib vs API**: `lib.data` is **static config**. Live state (attempts, enemy slots, war active) comes from APIs such as `clanWarGetInfo`, `crossClanWar_getInfo` — see cookbook sections 5–6 and `HERO_WARS_API_DOCUMENTATION.md`.
+
 ## Related Documentation
 
-- `HERO_WARS_API_DOCUMENTATION.md` - API documentation including refillable resources
+- `HERO_WARS_API_DOCUMENTATION.md` - API documentation including Guild War / Clash of Worlds
+- `TITAN_DATA_DOCUMENTATION.md` - Titan ids / elements
 - `EXTENSION_DEVELOPMENT.md` - Extension development guidelines
 - `DEVELOPMENT.md` - General development documentation
 
