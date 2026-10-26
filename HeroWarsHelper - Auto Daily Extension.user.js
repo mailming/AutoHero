@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.48
+// @version      3.5.49
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.48";
+    const EXTENSION_VERSION = "3.5.49";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -7497,6 +7497,10 @@ async function executeGetDailyBonus() {
             const titanGetAllRes = data.results[2]?.result?.response;
             allTitans = titanGetAllRes ? Object.values(titanGetAllRes) : [];
 
+            if (isHwhAutoFixEnabled()) {
+                console.log('[ToE] HWH AutoFix on — losses on titanArenaEndBattle will be salvaged');
+            }
+
             checkTier(titanArena);
         }
 
@@ -7507,7 +7511,8 @@ async function executeGetDailyBonus() {
             }
             currTier = titanArena.tier;
             if (currTier) {
-                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier}`);
+                const autoFixHint = isHwhAutoFixEnabled() ? ' (AutoFix)' : '';
+                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier}${autoFixHint}`);
             }
 
             if (titanArena.status === 'completed_tier') {
@@ -7605,11 +7610,25 @@ async function executeGetDailyBonus() {
 
         async function resultCalcBattle(resultBattle) {
             if (resultBattle.result.win || !attempts) {
-                const { progress, result } = resultBattle;
+                let { progress, result } = resultBattle;
+                const battleData = resultBattle.battleData;
+                // AutoFix ext needs a live Scheduler battleLog; Auto Daily Calc-only uses local FixBattle.
+                if (isHwhAutoFixEnabled() && !result?.win && battleData) {
+                    const salvaged = await salvageWithHwhFixBattle(battleData, {
+                        mode: 'pvp',
+                        label: 'ToE',
+                        durationMs: 120000,
+                        maxCount: 500,
+                    });
+                    if (salvaged?.win) {
+                        result = salvaged.result;
+                        progress = salvaged.progress;
+                    }
+                }
                 titanArenaEndBattle({
                     progress,
                     result,
-                    rivalId: resultBattle.battleData.typeId,
+                    rivalId: battleData?.typeId,
                 });
                 return;
             }
