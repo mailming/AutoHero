@@ -3,21 +3,21 @@
 // @name:en			HWHAutoFixBattleExt
 // @name:ru			HWHAutoFixBattleExt
 // @namespace		HeroWarsHelper
-// @version			0.0.12
+// @version			0.0.15
 // @description		Extension for HeroWarsHelper script. Enables fixes for Asgard boss fights, Guild Wars, Worlds Collide, and Brawls
 // @description:en	Extension for HeroWarsHelper script. Enables fixes for Asgard boss fights, Guild Wars, Worlds Collide, and Brawls
-// @description:ru	Расширение для скрипта HeroWarsHelper. Включает исправление боев на боссе Асгарда, в Войне Гильдий, Столкновении Миров и Потасовках
+// @description:ru	Р Р°СЃС€РёСЂРµРЅРёРµ РґР»СЏ СЃРєСЂРёРїС‚Р° HeroWarsHelper. Р’РєР»СЋС‡Р°РµС‚ РёСЃРїСЂР°РІР»РµРЅРёРµ Р±РѕРµРІ РЅР° Р±РѕСЃСЃРµ РђСЃРіР°СЂРґР°, РІ Р’РѕР№РЅРµ Р“РёР»СЊРґРёР№, РЎС‚РѕР»РєРЅРѕРІРµРЅРёРё РњРёСЂРѕРІ Рё РџРѕС‚Р°СЃРѕРІРєР°С…
 // @author			ZingerY
 // @license 		MIT
 // @homepage		https://zingery.ru/scripts/HWHAutoFixBattleExt.user.js
+// @downloadURL		https://zingery.ru/scripts/HWHAutoFixBattleExt.user.js
+// @updateURL		https://zingery.ru/scripts/HWHAutoFixBattleExt.user.js
 // @icon			https://zingery.ru/scripts/VaultBoyIco16.ico
 // @icon64			https://zingery.ru/scripts/VaultBoyIco64.png
 // @match			https://www.hero-wars.com/*
 // @match			https://apps-1701433570146040.apps.fbsbx.com/*
 // @run-at			document-start
 // @grant			none
-// @downloadURL https://update.greasyfork.org/scripts/601661/HWHAutoFixBattleExt.user.js
-// @updateURL https://update.greasyfork.org/scripts/601661/HWHAutoFixBattleExt.meta.js
 // ==/UserScript==
 
 (async function () {
@@ -39,18 +39,18 @@
 		AUTO_FIX_BOSS_STATUS_MSG: 'Tests: {count}/{maxCount}<br/>Best Damage: {maxDmg}<br/>End of the battle: {endTime}s',
 		AUTO_FIX_BOSS_START: 'Fixing...',
 		AUTO_FIX_BOSS_FAILED: 'Failed to fix damage: {damage}',
-		AUTO_FIX_BOSS_SUCCESS: 'Damage fixed from {firstDmg} to ${maxDmg)}!',
+		AUTO_FIX_BOSS_SUCCESS: 'Damage fixed from {firstDmg} to {maxDmg}!',
 	});
 
 	i18nLangData['ru'] = Object.assign(i18nLangData['ru'], {
-		AUTO_FIX_START_MSG: 'Для работы расширения HWHAutoFixBattleExt необходима версия HeroWarsHelper - {needScriptVersion} и старше.',
+		AUTO_FIX_START_MSG: 'Р”Р»СЏ СЂР°Р±РѕС‚С‹ СЂР°СЃС€РёСЂРµРЅРёСЏ HWHAutoFixBattleExt РЅРµРѕР±С…РѕРґРёРјР° РІРµСЂСЃРёСЏ HeroWarsHelper - {needScriptVersion} Рё СЃС‚Р°СЂС€Рµ.',
 		AUTO_FIX_CHECKBOX: 'AutoFix',
-		AUTO_FIX_CHECKBOX_TITLE: 'Включает исправление боев на боссе Асгарда, в Войне Гильдий, Столкновении Миров и Потасовках',
-		AUTO_FIX_STATUS_MSG: 'Тесты: {count}/{maxCount}<br/>Лучшее значение: {bestValue}%<br/>Конец боя: {endTime}s',
-		AUTO_FIX_BOSS_STATUS_MSG: 'Тесты: {count}/{maxCount}<br/>Лучший урон: {maxDmg}<br/>Конец боя: {endTime}s',
-		AUTO_FIX_BOSS_START: 'Исправляем...',
-		AUTO_FIX_BOSS_FAILED: 'Не удалось исправить урон: {damage}',
-		AUTO_FIX_BOSS_SUCCESS: 'Урон исправлен с {firstDmg} до ${maxDmg)}!',
+		AUTO_FIX_CHECKBOX_TITLE: 'Р’РєР»СЋС‡Р°РµС‚ РёСЃРїСЂР°РІР»РµРЅРёРµ Р±РѕРµРІ РЅР° Р±РѕСЃСЃРµ РђСЃРіР°СЂРґР°, РІ Р’РѕР№РЅРµ Р“РёР»СЊРґРёР№, РЎС‚РѕР»РєРЅРѕРІРµРЅРёРё РњРёСЂРѕРІ Рё РџРѕС‚Р°СЃРѕРІРєР°С…',
+		AUTO_FIX_STATUS_MSG: 'РўРµСЃС‚С‹: {count}/{maxCount}<br/>Р›СѓС‡С€РµРµ Р·РЅР°С‡РµРЅРёРµ: {bestValue}%<br/>РљРѕРЅРµС† Р±РѕСЏ: {endTime}s',
+		AUTO_FIX_BOSS_STATUS_MSG: 'РўРµСЃС‚С‹: {count}/{maxCount}<br/>Р›СѓС‡С€РёР№ СѓСЂРѕРЅ: {maxDmg}<br/>РљРѕРЅРµС† Р±РѕСЏ: {endTime}s',
+		AUTO_FIX_BOSS_START: 'РСЃРїСЂР°РІР»СЏРµРј...',
+		AUTO_FIX_BOSS_FAILED: 'РќРµ СѓРґР°Р»РѕСЃСЊ РёСЃРїСЂР°РІРёС‚СЊ СѓСЂРѕРЅ: {damage}',
+		AUTO_FIX_BOSS_SUCCESS: 'РЈСЂРѕРЅ РёСЃРїСЂР°РІР»РµРЅ СЃ {firstDmg} РґРѕ {maxDmg}!',
 	});
 
 	const HWHversion = +context.scriptInfo.version;
@@ -309,7 +309,7 @@
 				lastBattleInfo = result.battle || result.replay || result.response;
 				let battleDuration = 120;
 				try {
-					const battleType = battle?.effects?.battleConfig ?? battle.type;
+					const battleType = lastBattleInfo?.effects?.battleConfig ?? lastBattleInfo?.type;
 					const typeBattle = getBattleType(battleType);
 					battleDuration = +lib.data.battleConfig[typeBattle.split('_')[1]].config.battleDuration;
 				} catch (e) {}
@@ -320,9 +320,9 @@
 		Events.on('checkChangeSend', async (request, call) => {
 			if (
 				isChecked('autoFixIt') &&
-				(call.name == 'titanArenaEndBattle' || // Турнир стихий
-					call.name == 'clanWarEndBattle' || // Война гильдий
-					call.name == 'crossClanWar_endBattle' || // Столкновение миров
+				(call.name == 'titanArenaEndBattle' || // РўСѓСЂРЅРёСЂ СЃС‚РёС…РёР№
+					call.name == 'clanWarEndBattle' || // Р’РѕР№РЅР° РіРёР»СЊРґРёР№
+					call.name == 'crossClanWar_endBattle' || // РЎС‚РѕР»РєРЅРѕРІРµРЅРёРµ РјРёСЂРѕРІ
 					call.name == 'epicBrawl_endBattle') &&
 				!call.args.result.win
 			) {
@@ -334,7 +334,7 @@
 					if (endTime < cloneBattle.endTime) {
 						endTime = cloneBattle.endTime;
 					}
-					const result = await bFix.start(cloneBattle.endTime, Infinity);
+					const result = await bFix.start(endTime, Infinity);
 					if (result.result?.win || result.value > 0) {
 						call.args.result = result.result;
 						call.args.progress = result.progress;
@@ -351,6 +351,7 @@
 				const lastDamage = maxDamage;
 				setProgress(I18N('AUTO_FIX_BOSS_START'), false);
 				const cloneBattle = structuredClone(lastBattleInfo);
+				lastBattleInfo = null;
 				const bFix = new BossAutoFixBattle(cloneBattle, true);
 				const result = await bFix.start(cloneBattle.endTime, 1000);
 				let msgResult = I18N('AUTO_FIX_BOSS_FAILED', { damage: lastDamage.toLocaleString() });
@@ -386,7 +387,7 @@
 				if (result.result?.win || result.value > 0) {
 					console.log(result);
 				} else {
-					console.log('не вышло');
+					console.log('РЅРµ РІС‹С€Р»Рѕ');
 				}
 			} catch (error) {
 				console.error(error);
@@ -399,9 +400,9 @@
 
 /*
 TODO:
-Есть пожелание по скрипту HWHAutoFixBattleExt - в диалог, который выскакивает на ВГ и СМ после боя с 2-мя кнопками, добавить 3-ю кнопку - FixIt! - чтобы по ней AutoFix запускался, а то иногда хочется оставить результат ручного боя.
+Р•СЃС‚СЊ РїРѕР¶РµР»Р°РЅРёРµ РїРѕ СЃРєСЂРёРїС‚Сѓ HWHAutoFixBattleExt - РІ РґРёР°Р»РѕРі, РєРѕС‚РѕСЂС‹Р№ РІС‹СЃРєР°РєРёРІР°РµС‚ РЅР° Р’Р“ Рё РЎРњ РїРѕСЃР»Рµ Р±РѕСЏ СЃ 2-РјСЏ РєРЅРѕРїРєР°РјРё, РґРѕР±Р°РІРёС‚СЊ 3-СЋ РєРЅРѕРїРєСѓ - FixIt! - С‡С‚РѕР±С‹ РїРѕ РЅРµР№ AutoFix Р·Р°РїСѓСЃРєР°Р»СЃСЏ, Р° С‚Рѕ РёРЅРѕРіРґР° С…РѕС‡РµС‚СЃСЏ РѕСЃС‚Р°РІРёС‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚ СЂСѓС‡РЅРѕРіРѕ Р±РѕСЏ.
 
-Иногда, когда таймер в минус уходит, он не пишет "Урон исправле..." - а предыдущее окно с Best Damage
+РРЅРѕРіРґР°, РєРѕРіРґР° С‚Р°Р№РјРµСЂ РІ РјРёРЅСѓСЃ СѓС…РѕРґРёС‚, РѕРЅ РЅРµ РїРёС€РµС‚ "РЈСЂРѕРЅ РёСЃРїСЂР°РІР»Рµ..." - Р° РїСЂРµРґС‹РґСѓС‰РµРµ РѕРєРЅРѕ СЃ Best Damage
 */
 
 /*
