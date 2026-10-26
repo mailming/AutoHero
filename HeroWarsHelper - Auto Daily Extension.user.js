@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.49
+// @version      3.5.50
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.49";
+    const EXTENSION_VERSION = "3.5.50";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -6681,7 +6681,11 @@ async function executeGetDailyBonus() {
         this.attacksCompleted = 0;
 
         this.start = async function() {
-            setProgress('Cross Clan War: Initializing...');
+            const useAutoFix = isHwhAutoFixEnabled();
+            setProgress(useAutoFix ? 'Cross Clan War: Initializing (AutoFix)...' : 'Cross Clan War: Initializing...');
+            if (useAutoFix) {
+                console.log('[Clash] HWH AutoFix on — losses on crossClanWar_endBattle will be salvaged');
+            }
             try {
                 await this.getCurrentUserId();
                 if (!this.currentUserId) {
@@ -6985,6 +6989,25 @@ async function executeGetDailyBonus() {
                     // If battle was started but calculation failed, we should still try to end it
                     // But for now, just throw the error and let the caller handle it
                     throw new Error(`Failed to calculate battle result: ${error.message}`);
+                }
+
+                // AutoFix ext needs live Scheduler battleLog; Auto Daily Calc-only salvages locally.
+                if (isHwhAutoFixEnabled() && !battleResult.win && battleData) {
+                    const salvaged = await salvageWithHwhFixBattle(battleData, {
+                        mode: 'pvp',
+                        label: `Clash slot ${slotId}`,
+                        durationMs: 120000,
+                        maxCount: 500,
+                    });
+                    if (salvaged?.win) {
+                        battleResult = {
+                            win: true,
+                            result: salvaged.result,
+                            progress: salvaged.progress,
+                            battleData,
+                        };
+                        console.log(`Cross Clan War: [attackSlot] AutoFix salvaged win for slot ${slotId}`);
+                    }
                 }
                 
                 // End battle
