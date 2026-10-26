@@ -13,10 +13,11 @@
     "db:import-json": "node import-training-json.mjs",
     "db:backfill-matchups": "node db-backfill-matchups.mjs",
     "db:scrape-meta-teams": "python scrape_meta_teams_to_db.py",
+    "db:build-counter-model": "node build-counter-model.mjs",
     "db:docker:up": "docker compose up -d",
     "db:docker:down": "docker compose stop"
   },
   "dependencies": {
-    "pg": "^8.16.3"
+    "pg": "^8.23.1"
   }
 }
