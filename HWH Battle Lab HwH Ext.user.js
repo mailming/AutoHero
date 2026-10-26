@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           HWH Battle Lab HwH Ext
 // @namespace      HeroWarsHelper.BattleLab
-// @version        0.2.364
+// @version        0.2.366
 // @description    Battle lab for opponents, simulations, best teams, and local battle history.
 // @author         Askja
 // @match          https://www.hero-wars.com/*
@@ -2104,9 +2104,18 @@
 				readInitPayload: () => {
 					const bundleUrl = findGameBundleUrl(root);
 					const library = options.readLibrary();
-					if (!bundleUrl || !library) return null;
+					if (!bundleUrl || !library) {
+						console.warn("[Battle Lab:calc-workers]", "Init payload skipped: missing game bundle URL or library");
+						return null;
+					}
 					const registry = findHeroWarsClassRegistry(root);
+					console.info("[Battle Lab:calc-workers]", "Serializing game library for Calc workers…");
+					const serializeStartedAt = Date.now();
 					const libraryJson = JSON.stringify(library);
+					console.info("[Battle Lab:calc-workers]", "Library serialized", {
+						bytes: libraryJson.length,
+						ms: Date.now() - serializeStartedAt
+					});
 					const makePayload = (codeAssets) => ({
 						bundleUrl,
 						libraryJson,
@@ -2115,7 +2124,9 @@
 						page: readCalcWorkerPageInfo(root)
 					});
 					const codeAssets = readGameCodeAssets(registry);
-					return codeAssets ? makePayload(codeAssets) : loadGameCodeAssets(registry).then(makePayload);
+					if (codeAssets) return makePayload(codeAssets);
+					console.info("[Battle Lab:calc-workers]", "Combat skill bytecode missing; loading assets…");
+					return loadGameCodeAssets(registry).then(makePayload);
 				}
 			}) : null,
 			allowMainThreadFallback: options.allowMainThreadFallback
@@ -9720,7 +9731,7 @@
 	}
 	function buildBattleLabTerritoryCapture(calls, response, owner, createdAt = (/* @__PURE__ */ new Date()).toISOString()) {
 		return {
-			version: "0.2.364",
+			version: "0.2.366",
 			createdAt,
 			calls: calls.map((call) => ({
 				name: call.name,
@@ -14595,7 +14606,7 @@
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(phase, {
-			version: "0.2.364",
+			version: "0.2.366",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			phase,
 			error: getErrorMessage(error),
@@ -15711,6 +15722,9 @@ self.onmessage = (event) => {
 			failures
 		};
 	}
+	async function yieldBattleLabUi() {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
 	async function runSingleBattle(options, budget, runner, scorer, index) {
 		const exhaustiveTitanSearch = options.opponent.modeId === "lord";
 		const generator = createGenerator(index, options.mode, budget.max, exhaustiveTitanSearch);
@@ -15719,6 +15733,17 @@ self.onmessage = (event) => {
 		const hasFixedCandidates = Boolean(options.fixedCandidates?.length);
 		const hasFixedTeams = Boolean(options.fixedTeams?.length);
 		const candidateLimit = Math.min(MAX_SCREENING_CANDIDATES, Math.max(hasFixedTeams ? (options.fixedTeams?.length ?? 1) * 8 : requestedCount > 1 ? requestedCount * 8 : 1, exhaustiveTitanSearch ? Math.floor(budget.max * .55) : options.compositionSearch ? Math.floor(budget.max * COMPOSITION_SCREENING_SHARE) : wideAsgardTiming && requestedCount === 1 && !hasFixedTeams ? Math.floor(budget.max * .88 / ASGARD_TIMING_CALCULATIONS_PER_TEAM) : Math.floor(budget.max * (options.mode.objective === "max_damage" ? .3 : .4))));
+		emitEngineProgress(options, budget, "preparing", []);
+		console.info("[Battle Lab]", "Building lineup candidates (CPU-heavy; UI may pause)", {
+			modeId: options.opponent.modeId,
+			candidateLimit,
+			maxCalculations: budget.max,
+			hasFixedCandidates,
+			hasFixedTeams,
+			concurrency: runner.concurrency
+		});
+		await yieldBattleLabUi();
+		const generateStartedAt = Date.now();
 		const learnedCandidates = hasFixedCandidates ? [...options.fixedCandidates ?? []] : hasFixedTeams ? generateFixedTeamCandidates(options, options.fixedTeams ?? [], options.opponent.context, options.mode, options.fixedTeamSupports) : learnGeneratedCandidates({
 			options,
 			index,
@@ -15726,12 +15751,28 @@ self.onmessage = (event) => {
 			mode: options.mode,
 			enemyContext: options.opponent.context
 		});
+		console.info("[Battle Lab]", "Candidate generate+learn finished", {
+			count: learnedCandidates.length,
+			ms: Date.now() - generateStartedAt
+		});
+		await yieldBattleLabUi();
 		const libraryCovered = measureBattleLabPhase("engine.libraryCoverage", () => filterBattleLabCandidatesByLibrary(learnedCandidates, index));
 		if (libraryCovered.candidates.length === 0) throw noLibraryCoverageError(libraryCovered.gaps);
+		console.info("[Battle Lab]", "Preselecting candidates with planner workers", {
+			input: libraryCovered.candidates.length,
+			limit: candidateLimit,
+			plannerWorkers: options.plannerWorkers ?? 1
+		});
 		const preselectedCandidates = await measureBattleLabPhaseAsync("engine.preselect", () => preselectCandidatesWithWorkers(libraryCovered.candidates, candidateLimit, options.plannerWorkers ?? 1, options.signal, options.mode.objective === "max_damage" ? MAX_DAMAGE_PLANNER_BREADTH : 1.5, options.mode.objective === "max_damage"));
 		const generatedCandidates = measureBattleLabPhase("engine.pareto", () => selectDiverseParetoCandidates(preselectedCandidates, candidateLimit, options.mode.objective === "max_damage"));
 		const candidates = filterBattleLabCandidatesByLibrary(mergeSeedCandidates(options.compositionSearch && hasFixedCandidates ? selectCompositionSeeds(libraryCovered.candidates, 64) : hasFixedCandidates || hasFixedTeams ? [] : options.seedCandidates, generatedCandidates, options.opponent.modeId === "asgard" ? candidateLimit : void 0), index).candidates;
 		if (candidates.length === 0) throw new Error("The roster is empty: the engine has nothing to go through.");
+		console.info("[Battle Lab]", "Starting battle simulations (screening)", {
+			candidates: candidates.length,
+			concurrency: runner.concurrency
+		});
+		emitEngineProgress(options, budget, "screening", []);
+		await yieldBattleLabUi();
 		const errors = [];
 		const screening = await measureBattleLabPhaseAsync("phase.screening", () => screenSingleBattleCandidates({
 			options,
@@ -17726,8 +17767,32 @@ self.onmessage = (event) => {
 	async function runBattleLabOpponentOptimization(options) {
 		const { accountSnapshot, caller, gameLibrary, opponent, maxCalculations, asgardTeamCount = 5, plannerWorkers = 4, direction = "attack", ultraTimingEnabled = true, ultraMinTime = 1, ultraMaxTime = 120, scenarios = opponent.scenarios, history = [], signal: hardSignal, onProgress, onProcess, seedTeams = [], fixedCandidates, fixedTeams, fixedTeamSupports, runKind = "search" } = options;
 		const signal = combineAbortSignals(hardSignal, options.finishSignal);
-		const account = restrictAccountForOpponent(accountSnapshot ?? (opponent.modeId === "archdemon" ? await fetchArchdemonAccount(caller, opponent, gameLibrary) : opponent.modeId === "invasion" ? await fetchBattleLabInvasionAccount(caller, opponent, gameLibrary) : await fetchAccountSnapshot(caller)), opponent);
+		let accountRaw = accountSnapshot;
+		if (!accountRaw) {
+			console.info("[Battle Lab]", "Fetching account snapshot for search", { modeId: opponent.modeId });
+			try {
+				accountRaw = opponent.modeId === "archdemon" ? await fetchArchdemonAccount(caller, opponent, gameLibrary) : opponent.modeId === "invasion" ? await fetchBattleLabInvasionAccount(caller, opponent, gameLibrary) : await fetchAccountSnapshot(caller);
+			} catch (error) {
+				console.error("[Battle Lab]", "Account snapshot failed (often reCAPTCHA / network)", error);
+				throw error;
+			}
+			console.info("[Battle Lab]", "Account snapshot ready");
+		}
+		const account = restrictAccountForOpponent(accountRaw, opponent);
 		assertAsgardBossRoster(opponent, account);
+		console.info("[Battle Lab]", "Starting candidate generation / screening", {
+			modeId: opponent.modeId,
+			maxCalculations,
+			heroes: Object.keys(account.heroes ?? {}).length,
+			titans: Object.keys(account.titans ?? {}).length
+		});
+		onProcess?.({
+			kind: runKind,
+			phase: "screening",
+			completed: 0,
+			total: maxCalculations,
+			variations: []
+		});
 		const mode = resolveBattleMode(opponent, account, direction);
 		if (opponent.modeId === "asgard" && !fixedCandidates?.length && ((options.asgardTeamCount ?? 1) > 1 || (fixedTeams?.length ?? 0) > 1 || fixedTeams?.some((team) => team.length < 5))) return optimizeAsgardSlots({
 			...options,
@@ -18291,7 +18356,9 @@ self.onmessage = (event) => {
 			const resultsMap = {};
 			for (const name of ACCOUNT_CALLS) resultsMap[name] = instance.result(name);
 			return normalizeAccountSnapshot(resultsMap);
-		} catch {}
+		} catch (error) {
+			console.warn("[Battle Lab]", "Primary account Caller.send failed, retrying via caller.send", error);
+		}
 		return normalizeAccountSnapshot(await caller.send(ACCOUNT_CALLS));
 	}
 	function canUseCallerInstance(caller) {
@@ -19326,7 +19393,7 @@ self.onmessage = (event) => {
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(`campaign:${options.mode}`, {
-			version: "0.2.364",
+			version: "0.2.366",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			mode: options.mode,
 			phase: options.phase,
@@ -27836,7 +27903,9 @@ self.onmessage = (event) => {
 				progressBar.style.width = `${pct}%`;
 				const phase = isRunning ? state.runProgress?.phase : void 0;
 				let phaseLabel = state.statusText || "Simulating...";
-				if (phase === "screening") phaseLabel = "Screening candidates";
+				if (phase === "preparing") phaseLabel = state.statusText || "Preparing…";
+				else if (phase === "screening" && completed <= 0) phaseLabel = state.statusText || "Building candidate list…";
+				else if (phase === "screening") phaseLabel = state.statusText || "Screening candidates";
 				else if (phase === "racing") phaseLabel = "Racing top teams";
 				else if (phase === "timing") phaseLabel = "Auto-timing search";
 				else if (phase === "validation") phaseLabel = "Validating result";
@@ -27946,7 +28015,7 @@ self.onmessage = (event) => {
 						textAlign: "center",
 						color: "var(--hwhbl-text-subtle)"
 					},
-					text: isRunning ? "Screening candidates..." : "Plan not calculated yet. Press Calculate to start simulations."
+					text: isRunning ? (state.statusText || (state.runProgress?.phase === "preparing" ? "Preparing… (workers / roster / candidate list)" : "Working…")) : "Plan not calculated yet. Press Calculate to start simulations."
 				}));
 				return;
 			}
@@ -31883,7 +31952,7 @@ self.onmessage = (event) => {
 	function readBattleLabUserscriptInfo() {
 		return {
 			name: "HWH Battle Lab",
-			version: "0.2.364",
+			version: "0.2.366",
 			author: "Askja"
 		};
 	}
@@ -36995,20 +37064,59 @@ self.onmessage = (event) => {
 			model.calculationCount = 0;
 			model.runProgress = {
 				kind: "search",
-				phase: "screening",
+				phase: "preparing",
 				completed: 0,
 				total: model.maxCalculations,
 				variations: []
 			};
 			model.errorText = "";
-			model.statusText = translate("HWHBL_STATUS_RUNNING", {
-				current: 0,
-				total: model.maxCalculations
+			model.statusText = "Preparing Calc workers…";
+			console.info("[Battle Lab]", model.statusText, {
+				modeId: opponent.modeId,
+				opponentId: opponent.id,
+				maxCalculations: model.maxCalculations,
+				calcWorkers: model.settings.plannerWorkers,
+				calcInWorkers: model.settings.calcInWorkers,
+				hasDispatcher: Boolean(calcWorkers.dispatcher)
 			});
 			const setup = setupOverride ?? normalizePlanningSetup(model.planningSetups?.[planningSetupKey(opponent, direction)]);
 			const territoryLockedCandidate = readBattleLabTerritoryLockedCandidate(opponent);
 			await persistWorkspace();
-			await calcWorkers.dispatcher?.warmUp();
+			try {
+				const warmStartedAt = Date.now();
+				const warmPromise = calcWorkers.dispatcher?.warmUp() ?? Promise.resolve(false);
+				warmPromise.catch(() => void 0);
+				const warmSlowTimer = setInterval(() => {
+					console.warn("[Battle Lab]", `Calc workers warm-up still running (${Math.round((Date.now() - warmStartedAt) / 1e3)}s)…`, {
+						hint: "Watch for [Battle Lab:calc-workers] serialize / ready / start-failed messages"
+					});
+				}, 15e3);
+				let warmed;
+				try {
+					warmed = await Promise.race([
+						warmPromise,
+						new Promise((_, reject) => setTimeout(() => reject(new Error("Calc workers warm-up timed out after 90s. Check console for [Battle Lab:calc-workers] errors, or disable Calc-in-workers in settings and retry.")), 9e4))
+					]);
+				} finally {
+					clearInterval(warmSlowTimer);
+				}
+				console.info("[Battle Lab]", "Calc workers warm-up finished", {
+					warmed: warmed ?? false,
+					ms: Date.now() - warmStartedAt
+				});
+				if (model.settings.calcInWorkers && warmed === false) {
+					throw new Error("Calc workers failed to start. Open the browser console for [Battle Lab:calc-workers] details, or turn off Calc-in-workers in Battle Lab settings.");
+				}
+			} catch (error) {
+				console.error("[Battle Lab]", "Calc workers warm-up failed", error);
+				throw error;
+			}
+			model.statusText = "Loading roster from server…";
+			model.runProgress = {
+				...model.runProgress,
+				phase: "preparing"
+			};
+			console.info("[Battle Lab]", model.statusText);
 			let bestResult = await optimizeBattleLabPlan({
 				caller,
 				gameLibrary: getGameLibrary(),
@@ -37038,6 +37146,12 @@ self.onmessage = (event) => {
 				onProcess: (progress) => {
 					model.runProgress = progress;
 					model.calculationCount = progress.completed;
+					if (progress.phase === "preparing") model.statusText = "Building candidate list…";
+					else if (progress.phase === "screening" && progress.completed <= 0) model.statusText = "Starting simulations…";
+					else if (progress.phase === "screening") model.statusText = translate("HWHBL_STATUS_RUNNING", {
+						current: progress.completed,
+						total: progress.total
+					});
 					const partial = battleLabProgressResult(opponent, direction, progress);
 					if (partial) model.bestResults = replaceBattleLabRunResult(model.bestResults, opponent, direction, partial);
 				}

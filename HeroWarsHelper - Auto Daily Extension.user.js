@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.47
+// @version      3.5.50
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.47";
+    const EXTENSION_VERSION = "3.5.50";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2381,6 +2381,122 @@ async function executeGetDailyBonus() {
     // =========================================================================
     let autoBattleInitialized = false;
 
+    /** True when HWHAutoFixBattleExt AutoFix checkbox is on.
+     *  Must live at IIFE scope — Cosmic (executeEpicBrawl) runs outside initializeAutoBattle. */
+    function isHwhAutoFixEnabled() {
+        const HWHFuncs = window.HWHFuncs;
+        try {
+            if (typeof HWHFuncs?.isChecked === 'function' && HWHFuncs.isChecked('autoFixIt')) {
+                return true;
+            }
+        } catch (_) { /* ignore */ }
+        try {
+            const box = window.HWHData?.checkboxes?.autoFixIt;
+            if (box?.cbox) return !!box.cbox.checked;
+            // Before menu paint, fall back to persisted checkbox default/storage.
+            if (typeof HWHFuncs?.getSaveVal === 'function') {
+                const saved = HWHFuncs.getSaveVal('autoFixIt', null);
+                if (saved !== null && saved !== undefined) return !!saved;
+            }
+            return !!box?.default;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /**
+     * AutoFix ext's battleLog search needs a live Scheduler timeline (manual fights).
+     * Auto Daily only runs Calc, so that path no-ops. Use HWH BestOrWinFixBattle /
+     * BossFixBattle instead — they search timers from Calc battleLogs.
+     */
+    async function salvageWithHwhFixBattle(battleData, options = {}) {
+        const {
+            mode = 'pvp', // 'pvp' | 'boss'
+            label = 'AutoFix',
+            durationMs = 120000,
+            maxCount = 500,
+        } = options;
+        if (!battleData) {
+            return null;
+        }
+        const FixClass = mode === 'boss'
+            ? window.HWHClasses?.BossFixBattle
+            : window.HWHClasses?.BestOrWinFixBattle;
+        if (typeof FixClass !== 'function') {
+            console.warn(`[${label}] HWH FixBattle class unavailable — salvage skipped`);
+            return null;
+        }
+
+        const clone = structuredClone(battleData);
+        const endTime = Math.max(Date.now() + Math.min(durationMs, 180000), Date.now() + 30000);
+        clone.endTime = endTime;
+        if (typeof window.HWHFuncs?.setProgress === 'function') {
+            window.HWHFuncs.setProgress(`${label}: AutoFix searching...`, true);
+        }
+        console.log(`[${label}] Running local HWH FixBattle salvage (${mode})`);
+
+        try {
+            const bFix = new FixClass(clone, true);
+            const fixed = await bFix.start(endTime, maxCount);
+            if (!fixed) return null;
+            if (mode === 'boss') {
+                if (!(fixed.value > 0) || !fixed.result || !fixed.progress) return null;
+                return {
+                    win: !!fixed.result.win,
+                    result: fixed.result,
+                    progress: fixed.progress,
+                    value: fixed.value,
+                    salvaged: true,
+                };
+            }
+            // PvP / Cosmic / GW: only accept a flipped win (loss with better score still loses).
+            if (!fixed.result?.win || !fixed.progress) return null;
+            console.log(`[${label}] AutoFix salvaged a win`);
+            return {
+                win: true,
+                result: fixed.result,
+                progress: fixed.progress,
+                value: fixed.value,
+                salvaged: true,
+            };
+        } catch (err) {
+            console.warn(`[${label}] AutoFix salvage failed:`, err);
+            return null;
+        }
+    }
+
+    /**
+     * HWHAutoFixBattleExt reads progress[0].defenders.heroes[1].extra on clanRaid_endBossBattle.
+     * Normalize string/"1" keys so AutoFix can measure and improve damage.
+     */
+    function prepareRaidBossProgressForAutoFix(progress) {
+        const wave = progress?.[0];
+        const heroes = wave?.defenders?.heroes;
+        if (!heroes || typeof heroes !== 'object') {
+            return { ok: false, damage: 0, progress };
+        }
+        const boss = heroes[1] || heroes['1'];
+        if (!boss) {
+            return { ok: false, damage: 0, progress };
+        }
+        if (!heroes[1]) {
+            heroes[1] = boss;
+        }
+        const extra = boss.extra || {};
+        if (typeof extra.damageTaken !== 'number') {
+            extra.damageTaken = Number(extra.damageTaken) || 0;
+        }
+        if (typeof extra.damageTakenNextLevel !== 'number') {
+            extra.damageTakenNextLevel = Number(extra.damageTakenNextLevel) || 0;
+        }
+        boss.extra = extra;
+        return {
+            ok: true,
+            damage: extra.damageTaken + extra.damageTakenNextLevel,
+            progress,
+        };
+    }
+
     function initializeAutoBattle() {
     if (autoBattleInitialized) {
         return;
@@ -2533,118 +2649,6 @@ async function executeGetDailyBonus() {
         if (name === 'countTestBattle') return 10;
         if (name === 'countAutoBattle') return 10;
         return 0;
-    }
-
-    /** True when HWHAutoFixBattleExt AutoFix checkbox is on. */
-    function isHwhAutoFixEnabled() {
-        try {
-            if (typeof HWHFuncs?.isChecked === 'function' && HWHFuncs.isChecked('autoFixIt')) {
-                return true;
-            }
-        } catch (_) { /* ignore */ }
-        try {
-            const box = window.HWHData?.checkboxes?.autoFixIt;
-            if (box?.cbox) return !!box.cbox.checked;
-            // Before menu paint, fall back to persisted checkbox default/storage.
-            if (typeof HWHFuncs?.getSaveVal === 'function') {
-                const saved = HWHFuncs.getSaveVal('autoFixIt', null);
-                if (saved !== null && saved !== undefined) return !!saved;
-            }
-            return !!box?.default;
-        } catch (_) {
-            return false;
-        }
-    }
-
-    /**
-     * AutoFix ext's battleLog search needs a live Scheduler timeline (manual fights).
-     * Auto Daily only runs Calc, so that path no-ops. Use HWH BestOrWinFixBattle /
-     * BossFixBattle instead — they search timers from Calc battleLogs.
-     */
-    async function salvageWithHwhFixBattle(battleData, options = {}) {
-        const {
-            mode = 'pvp', // 'pvp' | 'boss'
-            label = 'AutoFix',
-            durationMs = 120000,
-            maxCount = 500,
-        } = options;
-        if (!battleData) {
-            return null;
-        }
-        const FixClass = mode === 'boss'
-            ? window.HWHClasses?.BossFixBattle
-            : window.HWHClasses?.BestOrWinFixBattle;
-        if (typeof FixClass !== 'function') {
-            console.warn(`[${label}] HWH FixBattle class unavailable — salvage skipped`);
-            return null;
-        }
-
-        const clone = structuredClone(battleData);
-        const endTime = Math.max(Date.now() + Math.min(durationMs, 180000), Date.now() + 30000);
-        clone.endTime = endTime;
-        setProgress(`${label}: AutoFix searching...`, true);
-        console.log(`[${label}] Running local HWH FixBattle salvage (${mode})`);
-
-        try {
-            const bFix = new FixClass(clone, true);
-            const fixed = await bFix.start(endTime, maxCount);
-            if (!fixed) return null;
-            if (mode === 'boss') {
-                if (!(fixed.value > 0) || !fixed.result || !fixed.progress) return null;
-                return {
-                    win: !!fixed.result.win,
-                    result: fixed.result,
-                    progress: fixed.progress,
-                    value: fixed.value,
-                    salvaged: true,
-                };
-            }
-            // PvP / Cosmic / GW: only accept a flipped win (loss with better score still loses).
-            if (!fixed.result?.win || !fixed.progress) return null;
-            console.log(`[${label}] AutoFix salvaged a win`);
-            return {
-                win: true,
-                result: fixed.result,
-                progress: fixed.progress,
-                value: fixed.value,
-                salvaged: true,
-            };
-        } catch (err) {
-            console.warn(`[${label}] AutoFix salvage failed:`, err);
-            return null;
-        }
-    }
-
-    /**
-     * HWHAutoFixBattleExt reads progress[0].defenders.heroes[1].extra on clanRaid_endBossBattle.
-     * Normalize string/"1" keys so AutoFix can measure and improve damage.
-     */
-    function prepareRaidBossProgressForAutoFix(progress) {
-        const wave = progress?.[0];
-        const heroes = wave?.defenders?.heroes;
-        if (!heroes || typeof heroes !== 'object') {
-            return { ok: false, damage: 0, progress };
-        }
-        const boss = heroes[1] || heroes['1'];
-        if (!boss) {
-            return { ok: false, damage: 0, progress };
-        }
-        if (!heroes[1]) {
-            heroes[1] = boss;
-        }
-        const extra = boss.extra || {};
-        if (typeof extra.damageTaken !== 'number') {
-            extra.damageTaken = Number(extra.damageTaken) || 0;
-        }
-        if (typeof extra.damageTakenNextLevel !== 'number') {
-            extra.damageTakenNextLevel = Number(extra.damageTakenNextLevel) || 0;
-        }
-        boss.extra = extra;
-        return {
-            ok: true,
-            damage: extra.damageTaken + extra.damageTakenNextLevel,
-            progress,
-        };
     }
 
     // Main-menu "Number of test fights" (countTestBattle). Each sample is a local BattleCalc.
@@ -6677,7 +6681,11 @@ async function executeGetDailyBonus() {
         this.attacksCompleted = 0;
 
         this.start = async function() {
-            setProgress('Cross Clan War: Initializing...');
+            const useAutoFix = isHwhAutoFixEnabled();
+            setProgress(useAutoFix ? 'Cross Clan War: Initializing (AutoFix)...' : 'Cross Clan War: Initializing...');
+            if (useAutoFix) {
+                console.log('[Clash] HWH AutoFix on — losses on crossClanWar_endBattle will be salvaged');
+            }
             try {
                 await this.getCurrentUserId();
                 if (!this.currentUserId) {
@@ -6981,6 +6989,25 @@ async function executeGetDailyBonus() {
                     // If battle was started but calculation failed, we should still try to end it
                     // But for now, just throw the error and let the caller handle it
                     throw new Error(`Failed to calculate battle result: ${error.message}`);
+                }
+
+                // AutoFix ext needs live Scheduler battleLog; Auto Daily Calc-only salvages locally.
+                if (isHwhAutoFixEnabled() && !battleResult.win && battleData) {
+                    const salvaged = await salvageWithHwhFixBattle(battleData, {
+                        mode: 'pvp',
+                        label: `Clash slot ${slotId}`,
+                        durationMs: 120000,
+                        maxCount: 500,
+                    });
+                    if (salvaged?.win) {
+                        battleResult = {
+                            win: true,
+                            result: salvaged.result,
+                            progress: salvaged.progress,
+                            battleData,
+                        };
+                        console.log(`Cross Clan War: [attackSlot] AutoFix salvaged win for slot ${slotId}`);
+                    }
                 }
                 
                 // End battle
@@ -7493,6 +7520,10 @@ async function executeGetDailyBonus() {
             const titanGetAllRes = data.results[2]?.result?.response;
             allTitans = titanGetAllRes ? Object.values(titanGetAllRes) : [];
 
+            if (isHwhAutoFixEnabled()) {
+                console.log('[ToE] HWH AutoFix on — losses on titanArenaEndBattle will be salvaged');
+            }
+
             checkTier(titanArena);
         }
 
@@ -7503,7 +7534,8 @@ async function executeGetDailyBonus() {
             }
             currTier = titanArena.tier;
             if (currTier) {
-                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier}`);
+                const autoFixHint = isHwhAutoFixEnabled() ? ' (AutoFix)' : '';
+                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier}${autoFixHint}`);
             }
 
             if (titanArena.status === 'completed_tier') {
@@ -7601,11 +7633,25 @@ async function executeGetDailyBonus() {
 
         async function resultCalcBattle(resultBattle) {
             if (resultBattle.result.win || !attempts) {
-                const { progress, result } = resultBattle;
+                let { progress, result } = resultBattle;
+                const battleData = resultBattle.battleData;
+                // AutoFix ext needs a live Scheduler battleLog; Auto Daily Calc-only uses local FixBattle.
+                if (isHwhAutoFixEnabled() && !result?.win && battleData) {
+                    const salvaged = await salvageWithHwhFixBattle(battleData, {
+                        mode: 'pvp',
+                        label: 'ToE',
+                        durationMs: 120000,
+                        maxCount: 500,
+                    });
+                    if (salvaged?.win) {
+                        result = salvaged.result;
+                        progress = salvaged.progress;
+                    }
+                }
                 titanArenaEndBattle({
                     progress,
                     result,
-                    rivalId: resultBattle.battleData.typeId,
+                    rivalId: battleData?.typeId,
                 });
                 return;
             }
