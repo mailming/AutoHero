@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.25
+// @version      1.26
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.25';
+    const EXTENSION_VERSION = '1.26';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -212,7 +212,122 @@
         DEFAULT_SKIP_CACHE_MIN_WIN_RATE: 90,
         DEFAULT_SKIP_CACHE_MAX_AGE_DAYS: 30,
         DEFAULT_META_TEAMS_LIMIT: 0,
+        /** Keep only this many compact round summaries in loopSession (bridge already has full saves). */
+        MAX_LOOP_ROUNDS_IN_MEMORY: 40,
     };
+
+    /** BattleCalc returns huge battleLogs + battleData; never retain those past a single sample. */
+    function slimEndDemoPayload(calcResult) {
+        if (!calcResult) return null;
+        return {
+            result: {
+                win: !!calcResult.result?.win,
+                stars: Number(calcResult.result?.stars) || 0,
+            },
+            progress: calcResult.progress || null,
+        };
+    }
+
+    function slimSimulationSample(sample) {
+        if (!sample) return { win: false, battleTime: 0 };
+        return {
+            win: !!sample.win,
+            battleTime: Number(sample.battleTime) || 0,
+            ...(sample.error ? { error: String(sample.error) } : {}),
+        };
+    }
+
+    function slimRankingEntry(entry) {
+        if (!entry || typeof entry !== 'object') return entry;
+        const sims = Array.isArray(entry.simulations)
+            ? entry.simulations.map(slimSimulationSample)
+            : undefined;
+        return {
+            rank: entry.rank,
+            heroes: entry.heroes,
+            heroNames: entry.heroNames,
+            pet: entry.pet,
+            banner: entry.banner,
+            favor: entry.favor,
+            source: entry.source,
+            wins: entry.wins,
+            losses: entry.losses,
+            winRate: entry.winRate,
+            averageBattleTime: entry.averageBattleTime,
+            ...(sims ? { simulations: sims } : {}),
+        };
+    }
+
+    /** Drop heavy fields before JSON.stringify / long-lived retention. */
+    function slimTrainingResult(result) {
+        if (!result || typeof result !== 'object') return result;
+        const slim = { ...result };
+        if (Array.isArray(slim.rankings)) {
+            slim.rankings = slim.rankings.map(slimRankingEntry);
+        }
+        if (slim.best && typeof slim.best === 'object') {
+            const { simulations, ...bestRest } = slim.best;
+            slim.best = {
+                ...bestRest,
+                ...(Array.isArray(simulations)
+                    ? { simulations: simulations.map(slimSimulationSample) }
+                    : {}),
+            };
+        }
+        if (Array.isArray(slim.pairAttempts)) {
+            slim.pairAttempts = slim.pairAttempts.map((attempt) => ({
+                attempt: attempt.attempt,
+                type: attempt.type,
+                winRate: attempt.result?.best?.winRate
+                    ?? attempt.result?.rankings?.[0]?.winRate
+                    ?? attempt.result?.cachedWinRate
+                    ?? null,
+                skipped: !!attempt.result?.skipped,
+                skipReason: attempt.result?.skipReason,
+                counterKey: attempt.counterLineup
+                    ? `${(attempt.counterLineup.heroes || []).join(',')}:${attempt.counterLineup.pet}`
+                    : undefined,
+            }));
+        }
+        return slim;
+    }
+
+    /** Tiny in-memory loop history after bridge save (avoids multi-GB round growth). */
+    function summarizeRoundForMemory(result) {
+        if (!result || typeof result !== 'object') return result;
+        const top = result.rankings?.[0] || result.best || null;
+        return {
+            sessionId: result.sessionId || null,
+            round: result.round ?? null,
+            label: result.label || null,
+            skipped: !!result.skipped,
+            skipReason: result.skipReason || null,
+            targetMet: !!result.targetMet,
+            stoppedBecause: result.stoppedBecause || null,
+            completedAt: result.completedAt || null,
+            error: result.error || null,
+            opponent: result.opponent
+                ? {
+                    userId: result.opponent.userId,
+                    name: result.opponent.name,
+                    place: result.opponent.place,
+                    source: result.opponent.source,
+                }
+                : undefined,
+            topWinRate: top?.winRate ?? result.cachedBestWinRate ?? result.cachedWinRate ?? null,
+            testedCombos: Array.isArray(result.rankings) ? result.rankings.length : null,
+        };
+    }
+
+    function pushLoopRound(loopSession, result, { keepFull = false } = {}) {
+        if (!loopSession) return;
+        const entry = keepFull ? slimTrainingResult(result) : summarizeRoundForMemory(result);
+        loopSession.rounds.push(entry);
+        const maxRounds = CONSTANTS.MAX_LOOP_ROUNDS_IN_MEMORY;
+        if (loopSession.rounds.length > maxRounds) {
+            loopSession.rounds.splice(0, loopSession.rounds.length - maxRounds);
+        }
+    }
 
     function getTestFightCount(readInput, fallback) {
         const raw = parseInt(typeof readInput === 'function' ? readInput('countTestBattle') : readInput, 10);
@@ -243,10 +358,11 @@
                         resolve({ win: false, battleTime: 0, error: 'Invalid calculation result' });
                         return;
                     }
+                    // Intentionally drop battleLogs / battleData — those alone can be tens of MB each.
                     resolve({
                         win: !!calcResult.result?.win,
                         battleTime: calcResult.battleTime || 0,
-                        result: calcResult,
+                        endDemo: slimEndDemoPayload(calcResult),
                     });
                 });
             } catch (error) {
@@ -325,6 +441,7 @@
 
         const serverSeed = battleData.seed;
         const simulations = [];
+        let endDemoPayload = null;
         log(`[Arena Training] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
         for (let i = 0; i < total; i++) {
             if (isStopped()) break;
@@ -333,7 +450,10 @@
             setProgress(`Arena Training: BattleCalc local ${i + 1}/${total}`);
             try {
                 const sample = await calcBattleCopy(battleData, seed, battleCalc, getBattleType, isValidBattleResult);
-                simulations.push(sample);
+                if (!endDemoPayload && sample.endDemo) {
+                    endDemoPayload = sample.endDemo;
+                }
+                simulations.push(slimSimulationSample(sample));
                 log(`[Arena Training] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
             } catch (error) {
                 console.error(`[Arena Training] BattleCalc local ${i + 1}/${total} failed:`, error);
@@ -341,10 +461,10 @@
             }
         }
 
-        const calcResult = simulations.find((sample) => sample.result)?.result;
-        if (calcResult && endDemo) {
-            await endDemo(calcResult, battleData);
+        if (endDemoPayload && endDemo) {
+            await endDemo(endDemoPayload, battleData);
         }
+        endDemoPayload = null;
 
         const wins = simulations.filter((sample) => sample.win).length;
         const losses = simulations.length - wins;
@@ -608,10 +728,12 @@
 
         async function saveRoundToBridge(result) {
             try {
+                // Slim before stringify — full BattleCalc payloads used to spike memory into multi-GB.
+                const payload = slimTrainingResult(result);
                 const res = await fetch(`${BRIDGE_URL}/training/save`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(result),
+                    body: JSON.stringify(payload),
                 });
                 if (!res.ok) {
                     console.warn('[Arena Training] Bridge save failed:', res.status);
@@ -1150,7 +1272,7 @@
                 `[Arena Training] Round ${roundNum} skipped — incomplete opponent team (${teamInfo.heroCount}/5 heroes)`,
                 teamInfo
             );
-            loopSession.rounds.push({
+            pushLoopRound(loopSession, {
                 round: roundNum,
                 skipped: true,
                 skipReason: 'invalid_opponent_team',
@@ -1603,8 +1725,12 @@
                         },
                         completedAt: new Date().toISOString(),
                     };
-                    pairAttempts.push({ attempt: attemptNum, type: 'max-cache', result: skippedResult });
-                    if (loopSession) loopSession.rounds.push(skippedResult);
+                    pairAttempts.push({
+                        attempt: attemptNum,
+                        type: 'max-cache',
+                        result: slimTrainingResult(skippedResult),
+                    });
+                    pushLoopRound(loopSession, skippedResult);
                     console.log(
                         `[Arena Training] Round ${roundNum} attempt ${attemptNum} — using cached ${lineup.cachedWinRate?.toFixed?.(1) ?? lineup.cachedWinRate ?? '?'}% counter (${cachedMaxQueue.length} remaining in cache queue)`
                     );
@@ -1694,9 +1820,9 @@
                             opponentOverride: opponentRaw,
                             label: `${trainOptions.label}-r${roundNum}-max-a${attempt}`,
                         });
-                        finalMaxResult = maxResult;
-                        pairAttempts.push({ attempt, type: 'max-search', result: maxResult });
-                        if (loopSession) loopSession.rounds.push(maxResult);
+                        finalMaxResult = slimTrainingResult(maxResult);
+                        pairAttempts.push({ attempt, type: 'max-search', result: finalMaxResult });
+                        pushLoopRound(loopSession, finalMaxResult);
 
                         if (maxResult?.skipped && maxResult.cachedBestMatch?.myHeroIds?.length === 5) {
                             counterLineup = tryApplyCachedMaxSkip(maxResult, attempt);
@@ -1705,7 +1831,7 @@
 
                         if (!counterLineup) {
                             if (trainOptions.saveToBridge !== false) {
-                                const saved = await saveRoundToBridge(maxResult);
+                                const saved = await saveRoundToBridge(finalMaxResult);
                                 if (saved && loopSession) {
                                     loopSession.lastSavedAt = new Date().toISOString();
                                 }
@@ -1779,10 +1905,10 @@
                                 pairAttempts.push({
                                     attempt,
                                     type: 'user-cache',
-                                    result: userResult,
+                                    result: slimTrainingResult(userResult),
                                     counterLineup,
                                 });
-                                if (loopSession) loopSession.rounds.push(userResult);
+                                pushLoopRound(loopSession, userResult);
                                 console.log(
                                     `[Arena Training] Round ${roundNum} attempt ${attempt} user skipped — cached ${userWinRate.toFixed(1)}% within ${trainOptions.skipCacheMaxAgeDays ?? CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS} days`
                                 );
@@ -1803,8 +1929,9 @@
                             opponentOverride: opponentRaw,
                             label: `${trainOptions.label}-r${roundNum}-user-a${attempt}`,
                         });
+                        userResult = slimTrainingResult(userResult);
                         pairAttempts.push({ attempt, type: 'user-counter', result: userResult, counterLineup });
-                        if (loopSession) loopSession.rounds.push(userResult);
+                        pushLoopRound(loopSession, userResult);
 
                         if (trainOptions.saveToBridge !== false) {
                             const userSaved = await saveRoundToBridge(userResult);
@@ -1816,8 +1943,8 @@
                         userWinRate = userResult.best?.winRate ?? 0;
                     }
 
-                    finalUserResult = userResult;
-                    lastResults = userResult;
+                    finalUserResult = slimTrainingResult(userResult);
+                    lastResults = finalUserResult;
 
                     const userHeroNames = userResult.best?.heroNames?.join(', ')
                         || counterLineup.heroNames?.join(', ')
@@ -1852,7 +1979,7 @@
                     }
                 }
 
-                const summary = {
+                const summary = slimTrainingResult({
                     round: roundNum,
                     attempts: attempt,
                     userTargetWinRate,
@@ -1863,7 +1990,7 @@
                     maxResult: finalMaxResult,
                     userResult: finalUserResult,
                     completedAt: new Date().toISOString(),
-                };
+                });
                 lastResults = summary;
                 return summary;
             },
@@ -1936,7 +2063,7 @@
                             }
 
                             if (trainOptions.includeUserTeamTest === false) {
-                                const result = await this.runSingle({
+                                const result = slimTrainingResult(await this.runSingle({
                                     ...trainOptions,
                                     maxUpgrade: true,
                                     skipCachedOpponents: false,
@@ -1944,13 +2071,13 @@
                                     opponentIndex: runOptions.opponentIndex ?? opponentMeta.index ?? 0,
                                     opponentOverride: opponentRaw,
                                     label: `${trainOptions.label}-r${roundNum}-max`,
-                                });
-                                loopSession.rounds.push(result);
+                                }));
                                 lastResults = result;
                                 if (trainOptions.saveToBridge !== false) {
                                     const saved = await saveRoundToBridge(result);
                                     if (saved) loopSession.lastSavedAt = new Date().toISOString();
                                 }
+                                pushLoopRound(loopSession, result);
                             } else {
                                 await this.runCounterPairWorkflow(
                                     opponentMeta,
@@ -1961,7 +2088,7 @@
                             }
                         } catch (err) {
                             console.error(`[Arena Training] Round ${roundNum} failed:`, err);
-                            loopSession.rounds.push({
+                            pushLoopRound(loopSession, {
                                 round: roundNum,
                                 opponentIndex: opponentMeta?.index,
                                 opponentSource: opponentMeta?.source,
@@ -2170,12 +2297,12 @@
                                     skipCacheMaxAgeDays: Number(options.skipCacheMaxAgeDays ?? CONSTANTS.DEFAULT_SKIP_CACHE_MAX_AGE_DAYS),
                                 },
                             };
-                            lastResults = skippedResult;
+                            lastResults = slimTrainingResult(skippedResult);
                             HWHFuncs.setProgress(
                                 `Arena Training skipped — cached ${skipInfo.bestWinRate?.toFixed?.(1) ?? skipInfo.bestWinRate}% counter (${opponentComboKey})`,
                                 true
                             );
-                            return skippedResult;
+                            return lastResults;
                         }
                     }
 
@@ -2243,7 +2370,7 @@
                                 simulationsPerCombo,
                                 battleOptions
                             );
-                            rankings.push({
+                                            rankings.push(slimRankingEntry({
                                 rank: 0,
                                 heroes: candidate.heroes,
                                 heroNames: heroLabels,
@@ -2256,7 +2383,7 @@
                                 winRate: simulation.winRate,
                                 averageBattleTime: simulation.averageBattleTime,
                                 simulations: simulation.simulations,
-                            });
+                            }));
 
                             if (searchUntilTarget && simulation.winRate >= targetWinRate) {
                                 stoppedBecause = 'target_met';
@@ -2342,7 +2469,7 @@
                         entry.rank = index + 1;
                     });
 
-                    lastResults = {
+                    lastResults = slimTrainingResult({
                         sessionId,
                         label: options.label || 'arena-training',
                         startedAt,
@@ -2402,17 +2529,21 @@
                         testedCombos: rankings.length,
                         rankings,
                         best: rankings[0] || null,
-                    };
+                    });
 
-                    const best = rankings[0];
+                    const best = lastResults.best || rankings[0];
                     const summary = best
-                        ? `Best: ${best.heroNames.join(', ')} + pet ${best.pet} (${best.winRate.toFixed(1)}% WR)`
+                        ? `Best: ${(best.heroNames || []).join(', ')} + pet ${best.pet} (${Number(best.winRate || 0).toFixed(1)}% WR)`
                         : 'No combinations tested';
                     const stopNote = stoppedBecause === 'target_met'
                         ? ` Target ${targetWinRate}%+ reached.`
                         : (searchUntilTarget ? ` Exhausted ${rankings.length} combos (no ${targetWinRate}%+).` : '');
                     HWHFuncs.setProgress(`Arena Training done. ${summary}${stopNote}`, true);
-                    console.log('[Arena Training] Results:', lastResults);
+                    console.log('[Arena Training] Results:', {
+                        testedCombos: lastResults.testedCombos,
+                        bestWinRate: best?.winRate,
+                        stoppedBecause: lastResults.stoppedBecause,
+                    });
                     return lastResults;
                 } finally {
                     running = false;
