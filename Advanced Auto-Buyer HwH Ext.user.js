@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Advanced Auto-Buyer HwH Ext
 // @namespace    HeroWarsHelper.AdvancedAutoBuyer
-// @version      1.8
-// @description  Simple all-shops settings with slot ID textboxes. Buys by fixed slot IDs.
+// @version      1.10
+// @description  Slot-ID auto-buyer for standard shops plus Clan Raid shopBuy (Mon–Wed, when available).
 // @author       YourName & Coding Partner
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
@@ -39,7 +39,9 @@
             { id: 9, name: 'Friendship Shop' },
             { id: 10, name: 'Outland Shop' },
             { id: 13, name: 'Titan Artifact Shop' },
-            { id: 'SECRET_WEALTH', name: 'Secret Wealth Shop' }
+            { id: 'SECRET_WEALTH', name: 'Secret Wealth Shop' },
+            // Captured as clanRaid_shopBuy({ slotId }) from clanRaid_getInfo.shop
+            { id: 'CLAN_RAID', name: 'Clan Raid Shop', buyApi: 'clanRaid_shopBuy' }
         ];
 
         // Helper function to find Secret Wealth Shop by pattern (ends with 0026)
@@ -185,7 +187,7 @@
                 headerContainer.appendChild(buttonContainer);
 
                 const hint = document.createElement('p');
-                hint.textContent = 'Enter comma-separated slot IDs next to each shop (e.g. 6, 3, 24). Saved automatically.';
+                hint.textContent = 'Slot IDs per shop (e.g. 6, 3). Clan Raid buys Mon–Wed only, and only slots still available.';
                 hint.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 0 0 10px 0; opacity: 0.9;';
 
                 const listContainer = document.createElement('div');
@@ -277,8 +279,99 @@
         }
 
         // --- ACTION LOGIC ---
+        /** Clan Raid shop is only open Mon–Wed (local time). getDay(): 0=Sun … 6=Sat. */
+        function isClanRaidShopDay(date = new Date()) {
+            const day = date.getDay();
+            return day >= 1 && day <= 3; // Mon, Tue, Wed
+        }
+
+        /** True when a clanRaid_getInfo.shop entry can still be purchased. */
+        function isClanRaidSlotAvailable(slot) {
+            if (!slot || typeof slot !== 'object') return false;
+            const boughtCount = Number(slot.boughtCount) || 0;
+            const buyLimit = Number(slot.buyLimit);
+            if (Number.isFinite(buyLimit)) {
+                return boughtCount < buyLimit;
+            }
+            // No buyLimit: available only if not yet bought
+            return boughtCount <= 0;
+        }
+
+        function clanRaidSlotRemaining(slot) {
+            if (!isClanRaidSlotAvailable(slot)) return 0;
+            const boughtCount = Number(slot.boughtCount) || 0;
+            const buyLimit = Number(slot.buyLimit);
+            if (Number.isFinite(buyLimit)) {
+                return Math.max(0, buyLimit - boughtCount);
+            }
+            return 1;
+        }
+
+        /** Queue clanRaid_shopBuy only on Mon–Wed, and only for slots still available. */
+        async function collectClanRaidBuys(callsToMake) {
+            const shop = SHOPS.find(s => s.id === 'CLAN_RAID');
+            if (!shop) return;
+
+            if (!isClanRaidShopDay()) {
+                console.log('Clan Raid Shop: Closed today (only Mon–Wed); skipping');
+                return;
+            }
+
+            const storageKey = getShopStorageKey('CLAN_RAID');
+            const fixedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
+            if (fixedSlotIds.length === 0) {
+                console.log('Clan Raid Shop: No slot IDs configured, skipping');
+                return;
+            }
+
+            try {
+                const caller = new Caller(['clanRaid_getInfo']);
+                await caller.send();
+                let info = caller.result('clanRaid_getInfo');
+                if (Array.isArray(info)) info = info[0];
+
+                const raidShop = info && info.shop;
+                if (!raidShop || typeof raidShop !== 'object' || Object.keys(raidShop).length === 0) {
+                    console.log('Clan Raid Shop: Not available (no shop on clanRaid_getInfo)');
+                    return;
+                }
+
+                console.log(`Clan Raid Shop: Open with ${Object.keys(raidShop).length} slots, ${fixedSlotIds.length} configured`);
+
+                for (const slotId of fixedSlotIds) {
+                    const slot = raidShop[slotId] || raidShop[String(slotId)];
+                    if (!slot) {
+                        console.log(`Clan Raid Shop: Slot ${slotId} not in shop (unavailable)`);
+                        continue;
+                    }
+
+                    if (!isClanRaidSlotAvailable(slot)) {
+                        const boughtCount = Number(slot.boughtCount) || 0;
+                        const buyLimit = Number(slot.buyLimit);
+                        console.log(`Clan Raid Shop: Slot ${slotId} not available (${boughtCount}/${Number.isFinite(buyLimit) ? buyLimit : '?'})`);
+                        continue;
+                    }
+
+                    const remaining = clanRaidSlotRemaining(slot);
+                    const label = slot.buffId != null
+                        ? `Buff ${slot.buffId}+${slot.buffValue ?? '?'}`
+                        : `Slot ${slotId}`;
+
+                    for (let n = 0; n < remaining; n++) {
+                        callsToMake.push({
+                            name: 'clanRaid_shopBuy',
+                            args: { slotId: Number(slotId) },
+                            itemInfo: `- ${label} (Slot ${slotId}) from ${shop.name}` + (remaining > 1 ? ` [${n + 1}/${remaining}]` : '')
+                        });
+                    }
+                }
+            } catch (error) {
+                console.log('Clan Raid Shop: Not available or failed to load:', error.message || error);
+            }
+        }
+
         async function runAutoBuy() {
-            console.log("--- Advanced Auto-Buyer RUNNING (v1.7 Slot IDs) ---");
+            console.log("--- Advanced Auto-Buyer RUNNING (v1.10 Clan Raid Mon–Wed) ---");
             HWHFuncs.setProgress("Auto-Buyer: Fetching data...");
             try {
                 const caller = new Caller(['shopGetAll']);
@@ -295,6 +388,9 @@
 
                 const callsToMake = [];
                 for (const shop of SHOPS) {
+                    // Clan Raid uses clanRaid_shopBuy / clanRaid_getInfo, not shopGetAll
+                    if (shop.id === 'CLAN_RAID') continue;
+
                     let shopId = shop.id;
                     let currentShopData = null;
 
@@ -384,6 +480,10 @@
                         }
                     }
                 }
+
+                // Clan Raid shop: only when clanRaid_getInfo returns an active shop
+                await collectClanRaidBuys(callsToMake);
+
                 // Process purchases one by one (1 API call per item)
                 // This way, if one purchase fails, others can still succeed
                 if (callsToMake.length > 0) {
