@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.26
+// @version      1.27
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.26';
+    const EXTENSION_VERSION = '1.27';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -345,13 +345,67 @@
         return Math.floor(Math.random() * (max - min + 1) + min);
     }
 
-    async function calcBattleCopy(battleData, seed, battleCalc, resolveBattleType, isValidBattleResult) {
-        const battle = structuredClone(battleData);
-        if (seed != null) {
-            battle.seed = seed;
+    /**
+     * Yield so clicks/paint/network outrank training BattleCalc.
+     * Prefers scheduler.yield / background postTask; falls back to idle / setTimeout(0).
+     * Optional extra pause: `window.HWH_ARENA_TRAINING_YIELD_MS = 16` (or higher).
+     */
+    async function yieldForUi() {
+        try {
+            if (typeof scheduler?.yield === 'function') {
+                await scheduler.yield();
+            } else if (typeof scheduler?.postTask === 'function') {
+                await scheduler.postTask(() => {}, { priority: 'background' });
+            } else if (typeof requestIdleCallback === 'function') {
+                await new Promise((resolve) => {
+                    let done = false;
+                    const finish = () => {
+                        if (done) return;
+                        done = true;
+                        resolve();
+                    };
+                    requestIdleCallback(finish, { timeout: 32 });
+                    setTimeout(finish, 48);
+                });
+            } else {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+        } catch (_) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
         }
-        const battleType = battle?.effects?.battleConfig ?? battle?.type ?? 'arena';
+        const extraMs = Number(typeof window !== 'undefined' ? window.HWH_ARENA_TRAINING_YIELD_MS : 0);
+        if (Number.isFinite(extraMs) && extraMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, extraMs));
+        }
+    }
+
+    /** Run a sync block as a low-priority task so queued UI work can run first. */
+    function runAsBackgroundTask(fn) {
         return new Promise((resolve, reject) => {
+            const run = () => {
+                try {
+                    fn(resolve, reject);
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            if (typeof scheduler?.postTask === 'function') {
+                scheduler.postTask(run, { priority: 'background' }).catch(() => setTimeout(run, 0));
+            } else {
+                setTimeout(run, 0);
+            }
+        });
+    }
+
+    async function calcBattleCopy(battleData, seed, battleCalc, resolveBattleType, isValidBattleResult) {
+        // Let the browser flush input/paint before the CPU-heavy BattleCalc.
+        await yieldForUi();
+        return runAsBackgroundTask((resolve, reject) => {
+            const battle = structuredClone(battleData);
+            if (seed != null) {
+                battle.seed = seed;
+            }
+            const battleType = battle?.effects?.battleConfig ?? battle?.type ?? 'arena';
             try {
                 battleCalc(battle, resolveBattleType(battleType), (calcResult) => {
                     if (!isValidBattleResult(calcResult)) {
@@ -459,6 +513,8 @@
                 console.error(`[Arena Training] BattleCalc local ${i + 1}/${total} failed:`, error);
                 simulations.push({ win: false, battleTime: 0, error: error.message });
             }
+            // Yield again after each calc so the tab stays interactive between sims.
+            await yieldForUi();
         }
 
         if (endDemoPayload && endDemo) {
@@ -2364,6 +2420,7 @@
                                 candidate.favor
                             );
 
+                            await yieldForUi();
                             const simulation = await simulateTeam(
                                 myTeam,
                                 opponentTeam,
