@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.51
+// @version      3.5.52
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,23 +15,16 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.51";
+    const EXTENSION_VERSION = "3.5.52";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
-    /** Verbose dungeon logs: `window.HWH_DEBUG_DUNGEON = true` before run. */
-    /** Per-end-battle prediction card count: `window.HWH_LOG_PREDICTION_CARDS = true` (HeroWarsHelper). */
-    /** Disable hero-door prediction cards: `window.HWH_DUNGEON_USE_ORACLE_CARDS = false`. */
-    /** Battle pre-calc count (0-25): `window.HWH_DUNGEON_NUM_TRIES` (default 10). */
-    /** Step delay between floors ms: `window.HWH_DUNGEON_STEP_DELAY_MS` (default 100). */
-    /** Brute-force budget ms per battle sim: `window.HWH_DUNGEON_BRUTEFORCE_MS` (default 60000, Stealther default). */
-    /** Optional override for door comparison only: `window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS`. */
-    /** Optional override when restarting a non-last door: `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS`. */
-    /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (0 = unlimited, Stealther default). */
-    /** Elemental door re-sim attempts (1-20): `window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS` (default 10, Stealther 1.012). */
-    /** Per BattleCalc / Calc call timeout ms (5s-180s, default 60s): `window.HWH_BATTLE_CALC_TIMEOUT_MS`. */
+    // Dungeon knobs (set on window before run): HWH_DEBUG_DUNGEON, HWH_LOG_PREDICTION_CARDS,
+    // HWH_DUNGEON_USE_ORACLE_CARDS, HWH_DUNGEON_NUM_TRIES, HWH_DUNGEON_STEP_DELAY_MS,
+    // HWH_DUNGEON_BRUTEFORCE_MS, HWH_DUNGEON_EVAL_BRUTEFORCE_MS, HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS,
+    // HWH_DUNGEON_MAX_TIMER_TRIES, HWH_DUNGEON_ELEMENTAL_ATTEMPTS, HWH_BATTLE_CALC_TIMEOUT_MS.
 
-    // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
+    // ASCII-safe UI icons (userscript managers can mangle UTF-8)
     const UI_ICON = {
         fire: '\uD83D\uDD25',
         pending: '\u23F3',
@@ -50,10 +43,9 @@
     let isProviderActive = false;
     let customOthersButton = null;
     let combinedButton = null;
-    let cachedQuestData = null; // Cache for questGetAll results
+    let cachedQuestData = null;
     let autoRunInProgress = false;
     let dungeonRunning = false;
-    let epicBrawlStatusCache = null;
 
     function setDungeonBattleOpen(isOpen) {
         window.HWH_DUNGEON_BATTLE_OPEN = !!isOpen;
@@ -80,16 +72,12 @@
         titan4000Energy400HP: 0.45,
         titan4000Energy670HP: 0.34,
         autoRefreshPage: false,
-        // Optional: skip glass-cannon titans on elemental doors (Tidus/Asherona/Verdoc).
-        // Off by default — they're strong; enable if long farms keep dying.
-        excludeFragileElemental: false,
-        // Try smaller earth/fire teams (5→2) when a full team fails survival checks.
-        shrinkEarthFireTeams: true,
-        // Reject sims that leave tanks below the HP/energy cutoffs above.
-        enforceTankSurvival: true,
+        excludeFragileElemental: false, // skip Tidus/Asherona/Verdoc on elemental doors
+        shrinkEarthFireTeams: true,     // try 5→2 when full earth/fire team fails survival
+        enforceTankSurvival: true,      // reject sims below tank HP/energy cutoffs
     };
 
-    /** Fragile high-DPS titans that can brick long auto runs on elemental doors. */
+    /** Glass-cannon titans optionally excluded on elemental doors. */
     const FRAGILE_ELEMENTAL_TITANS = {
         water: 4004, // Tidus
         fire: 4014,  // Asherona
@@ -97,16 +85,11 @@
     };
 
     let titanHealthSettings = {};
-    let stopDung = false; // External stop mechanism for dungeon
+    let stopDung = false;
 
-    // External stop function for dungeon
     window.stopHWDDungeon = () => {
-        if (typeof stopDung !== 'undefined') {
-            stopDung = true;
-            console.log('HWD Dungeon stop requested externally.');
-        } else {
-            console.log('stopDung variable not found or not in scope.');
-        }
+        stopDung = true;
+        console.log('HWD Dungeon stop requested externally.');
     };
 
     function loadTitanHealthSettings() {
@@ -159,10 +142,7 @@
         return Math.max(5000, Math.min(180000, Number(window.HWH_BATTLE_CALC_TIMEOUT_MS) || 60000));
     }
 
-    /**
-     * Run cheats.BattleCalc as a Promise with a hard timeout.
-     * Prevents hung Calc callbacks from retaining dungeon/arena closures forever.
-     */
+    /** BattleCalc as a Promise with a hard timeout (avoids hung Calc retaining callers). */
     function runBattleCalc(battleCalcFn, battleData, battleType, timeoutMs) {
         const ms = timeoutMs ?? getBattleCalcTimeoutMs();
         return withTimeout(new Promise((resolve, reject) => {
@@ -176,7 +156,6 @@
         }), ms, `BattleCalc timed out after ${ms}ms`);
     }
 
-    // --- QUEST DATA CACHE ---
     async function getQuestData(forceRefresh = false) {
         if (cachedQuestData && !forceRefresh) {
             return cachedQuestData;
@@ -191,7 +170,6 @@
         cachedQuestData = null;
     }
 
-    // --- REIMPLEMENTED CORE FUNCTIONS (WRAPPERS) ---
     async function executeGetOutland() {
         const { Send, HWHFuncs } = window;
         HWHFuncs.setProgress('Executing: Outland', true);
@@ -217,7 +195,7 @@
         HWHFuncs.setProgress('Executing: Expeditions', true);
         return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
     }
-    // Dungeon Algorithm - ported from Hero Wars Stealther 1.012 (Mike Rohsoft), with HWH Auto Daily integration
+    // Dungeon algorithm (Stealther 1.012 / Mike Rohsoft), integrated for HWH Auto Daily
     function executeDungeon(resolve, reject) {
         const { HWHFuncs, Send, BattleCalc, cheats } = window;
         const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
@@ -249,10 +227,8 @@
             return Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
         }
 
-        // Stealther 1.012: prediction cards (consumable 81) only for hero doors.
-        // Do NOT decrement here — HWH's dungeonEndBattle interceptor decrements when isRaid is sent.
-        // Pre-decrementing makes HWH strip isRaid, and Auto Daily does not set lastDungeonBattleData,
-        // so the request ends instantly and the server returns "abnormal speed".
+        // Prediction cards (81) only on hero doors. Do not decrement here — HWH does on endBattle;
+        // pre-decrement strips isRaid and can trigger "abnormal speed".
         function shouldUseOracleCard(attackerType) {
             if (window.HWH_DUNGEON_USE_ORACLE_CARDS === false) {
                 return false;
@@ -292,16 +268,13 @@
         let isRestart = false;
         let lastError = null;
         let lastDebugString = '';
-        let lastBattleHandler = null;
         let lastSimulatedOption = null;
-        let lastStartedTeamNum = -1;
         let battleStartTime = 0;
         let stepCount = 0;
         let consecutiveNoWin = 0;
         let timeDungeon = { all: Date.now(), steps: 0 };
 
-        // Stealther 1.012: glass-cannon x1.5 / healer-priority x1.25 for sort + heal-power checks.
-        // Computed (not in-place mutate) so repeated getTitans() calls do not compound.
+        // Glass-cannon x1.5 / healer x1.25 (computed; not in-place, so repeated sorts stay stable).
         function effectiveTitanPower(titan) {
             const power = titan?.power || 0;
             const id = Number(titan?.id);
@@ -697,7 +670,7 @@
             for (const [titanId, state] of Object.entries(states)) {
                 const id = normalize(titanId);
                 if (id < 4010 || id >= 4030 || state.isDead) continue;
-                // Stealther 1.011: prefer low HP+energy targets for heal doors.
+                // Prefer low HP+energy targets for heal doors.
                 const diff = (Number(state.hp) + Number(state.energy || 0)) / (Number(state.maxHp) + 1000);
                 if (diff >= 1) continue;
                 allStates.push({ diff, id });
@@ -923,7 +896,7 @@
             return (option.state ?? 0) > (best.state ?? 0);
         }
 
-        // Stealther 1.011: re-sim the same elemental team up to N times; keep lowest deaths / best state.
+        // Re-sim the same elemental team up to N times; keep lowest deaths / best state.
         async function simulateElementalTeam(teamNum, heroes, attackerType) {
             let best = null;
             let attempts = 0;
@@ -1010,7 +983,7 @@
         function isHealingSuccessful(healingTeam, progress, states) {
             const afterHeroes = progress?.[0]?.attackers?.heroes;
             if (!afterHeroes) return false;
-            // Stealther 1.011 uses >= so flat HP after heal still counts as success.
+            // Use >= so flat HP after heal still counts as success.
             return healingTeam.filter((id) => id >= 4010).every((id) => {
                 const after = afterHeroes[id] || afterHeroes[String(id)];
                 const beforeHp = states[id]?.hp || states[String(id)]?.hp || 0;
@@ -1067,7 +1040,6 @@
                 return null;
             }
 
-            lastStartedTeamNum = teamNum;
             battleStartTime = Date.now();
             setBattleOpen(true);
 
@@ -1151,7 +1123,6 @@
             const isBruteForceBattle = attackerType !== 'hero';
             const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
             const handler = new DungeonBattleHandler(battleData, battleType);
-            lastBattleHandler = handler;
             const maxTimerTries = simOpts.maxTimerTries ?? MAX_TIMER_TRIES;
 
             const handlerResult = await runBattleHandler(
@@ -1209,7 +1180,7 @@
             await countdownTimer(totalTimer, msg);
         }
 
-        // Stealther 1.012: hero doors can spend a prediction card to skip the wait and end with isRaid.
+        // Hero doors can spend a prediction card to skip the wait and end with isRaid.
         async function waitOrUseOracleCard(option, attackerType, debug = '') {
             if (shouldUseOracleCard(attackerType)) {
                 const cards = getOracleCards();
@@ -1227,8 +1198,8 @@
             return false;
         }
 
-        // Stealther 1.012: skip re-sim when the chosen option is already the latest server battle.
-        async function executeChosenOption(option, attackerType, doorCount, debug = '', skipRestart = false) {
+        // Skip re-sim when the chosen option is already the latest server battle.
+        async function executeChosenOption(option, attackerType, debug = '', skipRestart = false) {
             if (stopDung || end) {
                 return false;
             }
@@ -1295,8 +1266,7 @@
                 result: option.result,
                 progress: option.progress,
             };
-            // Stealther 1.012: isRaid only when a prediction card was spent for a hero door.
-            if (useOracleCard) {
+            if (useOracleCard) { // isRaid only when a prediction card was spent
                 args.isRaid = true;
             }
 
@@ -1610,14 +1580,14 @@
                 if (candidate?.immediate) {
                     lastDebugString += debugString(candidate.option, candidate.attackerType) + ' [heal]';
                     if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-                    const ok = await executeChosenOption(candidate.option, candidate.attackerType, userData.length, lastDebugString, true);
+                    const ok = await executeChosenOption(candidate.option, candidate.attackerType, lastDebugString, true);
                     timeDungeon.steps += Date.now() - stepStart;
                     return ok !== false;
                 }
                 candidates.push(candidate);
             }
 
-            // Stealther 1.011 ranks by win quality; survival is a soft preference, not a hard stop.
+            // Rank by win quality; survival is a soft preference, not a hard stop.
             const winning = candidates.filter((v) => v?.option?.win);
             let valid = winning.filter((v) => v.passesSurvival !== false);
             if (valid.length === 0) {
@@ -1629,8 +1599,7 @@
                 }).join(', ');
                 console.warn(`[Dungeon] No survival-safe door (${consecutiveNoWin}/${NO_WIN_RETRIES}): ${doorSummary}`);
                 if (winning.length > 0) {
-                    // Prefer Stealther behavior: take a winning door rather than stalling.
-                    valid = winning;
+                    valid = winning; // prefer a winning door over stalling
                 } else if (consecutiveNoWin <= NO_WIN_RETRIES) {
                     HWHFuncs.setProgress(
                         `${I18N('DUNGEON')}: retrying floor (${consecutiveNoWin}/${NO_WIN_RETRIES}) ${dungeonActivity}/${maxDungeonActivity}`,
@@ -1669,7 +1638,7 @@
             lastDebugString += ` -> ${best.option.teamNum} `;
 
             if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-            const ok = await executeChosenOption(best.option, best.attackerType, userData.length, lastDebugString);
+            const ok = await executeChosenOption(best.option, best.attackerType, lastDebugString);
             stepCount++;
             timeDungeon.steps += Date.now() - stepStart;
             return ok !== false;
@@ -1751,7 +1720,6 @@
                 : Object.values(titanRaw || {}).filter((t) => t && t.id != null);
 
             const layout = getTitans(titansList);
-            // Stealther 1.012: effective power already applies glass-cannon/healer weights.
             const waterPower = layout.water.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
             const earthPower = layout.earth.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
             const firePower = layout.fire.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
@@ -1787,7 +1755,6 @@
             isRestart = false;
             lastError = null;
             lastSimulatedOption = null;
-            lastStartedTeamNum = -1;
             battleStartTime = 0;
             stepCount = 0;
             consecutiveNoWin = 0;
@@ -2250,32 +2217,16 @@
     }
     async function executeQuestAllFarm() {
          const { Send } = window;
-         // Get current quest state from cache - following API documentation pattern
          const quests = await getQuestData();
-         
-         // Filter quests that are completed and ready to collect (state === 2)
-         // Only process regular daily quests (id < 1000000)
-         // According to API docs: state 0 = not started, 1 = in progress, 2 = completed (ready to collect)
-         // After collection, quest should be removed or state should change
-         const questsToFarm = quests.filter(q => {
-             // Only collect if quest exists, is a regular daily quest, and is completed (state === 2)
-             return q && typeof q.id !== 'undefined' && q.id < 1000000 && q.state === 2;
-         });
-         
-         if (questsToFarm.length === 0) {
-             // No quests ready to collect - all done
-             return;
-         }
-         
-         // Collect the quest rewards
-         const questCalls = questsToFarm.map(q => ({ 
-             name: "questFarm", 
-             args: { questId: q.id }, 
-             ident: `questFarm_${q.id}` 
+         // state 2 = completed (ready to collect); skip event quests (id >= 1e6)
+         const questsToFarm = quests.filter(q => q && q.id < 1000000 && q.state === 2);
+         if (questsToFarm.length === 0) return;
+         const questCalls = questsToFarm.map(q => ({
+             name: "questFarm",
+             args: { questId: q.id },
+             ident: `questFarm_${q.id}`
          }));
-         
          await Send({ calls: questCalls });
-         // Invalidate cache after collecting quest rewards to get fresh data
          invalidateQuestCache();
     }
     async function executeMailGetAll() {
@@ -2305,21 +2256,15 @@
             HWHFuncs.setProgress('Seer: Done!', true);
         } catch (e) { console.error("Error in executeRollAscension", e); HWHFuncs.setProgress('Seer: Error!', true); }
     }
-    // NEWLY ADDED FUNCTION - Reuses doYourBest functions from HeroWarsHelper
-async function executeGetDailyBonus() {
+    async function executeGetDailyBonus() {
     const { HWHClasses, HWHFuncs } = window;
     HWHFuncs.setProgress('Executing: Daily Bonus', true);
     try {
-        // Reuse getDailyBonus from doYourBest class if available
         if (HWHClasses && HWHClasses.doYourBest) {
             const doYourBestInstance = new HWHClasses.doYourBest(() => {}, () => {});
             if (doYourBestInstance.functions && doYourBestInstance.functions.getDailyBonus) {
                 await doYourBestInstance.functions.getDailyBonus();
-                
-                // Also collect subscription and zeppelin gifts using collectAllStuff pattern
                 if (doYourBestInstance.functions.collectAllStuff) {
-                    // collectAllStuff includes: offerFarmAllReward, subscriptionFarm, zeppelinGiftFarm, grandFarmCoins, gacha_refill
-                    // But we only want subscriptionFarm and zeppelinGiftFarm here
                     const { Send } = window;
                     await Send({
                         calls: [
@@ -2425,11 +2370,7 @@ async function executeGetDailyBonus() {
         }
     }
 
-    /**
-     * AutoFix ext's battleLog search needs a live Scheduler timeline (manual fights).
-     * Auto Daily only runs Calc, so that path no-ops. Use HWH BestOrWinFixBattle /
-     * BossFixBattle instead — they search timers from Calc battleLogs.
-     */
+    /** Local HWH FixBattle salvage (AutoFix ext needs live Scheduler logs Auto Daily never fills). */
     async function salvageWithHwhFixBattle(battleData, options = {}) {
         const {
             mode = 'pvp', // 'pvp' | 'boss'
@@ -2486,10 +2427,7 @@ async function executeGetDailyBonus() {
         }
     }
 
-    /**
-     * HWHAutoFixBattleExt reads progress[0].defenders.heroes[1].extra on clanRaid_endBossBattle.
-     * Normalize string/"1" keys so AutoFix can measure and improve damage.
-     */
+    /** Normalize raid-boss progress keys so AutoFix can read defenders.heroes[1].extra. */
     function prepareRaidBossProgressForAutoFix(progress) {
         const wave = progress?.[0];
         const heroes = wave?.defenders?.heroes;
@@ -2586,24 +2524,17 @@ async function executeGetDailyBonus() {
         }
     }
 
-    // Helper function to access I18N (translation)
     function I18N(constant, replace) {
-        // Map of constants that might not exist in I18N - use fallbacks directly
         const fallbacks = {
-            'ARENA': 'Arena',
-            'GRAND_ARENA': 'Grand Arena',
-            'GUILD_WAR': 'Guild War',
-            'MINION_RAID': 'Minion Raid',
-            'INITIALIZING': 'Initializing',
-            'BATTLE': 'Battle',
-            'COMPLETED': 'Completed',
-            'BATTLES_CANCELED': 'Battles Canceled',
-            'REMAINING_ATTEMPTS': 'Remaining Attempts',
-            'TITAN_ARENA': 'Titan Arena'
+            GUILD_WAR: 'Guild War',
+            MINION_RAID: 'Minion Raid',
+            INITIALIZING: 'Initializing',
+            COMPLETED: 'Completed',
+            BATTLES_CANCELED: 'Battles Canceled',
+            REMAINING_ATTEMPTS: 'Remaining Attempts',
+            TITAN_ARENA: 'Titan Arena',
         };
-        
-        // If we have a fallback for this constant, use it directly to avoid I18N warnings
-        if (fallbacks.hasOwnProperty(constant)) {
+        if (Object.prototype.hasOwnProperty.call(fallbacks, constant)) {
             let result = fallbacks[constant];
             if (replace) {
                 for (const key in replace) {
@@ -2612,33 +2543,12 @@ async function executeGetDailyBonus() {
             }
             return result;
         }
-        
-        // For other constants, try to use window.I18N if available
-        if (window.I18N && typeof window.I18N === 'function') {
-            try {
-                const result = window.I18N(constant, replace);
-                // If I18N returns the constant name unchanged (meaning it wasn't found), use fallback
-                if (result === constant && fallbacks[constant]) {
-                    return fallbacks[constant];
-                }
-                return result;
-            } catch (error) {
-                // If translation constant not found, fall back to constant name or English defaults
-                return fallbacks[constant] || constant;
-            }
+        if (typeof window.I18N === 'function') {
+            try { return window.I18N(constant, replace); } catch (_) { /* fall through */ }
         }
-        
-        // Final fallback
-        let result = fallbacks[constant] || constant;
-        if (replace) {
-            for (const key in replace) {
-                result = result.replace(`{${key}}`, replace[key]);
-            }
-        }
-        return result;
+        return constant;
     }
 
-    // Helper function to access getUserInfo
     function getUserInfo() {
         if (window.getUserInfo && typeof window.getUserInfo === 'function') {
             return window.getUserInfo();
@@ -2646,19 +2556,16 @@ async function executeGetDailyBonus() {
         return {};
     }
 
-    // Helper function for setIsCancalBattle
     function setIsCancalBattle(value) {
         if (window.setIsCancalBattle && typeof window.setIsCancalBattle === 'function') {
             window.setIsCancalBattle(value);
         }
     }
 
-    // Helper function for setProgress
     function setProgress(text, hide) {
         HWHFuncs.setProgress(text, hide);
     }
 
-    // Helper function for getInput (HWH script menu settings)
     function getInput(name) {
         if (HWHFuncs && typeof HWHFuncs.getInput === 'function') {
             return HWHFuncs.getInput(name);
@@ -2666,13 +2573,12 @@ async function executeGetDailyBonus() {
         if (window.getInput && typeof window.getInput === 'function') {
             return window.getInput(name);
         }
-        // Sensible defaults matching typical HWH settings
         if (name === 'countTestBattle') return 10;
         if (name === 'countAutoBattle') return 10;
         return 0;
     }
 
-    // Main-menu "Number of test fights" (countTestBattle). Each sample is a local BattleCalc.
+    /** Main-menu countTestBattle — each sample is a local BattleCalc. */
     function getTestFightCount() {
         const raw = parseInt(getInput('countTestBattle'), 10);
         if (!Number.isFinite(raw) || raw < 1) {
@@ -2681,12 +2587,10 @@ async function executeGetDailyBonus() {
         return raw;
     }
 
-    // Helper function for random
     function random(min, max) {
         return Math.floor(Math.random() * (max - min + 1) + min);
     }
 
-    // Helper function for Send (used in raid nodes / ToE)
     function SendRequest(json, callback) {
         if (typeof Send === 'function') {
             Send(json).then(result => {
@@ -2700,27 +2604,20 @@ async function executeGetDailyBonus() {
         }
     }
 
-    // Callback-style send compatible with stock HWH ToE flow
+    /** Callback-style send for stock HWH ToE / raid-node flows. */
     function send(payload, callback) {
         SendRequest(typeof payload === 'string' ? payload : JSON.stringify(payload), callback);
     }
 
-    // BattleCalc from cheats
     const BattleCalc = cheats.BattleCalc;
 
-    // ========== CONSTANTS ==========
     const CONSTANTS = {
         WIN_RATE_THRESHOLD: 70,
         SIMULATION_COUNT: 10,
-        // Arena endBattle fallback. Titan demo endBattle uses 298 (capture 2026-10-24).
-        BATTLE_VERSION: 296,
-        TITAN_BATTLE_VERSION: 298,
+        BATTLE_VERSION: 296,       // Arena demo endBattle
+        TITAN_BATTLE_VERSION: 298, // Titan demo endBattle
         DELAY_BETWEEN_BATTLES: 1000,
-        DELAY_BATTLE_COMPLETE: 100,
-        /**
-         * Fallback Guild War map (lib.data.clanWar). Forts with tierUnlock unlock the next map tier.
-         * Fort 4 = Bridge (unlocks tier 2); forts 7/8/9 = Fire/Nature/Ice (unlock Citadel tier 3).
-         */
+        // Fallback GW map when lib.data.clanWar missing (4=Bridge; 7/8/9 unlock Citadel).
         GUILD_WAR_FORTIFICATION_FALLBACK: {
             1: { id: 1, pointReward: 40, tier: 1, tierUnlock: null },
             2: { id: 2, pointReward: 40, tier: 1, tierUnlock: null },
@@ -2749,16 +2646,6 @@ async function executeGetDailyBonus() {
         DEFAULT_PET_ID: 6005,
         PET_ID_RANGE_MIN: 6000,
         PET_ID_RANGE_MAX: 7000,
-        // Known pet IDs (6000–6011); Robin = 6011 (gacha 2027-02-01)
-        PET_NAMES: {
-            6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
-            6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
-            6011: 'Robin',
-        },
-        // Newer heroes may lack LIB_HERO_NAME_* until client update
-        HERO_NAMES: {
-            71: 'Fluffy', 72: 'Byrna', 73: 'Adam', 74: 'Somna', 75: 'Eva',
-        },
         DAYS: {
             SUNDAY: 0,
             MONDAY: 1,
@@ -2766,74 +2653,41 @@ async function executeGetDailyBonus() {
         }
     };
 
-    // ========== UTILITY FUNCTIONS ==========
     const Utils = {
         getDayOfWeek: function() {
             return new Date().getDay();
         },
-        
+
         isTitanArenaDay: function() {
             const day = this.getDayOfWeek();
             return day >= CONSTANTS.DAYS.MONDAY && day <= CONSTANTS.DAYS.SATURDAY;
         },
-        
+
         isRaidBossDay: function() {
             const day = this.getDayOfWeek();
             return day === CONSTANTS.DAYS.SUNDAY || day === CONSTANTS.DAYS.SATURDAY;
         },
-        
+
         getDayName: function(dayOfWeek) {
             return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
         },
 
-        getPetName: function(petId) {
-            const id = Number(petId);
-            if (!Number.isFinite(id) || id < CONSTANTS.PET_ID_RANGE_MIN || id >= CONSTANTS.PET_ID_RANGE_MAX) {
-                return null;
-            }
-            try {
-                const translated = cheats?.translate?.(`LIB_PET_NAME_${id}`);
-                if (translated && translated !== `LIB_PET_NAME_${id}`) return translated;
-            } catch {
-                // fall through
-            }
-            return CONSTANTS.PET_NAMES[id] || `Pet ${id}`;
-        },
-
-        getHeroName: function(heroId) {
-            const id = Number(heroId);
-            if (!Number.isFinite(id) || id <= 0) return null;
-            if (id >= CONSTANTS.PET_ID_RANGE_MIN && id < CONSTANTS.PET_ID_RANGE_MAX) {
-                return this.getPetName(id);
-            }
-            try {
-                const translated = cheats?.translate?.(`LIB_HERO_NAME_${id}`);
-                if (translated && translated !== `LIB_HERO_NAME_${id}`) return translated;
-            } catch {
-                // fall through
-            }
-            return CONSTANTS.HERO_NAMES[id] || `Hero ${id}`;
-        },
-        
-        // Optimized logging - can be disabled in production
         log: function(level, ...args) {
             if (window.DEBUG !== false) {
                 console[level](...args);
             }
         },
-        
-        // Create action timestamp (called per API request for uniqueness)
+
         getActionTs: function() {
             return Date.now();
         },
-        
-        // Validate battle result
+
         isValidBattleResult: function(result) {
             return result && result.result && typeof result.result.win === 'boolean';
         }
     };
 
-    // Arena lineups arrive as id lists, {id} objects, id-keyed maps, or [id, level, ...] tuples.
+    /** Arena lineups: id lists, {id} objects, id-keyed maps, or [id, level, ...] tuples. */
     function parseArenaLineup(team, explicitPet, petMin = 6000, petMax = 7000) {
         if (team == null) {
             return null;
@@ -3403,8 +3257,7 @@ async function executeGetDailyBonus() {
                 this.demoApiCount = 0;
                 console.log(`[Arena pre-check] ===== Opponent ${opponentId}: 1 server demo per matchup, then local BattleCalc =====`);
 
-                // Step 1: Get team configurations
-                console.log('[DEMO] Step 1: Getting team configurations...');
+                console.log('[DEMO] Getting team configurations...');
                 const myTeamConfig = this.getTeamConfiguration();
                 let opponentTeamConfig = this.getOpponentTeamConfig(opponent);
                 
@@ -3500,7 +3353,6 @@ async function executeGetDailyBonus() {
                     return { win: false, skipped: true, winRate: simulationResult.winRate, reason: 'win rate below threshold' };
                 }
 
-                // Step 4: Proceed with actual battle
                 console.log(`[DEMO] ✓ Win rate ${simulationResult.winRate.toFixed(2)}% is above threshold, proceeding with actual attack`);
                 console.log('[DEMO] Step 4: Executing actual battle...');
 
@@ -4231,20 +4083,15 @@ async function executeGetDailyBonus() {
 
                             const endBattleResponse = response.results[0].result.response;
                             
-                            // Extract both parentId and battleId from battle object in response
-                            // Strategy: Use first battle's ID as parentId for subsequent battles
                             const battle = endBattleResponse?.battle;
-                            const extractedParentId = battle?.parentId;
-                            const battleId = battle?.id;
-                            
                             resolve({
-                                parentId: extractedParentId !== undefined && extractedParentId !== null ? extractedParentId : null,
-                                battleId: battleId !== undefined && battleId !== null ? battleId : null
+                                parentId: battle?.parentId ?? null,
+                                battleId: battle?.id ?? null
                             });
                         })
                         .catch(error => {
                             Utils.log('warn', '[DEMO] Error calling endBattle:', error);
-                            resolve(null); // Return null on error, will use original parentId
+                            resolve(null);
                         });
                 } catch (error) {
                     Utils.log('warn', '[DEMO] Error preparing endBattle:', error);
@@ -4627,7 +4474,6 @@ async function executeGetDailyBonus() {
             return ids.slice(0, 5).reduce((sum, id) => sum + this.getUnitPower(id, isTitanBattle), 0);
         }
 
-        /** Infer unit type when API omits `type` (pets 6xxx, titans 4xxx). */
         this.inferUnitType = function(unit) {
             if (!unit || unit.id == null) return null;
             if (unit.type) return unit.type;
@@ -4638,7 +4484,6 @@ async function executeGetDailyBonus() {
             return 'hero';
         }
 
-        /** Parse enemySlots.team whether array-of-maps or position-keyed object. */
         this.parseSlotUnits = function(slotData) {
             const team = slotData?.team;
             if (!team) return [];
@@ -4664,13 +4509,7 @@ async function executeGetDailyBonus() {
             return units;
         }
 
-        this.getOpponentSlotPower = function(slotId, isTitanBattle) {
-            const slot = this.listAttackableSlots({ includeUnavailable: true })
-                .find((s) => s.slotId === Number(slotId) && s.isTitan === !!isTitanBattle);
-            return slot ? slot.power : 0;
-        }
-
-        /** Load fortification / slot maps from lib.data.clanWar (fallback to CONSTANTS). */
+        /** Fortification / slot maps from lib.data.clanWar (falls back to CONSTANTS). */
         this.getClanWarFortMaps = function() {
             let forts = null;
             let slots = null;
@@ -4695,10 +4534,7 @@ async function executeGetDailyBonus() {
             return { forts, slots };
         }
 
-        /**
-         * Slot fortification meta from lib maps.
-         * Fort 4 = Bridge; 7/8/9 = Fire/Nature/Ice (any one unlocks Citadel); 10 = Citadel.
-         */
+        /** Slot fort meta (4=Bridge; 7/8/9 unlock Citadel; 10=Citadel). */
         this.getSlotFortMeta = function(slotId) {
             const { forts, slots } = this.getClanWarFortMaps();
             const slotEntry = slots[slotId] || slots[String(slotId)];
@@ -4725,7 +4561,6 @@ async function executeGetDailyBonus() {
             };
         }
 
-        /** All known slot IDs that belong to a fortification. */
         this.getSlotIdsForFort = function(fortificationId) {
             const { slots } = this.getClanWarFortMaps();
             const ids = [];
@@ -4742,7 +4577,6 @@ async function executeGetDailyBonus() {
             return ids;
         }
 
-        /** True when a fort has no living defenders left on any of its slots. */
         this.isFortBeaten = function(fortificationId) {
             const enemySlots = this.guildWarInfo?.enemySlots || {};
             const slotIds = this.getSlotIdsForFort(fortificationId);
@@ -4767,10 +4601,7 @@ async function executeGetDailyBonus() {
             return sawSlot;
         }
 
-        /**
-         * Bridge beaten → tier 2; any Fire/Nature/Ice bastion beaten → tier 3 (Citadel).
-         * Also honors fort.tierUnlock from lib maps.
-         */
+        /** Bridge→tier2; any bastion 7/8/9→tier3; also honors fort.tierUnlock. */
         this.getGuildWarState = function() {
             const bastionForts = [7, 8, 9];
             const beatenBastions = bastionForts.filter((fid) => this.isFortBeaten(fid));
@@ -4794,12 +4625,7 @@ async function executeGetDailyBonus() {
             return { anyBastionBeaten, beatenBastions, bridgeBeaten, maxUnlockedTier };
         }
 
-        /**
-         * Strategic priority rank (lower = attack first):
-         * 0 Bridge → 1 Bastions (until any of 7/8/9 beaten) → 1 Citadel (after any bastion beaten)
-         * → 3 everything else on unlocked tiers (leftover bastions / barracks once priorities done)
-         * → 9 locked-tier / locked citadel (should not happen if API status is correct).
-         */
+        /** Lower = attack first: Bridge 0 → bastions/citadel 1 → other unlocked 3 → locked 9. */
         this.getFortPriorityRank = function(slot, warState) {
             if (slot.fortTier > warState.maxUnlockedTier) return 9;
             if (slot.isBridge) return 0;
@@ -4812,10 +4638,7 @@ async function executeGetDailyBonus() {
             return 3;
         }
 
-        /**
-         * List GW slots we can consider attacking.
-         * Accepts partially cleared defenses (1+ living hero/titan) — common after bastions fall.
-         */
+        /** Attackable GW slots (allows 1+ living defenders on partially cleared forts). */
         this.listAttackableSlots = function(opts = {}) {
             const includeUnavailable = !!opts.includeUnavailable;
             const diagnose = !!opts.diagnose;
@@ -4914,11 +4737,7 @@ async function executeGetDailyBonus() {
             return slots;
         }
 
-        /**
-         * Priority: Bridge → bastions 7/8/9 (until one beaten) → Citadel → low-priority leftovers.
-         * After tier unlocks (bridge→T2, bastion→T3), unlocked-tier low targets are included.
-         * Demo-sim each; keep those above win-rate threshold until attempts are filled.
-         */
+        /** Bridge → bastions → Citadel → leftovers; demo-sim and keep above win-rate threshold. */
         this.selectStrongestBeatableSlots = async function(heroTeam, titanTeam, maxTargets, options = {}) {
             const warState = this.getGuildWarState();
             const { anyBastionBeaten, beatenBastions, bridgeBeaten, maxUnlockedTier } = warState;
@@ -5347,7 +5166,6 @@ async function executeGetDailyBonus() {
                 throw new Error('Invalid attack response - no result data');
             }
 
-            // Legacy one-shot path when AutoFix is off (previous Auto Daily behavior).
             if (!useAutoFix) {
                 console.log(`Slot ${slotId} attack completed successfully`);
                 return { win: true, result };
@@ -5361,7 +5179,6 @@ async function executeGetDailyBonus() {
             let battleResult = await this.calculateGuildWarBattleResult(battleData, isTitanBattle);
             console.log(`[GUILD_WAR] Slot ${slotId} Calc: ${battleResult.win ? 'WIN' : 'LOSS'}`);
 
-            // Local HWH FixBattle (Calc battleLogs) — AutoFix ext live-log path does not work for Auto Daily.
             if (!battleResult.win) {
                 const salvaged = await salvageWithHwhFixBattle(battleData, {
                     mode: 'pvp',
@@ -5384,7 +5201,7 @@ async function executeGetDailyBonus() {
             return { win: ended.win || battleResult.win, result: ended.response, calc: battleResult };
         }
 
-        /** Prefer Guild War hero attack team; fall back to Arena. */
+        /** Guild War hero attack team; falls back to Arena. */
         this.getHeroTeamConfiguration = function() {
             if (!this.teamInfo || !this.teamInfo.teams) {
                 throw new Error('Guild War team info not available');
@@ -5434,11 +5251,6 @@ async function executeGetDailyBonus() {
             };
         }
 
-        // Back-compat alias
-        this.getArenaTeamConfiguration = function() {
-            return this.getHeroTeamConfiguration();
-        }
-
         this.getTitanTeamConfiguration = function() {
             if (!this.teamInfo || !this.teamInfo.teams) {
                 throw new Error('Guild War titan team info not available');
@@ -5456,16 +5268,6 @@ async function executeGetDailyBonus() {
             return {
                 titans: titanTeam.slice(0, 5).map(Number)
             };
-        }
-
-        this.getOpponentTitanTeamFromSlot = function(slotId) {
-            const slot = this.listAttackableSlots({ includeUnavailable: true })
-                .find((s) => s.slotId === Number(slotId) && s.isTitan);
-            if (!slot || !slot.unitIds.length) {
-                console.warn(`[GUILD_WAR_TITAN] No titan team data for slot ${slotId}`);
-                return null;
-            }
-            return { titans: slot.unitIds.slice(0, 5), units: slot.units };
         }
 
         /** Titan element from lib.data.titan or ID range. */
@@ -5488,7 +5290,6 @@ async function executeGetDailyBonus() {
             return null;
         }
 
-        /** lib.data.titanSpirit labels a skill as elemental or primal when the field is present. */
         this.spiritSkillKind = function(skillId) {
             try {
                 const root = window.lib?.data?.titanSpirit
@@ -5505,7 +5306,6 @@ async function executeGetDailyBonus() {
             return null;
         }
 
-        /** elementSpiritSkills is [elemental, primal] on captured titan demo battles. */
         this.spiritSkillPair = function(unit) {
             const list = Array.isArray(unit?.elementSpiritSkills) ? unit.elementSpiritSkills : [];
             const ids = list
@@ -5557,11 +5357,7 @@ async function executeGetDailyBonus() {
             return null;
         }
 
-        /**
-         * Spirit args for GW titan demoBattles_startBattle.
-         * Up to two elements that are actually on the team. A mono-element team sends one spirit.
-         * Skill ids come from the unit's elementSpiritSkills (enemy slot, or our titanGetAll for the attack).
-         */
+        /** Spirit args for GW titan demoBattles (up to 2 elements; skills from elementSpiritSkills). */
         this.getGuildWarTitanSpiritArgs = function(attackTitanIds, defenceTitanIds, defenceUnits) {
             const atkRanked = this.rankTitanElements(attackTitanIds).slice(0, 2);
             const defRanked = this.rankTitanElements(defenceTitanIds).slice(0, 2);
@@ -5641,7 +5437,7 @@ async function executeGetDailyBonus() {
             };
         }
 
-        this.runSingleGuildWarHeroDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0) {
+        this.runSingleGuildWarHeroDemoBattle = async function(myTeam, opponentTeam, mechanic, _seedOffset = 0, parentId = 0) {
             const self = this;
             return new Promise((resolve, reject) => {
                 try {
@@ -5741,17 +5537,12 @@ async function executeGetDailyBonus() {
                     const result = await this.runSingleGuildWarTitanDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
                     simulations.push(result);
                     
-                    // For first battle: store the battle ID to use as parentId for subsequent battles
                     if (i === 0 && result.battleId) {
                         firstBattleId = result.battleId;
                         parentId = firstBattleId;
-                    }
-                    // For subsequent battles: use the first battle's ID as parentId
-                    else if (i > 0 && firstBattleId) {
+                    } else if (i > 0 && firstBattleId) {
                         parentId = firstBattleId;
-                    }
-                    // Fallback: try to extract parentId from endBattle response
-                    else if (result.parentId !== undefined && result.parentId !== null && result.parentId !== 0) {
+                    } else if (result.parentId) {
                         parentId = result.parentId;
                     }
                 } catch (error) {
@@ -5759,8 +5550,7 @@ async function executeGetDailyBonus() {
                     simulations.push({ win: false, battleTime: 0, error: error.message, parentId: parentId });
                 }
             }
-            
-            // Calculate statistics
+
             const wins = simulations.filter(s => s.win).length;
             const losses = simulations.length - wins;
             const winRate = (wins / simulations.length) * 100;
@@ -5988,15 +5778,10 @@ async function executeGetDailyBonus() {
                             
                             const endBattleResponse = response.results[0].result.response;
                             
-                            // Extract both parentId and battleId from battle object in response
-                            // Strategy: Use first battle's ID as parentId for subsequent battles
                             const battle = endBattleResponse?.battle;
-                            const extractedParentId = battle?.parentId;
-                            const battleId = battle?.id;
-                            
                             resolve({
-                                parentId: extractedParentId !== undefined && extractedParentId !== null ? extractedParentId : null,
-                                battleId: battleId !== undefined && battleId !== null ? battleId : null
+                                parentId: battle?.parentId ?? null,
+                                battleId: battle?.id ?? null
                             });
                         })
                         .catch(error => {
@@ -6534,7 +6319,6 @@ async function executeGetDailyBonus() {
                     const battleData = await this.startBossBattle(heroes, pet, favor);
                     let battleResult = await this.calculateBattleResult(battleData);
 
-                    // Local BossFixBattle before end — AutoFix ext needs live battleLog Auto Daily never fills.
                     if (useAutoFix) {
                         const baseline = prepareRaidBossProgressForAutoFix(battleResult.progress);
                         const salvaged = await salvageWithHwhFixBattle(battleData, {
@@ -6820,174 +6604,81 @@ async function executeGetDailyBonus() {
             console.log(`Cross Clan War: Found ${myTargets.length} targets assigned to you`);
             setProgress(`Cross Clan War: Attacking ${myTargets.length} targets...`);
 
-            let skippedCount = 0; // Track skipped slots separately
-
-            // Process all targets - ensure loop always continues even on errors
+            let skippedCount = 0;
             for (let i = 0; i < myTargets.length; i++) {
                 const { slotId, target } = myTargets[i];
                 const enemySlot = enemySlots[slotId];
-                let attackSuccess = false;
-                let attackError = null;
-
                 try {
-                    console.log(`Cross Clan War: ===== Starting attack ${i + 1}/${myTargets.length} - Slot ${slotId} =====`);
                     setProgress(`Cross Clan War: Slot ${slotId} (${i + 1}/${myTargets.length})`);
-                    
-                    // Attempt the attack
                     await this.attackSlot(slotId, target, enemySlot);
-                    attackSuccess = true;
                     this.attacksCompleted++;
                     this.victories++;
-                    console.log(`Cross Clan War: ✓ Successfully completed attack ${i + 1}/${myTargets.length} - Slot ${slotId}`);
-                    
                 } catch (error) {
-                    attackError = error;
-                    attackSuccess = false;
-                    
-                    // Determine if this is a skip (dead units, not available) vs actual failure
                     const errorMsg = error.message || String(error);
-                    const isSkip = errorMsg.includes('dead units') || 
-                                  errorMsg.includes('not available') ||
-                                  errorMsg.includes('skipping');
-                    
-                    if (isSkip) {
-                        // Don't count skips as attempts - these are intentional skips
+                    if (/dead units|not available|skipping/i.test(errorMsg)) {
                         skippedCount++;
-                        console.warn(`Cross Clan War: ⚠ Skipping slot ${slotId} (${i + 1}/${myTargets.length}): ${errorMsg}`);
+                        console.warn(`Cross Clan War: Skipping slot ${slotId}: ${errorMsg}`);
                     } else {
-                        // Count actual failures as attempts
                         this.attacksCompleted++;
-                        console.error(`Cross Clan War: ✗ Error attacking slot ${slotId} (${i + 1}/${myTargets.length}):`, error);
-                        console.error(`Cross Clan War: Error message: ${errorMsg}`);
-                        if (error.stack) {
-                            console.error(`Cross Clan War: Error stack:`, error.stack);
-                        }
+                        console.error(`Cross Clan War: Error attacking slot ${slotId}:`, error);
                     }
                 }
-
-                // Always continue to next target, regardless of success or failure
                 if (i < myTargets.length - 1) {
-                    if (attackSuccess) {
-                        console.log(`Cross Clan War: Attack ${i + 1} completed, proceeding to next target...`);
-                    } else {
-                        console.log(`Cross Clan War: Attack ${i + 1} failed, but continuing to next target...`);
-                    }
-                    // Add delay before next attack
                     await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
-                } else {
-                    // Last target
-                    if (attackSuccess) {
-                        console.log(`Cross Clan War: Final attack completed`);
-                    } else {
-                        console.log(`Cross Clan War: Final attack failed`);
-                    }
                 }
             }
 
-            console.log(`Cross Clan War: ===== All attacks completed =====`);
-            console.log(`Cross Clan War: Total attempts: ${this.attacksCompleted}, Victories: ${this.victories}, Skipped: ${skippedCount}`);
+            console.log(`Cross Clan War: Done — ${this.victories}/${this.attacksCompleted} wins, ${skippedCount} skipped`);
             let summary = `Completed ${this.victories}/${this.attacksCompleted} attacks`;
-            if (skippedCount > 0) {
-                summary += ` (${skippedCount} skipped)`;
-            }
+            if (skippedCount > 0) summary += ` (${skippedCount} skipped)`;
             this.end(summary);
         }
 
         this.attackSlot = async function(slotId, target, enemySlot) {
             let battleData = null;
             let battleResult = null;
-            
+
             try {
-                console.log(`Cross Clan War: [attackSlot] Starting attack on slot ${slotId}`);
-                console.log(`Cross Clan War: [attackSlot] Target data:`, target);
-                
-                // Verify slot is available
                 if (enemySlot) {
                     if (enemySlot.status !== "ready" || enemySlot.attackerId !== null) {
                         throw new Error(`Slot ${slotId} is not available for attack (status: ${enemySlot.status}, attackerId: ${enemySlot.attackerId})`);
                     }
-
-                    // Check if any units are clearly dead (more lenient check)
-                    // Only skip if we can definitively see dead units
-                    const team = enemySlot.team || {};
-                    const teamValues = Object.values(team);
-                    
-                    if (teamValues.length > 0) {
-                        // Check if any unit is explicitly marked as dead
-                        const hasDeadUnits = teamValues.some(unit => {
-                            // Only consider dead if state exists and explicitly says isDead === true
-                            return unit && unit.state && unit.state.isDead === true;
-                        });
-
-                        if (hasDeadUnits) {
-                            console.warn(`Cross Clan War: [attackSlot] Slot ${slotId} has dead units, skipping...`);
-                            throw new Error(`Slot ${slotId} has dead units - skipping`);
-                        }
+                    const teamValues = Object.values(enemySlot.team || {});
+                    if (teamValues.some(unit => unit?.state?.isDead === true)) {
+                        throw new Error(`Slot ${slotId} has dead units - skipping`);
                     }
                 }
 
-                // Determine battle type
                 let battleType = null;
-                if (enemySlot && enemySlot.team) {
-                    const team = enemySlot.team;
-                    for (const unit of Object.values(team)) {
-                        if (unit.type === "hero") {
-                            battleType = "hero";
-                            break;
-                        } else if (unit.type === "titan") {
-                            battleType = "titan";
-                            break;
-                        }
+                if (enemySlot?.team) {
+                    for (const unit of Object.values(enemySlot.team)) {
+                        if (unit.type === "hero") { battleType = "hero"; break; }
+                        if (unit.type === "titan") { battleType = "titan"; break; }
                     }
                 }
-
-                // Fallback: use slot ID to guess (lower IDs are usually hero battles)
                 if (!battleType) {
-                    const slotNum = parseInt(slotId);
-                    battleType = slotNum <= 16 ? "hero" : "titan";
-                    console.warn(`Cross Clan War: [attackSlot] Could not determine battle type from enemySlot, using slot ID heuristic: ${battleType}`);
+                    battleType = parseInt(slotId, 10) <= 16 ? "hero" : "titan";
                 }
 
-                console.log(`Cross Clan War: [attackSlot] Battle type: ${battleType}, teamIndex: ${target.teamIndex}`);
-
-                // Get team configuration
                 let teamConfig;
                 try {
                     teamConfig = this.getTeamConfiguration(target.teamIndex, battleType);
-                    console.log(`Cross Clan War: [attackSlot] Team config obtained:`, {
-                        type: teamConfig.type,
-                        heroes: teamConfig.heroes || teamConfig.titans,
-                        pet: teamConfig.pet,
-                        favorKeys: teamConfig.favor ? Object.keys(teamConfig.favor).length : 0
-                    });
                 } catch (error) {
-                    console.error(`Cross Clan War: [attackSlot] Error getting team configuration:`, error);
                     throw new Error(`Failed to get team configuration: ${error.message}`);
                 }
-                
-                // Start battle
+
                 try {
-                    console.log(`Cross Clan War: [attackSlot] Starting battle...`);
                     battleData = await this.startBattle(parseInt(slotId), teamConfig, battleType);
-                    console.log(`Cross Clan War: [attackSlot] Battle started successfully`);
                 } catch (error) {
-                    console.error(`Cross Clan War: [attackSlot] Error starting battle:`, error);
                     throw new Error(`Failed to start battle: ${error.message}`);
                 }
-                
-                // Calculate battle result
+
                 try {
-                    console.log(`Cross Clan War: [attackSlot] Calculating battle result...`);
                     battleResult = await this.calculateBattleResult(battleData, battleType);
-                    console.log(`Cross Clan War: [attackSlot] Battle result: ${battleResult.win ? 'Victory' : 'Defeat'}`);
                 } catch (error) {
-                    console.error(`Cross Clan War: [attackSlot] Error calculating battle result:`, error);
-                    // If battle was started but calculation failed, we should still try to end it
-                    // But for now, just throw the error and let the caller handle it
                     throw new Error(`Failed to calculate battle result: ${error.message}`);
                 }
 
-                // AutoFix ext needs live Scheduler battleLog; Auto Daily Calc-only salvages locally.
                 if (isHwhAutoFixEnabled() && !battleResult.win && battleData) {
                     const salvaged = await salvageWithHwhFixBattle(battleData, {
                         mode: 'pvp',
@@ -7002,28 +6693,19 @@ async function executeGetDailyBonus() {
                             progress: salvaged.progress,
                             battleData,
                         };
-                        console.log(`Cross Clan War: [attackSlot] AutoFix salvaged win for slot ${slotId}`);
+                        console.log(`Cross Clan War: AutoFix salvaged win for slot ${slotId}`);
                     }
                 }
-                
-                // End battle
+
                 try {
-                    console.log(`Cross Clan War: [attackSlot] Ending battle...`);
                     await this.endBattle(parseInt(slotId), battleResult);
-                    console.log(`Cross Clan War: [attackSlot] Battle ended successfully`);
                 } catch (error) {
-                    console.error(`Cross Clan War: [attackSlot] Error ending battle:`, error);
-                    // Even if ending fails, the battle was attempted, so we consider it an error but continue
                     throw new Error(`Failed to end battle: ${error.message}`);
                 }
 
-                console.log(`Cross Clan War: [attackSlot] ✓ Slot ${slotId} attack completed: ${battleResult.win ? 'Victory' : 'Defeat'}`);
+                console.log(`Cross Clan War: Slot ${slotId} ${battleResult.win ? 'WIN' : 'LOSS'}`);
             } catch (error) {
-                console.error(`Cross Clan War: [attackSlot] ✗ Error in attackSlot for slot ${slotId}:`, error);
-                if (error.stack) {
-                    console.error(`Cross Clan War: [attackSlot] Error stack:`, error.stack);
-                }
-                // Always re-throw to ensure calling function knows about the failure
+                console.error(`Cross Clan War: attackSlot ${slotId} failed:`, error);
                 throw error;
             }
         }
@@ -7051,115 +6733,47 @@ async function executeGetDailyBonus() {
                 const heroes = team.slice(0, 5);
                 const pet = team[5];
 
-                // Get favor for this team
-                // Favor structure: favorData.crossClanDefence_heroes is a flat object
-                // where keys are hero IDs (as numbers or strings) and values are pet IDs
-                // Example: {1: 6006, 9: 6007, 13: 6002, 16: 6004, ...}
-                const crossClanDefenceFavor = favorData.crossClanDefence_heroes || {};
+                // favorData.crossClanDefence_heroes: flat {heroId: petId} or nested {teamIndex: favorObj}
+                const rawFavor = favorData?.crossClanDefence_heroes || {};
                 let favor = {};
-                
-                console.log(`Cross Clan War: Getting favor for teamIndex ${teamIndex}`);
-                console.log(`Cross Clan War: crossClanDefenceFavor structure:`, crossClanDefenceFavor);
-                console.log(`Cross Clan War: Team heroes:`, heroes);
-                
-                // Build favor object by looking up each hero in the flat favor structure
-                if (crossClanDefenceFavor && typeof crossClanDefenceFavor === 'object' && !Array.isArray(crossClanDefenceFavor)) {
-                    // Check if it's a nested structure (team index -> favor object) or flat (hero ID -> pet ID)
-                    // If the first hero ID exists as a key, it's a flat structure
-                    const firstHeroId = heroes[0];
-                    const isFlatStructure = firstHeroId !== undefined && 
-                                           (crossClanDefenceFavor[firstHeroId] !== undefined || 
-                                            crossClanDefenceFavor[String(firstHeroId)] !== undefined);
-                    
-                    if (isFlatStructure) {
-                        // Flat structure: hero ID -> pet ID
-                        heroes.forEach(heroId => {
-                            // Try both number and string key
-                            const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
-                            if (petId !== undefined && typeof petId === 'number') {
-                                // Favor object uses hero IDs as string keys
-                                favor[String(heroId)] = petId;
-                            }
-                        });
-                        console.log(`Cross Clan War: Built favor from flat structure:`, favor);
-                    } else {
-                        // Nested structure: team index -> favor object
-                        // Try numeric index first
-                        if (crossClanDefenceFavor[teamIndex] !== undefined) {
-                            const favorValue = crossClanDefenceFavor[teamIndex];
-                            if (favorValue && typeof favorValue === 'object' && !Array.isArray(favorValue)) {
-                                favor = favorValue;
-                                console.log(`Cross Clan War: Got favor from nested structure at index ${teamIndex}:`, favor);
-                            } else {
-                                console.warn(`Cross Clan War: Favor at index ${teamIndex} is not an object (got ${typeof favorValue}: ${favorValue}), building from flat structure`);
-                                // Fallback: try to build from flat structure
-                                heroes.forEach(heroId => {
-                                    const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
-                                    if (petId !== undefined && typeof petId === 'number') {
-                                        favor[String(heroId)] = petId;
-                                    }
-                                });
-                            }
-                        } else {
-                            // Try string key
-                            const stringKey = String(teamIndex);
-                            if (crossClanDefenceFavor[stringKey] !== undefined) {
-                                const favorValue = crossClanDefenceFavor[stringKey];
-                                if (favorValue && typeof favorValue === 'object' && !Array.isArray(favorValue)) {
-                                    favor = favorValue;
-                                    console.log(`Cross Clan War: Got favor from nested structure at string key "${stringKey}":`, favor);
-                                } else {
-                                    console.warn(`Cross Clan War: Favor at string key "${stringKey}" is not an object, building from flat structure`);
-                                    // Fallback: try to build from flat structure
-                                    heroes.forEach(heroId => {
-                                        const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
-                                        if (petId !== undefined && typeof petId === 'number') {
-                                            favor[String(heroId)] = petId;
-                                        }
-                                    });
-                                }
-                            } else {
-                                console.log(`Cross Clan War: No favor found at index ${teamIndex}, building from flat structure`);
-                                // Build from flat structure as fallback
-                                heroes.forEach(heroId => {
-                                    const petId = crossClanDefenceFavor[heroId] || crossClanDefenceFavor[String(heroId)];
-                                    if (petId !== undefined && typeof petId === 'number') {
-                                        favor[String(heroId)] = petId;
-                                    }
-                                });
-                            }
-                        }
+                const favorFromFlat = () => {
+                    const out = {};
+                    for (const heroId of heroes) {
+                        const petId = rawFavor[heroId] ?? rawFavor[String(heroId)];
+                        if (typeof petId === 'number') out[String(heroId)] = petId;
                     }
-                } else {
-                    console.warn(`Cross Clan War: crossClanDefenceFavor is not a valid object, using empty favor`);
+                    return out;
+                };
+                if (rawFavor && typeof rawFavor === 'object' && !Array.isArray(rawFavor)) {
+                    const firstHeroId = heroes[0];
+                    const isFlat = firstHeroId != null
+                        && (rawFavor[firstHeroId] !== undefined || rawFavor[String(firstHeroId)] !== undefined);
+                    if (isFlat) {
+                        favor = favorFromFlat();
+                    } else {
+                        const nested = rawFavor[teamIndex] ?? rawFavor[String(teamIndex)];
+                        favor = (nested && typeof nested === 'object' && !Array.isArray(nested))
+                            ? nested
+                            : favorFromFlat();
+                    }
                 }
-                
-                // Validate favor is an object (hero IDs as string keys, pet IDs as values)
-                if (typeof favor !== 'object' || Array.isArray(favor)) {
-                    console.warn(`Cross Clan War: Invalid favor structure after processing, using empty object. Got:`, favor, `(type: ${typeof favor})`);
-                    favor = {};
-                }
-                
-                console.log(`Cross Clan War: Final favor object:`, favor);
+                if (typeof favor !== 'object' || Array.isArray(favor)) favor = {};
 
-                // Get banner
                 let banner = 1;
                 try {
                     const userInfo = getUserInfo();
-                    if (userInfo && userInfo.banner) {
-                        banner = typeof userInfo.banner === 'number' ? userInfo.banner : 
-                                 Array.isArray(userInfo.banner) ? userInfo.banner[0] : 1;
+                    if (userInfo?.banner != null) {
+                        banner = typeof userInfo.banner === 'number' ? userInfo.banner
+                            : Array.isArray(userInfo.banner) ? userInfo.banner[0] : 1;
                     }
-                } catch (e) {
-                    console.log('Could not get banner from userInfo, using default');
-                }
+                } catch (_) { /* default banner */ }
 
                 return {
                     type: 'hero',
-                    heroes: heroes,
-                    pet: pet,
-                    favor: favor,
-                    banner: banner
+                    heroes,
+                    pet,
+                    favor,
+                    banner
                 };
             } else {
                 const crossClanDefenceTitans = teamData.crossClanDefence_titans || [];
@@ -7303,11 +6917,7 @@ async function executeGetDailyBonus() {
         }
     }
 
-    /**
-     * ToE (Titan Arena) with elemental attack-team switching when stuck.
-     * Overrides stock HWHClasses.executeTitanArena (Auto Daily only — does not edit HeroWarsHelper.user.js).
-     * Counters: Fire>Earth>Water>Fire, Light↔Dark; Distortion beaten by classic elements.
-     */
+    /** ToE with elemental counter switching when stuck (overrides HWHClasses.executeTitanArena). */
     function executeTitanArena(resolve, reject) {
         let titan_arena = [];
         let finishListBattle = [];
@@ -7627,7 +7237,6 @@ async function executeGetDailyBonus() {
             if (resultBattle.result.win || !attempts) {
                 let { progress, result } = resultBattle;
                 const battleData = resultBattle.battleData;
-                // AutoFix ext needs a live Scheduler battleLog; Auto Daily Calc-only uses local FixBattle.
                 if (isHwhAutoFixEnabled() && !result?.win && battleData) {
                     const salvaged = await salvageWithHwhFixBattle(battleData, {
                         mode: 'pvp',
@@ -8067,7 +7676,7 @@ async function executeGetDailyBonus() {
         }
     }
 
-    /** Migrate legacy single "autoBattle" checkbox into the split battle options. */
+    /** Migrate legacy single `autoBattle` checkbox into split battle options. */
     function migrateAutoBattleExecutionState(state) {
         if (!state || !state.autoBattle) return state;
         AUTO_BATTLE_TASK_IDS.forEach((id) => { state[id] = true; });
@@ -8129,21 +7738,11 @@ async function executeGetDailyBonus() {
         };
     }
 
-    function getDefaultBattleSimSettingsState() {
-        return {
-            // Pre-fight demoBattles maxUpgrade for our attack team (Arena / GA / Guild War).
-            attackMaxPower: true,
-        };
-    }
-
     function normalizeBattleSimSettingsState(state = {}) {
-        return {
-            // Default on (legacy behavior). Explicit false = current hero/titan power.
-            attackMaxPower: state.attackMaxPower !== false,
-        };
+        // Default on: demoBattles maxUpgrade for our attack team. Explicit false = current power.
+        return { attackMaxPower: state.attackMaxPower !== false };
     }
 
-    /** demoBattles `maxUpgrade` for our attack team: true = max power, false = current power. */
     function getSimAttackMaxUpgrade() {
         return battleSimSettingsState.attackMaxPower !== false;
     }
@@ -8152,10 +7751,7 @@ async function executeGetDailyBonus() {
         othersSettingsState.EPIC_BRAWL = eventSettingsState.epicBrawlEnabled !== false;
     }
 
-    /**
-     * Detect Cosmic Battle (epic_brawl) live status via refillable 52 + team slots.
-     * Optionally confirms with epicBrawl_getWinStreak.
-     */
+    /** Cosmic Battle live status via refillable 52 + team slots (+ optional getWinStreak). */
     async function checkEpicBrawlStatus(options = {}) {
         const { Caller } = window;
         const skipWinStreak = options.skipWinStreak === true;
@@ -8191,7 +7787,6 @@ async function executeGetDailyBonus() {
             }
         }
 
-        epicBrawlStatusCache = status;
         return status;
     }
 
@@ -8286,13 +7881,7 @@ async function executeGetDailyBonus() {
         let coins = 0;
         let streak = { progress: 0, nextStage: 0 };
 
-        /**
-         * Emerald-safe flow (refillable 53 = reroll):
-         * - Always try startBattle against the current server target (no getEnemy).
-         * - Call getEnemy ONLY when startBattle returns "no target" (first free match).
-         * - Never call getEnemy while a target may still exist (costs ~50 emeralds).
-         * - Do NOT prefetch getEnemy after endBattle — next startBattle will fetch only if needed.
-         */
+        // Emerald-safe: only getEnemy when startBattle says "no target" (prefetch costs ~50 emeralds).
         async function startEpicBrawlBattle(teamArgs) {
             try {
                 return await Caller.send({ name: 'epicBrawl_startBattle', args: teamArgs });
@@ -8353,8 +7942,6 @@ async function executeGetDailyBonus() {
             progress = alignEpicBrawlProgressSeed(battle, progress);
             let calcWin = !!result.win;
 
-            // AutoFix ext hooks endBattle using a live Scheduler battleLog Auto Daily never fills,
-            // so salvage here with HWH BestOrWinFixBattle (uses Calc battleLogs) before send.
             if (useAutoFix && !calcWin) {
                 const salvaged = await salvageWithHwhFixBattle(battle, {
                     mode: 'pvp',
@@ -8868,11 +8455,7 @@ async function executeGetDailyBonus() {
         }
     }
 
-    /**
-     * HWH ScriptMenu: button.parentElement is a scriptMenu_btnRow.
-     * Passing that row into addButton/insertBefore merges into existing groups
-     * (e.g. Action Replay). Always create standalone rows and move the row.
-     */
+    /** Prefer the scriptMenu_btnRow wrapper (do not pass the row into addButton). */
     function getMenuButtonRow(el) {
         if (!el) return null;
         if (el.classList?.contains('scriptMenu_btnRow')) return el;
@@ -9302,7 +8885,6 @@ async function executeGetDailyBonus() {
         console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
 
-        // Stealther 1.012 is the default dungeon algorithm for all HWH dungeon starts.
         installDefaultDungeonAlgorithm();
         keepDefaultDungeonAlgorithmInstalled();
         
