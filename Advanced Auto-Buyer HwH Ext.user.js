@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Advanced Auto-Buyer HwH Ext
 // @namespace    HeroWarsHelper.AdvancedAutoBuyer
-// @version      1.6
-// @description  Multi-column UI with Import/Export. Buys items based on names.
+// @version      1.8
+// @description  Simple all-shops settings with slot ID textboxes. Buys by fixed slot IDs.
 // @author       YourName & Coding Partner
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
@@ -30,9 +30,18 @@
         const STORAGE_PREFIX = 'advAutoBuyer_';
 
         // --- DATA STRUCTURES & HELPERS ---
-        const SHOPS = [ { id: 1, name: 'Town Shop' }, { id: 4, name: 'Arena Shop' }, { id: 5, name: 'Grand Arena Shop' }, { id: 6, name: 'Tower Shop' }, { id: 8, name: 'Soul Shop' }, { id: 9, name: 'Friendship Shop' }, { id: 10, name: 'Outland Shop' }, { id: 13, name: 'Titan Artifact Shop' }, { id: 'SECRET_WEALTH', name: 'Secret Wealth Shop' } ];
-        const ITEMS_DATABASE = window.AUTO_BUYER_ITEM_DATABASE || {};
-        
+        const SHOPS = [
+            { id: 1, name: 'Town Shop' },
+            { id: 4, name: 'Arena Shop' },
+            { id: 5, name: 'Grand Arena Shop' },
+            { id: 6, name: 'Tower Shop' },
+            { id: 8, name: 'Soul Shop' },
+            { id: 9, name: 'Friendship Shop' },
+            { id: 10, name: 'Outland Shop' },
+            { id: 13, name: 'Titan Artifact Shop' },
+            { id: 'SECRET_WEALTH', name: 'Secret Wealth Shop' }
+        ];
+
         // Helper function to find Secret Wealth Shop by pattern (ends with 0026)
         function findSecretWealthShop(shopsData) {
             for (const shopId in shopsData) {
@@ -52,21 +61,38 @@
             }
             return null;
         }
-        
+
         // Helper function to get storage key for Secret Wealth Shop (consistent regardless of actual ID)
         function getSecretWealthStorageKey() {
             return STORAGE_PREFIX + 'SECRET_WEALTH';
         }
 
-        // --- NEW: Import/Export Functions ---
+        function getShopStorageKey(shopId) {
+            return shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
+        }
+
+        function parseSlotIds(value) {
+            return value.split(',')
+                .map(s => s.trim())
+                .filter(s => s && !isNaN(parseInt(s)))
+                .map(s => parseInt(s));
+        }
+
+        // --- Import/Export Functions ---
         function exportSettings() {
             const settingsToExport = {};
             SHOPS.forEach(shop => {
-                const key = shop.id === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shop.id;
-                const data = localStorage.getItem(key);
-                if (data) {
-                    settingsToExport[key] = JSON.parse(data);
-                }
+                const key = getShopStorageKey(shop.id);
+                [key, key + '_slots', key + '_amount'].forEach(storageKey => {
+                    const data = localStorage.getItem(storageKey);
+                    if (data !== null) {
+                        try {
+                            settingsToExport[storageKey] = JSON.parse(data);
+                        } catch (e) {
+                            settingsToExport[storageKey] = data;
+                        }
+                    }
+                });
             });
 
             if (Object.keys(settingsToExport).length === 0) {
@@ -103,13 +129,14 @@
 
                         Object.keys(importedSettings).forEach(key => {
                             if (key.startsWith(STORAGE_PREFIX)) {
-                                localStorage.setItem(key, JSON.stringify(importedSettings[key]));
+                                const value = importedSettings[key];
+                                localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
                                 settingsApplied++;
                             }
                         });
 
                         if (settingsApplied > 0) {
-                            alert(`Import successful! ${settingsApplied} shop lists were loaded.\nPlease reopen the settings to see the changes.`);
+                            alert(`Import successful! ${settingsApplied} setting(s) loaded.\nPlease reopen the settings to see the changes.`);
                         } else {
                             alert("Import failed: The file does not contain valid settings.");
                         }
@@ -123,249 +150,141 @@
             input.click();
         }
 
-        // --- UI LOGIC (Heavily modified for multi-column) ---
+        // --- UI LOGIC: one list of all shops, each with a slot-ID textbox ---
+        // IMPORTANT: never wipe .PopUp_Container — that destroys HWH's shared popup
+        // (msgText / buttons / .PopUp_custom) and breaks every later menu popup.
+        // Inject into popup.custom only, then clearCustomBlock() after close.
         async function openSettingsPopup() {
             try {
                 const popupContent = document.createElement('div');
-                popupContent.style.cssText = 'display: flex; flex-direction: column; height: 60vh; color: #fce1ac; text-shadow: 0 0 2px black;';
+                popupContent.style.cssText = 'display: flex; flex-direction: column; max-height: 70vh; color: #fce1ac; text-shadow: 0 0 2px black; min-width: 420px;';
 
                 const headerContainer = document.createElement('div');
-                headerContainer.style.cssText = 'display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ce9767; margin-bottom: 10px;';
+                headerContainer.style.cssText = 'display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ce9767; margin-bottom: 10px; padding-bottom: 8px;';
 
-                const tabContainer = document.createElement('div');
-                tabContainer.style.cssText = 'display: flex; flex-wrap: wrap;';
+                const title = document.createElement('div');
+                title.textContent = 'Auto-Buyer Slots';
+                title.style.cssText = 'font-weight: bold; color: #ffcc66;';
 
-                // --- NEW: Import/Export Button Container ---
                 const buttonContainer = document.createElement('div');
-                const exportBtn = document.createElement('button');
-                exportBtn.textContent = 'Export';
-                exportBtn.style.cssText = 'padding: 4px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin-left: 5px;';
-                exportBtn.onclick = exportSettings;
+                const btnStyle = 'padding: 4px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin-left: 5px;';
 
                 const importBtn = document.createElement('button');
                 importBtn.textContent = 'Import';
-                importBtn.style.cssText = 'padding: 4px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin-left: 5px;';
+                importBtn.style.cssText = btnStyle;
                 importBtn.onclick = importSettings;
+
+                const exportBtn = document.createElement('button');
+                exportBtn.textContent = 'Export';
+                exportBtn.style.cssText = btnStyle;
+                exportBtn.onclick = exportSettings;
 
                 buttonContainer.appendChild(importBtn);
                 buttonContainer.appendChild(exportBtn);
-                headerContainer.appendChild(tabContainer);
+                headerContainer.appendChild(title);
                 headerContainer.appendChild(buttonContainer);
 
-                // --- MODIFIED: Main content area is now a flex container for columns ---
-                const contentContainer = document.createElement('div');
-                contentContainer.style.cssText = 'flex-grow: 1; overflow-y: auto; padding: 5px; display: flex; flex-direction: row; align-items: flex-start;';
+                const hint = document.createElement('p');
+                hint.textContent = 'Enter comma-separated slot IDs next to each shop (e.g. 6, 3, 24). Saved automatically.';
+                hint.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 0 0 10px 0; opacity: 0.9;';
 
-                popupContent.appendChild(headerContainer);
-                popupContent.appendChild(contentContainer);
+                const listContainer = document.createElement('div');
+                listContainer.style.cssText = 'flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;';
 
-                const loadShopContent = async (shopId) => {
-                    contentContainer.innerHTML = ''; // Clear previous content
-                    
-                    // Handle Secret Wealth Shop - need to fetch actual shop ID
-                    let actualShopId = shopId;
-                    if (shopId === 'SECRET_WEALTH') {
-                        try {
-                            const caller = new Caller(['shopGetAll']);
-                            await caller.send();
-                            const shopsData = caller.result('shopGetAll');
-                            const secretShop = findSecretWealthShop(shopsData);
-                            if (secretShop) {
-                                actualShopId = secretShop.id;
-                            } else {
-                                contentContainer.innerHTML = '<p style="color: #ff6666;">Secret Wealth Shop not found. It may not be available at this time.</p>';
-                                return;
-                            }
-                        } catch (error) {
-                            contentContainer.innerHTML = `<p style="color: #ff6666;">Error loading Secret Wealth Shop: ${error.message}</p>`;
-                            return;
-                        }
-                    }
-                    
-                    const items = ITEMS_DATABASE[actualShopId] || ITEMS_DATABASE[shopId] || [];
-                    const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                    const savedItems = JSON.parse(localStorage.getItem(storageKey) || '{}');
+                const inputStyle = 'flex: 1; min-width: 160px; padding: 6px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                const labelStyle = 'width: 160px; flex-shrink: 0; color: #ffcc66;';
+
+                SHOPS.forEach(shop => {
+                    const storageKey = getShopStorageKey(shop.id);
                     const savedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
-                    const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '9999');
 
-                    // --- NEW: Fixed Slot ID Section ---
-                    const slotSection = document.createElement('div');
-                    slotSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
-                    
-                    const slotTitle = document.createElement('h3');
-                    slotTitle.textContent = 'Fixed Slot IDs';
-                    slotTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
-                    slotSection.appendChild(slotTitle);
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display: flex; align-items: center; gap: 10px;';
 
-                    const slotDescription = document.createElement('p');
-                    slotDescription.textContent = 'Enter slot IDs (comma-separated) to purchase specific slots, e.g., "6, 3"';
-                    slotDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
-                    slotSection.appendChild(slotDescription);
+                    const label = document.createElement('label');
+                    label.textContent = shop.name;
+                    label.style.cssText = labelStyle;
 
-                    const slotInputContainer = document.createElement('div');
-                    slotInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
-                    
                     const slotInput = document.createElement('input');
                     slotInput.type = 'text';
-                    slotInput.placeholder = 'e.g., 6, 3, 24';
+                    slotInput.placeholder = 'slot IDs, e.g. 6, 3';
                     slotInput.value = savedSlotIds.join(', ');
-                    slotInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
-                    
-                    const saveSlotBtn = document.createElement('button');
-                    saveSlotBtn.textContent = 'Save Slots';
-                    saveSlotBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
-                    saveSlotBtn.onclick = () => {
-                        const slotIds = slotInput.value.split(',').map(s => s.trim()).filter(s => s && !isNaN(parseInt(s))).map(s => parseInt(s));
-                        const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                        localStorage.setItem(storageKey + '_slots', JSON.stringify(slotIds));
-                        alert(`Saved ${slotIds.length} slot ID(s): ${slotIds.join(', ')}`);
+                    slotInput.style.cssText = inputStyle;
+                    slotInput.onchange = () => {
+                        localStorage.setItem(storageKey + '_slots', JSON.stringify(parseSlotIds(slotInput.value)));
                     };
-                    
-                    slotInputContainer.appendChild(slotInput);
-                    slotInputContainer.appendChild(saveSlotBtn);
-                    slotSection.appendChild(slotInputContainer);
-                    contentContainer.appendChild(slotSection);
+                    slotInput.onblur = slotInput.onchange;
 
-                    // --- NEW: Bulk Purchase Amount Section (only for Titan Artifact Shop) ---
-                    if (actualShopId === 13) {
-                        const amountSection = document.createElement('div');
-                        amountSection.style.cssText = 'margin-bottom: 20px; padding: 10px; border: 1px solid #ce9767; border-radius: 5px;';
-                        
-                        const amountTitle = document.createElement('h3');
-                        amountTitle.textContent = 'Bulk Purchase Amount';
-                        amountTitle.style.cssText = 'color: #ffcc66; margin: 0 0 10px 0; border-bottom: 1px solid #ce9767; padding-bottom: 5px;';
-                        amountSection.appendChild(amountTitle);
+                    row.appendChild(label);
+                    row.appendChild(slotInput);
 
-                        const amountDescription = document.createElement('p');
-                        amountDescription.textContent = 'Enter the number of items to purchase in bulk (e.g., 300). The API will enforce the maximum available.';
-                        amountDescription.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 5px 0;';
-                        amountSection.appendChild(amountDescription);
-
-                        const amountInputContainer = document.createElement('div');
-                        amountInputContainer.style.cssText = 'display: flex; align-items: center; gap: 10px;';
-                        
+                    // Titan Artifact Shop: bulk amount next to slots
+                    if (shop.id === 13) {
+                        const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '9999');
                         const amountInput = document.createElement('input');
                         amountInput.type = 'number';
                         amountInput.min = '1';
-                        amountInput.placeholder = 'e.g., 300';
+                        amountInput.title = 'Bulk purchase amount';
+                        amountInput.placeholder = 'qty';
                         amountInput.value = savedAmount;
-                        amountInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
-                        
-                        const saveAmountBtn = document.createElement('button');
-                        saveAmountBtn.textContent = 'Save Amount';
-                        saveAmountBtn.style.cssText = 'padding: 5px 10px; border: 1px solid #ce9767; background: #5c4b3a; color: #fce1ac; cursor: pointer;';
-                        saveAmountBtn.onclick = () => {
-                            const amount = parseInt(amountInput.value) || 9999;
-                            if (amount < 1) {
-                                alert('Amount must be at least 1');
-                                return;
-                            }
-                            const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                            localStorage.setItem(storageKey + '_amount', amount.toString());
-                            alert(`Saved bulk purchase amount: ${amount}`);
+                        amountInput.style.cssText = 'width: 72px; padding: 6px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                        amountInput.onchange = () => {
+                            const amount = Math.max(1, parseInt(amountInput.value) || 9999);
+                            amountInput.value = amount;
+                            localStorage.setItem(storageKey + '_amount', String(amount));
                         };
-                        
-                        amountInputContainer.appendChild(amountInput);
-                        amountInputContainer.appendChild(saveAmountBtn);
-                        amountSection.appendChild(amountInputContainer);
-                        contentContainer.appendChild(amountSection);
+                        amountInput.onblur = amountInput.onchange;
+                        row.appendChild(amountInput);
                     }
 
-                    if (items.length === 0) {
-                        const noItemsMsg = document.createElement('p');
-                        noItemsMsg.textContent = 'No items configured for this shop yet.';
-                        noItemsMsg.style.cssText = 'color: #fce1ac; margin-top: 10px;';
-                        contentContainer.appendChild(noItemsMsg);
-                        return;
-                    }
-
-                    // --- NEW: Column and Title generation logic ---
-                    let currentColumn = document.createElement('div');
-                    currentColumn.style.cssText = 'display: flex; flex-direction: column; margin-right: 20px;';
-                    contentContainer.appendChild(currentColumn);
-
-                    items.forEach(item => {
-                        // Handle special types: title and newColumn
-                        if (item.type === 'title' || item.type === 'newColumn') {
-                            if (item.type === 'newColumn') {
-                                currentColumn = document.createElement('div');
-                                currentColumn.style.cssText = 'display: flex; flex-direction: column; margin-right: 20px;';
-                                contentContainer.appendChild(currentColumn);
-                            }
-                            const title = document.createElement('h3');
-                            title.textContent = item.name;
-                            title.style.cssText = 'color: #ffcc66; margin: 10px 0 5px 0; border-bottom: 1px solid #ce9767; padding-bottom: 3px;';
-                            currentColumn.appendChild(title);
-                            return; // Continue to next item
-                        }
-
-                        // Handle regular items
-                        const itemDiv = document.createElement('div');
-                        itemDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px;';
-                        const checkbox = document.createElement('input');
-                        checkbox.type = 'checkbox';
-                        checkbox.id = `item-${actualShopId}-${item.name.replace(/\s/g, '')}`;
-                        checkbox.checked = savedItems[item.name] || false;
-                        checkbox.onchange = () => {
-                            savedItems[item.name] = checkbox.checked;
-                            const storageKey = shopId === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shopId;
-                            localStorage.setItem(storageKey, JSON.stringify(savedItems));
-                        };
-                        const label = document.createElement('label');
-                        label.setAttribute('for', checkbox.id);
-                        label.textContent = item.name;
-                        label.style.marginLeft = '10px';
-                        itemDiv.appendChild(checkbox);
-                        itemDiv.appendChild(label);
-                        currentColumn.appendChild(itemDiv);
-                    });
-                };
-
-                SHOPS.forEach((shop, index) => {
-                    const tab = document.createElement('button');
-                    tab.textContent = shop.name;
-                    tab.style.cssText = 'padding: 8px 12px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac; cursor: pointer; margin: 2px;';
-                    tab.onclick = () => {
-                        Array.from(tabContainer.children).forEach(t => t.style.background = '#3a2e24');
-                        tab.style.background = '#5c4b3a';
-                        loadShopContent(shop.id);
-                    };
-                    tabContainer.appendChild(tab);
-                    if (index === 0) {
-                        setTimeout(() => tab.click(), 0);
-                    }
+                    listContainer.appendChild(row);
                 });
 
-                // Use confirm with proper async handling (simplified like HWHhuntFragmentExt)
+                popupContent.appendChild(headerContainer);
+                popupContent.appendChild(hint);
+                popupContent.appendChild(listContainer);
+
                 const popupPromise = HWHFuncs.popup.confirm('', [{ msg: 'Close', result: true, isClose: true }]);
-                
-                // Wait a tick for popup to initialize, then replace content
                 await new Promise(resolve => setTimeout(resolve, 0));
-                
-                const popupBody = document.querySelector('.PopUp_Container');
-                if (popupBody) {
-                    // Clear and replace content (preserve the original close button in PopUp_buttons)
-                    popupBody.innerHTML = '';
-                    popupBody.appendChild(popupContent);
+
+                const customBlock = HWHFuncs.popup.custom || document.querySelector('.PopUp_custom');
+                if (customBlock) {
+                    customBlock.innerHTML = '';
+                    customBlock.appendChild(popupContent);
+                } else {
+                    console.error('Advanced Auto-Buyer: PopUp_custom not found; refusing to wipe PopUp_Container');
+                    if (HWHFuncs.popup.hide) HWHFuncs.popup.hide();
+                    return;
                 }
-                
-                // Wait for popup to close before returning
-                await popupPromise;
+
+                try {
+                    await popupPromise;
+                } finally {
+                    if (HWHFuncs.popup.clearCustomBlock) {
+                        HWHFuncs.popup.clearCustomBlock();
+                    } else if (customBlock) {
+                        customBlock.innerHTML = '';
+                    }
+                }
             } catch (error) {
                 console.error('Advanced Auto-Buyer: Popup error:', error);
                 HWHFuncs.setProgress(`Settings popup error: ${error.message}`, true);
+                try {
+                    if (HWHFuncs.popup.clearCustomBlock) HWHFuncs.popup.clearCustomBlock();
+                    if (HWHFuncs.popup.hide) HWHFuncs.popup.hide();
+                } catch (_) { /* ignore cleanup errors */ }
             }
         }
 
-        // --- ACTION LOGIC (Unchanged from v1.5) ---
+        // --- ACTION LOGIC ---
         async function runAutoBuy() {
-            console.log("--- Advanced Auto-Buyer RUNNING (v1.6 Name Logic) ---");
+            console.log("--- Advanced Auto-Buyer RUNNING (v1.7 Slot IDs) ---");
             HWHFuncs.setProgress("Auto-Buyer: Fetching data...");
             try {
                 const caller = new Caller(['shopGetAll']);
                 await caller.send();
                 const shopsData = caller.result('shopGetAll');
-                
+
                 // Find Secret Wealth Shop dynamically by pattern
                 const secretWealthShop = findSecretWealthShop(shopsData);
                 if (secretWealthShop) {
@@ -373,12 +292,12 @@
                 } else {
                     console.log("Secret Wealth Shop not found (no shop ID ending in 0026)");
                 }
-                
+
                 const callsToMake = [];
                 for (const shop of SHOPS) {
                     let shopId = shop.id;
                     let currentShopData = null;
-                    
+
                     // Handle Secret Wealth Shop dynamically
                     if (shopId === 'SECRET_WEALTH') {
                         if (!secretWealthShop) {
@@ -391,120 +310,77 @@
                         // Try both string and number format for shopId (API may return string IDs)
                         currentShopData = shopsData[shopId] || shopsData[String(shopId)] || shopsData[Number(shopId)];
                     }
-                    
+
                     if (!currentShopData || !currentShopData.slots) {
                         console.log(`Shop ${shop.name} (ID: ${shopId}): No shop data or slots found`);
                         continue;
                     }
-                    
-                    // Get storage key - use consistent key for Secret Wealth Shop
-                    const storageKey = shop.id === 'SECRET_WEALTH' ? getSecretWealthStorageKey() : STORAGE_PREFIX + shop.id;
-                    const shoppingList = JSON.parse(localStorage.getItem(storageKey) || '{}');
+
+                    const storageKey = getShopStorageKey(shop.id);
                     const fixedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
-                    
-                    const wantedNames = new Set();
-                    for(const name in shoppingList) { if(shoppingList[name] === true) { wantedNames.add(name); } }
-                    
-                    console.log(`Shop ${shop.name} (ID: ${shopId}): Found ${Object.keys(currentShopData.slots).length} slots, ${wantedNames.size} wanted items, ${fixedSlotIds.length} fixed slots`);
-                    
-                    // Check if we have anything to buy (names or fixed slots)
-                    if (wantedNames.size === 0 && fixedSlotIds.length === 0) {
-                        console.log(`Shop ${shop.name} (ID: ${shopId}): No items to buy (no checkboxes selected and no fixed slot IDs)`);
+
+                    console.log(`Shop ${shop.name} (ID: ${shopId}): Found ${Object.keys(currentShopData.slots).length} slots, ${fixedSlotIds.length} fixed slots`);
+
+                    if (fixedSlotIds.length === 0) {
                         continue;
                     }
-                    
+
                     for (const slot of Object.values(currentShopData.slots)) {
-                        // Don't check if item is available - submit API call even if not available
-                        // Skip only if slot data is completely missing
                         if (!slot) continue;
-                        
-                        let shouldBuy = false;
+
+                        if (!fixedSlotIds.includes(Number(slot.id)) && !fixedSlotIds.includes(slot.id)) continue;
+
                         let itemDisplayName = `Slot ${slot.id}`;
-                        
-                        // Check if this slot is in the fixed slot IDs list
-                        if (fixedSlotIds.includes(slot.id)) {
-                            shouldBuy = true;
-                            // Try to get item name for logging
-                            try {
-                                const rewardType = Object.keys(slot.reward)[0];
-                                const rewardId = Object.keys(slot.reward[rewardType])[0];
-                                let libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
-                                const translationKey = `LIB_${libTypeForTranslate}_NAME_${rewardId}`;
-                                itemDisplayName = cheats.translate(translationKey) || `Slot ${slot.id}`;
-                            } catch (e) {
-                                // Keep default slot ID if translation fails
-                            }
-                        }
-                        
-                        // Also check by name if not already matched
-                        if (!shouldBuy && wantedNames.size > 0) {
+                        try {
                             const rewardType = Object.keys(slot.reward)[0];
                             const rewardId = Object.keys(slot.reward[rewardType])[0];
-                            let libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
+                            const libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
                             const translationKey = `LIB_${libTypeForTranslate}_NAME_${rewardId}`;
-                            const itemName = cheats.translate(translationKey);
-                            if (wantedNames.has(itemName)) {
-                                shouldBuy = true;
-                                itemDisplayName = itemName;
-                            }
+                            itemDisplayName = cheats.translate(translationKey) || itemDisplayName;
+                        } catch (e) {
+                            // Keep default slot ID if translation fails
                         }
-                        
-                        if (shouldBuy) {
-                            // Use slot.cost if available, otherwise use empty object (API will handle validation)
-                            const slotCost = slot.cost || {};
-                            const currencyType = slotCost ? Object.keys(slotCost)[0] : null;
-                            
-                            // Support multiple payment types: gold, coin (standard shops), consumable, starmoney (Secret Wealth Shop)
-                            // If no cost, still submit the call (API will return error if needed)
-                            if (!slotCost || currencyType === 'gold' || currencyType === 'coin' || currencyType === 'consumable' || currencyType === 'starmoney') {
-                                // Convert cost values from strings to numbers if needed
-                                // The API sometimes returns string values but expects numbers in shopBuy
-                                const normalizedCost = {};
-                                if (slotCost) {
-                                    for (const costType in slotCost) {
-                                        if (typeof slotCost[costType] === 'object' && slotCost[costType] !== null) {
-                                            // For nested objects like coin: { "18": "12" }
-                                            normalizedCost[costType] = {};
-                                            for (const costKey in slotCost[costType]) {
-                                                const costValue = slotCost[costType][costKey];
-                                                // Convert string numbers to actual numbers
-                                                normalizedCost[costType][costKey] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
-                                            }
-                                        } else {
-                                            // For direct values like gold: "1000"
-                                            const costValue = slotCost[costType];
-                                            normalizedCost[costType] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
+
+                        // Use slot.cost if available, otherwise use empty object (API will handle validation)
+                        const slotCost = slot.cost || {};
+                        const currencyType = slotCost ? Object.keys(slotCost)[0] : null;
+
+                        // Support gold/coin (standard shops), consumable/starmoney (Secret Wealth)
+                        if (!slotCost || currencyType === 'gold' || currencyType === 'coin' || currencyType === 'consumable' || currencyType === 'starmoney') {
+                            const normalizedCost = {};
+                            if (slotCost) {
+                                for (const costType in slotCost) {
+                                    if (typeof slotCost[costType] === 'object' && slotCost[costType] !== null) {
+                                        normalizedCost[costType] = {};
+                                        for (const costKey in slotCost[costType]) {
+                                            const costValue = slotCost[costType][costKey];
+                                            normalizedCost[costType][costKey] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
                                         }
+                                    } else {
+                                        const costValue = slotCost[costType];
+                                        normalizedCost[costType] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
                                     }
                                 }
-                                
-                                // Build shopBuy arguments - use slot data or defaults
-                                const shopBuyArgs = { 
-                                    shopId: shopId, 
-                                    slot: slot.id, 
-                                    cost: normalizedCost, 
-                                    reward: slot.reward || {}
-                                };
-                                
-                                // Secret Wealth Shop (dynamic ID ending in 0026) - fixed purchases only (no amount parameter)
-                                // Titan Artifact Shop (shopId 13) - supports bulk purchases via amount parameter
-                                if (shopId === 13 && slot.staticShopMultiplePurchase === 1) {
-                                    // For Titan Artifact Shop, we can specify amount for bulk purchase
-                                    // Get the saved amount from localStorage, or use slot's maxAmount, or default to 9999
-                                    const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '0');
-                                    const maxAmount = savedAmount > 0 ? savedAmount : (slot.maxAmount || slot.maxPurchaseAmount || 9999);
-                                    shopBuyArgs.amount = maxAmount;
-                                }
-                                // For Secret Wealth Shop and other shops, don't include amount (fixed purchase)
-                                // Note: Secret Wealth Shop is identified by pattern matching (ends with 0026)
-                                
-                                // Store purchase info with item details for individual API calls
-                                callsToMake.push({ 
-                                    name: 'shopBuy', 
-                                    args: shopBuyArgs,
-                                    itemInfo: `- ${itemDisplayName} (Slot ${slot.id}) from ${shop.name}`
-                                });
                             }
+
+                            const shopBuyArgs = {
+                                shopId: shopId,
+                                slot: slot.id,
+                                cost: normalizedCost,
+                                reward: slot.reward || {}
+                            };
+
+                            // Titan Artifact Shop supports bulk amount
+                            if (shopId === 13 && slot.staticShopMultiplePurchase === 1) {
+                                const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '0');
+                                shopBuyArgs.amount = savedAmount > 0 ? savedAmount : (slot.maxAmount || slot.maxPurchaseAmount || 9999);
+                            }
+
+                            callsToMake.push({
+                                name: 'shopBuy',
+                                args: shopBuyArgs,
+                                itemInfo: `- ${itemDisplayName} (Slot ${slot.id}) from ${shop.name}`
+                            });
                         }
                     }
                 }
