@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.50
+// @version      3.5.51
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.50";
+    const EXTENSION_VERSION = "3.5.51";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -29,6 +29,7 @@
     /** Optional override when restarting a non-last door: `window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS`. */
     /** Max timer slots per battle sim: `window.HWH_DUNGEON_MAX_TIMER_TRIES` (0 = unlimited, Stealther default). */
     /** Elemental door re-sim attempts (1-20): `window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS` (default 10, Stealther 1.012). */
+    /** Per BattleCalc / Calc call timeout ms (5s-180s, default 60s): `window.HWH_BATTLE_CALC_TIMEOUT_MS`. */
 
     // ASCII-safe UI icons (avoids UTF-8 encoding issues in userscript managers)
     const UI_ICON = {
@@ -152,6 +153,27 @@
         } finally {
             clearTimeout(t);
         }
+    }
+
+    function getBattleCalcTimeoutMs() {
+        return Math.max(5000, Math.min(180000, Number(window.HWH_BATTLE_CALC_TIMEOUT_MS) || 60000));
+    }
+
+    /**
+     * Run cheats.BattleCalc as a Promise with a hard timeout.
+     * Prevents hung Calc callbacks from retaining dungeon/arena closures forever.
+     */
+    function runBattleCalc(battleCalcFn, battleData, battleType, timeoutMs) {
+        const ms = timeoutMs ?? getBattleCalcTimeoutMs();
+        return withTimeout(new Promise((resolve, reject) => {
+            try {
+                battleCalcFn(battleData, battleType, (result) => {
+                    resolve(result);
+                });
+            } catch (e) {
+                reject(e);
+            }
+        }), ms, `BattleCalc timed out after ${ms}ms`);
     }
 
     // --- QUEST DATA CACHE ---
@@ -340,21 +362,16 @@
             };
         }
 
-        function simulateBattle(battleData, battleType) {
-            return new Promise((resolveSim, rejectSim) => {
-                const data = structuredClone(battleData);
-                if (!data.progress) {
-                    data.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
-                }
-                try {
-                    BattleCalc(data, battleType, (result) => {
-                        if (result) resolveSim(result);
-                        else rejectSim(new Error('BattleCalc returned empty result'));
-                    });
-                } catch (e) {
-                    rejectSim(e);
-                }
-            });
+        async function simulateBattle(battleData, battleType) {
+            const data = structuredClone(battleData);
+            if (!data.progress) {
+                data.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
+            }
+            const result = await runBattleCalc(BattleCalc, data, battleType);
+            if (!result) {
+                throw new Error('BattleCalc returned empty result');
+            }
+            return result;
         }
 
         // Stealther uses battlePresets.get_timeLimit(); 180s covers standard dungeon/tower battles.
@@ -1944,9 +1961,13 @@
                 'Dungeon timed out'
             );
         } catch (err) {
-            // Signal the in-flight run to stop. Do not clear dungeonRunning here —
-            // start() still owns that flag until its loop actually exits.
+            // Stop the in-flight loop and force flag cleanup so a hung Calc cannot
+            // leave dungeonRunning stuck (BattleCalc calls are also timed out via runBattleCalc).
             stopDung = true;
+            dungeonRunning = false;
+            window.HWH_DUNGEON_RUNNING = false;
+            setDungeonBattleOpen(false);
+            console.warn('[Dungeon] Run aborted — flags cleared:', err?.message || err);
             throw err;
         }
     }
@@ -3982,30 +4003,22 @@ async function executeGetDailyBonus() {
             return summary;
         }
 
-        this.calcBattleCopy = function(battleData, mechanic, seed) {
-            return new Promise((resolve, reject) => {
-                const battle = structuredClone(battleData);
-                if (seed != null) {
-                    battle.seed = seed;
-                }
-                const battleType = battle?.effects?.battleConfig ?? battle?.type ?? mechanic;
-                const battleConfigType = getBattleType(battleType);
-                try {
-                    BattleCalc(battle, battleConfigType, (calcResult) => {
-                        if (!Utils.isValidBattleResult(calcResult)) {
-                            resolve({ win: false, battleTime: 0, error: 'Invalid calculation result' });
-                            return;
-                        }
-                        resolve({
-                            win: !!calcResult.result?.win,
-                            battleTime: calcResult.battleTime || 0,
-                            result: calcResult
-                        });
-                    });
-                } catch (error) {
-                    reject(error);
-                }
-            });
+        this.calcBattleCopy = async function(battleData, mechanic, seed) {
+            const battle = structuredClone(battleData);
+            if (seed != null) {
+                battle.seed = seed;
+            }
+            const battleType = battle?.effects?.battleConfig ?? battle?.type ?? mechanic;
+            const battleConfigType = getBattleType(battleType);
+            const calcResult = await runBattleCalc(BattleCalc, battle, battleConfigType);
+            if (!Utils.isValidBattleResult(calcResult)) {
+                return { win: false, battleTime: 0, error: 'Invalid calculation result' };
+            }
+            return {
+                win: !!calcResult.result?.win,
+                battleTime: calcResult.battleTime || 0,
+                result: calcResult
+            };
         }
 
         this.runLocalTestFights = async function(battleData, mechanic, count) {
@@ -4333,9 +4346,7 @@ async function executeGetDailyBonus() {
                         let lastProgress = [];
                         let lastResult = { win: false };
                         for (const battleData of result.battles) {
-                            const calcResult = await new Promise((resolveCalc) => {
-                                BattleCalc(battleData, getBattleType(this.arenaType), (calc) => resolveCalc(calc));
-                            });
+                            const calcResult = await runBattleCalc(BattleCalc, battleData, getBattleType(this.arenaType));
                             if (!calcResult || !calcResult.result) {
                                 console.error('BattleCalc returned invalid result:', calcResult);
                                 continue;
@@ -4371,28 +4382,24 @@ async function executeGetDailyBonus() {
                 }
 
                 if (battleData) {
-                    return new Promise((resolve) => {
-                        BattleCalc(battleData, getBattleType(this.arenaType), (result) => {
-                            if (!result || !result.result) {
-                                console.error('BattleCalc returned invalid result:', result);
-                                resolve({
-                                    win: false,
-                                    progress: [],
-                                    result: { win: false },
-                                    battleTimer: 0,
-                                    battleTime: 0
-                                });
-                                return;
-                            }
-                            resolve({
-                                win: result.result.win,
-                                progress: result.progress,
-                                result: result.result,
-                                battleTimer: result.battleTimer || 0,
-                                battleTime: result.battleTime || 0
-                            });
-                        });
-                    });
+                    const result = await runBattleCalc(BattleCalc, battleData, getBattleType(this.arenaType));
+                    if (!result || !result.result) {
+                        console.error('BattleCalc returned invalid result:', result);
+                        return {
+                            win: false,
+                            progress: [],
+                            result: { win: false },
+                            battleTimer: 0,
+                            battleTime: 0
+                        };
+                    }
+                    return {
+                        win: result.result.win,
+                        progress: result.progress,
+                        result: result.result,
+                        battleTimer: result.battleTimer || 0,
+                        battleTime: result.battleTime || 0
+                    };
                 }
             }
 
@@ -5164,29 +5171,25 @@ async function executeGetDailyBonus() {
             const typeHint = battleData?.type
                 || (isTitanBattle ? 'clan_pvp_titan' : 'clan_pvp');
             const battleConfigType = getBattleType(typeHint);
-            return new Promise((resolve, reject) => {
-                BattleCalc(battleData, battleConfigType, (calcResult) => {
-                    if (!calcResult || !calcResult.result || !calcResult.progress) {
-                        reject(new Error('Invalid Guild War BattleCalc result'));
-                        return;
+            const calcResult = await runBattleCalc(BattleCalc, battleData, battleConfigType);
+            if (!calcResult || !calcResult.result || !calcResult.progress) {
+                throw new Error('Invalid Guild War BattleCalc result');
+            }
+            // Keep progress seed aligned with the started battle (required by clanWarEndBattle).
+            const expectedSeed = Number(battleData?.seed);
+            if (Number.isFinite(expectedSeed) && Array.isArray(calcResult.progress)) {
+                for (const entry of calcResult.progress) {
+                    if (entry && entry.seed == null) {
+                        entry.seed = expectedSeed;
                     }
-                    // Keep progress seed aligned with the started battle (required by clanWarEndBattle).
-                    const expectedSeed = Number(battleData?.seed);
-                    if (Number.isFinite(expectedSeed) && Array.isArray(calcResult.progress)) {
-                        for (const entry of calcResult.progress) {
-                            if (entry && entry.seed == null) {
-                                entry.seed = expectedSeed;
-                            }
-                        }
-                    }
-                    resolve({
-                        win: !!calcResult.result.win,
-                        progress: calcResult.progress,
-                        result: calcResult.result,
-                        battleData,
-                    });
-                });
-            });
+                }
+            }
+            return {
+                win: !!calcResult.result.win,
+                progress: calcResult.progress,
+                result: calcResult.result,
+                battleData,
+            };
         }
 
         this.endGuildWarBattle = async function(battleResult, useAutoFix = false) {
@@ -5694,24 +5697,26 @@ async function executeGetDailyBonus() {
 
                             const battleType = battleData?.type ?? mechanic;
                             const battleConfigType = getBattleType(battleType);
-                            BattleCalc(battleData, battleConfigType, (calcResult) => {
-                                if (!Utils.isValidBattleResult(calcResult)) {
-                                    resolve({ win: false, battleTime: 0, error: 'Invalid calculation result', parentId });
-                                    return;
-                                }
-                                const win = !!calcResult.result.win;
-                                const battleTime = calcResult.battleTime || 0;
-                                self.endGuildWarTitanDemoBattle(calcResult, battleData)
-                                    .then((endBattleResult) => {
-                                        const battleId = endBattleResult?.battleId;
-                                        let nextParentId = parentId;
-                                        if (parentId === 0 && battleId) nextParentId = battleId;
-                                        else if (parentId !== 0) nextParentId = parentId;
-                                        else if (endBattleResult?.parentId) nextParentId = endBattleResult.parentId;
-                                        resolve({ win, battleTime, result: calcResult, parentId: nextParentId, battleId });
-                                    })
-                                    .catch(() => resolve({ win, battleTime, result: calcResult, parentId, battleId: null }));
-                            });
+                            runBattleCalc(BattleCalc, battleData, battleConfigType)
+                                .then((calcResult) => {
+                                    if (!Utils.isValidBattleResult(calcResult)) {
+                                        resolve({ win: false, battleTime: 0, error: 'Invalid calculation result', parentId });
+                                        return;
+                                    }
+                                    const win = !!calcResult.result.win;
+                                    const battleTime = calcResult.battleTime || 0;
+                                    self.endGuildWarTitanDemoBattle(calcResult, battleData)
+                                        .then((endBattleResult) => {
+                                            const battleId = endBattleResult?.battleId;
+                                            let nextParentId = parentId;
+                                            if (parentId === 0 && battleId) nextParentId = battleId;
+                                            else if (parentId !== 0) nextParentId = parentId;
+                                            else if (endBattleResult?.parentId) nextParentId = endBattleResult.parentId;
+                                            resolve({ win, battleTime, result: calcResult, parentId: nextParentId, battleId });
+                                        })
+                                        .catch(() => resolve({ win, battleTime, result: calcResult, parentId, battleId: null }));
+                                })
+                                .catch(reject);
                         })
                         .catch(reject);
                 } catch (error) {
@@ -5854,54 +5859,56 @@ async function executeGetDailyBonus() {
                             const battleType = battleData?.type ?? mechanic;
                             const battleConfigType = getBattleType(battleType);
 
-                            BattleCalc(battleData, battleConfigType, (calcResult) => {
-                                if (!Utils.isValidBattleResult(calcResult)) {
-                                    Utils.log('error', '[GUILD_WAR_TITAN] BattleCalc returned invalid result');
-                                    resolve({
-                                        win: false,
-                                        battleTime: 0,
-                                        error: 'Invalid calculation result',
-                                        parentId: parentId
-                                    });
-                                    return;
-                                }
-
-                                const battleTime = calcResult.battleTime || 0;
-                                const win = !!calcResult.result.win;
-
-                                this.endGuildWarTitanDemoBattle(calcResult, battleData)
-                                    .then(endBattleResult => {
-                                        const extractedParentId = endBattleResult?.parentId;
-                                        const battleId = endBattleResult?.battleId;
-
-                                        let nextParentId = parentId;
-                                        if (parentId === 0 && battleId) {
-                                            nextParentId = battleId;
-                                        } else if (parentId !== 0) {
-                                            nextParentId = parentId;
-                                        } else if (extractedParentId && extractedParentId !== 0) {
-                                            nextParentId = extractedParentId;
-                                        }
-
+                            runBattleCalc(BattleCalc, battleData, battleConfigType)
+                                .then((calcResult) => {
+                                    if (!Utils.isValidBattleResult(calcResult)) {
+                                        Utils.log('error', '[GUILD_WAR_TITAN] BattleCalc returned invalid result');
                                         resolve({
-                                            win: win,
-                                            battleTime: battleTime,
-                                            result: calcResult,
-                                            parentId: nextParentId,
-                                            battleId: battleId
+                                            win: false,
+                                            battleTime: 0,
+                                            error: 'Invalid calculation result',
+                                            parentId: parentId
                                         });
-                                    })
-                                    .catch(endError => {
-                                        Utils.log('warn', '[GUILD_WAR_TITAN] Failed to call endBattle:', endError);
-                                        resolve({
-                                            win: win,
-                                            battleTime: battleTime,
-                                            result: calcResult,
-                                            parentId: parentId,
-                                            battleId: null
+                                        return;
+                                    }
+
+                                    const battleTime = calcResult.battleTime || 0;
+                                    const win = !!calcResult.result.win;
+
+                                    this.endGuildWarTitanDemoBattle(calcResult, battleData)
+                                        .then(endBattleResult => {
+                                            const extractedParentId = endBattleResult?.parentId;
+                                            const battleId = endBattleResult?.battleId;
+
+                                            let nextParentId = parentId;
+                                            if (parentId === 0 && battleId) {
+                                                nextParentId = battleId;
+                                            } else if (parentId !== 0) {
+                                                nextParentId = parentId;
+                                            } else if (extractedParentId && extractedParentId !== 0) {
+                                                nextParentId = extractedParentId;
+                                            }
+
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: nextParentId,
+                                                battleId: battleId
+                                            });
+                                        })
+                                        .catch(endError => {
+                                            Utils.log('warn', '[GUILD_WAR_TITAN] Failed to call endBattle:', endError);
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: parentId,
+                                                battleId: null
+                                            });
                                         });
-                                    });
-                            });
+                                })
+                                .catch(reject);
                         })
                         .catch(error => {
                             console.error('[GUILD_WAR_TITAN] Error in demo battle:', error);
@@ -6307,25 +6314,18 @@ async function executeGetDailyBonus() {
         }
 
         function calcBattleResult(battleData) {
-            return new Promise(function (resolve, reject) {
-                if (!battleData) {
-                    reject(new Error('No battle data provided'));
-                    return;
+            if (!battleData) {
+                return Promise.reject(new Error('No battle data provided'));
+            }
+            return runBattleCalc(BattleCalc, battleData, 'get_clanPvp').then((result) => {
+                if (!result || !result.result) {
+                    console.error('Raid Nodes: BattleCalc returned invalid result:', result);
+                    throw new Error('Invalid battle calculation result');
                 }
-                
-                try {
-                    BattleCalc(battleData, "get_clanPvp", (result) => {
-                        if (!result || !result.result) {
-                            console.error('Raid Nodes: BattleCalc returned invalid result:', result);
-                            reject(new Error('Invalid battle calculation result'));
-                            return;
-                        }
-                        resolve(result);
-                    });
-                } catch (error) {
-                    console.error('Raid Nodes: Error in BattleCalc:', error);
-                    reject(error);
-                }
+                return result;
+            }).catch((error) => {
+                console.error('Raid Nodes: Error in BattleCalc:', error);
+                throw error;
             });
         }
 
@@ -6606,21 +6606,17 @@ async function executeGetDailyBonus() {
         }
 
         this.calculateBattleResult = async function(battleData) {
-            return new Promise((resolve, reject) => {
-                BattleCalc(battleData, getBattleType('clan_raid'), (result) => {
-                    if (!result || !result.result) {
-                        console.error('BattleCalc returned invalid result:', result);
-                        reject(new Error('Invalid battle calculation result'));
-                        return;
-                    }
-                    resolve({
-                        win: result.result.win,
-                        progress: result.progress,
-                        result: result.result,
-                        battleData: battleData
-                    });
-                });
-            });
+            const result = await runBattleCalc(BattleCalc, battleData, getBattleType('clan_raid'));
+            if (!result || !result.result) {
+                console.error('BattleCalc returned invalid result:', result);
+                throw new Error('Invalid battle calculation result');
+            }
+            return {
+                win: result.result.win,
+                progress: result.progress,
+                result: result.result,
+                battleData: battleData
+            };
         }
 
         this.endBossBattle = async function(battleResult, useAutoFix = false) {
@@ -7264,22 +7260,18 @@ async function executeGetDailyBonus() {
         }
 
         this.calculateBattleResult = async function(battleData, battleType) {
-            return new Promise((resolve, reject) => {
-                const battleTypeStr = battleType === "hero" ? "clan_global_pvp" : "clan_global_pvp_titan";
-                BattleCalc(battleData, getBattleType(battleTypeStr), (result) => {
-                    if (!result || !result.result) {
-                        console.error('BattleCalc returned invalid result:', result);
-                        reject(new Error('Invalid battle calculation result'));
-                        return;
-                    }
-                    resolve({
-                        win: result.result.win,
-                        progress: result.progress,
-                        result: result.result,
-                        battleData: battleData
-                    });
-                });
-            });
+            const battleTypeStr = battleType === "hero" ? "clan_global_pvp" : "clan_global_pvp_titan";
+            const result = await runBattleCalc(BattleCalc, battleData, getBattleType(battleTypeStr));
+            if (!result || !result.result) {
+                console.error('BattleCalc returned invalid result:', result);
+                throw new Error('Invalid battle calculation result');
+            }
+            return {
+                win: result.result.win,
+                progress: result.progress,
+                result: result.result,
+                battleData: battleData
+            };
         }
 
         this.endBattle = async function(slotId, battleResult) {
@@ -7659,13 +7651,11 @@ async function executeGetDailyBonus() {
         }
 
         function getBattleInfo(battle, isRandSeed) {
-            return new Promise(function (res) {
-                battle = structuredClone(battle);
-                if (isRandSeed) {
-                    battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
-                }
-                BattleCalc(battle, 'get_titanClanPvp', (e) => res(e));
-            });
+            battle = structuredClone(battle);
+            if (isRandSeed) {
+                battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
+            }
+            return runBattleCalc(BattleCalc, battle, 'get_titanClanPvp');
         }
 
         function preCalcBattle(battle) {
@@ -7765,9 +7755,7 @@ async function executeGetDailyBonus() {
         }
 
         function calcBattleResult(battleData) {
-            return new Promise(function (res) {
-                BattleCalc(battleData, 'get_titanClanPvp', res);
-            });
+            return runBattleCalc(BattleCalc, battleData, 'get_titanClanPvp');
         }
 
         function titanArenaEndRaid(results) {
@@ -8350,7 +8338,7 @@ async function executeGetDailyBonus() {
 
             let calcResult;
             try {
-                calcResult = await Calc(battle);
+                calcResult = await withTimeout(Calc(battle), getBattleCalcTimeoutMs(), 'Cosmic Battle Calc timed out');
             } catch (e) {
                 console.error('[Auto Daily] Cosmic Battle Calc failed:', e, battle);
                 setProgress(`Cosmic Battle: battle sim failed — ${e?.message || e}`, true);
@@ -8503,7 +8491,10 @@ async function executeGetDailyBonus() {
 
     // --- UI & CORE LOGIC ---
     function waitForHWH(callback) {
+        let tries = 0;
+        const maxTries = 120; // ~60s
         const interval = setInterval(() => {
+            tries += 1;
             const buttons = window.HWHData?.buttons;
             if (
                 window.HWHData
@@ -8514,6 +8505,11 @@ async function executeGetDailyBonus() {
             ) {
                 clearInterval(interval);
                 callback();
+                return;
+            }
+            if (tries >= maxTries) {
+                clearInterval(interval);
+                console.error(`[${EXTENSION_NAME}] HWH UI not ready after ${maxTries * 500 / 1000}s — giving up`);
             }
         }, 500);
     }
