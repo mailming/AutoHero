@@ -1,0 +1,9145 @@
+﻿// ==UserScript==
+// @name         HeroWarsHelper - Auto Daily Extension
+// @namespace    http://tampermonkey.net/
+// @version      3.5.58
+// @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
+// @author       Your Name & Coding Partner
+// @match        https://www.hero-wars.com/*
+// @match        https://apps-1701433570146040.apps.fbsbx.com/*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // --- CONFIGURATION ---
+    const EXTENSION_NAME = "Auto Daily Extension";
+    const EXTENSION_VERSION = "3.5.58";
+    const EXTENSION_AUTHOR = "You";
+    const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
+
+    // Dungeon knobs (set on window before run): HWH_DEBUG_DUNGEON, HWH_LOG_PREDICTION_CARDS,
+    // HWH_DUNGEON_USE_ORACLE_CARDS, HWH_DUNGEON_NUM_TRIES, HWH_DUNGEON_STEP_DELAY_MS,
+    // HWH_DUNGEON_BRUTEFORCE_MS, HWH_DUNGEON_EVAL_BRUTEFORCE_MS, HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS,
+    // HWH_DUNGEON_MAX_TIMER_TRIES, HWH_DUNGEON_ELEMENTAL_ATTEMPTS, HWH_BATTLE_CALC_TIMEOUT_MS.
+
+    // ASCII-safe UI icons (userscript managers can mangle UTF-8)
+    const UI_ICON = {
+        fire: '\uD83D\uDD25',
+        pending: '\u23F3',
+        save: '\uD83D\uDCBE',
+        sync: '\uD83D\uDD04',
+        unavailable: '\uD83C\uDF11',
+        done: '\u2705',
+    };
+
+    // --- STATE VARIABLES ---
+    let executionState = {};
+    let hideButtonsState = {};
+    let othersSettingsState = {};
+    let eventSettingsState = {};
+    let battleSimSettingsState = {};
+    let isProviderActive = false;
+    let customOthersButton = null;
+    let combinedButton = null;
+    let cachedQuestData = null;
+    let autoRunInProgress = false;
+    let dungeonRunning = false;
+
+    function setDungeonBattleOpen(isOpen) {
+        window.HWH_DUNGEON_BATTLE_OPEN = !!isOpen;
+    }
+
+    async function waitForAutoBattleIdle(maxWaitMs = 45 * 60 * 1000) {
+        const start = Date.now();
+        while (window.HWH_AUTOBATTLE_RUNNING && Date.now() - start < maxWaitMs) {
+            if (window.HWHFuncs?.setProgress) {
+                window.HWHFuncs.setProgress('Dungeon: waiting for AutoBattle to finish...', true);
+            }
+            await sleep(1000);
+        }
+        return !window.HWH_AUTOBATTLE_RUNNING;
+    }
+
+    // --- DUNGEON TITAN HEALTH SETTINGS ---
+    const defaultTitanHealthSettings = {
+        minOverallHP: 0.30,
+        titan4020HP: 0.40,
+        titan4020EnergyHP: 0.20,
+        titan4010Combined: 0.67,
+        titan4000HP: 0.63,
+        titan4000Energy400HP: 0.45,
+        titan4000Energy670HP: 0.34,
+        autoRefreshPage: false,
+        excludeFragileElemental: false, // skip Tidus/Asherona/Verdoc on elemental doors
+        shrinkEarthFireTeams: true,     // try 5→2 when full earth/fire team fails survival
+        enforceTankSurvival: true,      // reject sims below tank HP/energy cutoffs
+    };
+
+    /** Glass-cannon titans optionally excluded on elemental doors. */
+    const FRAGILE_ELEMENTAL_TITANS = {
+        water: 4004, // Tidus
+        fire: 4014,  // Asherona
+        earth: 4024, // Verdoc
+    };
+
+    let titanHealthSettings = {};
+    let stopDung = false;
+
+    window.stopHWDDungeon = () => {
+        stopDung = true;
+        console.log('HWD Dungeon stop requested externally.');
+    };
+
+    function loadTitanHealthSettings() {
+        const { HWHFuncs } = window;
+        if (HWHFuncs && HWHFuncs.getSaveVal) {
+            const saved = HWHFuncs.getSaveVal('titanHealthSettings', {}) || {};
+            titanHealthSettings = Object.assign({}, defaultTitanHealthSettings, saved);
+        } else {
+            titanHealthSettings = Object.assign({}, defaultTitanHealthSettings);
+        }
+    }
+
+    function saveTitanHealthSettings() {
+        const { HWHFuncs } = window;
+        if (HWHFuncs && HWHFuncs.setSaveVal) {
+            HWHFuncs.setSaveVal('titanHealthSettings', titanHealthSettings);
+        }
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function waitFor(predicate, { timeoutMs = 30000, intervalMs = 200 } = {}) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            try {
+                if (predicate()) return true;
+            } catch (e) {
+                // ignore predicate errors while waiting
+            }
+            await sleep(intervalMs);
+        }
+        return false;
+    }
+
+    async function withTimeout(promise, timeoutMs, timeoutMessage = 'Timed out') {
+        let t;
+        const timeoutPromise = new Promise((_, reject) => {
+            t = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        });
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            clearTimeout(t);
+        }
+    }
+
+    function getBattleCalcTimeoutMs() {
+        return Math.max(5000, Math.min(180000, Number(window.HWH_BATTLE_CALC_TIMEOUT_MS) || 60000));
+    }
+
+    /** BattleCalc as a Promise with a hard timeout (avoids hung Calc retaining callers). */
+    function runBattleCalc(battleCalcFn, battleData, battleType, timeoutMs) {
+        const ms = timeoutMs ?? getBattleCalcTimeoutMs();
+        return withTimeout(new Promise((resolve, reject) => {
+            try {
+                battleCalcFn(battleData, battleType, (result) => {
+                    resolve(result);
+                });
+            } catch (e) {
+                reject(e);
+            }
+        }), ms, `BattleCalc timed out after ${ms}ms`);
+    }
+
+    async function getQuestData(forceRefresh = false) {
+        if (cachedQuestData && !forceRefresh) {
+            return cachedQuestData;
+        }
+        const { Send } = window;
+        const questResponse = await Send({ calls: [{ name: "questGetAll", args: {}, ident: "questGetAll" }] });
+        cachedQuestData = questResponse.results[0].result.response;
+        return cachedQuestData;
+    }
+    
+    function invalidateQuestCache() {
+        cachedQuestData = null;
+    }
+
+    async function executeGetOutland() {
+        const { Send, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Outland', true);
+        try {
+            const data = await Send({ calls: [{ name: "bossGetAll", args: {}, ident: "bossGetAll" }] });
+            const bosses = data.results[0].result.response;
+            const calls = [];
+            for (const boss of bosses) {
+                if (boss.mayRaid) calls.push({ name: "bossRaid", args: { bossId: boss.id }, ident: "bossRaid_" + boss.id });
+                if (boss.chestId === 1 || boss.mayRaid) calls.push({ name: "bossOpenChest", args: { bossId: boss.id, amount: 1, starmoney: 0 }, ident: "bossOpenChest_" + boss.id });
+            }
+            if (calls.length > 0) await Send({ calls });
+            HWHFuncs.setProgress('Outland: Done!', true);
+        } catch (e) { console.error("Error in executeGetOutland", e); HWHFuncs.setProgress('Outland: Error!', true); }
+    }
+    async function executeTestTower() {
+        const { HWHClasses, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Tower', true);
+        return new Promise((resolve) => { new HWHClasses.executeTower(resolve, resolve).start(); });
+    }
+    async function executeCheckExpedition() {
+        const { HWHClasses, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Expeditions', true);
+        return new Promise((resolve) => { new HWHClasses.Expedition(resolve, resolve).start(); });
+    }
+    // Dungeon algorithm (Stealther 1.012 / Mike Rohsoft), integrated for HWH Auto Daily
+    function executeDungeon(resolve, reject) {
+        const { HWHFuncs, Send, BattleCalc, cheats } = window;
+        const { getInput, setProgress, hideProgress, I18N, getTimer, countdownTimer } = HWHFuncs;
+
+        const DUNGEON_VERBOSE = typeof window !== 'undefined' && window.HWH_DEBUG_DUNGEON === true;
+        const LOG_PREDICTION_CARDS = typeof window !== 'undefined' && window.HWH_LOG_PREDICTION_CARDS === true;
+        const NUM_TRIES = Math.max(0, Math.min(25, Number(window.HWH_DUNGEON_NUM_TRIES) || 10));
+        const BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_BRUTEFORCE_MS) || 60000));
+        const EVAL_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EVAL_BRUTEFORCE_MS) || BRUTEFORCE_MS));
+        const RESTART_BRUTEFORCE_MS = Math.max(5000, Math.min(120000, Number(window.HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS) || BRUTEFORCE_MS));
+        const STEP_DELAY_MS = Math.max(0, Math.min(1000, Number(window.HWH_DUNGEON_STEP_DELAY_MS) || 100));
+        const NO_WIN_RETRIES = Math.max(1, Math.min(8, Number(window.HWH_DUNGEON_NO_WIN_RETRIES) || 3));
+        const MAX_TIMER_TRIES = window.HWH_DUNGEON_MAX_TIMER_TRIES != null
+            ? Math.max(0, Math.min(200, Number(window.HWH_DUNGEON_MAX_TIMER_TRIES) || 0))
+            : 0;
+        const MAX_ELEMENTAL_ATTEMPTS = Math.max(1, Math.min(20, Number(window.HWH_DUNGEON_ELEMENTAL_ATTEMPTS) || 10));
+        const SIM_YIELD_EVERY = 3;
+
+        function syncPredictionCardsFromInventory(invRes) {
+            const raw = invRes?.result?.response?.consumable?.[81];
+            const n = Math.max(0, Math.floor(Number(raw)) || 0);
+            if (window.HWHData) {
+                window.HWHData.countPredictionCard = n;
+            }
+            return n;
+        }
+
+        function getOracleCards() {
+            return Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+        }
+
+        // Prediction cards (81) only on hero doors. Do not decrement here — HWH does on endBattle;
+        // pre-decrement strips isRaid and can trigger "abnormal speed".
+        function shouldUseOracleCard(attackerType) {
+            if (window.HWH_DUNGEON_USE_ORACLE_CARDS === false) {
+                return false;
+            }
+            return attackerType === 'hero' && getOracleCards() > 0;
+        }
+
+        function isAbnormalSpeedError(err) {
+            const text = typeof err === 'string'
+                ? err
+                : [
+                    err?.description,
+                    err?.title,
+                    err?.name,
+                    err?.message,
+                    typeof err === 'object' ? JSON.stringify(err) : '',
+                ].filter(Boolean).join(' ');
+            return /abnormal\s*speed|third[-\s]?party|disable.*third/i.test(text);
+        }
+
+        function formatDungeonError(err) {
+            if (err == null || err === '') return '';
+            if (typeof err === 'string') return err;
+            return err.description || err.title || err.name || err.message || JSON.stringify(err);
+        }
+
+        let dungeonActivity = 0;
+        let startDungeonActivity = 0;
+        let maxDungeonActivity = 150;
+        let end = false;
+        let talentMsg = '';
+        let talentMsgReward = '';
+        let titansList = [];
+        let teamGetAll = null;
+        let teamGetFavor = null;
+        let isAbleToHeal = false;
+        let isRestart = false;
+        let lastError = null;
+        let lastDebugString = '';
+        let lastSimulatedOption = null;
+        let battleStartTime = 0;
+        let stepCount = 0;
+        let consecutiveNoWin = 0;
+        let timeDungeon = { all: Date.now(), steps: 0 };
+
+        // Glass-cannon x1.5 / healer x1.25 (computed; not in-place, so repeated sorts stay stable).
+        function effectiveTitanPower(titan) {
+            const power = titan?.power || 0;
+            const id = Number(titan?.id);
+            if (id === 4004 || id === 4014 || id === 4024) return power * 1.5;
+            if (id === 4003 || id === 4013 || id === 4023) return power * 1.25;
+            return power;
+        }
+
+        function titanPowerSort(a, b) {
+            return effectiveTitanPower(a) - effectiveTitanPower(b);
+        }
+
+        function getApiResult(result) {
+            if (!result) return null;
+            if (result.status >= 400 || result.errors) {
+                return { error: result, validation: result.errors };
+            }
+            if (result.error && !result.results) {
+                return { error: result.error };
+            }
+            return result?.results?.[0]?.result;
+        }
+
+        function getResponse(result) {
+            return getApiResult(result)?.response;
+        }
+
+        function buildHeroFavor(heroIds, favorMap) {
+            const favor = {};
+            if (!favorMap || !heroIds?.length) return favor;
+            for (const id of heroIds) {
+                const petId = favorMap[id] ?? favorMap[String(id)];
+                if (petId) {
+                    favor[id] = petId;
+                }
+            }
+            return favor;
+        }
+
+        function getHeroTeamForBattle(heroStates) {
+            const heroTeam = teamGetAll?.dungeon_hero;
+            if (!Array.isArray(heroTeam)) {
+                return null;
+            }
+            const pet = heroTeam.find((v) => v > 6000) || null;
+            const heroes = heroTeam.filter((v) => {
+                if (!v || v <= 0 || v >= 6000) return false;
+                const state = heroStates?.[v] ?? heroStates?.[String(v)];
+                return !state?.isDead;
+            });
+            if (heroes.length === 0) {
+                return null;
+            }
+            return {
+                heroes,
+                pet,
+                favor: buildHeroFavor(heroes, teamGetFavor?.dungeon_hero),
+            };
+        }
+
+        async function simulateBattle(battleData, battleType) {
+            const data = structuredClone(battleData);
+            if (!data.progress) {
+                data.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', 0, 0] } }];
+            }
+            const result = await runBattleCalc(BattleCalc, data, battleType);
+            if (!result) {
+                throw new Error('BattleCalc returned empty result');
+            }
+            return result;
+        }
+
+        // Stealther uses battlePresets.get_timeLimit(); 180s covers standard dungeon/tower battles.
+        const BATTLE_TIME_LIMIT = 180;
+
+        function extractTimers(battleResult, maxTimerTries = MAX_TIMER_TRIES) {
+            const logs = battleResult.battleLogs?.[0] || [];
+            if (logs.length === 0) {
+                return [0];
+            }
+            const timers = [...new Set(logs.map((e) => (e.time > 0 && e.time < BATTLE_TIME_LIMIT && e.time !== 168.8 ? e.time : 0)))];
+            timers.sort(() => Math.random() - 0.5);
+            if (maxTimerTries > 0 && timers.length > maxTimerTries) {
+                return timers.slice(0, maxTimerTries);
+            }
+            return timers.length > 0 ? timers : [0];
+        }
+
+        class PvPBattleHandler {
+            constructor(battle = undefined, type = 'get_clanPvp') {
+                this._type = type;
+                this.setBattle(battle);
+            }
+
+            setBattle(battle) {
+                this._battle = battle ? structuredClone(battle) : undefined;
+                this._counter = 0;
+                this._timers = undefined;
+                this._initialBattle = undefined;
+                this._lastBattle = undefined;
+                this._bestBattle = undefined;
+                this._maxBattles = 0;
+                this._errors = 0;
+            }
+
+            async init(maxTimerTries = MAX_TIMER_TRIES) {
+                this._initialBattle = await this.reCalculate(0);
+                this._timers = extractTimers(this._initialBattle, maxTimerTries);
+                if (this._timers.length === 0) {
+                    this._timers = [0];
+                }
+                this._timers.sort(() => Math.random() - 0.5);
+                this._maxBattles = this._timers.length;
+                return this._initialBattle;
+            }
+
+            randomTime() {
+                return this._timers[this._counter % this._timers.length];
+            }
+
+            async reCalculate(timer = this.randomTime()) {
+                const battle = structuredClone(this._battle);
+                battle.progress = [{ attackers: { input: ['auto', 0, 0, 'auto', this._counter, timer] } }];
+                const prev = this._lastBattle;
+                try {
+                    this._lastBattle = await simulateBattle(battle, this._type);
+                    this._lastBattle.timer = this._lastBattle.battleTime ?? 0;
+                } catch (e) {
+                    this._errors++;
+                    this._lastBattle = prev;
+                }
+                this._counter++;
+                return this._lastBattle;
+            }
+
+            count() {
+                return this._counter;
+            }
+
+            max() {
+                return this._maxBattles;
+            }
+
+            isWin() {
+                return !!this._initialBattle?.result?.win;
+            }
+
+            success(bestBattle) {
+                return !!bestBattle?.result?.win;
+            }
+
+            bestBattle() {
+                return this._bestBattle || this._lastBattle || this._initialBattle;
+            }
+
+            initialBattle() {
+                return this._initialBattle;
+            }
+
+            getFactor(before, after) {
+                let beforeSumFactor = 0;
+                for (const hero of Object.values(before || {})) {
+                    const state = hero.state;
+                    let factor = 1;
+                    if (state) {
+                        const hp = state.hp / hero.hp;
+                        const energy = state.energy * 0.001;
+                        factor = hp + energy * 0.05;
+                    }
+                    beforeSumFactor += factor;
+                }
+                let afterSumFactor = 0;
+                for (const [heroId, hero] of Object.entries(after || {})) {
+                    const hp = hero.hp / (before?.[heroId]?.hp || hero.hp);
+                    const energy = hero.energy * 0.001;
+                    afterSumFactor += hp + energy * 0.05;
+                }
+                return afterSumFactor - beforeSumFactor;
+            }
+
+            isBetter(bestBattle, thisBattle) {
+                if (!bestBattle || !thisBattle) {
+                    return !!thisBattle;
+                }
+                if (!thisBattle.result?.win) {
+                    return false;
+                }
+                const bestState = this.getState(bestBattle);
+                const thisState = this.getState(thisBattle);
+                if (!isFinite(thisState)) {
+                    return false;
+                }
+                if (!isFinite(bestState)) {
+                    return true;
+                }
+                return thisState > bestState;
+            }
+
+            async *bruteforce(endTime = Date.now() + BRUTEFORCE_MS) {
+                if (endTime < Date.now()) {
+                    endTime = Date.now() + BRUTEFORCE_MS;
+                }
+                if (!this._initialBattle) {
+                    this._initialBattle = await this.init();
+                }
+                while (Date.now() < endTime && this._counter < this._maxBattles) {
+                    if (stopDung || end) {
+                        break;
+                    }
+                    if (!(this._lastBattle = await this.reCalculate())) {
+                        continue;
+                    }
+                    if (this._counter % SIM_YIELD_EVERY === 0) {
+                        await sleep(0);
+                    }
+                    yield this._counter;
+                    if (!this._bestBattle) {
+                        this._bestBattle = this._lastBattle;
+                        continue;
+                    }
+                    if (!this.isBetter(this._bestBattle, this._lastBattle)) {
+                        continue;
+                    }
+                    this._bestBattle = this._lastBattle;
+                    if (!this.success(this._bestBattle)) {
+                        continue;
+                    }
+                    break;
+                }
+                return this._bestBattle;
+            }
+
+            async *calculateWinChance(times = 10) {
+                let wins = 0;
+                if (isNaN(times) || times <= 0) {
+                    return;
+                }
+                const originalSeed = this._battle?.seed;
+                for (let i = 0; i < times; i++) {
+                    if (stopDung || end) {
+                        break;
+                    }
+                    if (this._battle) {
+                        this._battle.seed = Math.floor(Date.now() / 1000) + Math.random() * 1000;
+                    }
+                    const battleBuffer = await simulateBattle(structuredClone(this._battle), this._type);
+                    if (battleBuffer?.result?.win) {
+                        wins++;
+                    }
+                    if ((i + 1) % SIM_YIELD_EVERY === 0) {
+                        await sleep(0);
+                    }
+                    yield wins;
+                }
+                if (this._battle && originalSeed !== undefined) {
+                    this._battle.seed = originalSeed;
+                }
+            }
+        }
+
+        class DungeonBattleHandler extends PvPBattleHandler {
+            getState(result) {
+                if (!result.result?.win) {
+                    return -1000;
+                }
+                const beforeTitans = result.battleData?.attackers || {};
+                const afterTitans = result.progress?.[0]?.attackers?.heroes || {};
+                return this.getFactor(beforeTitans, afterTitans);
+            }
+
+            isBetter(bestBattle, thisBattle) {
+                if (!bestBattle || !thisBattle) {
+                    return !!thisBattle;
+                }
+                const bestState = this.getState(bestBattle);
+                const thisState = this.getState(thisBattle);
+                if (!thisBattle.result?.win) {
+                    return false;
+                }
+                if (!isFinite(thisState)) {
+                    return false;
+                }
+                if (!isFinite(bestState)) {
+                    return true;
+                }
+                return thisState > bestState;
+            }
+
+            success() {
+                return false;
+            }
+        }
+
+        async function runBattleHandler(battleHandler, forceFix = false, skipPreCalc = false, simOpts = {}) {
+            const bruteMs = simOpts.bruteforceMs ?? BRUTEFORCE_MS;
+            const maxTimerTries = simOpts.maxTimerTries ?? MAX_TIMER_TRIES;
+            const initBattle = await battleHandler.init(maxTimerTries);
+            if (!initBattle) {
+                return { initBattle: null, bestBattle: null, isWin: false, timer: 0 };
+            }
+            const isWin = battleHandler.isWin();
+            let wins = 0;
+
+            if (NUM_TRIES > 0 && !skipPreCalc) {
+                let count = 1;
+                for await (const liveWins of battleHandler.calculateWinChance(NUM_TRIES)) {
+                    wins = liveWins;
+                    if (DUNGEON_VERBOSE) {
+                        setProgress(`${I18N('DUNGEON')}: sim ${liveWins}/${count} ${talentMsg}`, true);
+                    }
+                    count++;
+                }
+            }
+
+            if (!forceFix && isWin) {
+                return { initBattle, bestBattle: null, isWin, timer: initBattle.battleTime ?? 0 };
+            }
+
+            if (bruteMs <= 0) {
+                const resolved = battleHandler.bestBattle() ?? initBattle;
+                return {
+                    initBattle,
+                    bestBattle: null,
+                    isWin: !!resolved?.result?.win,
+                    timer: resolved?.battleTime ?? 0,
+                };
+            }
+
+            for await (const _count of battleHandler.bruteforce(Date.now() + bruteMs)) {
+                if (stopDung || end) {
+                    break;
+                }
+            }
+
+            const bestBattle = battleHandler.bestBattle();
+            const resolved = bestBattle ?? initBattle;
+            return {
+                initBattle,
+                bestBattle: bestBattle !== initBattle ? bestBattle : null,
+                isWin: !!resolved?.result?.win,
+                timer: resolved?.battleTime ?? 0,
+            };
+        }
+
+        function getTitans(titans, states = {}) {
+            const all = titans
+                .filter((x) => !states[x.id]?.isDead && !states[String(x.id)]?.isDead)
+                .sort((x, y) => (y.power || 0) - (x.power || 0));
+            const water = [];
+            const fire = [];
+            const earth = [];
+            const dark = [];
+            const light = [];
+            const distortion = [];
+            const unknown = [];
+            for (const titan of all) {
+                const id = titan.id;
+                if (id < 4010) water.push(titan);
+                else if (id < 4020) fire.push(titan);
+                else if (id < 4030) earth.push(titan);
+                else if (id < 4040) dark.push(titan);
+                else if (id < 4050) light.push(titan);
+                else if (id < 4060) distortion.push(titan);
+                else unknown.push(titan);
+            }
+            return {
+                all,
+                water: water.sort(titanPowerSort),
+                earth: earth.sort(titanPowerSort),
+                fire: fire.sort(titanPowerSort),
+                dark: dark.sort(titanPowerSort),
+                light: light.sort(titanPowerSort),
+                distortion: distortion.sort(titanPowerSort),
+                elemental: [...dark, ...light, ...distortion, ...unknown].sort(titanPowerSort),
+            };
+        }
+
+        function getTitansForPotentialHealingTeam(aliveTitans, states = {}, index = 0) {
+            const normalize = (id) => Number(id);
+            if (aliveTitans.water.length < 3) {
+                return null;
+            }
+            const result = [];
+            const used = new Set();
+            const push = (id) => {
+                const n = normalize(id);
+                if (!used.has(n) && result.length < 5) {
+                    used.add(n);
+                    result.push(n);
+                }
+            };
+            const allStates = [];
+            for (const [titanId, state] of Object.entries(states)) {
+                const id = normalize(titanId);
+                if (id < 4010 || id >= 4030 || state.isDead) continue;
+                // Prefer low HP+energy targets for heal doors.
+                const diff = (Number(state.hp) + Number(state.energy || 0)) / (Number(state.maxHp) + 1000);
+                if (diff >= 1) continue;
+                allStates.push({ diff, id });
+            }
+            for (const titan of aliveTitans.water.slice(0, 4)) {
+                push(titan.id);
+            }
+            if (allStates.length === 0) {
+                return null;
+            }
+            const candidates = allStates.sort((a, b) => a.diff - b.diff);
+            if (candidates[index]) {
+                push(candidates[index].id);
+            } else {
+                return null;
+            }
+            if (result.length < 5) {
+                for (const titan of aliveTitans.elemental ?? []) {
+                    if (result.length >= 5) break;
+                    push(titan.id);
+                }
+                if (result.length < 5) {
+                    const alive = [...aliveTitans.earth, ...aliveTitans.fire].sort((a, b) => (b.power || 0) - (a.power || 0));
+                    for (const titan of alive) {
+                        if (result.length >= 5) break;
+                        push(titan.id);
+                    }
+                }
+            }
+            return result.length === 5 ? result : null;
+        }
+
+        function getNeutralTitans(aliveTitans, strongest = false) {
+            const normalize = (id) => Number(id);
+            if (strongest) {
+                return aliveTitans.all.slice(0, 5).map((t) => normalize(t.id));
+            }
+            const result = [];
+            const used = new Set();
+            const waterPower = aliveTitans.water.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            if (waterPower > 500000 && aliveTitans.water.length >= 4) {
+                for (const waterTitan of aliveTitans.water) {
+                    if (result.length === 4) break;
+                    result.push(waterTitan.id);
+                    used.add(waterTitan.id);
+                }
+            }
+            const push = (id) => {
+                const n = normalize(id);
+                if (!used.has(n) && result.length < 5) {
+                    used.add(n);
+                    result.push(n);
+                }
+            };
+            const elementMap = {
+                water: { max: 4010, special: 4004 },      // Tidus and Gelo
+                fire: { max: 4020, special: 4014 },       // Asherona and Pyro
+                earth: { max: 4030, special: 4024 },      // Verdoc and Phyto
+                dark: { max: 4040, special: 4034 },       // Umbra and Caligo
+                light: { max: 4050, special: 4044 },      // Lumira and Apollo
+                distortion: { max: 4060, special: 4054 }, // Valdur and Echo
+            };
+            for (const titan of aliveTitans.all) {
+                if (result.length >= 4) break;
+                const id = normalize(titan.id);
+                if (used.has(id)) continue;
+                if (id < elementMap.water.max) {
+                    const group = aliveTitans.water.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.water.special)) {
+                        push(elementMap.water.special);
+                        const partner = group.find((x) => x !== elementMap.water.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
+                            if (result.length < 5) push(other);
+                        }
+                    }
+                } else if (id < elementMap.fire.max) {
+                    const group = aliveTitans.fire.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.fire.special)) {
+                        push(elementMap.fire.special);
+                        const partner = group.find((x) => x !== elementMap.fire.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
+                            if (result.length < 5) push(other);
+                        }
+                    }
+                } else if (id < elementMap.earth.max) {
+                    const group = aliveTitans.earth.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.earth.special)) {
+                        push(elementMap.earth.special);
+                        const partner = group.find((x) => x !== elementMap.earth.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        for (const other of group.filter((x) => x !== id).slice(0, 2)) {
+                            if (result.length < 5) push(other);
+                        }
+                    }
+                } else if (id < elementMap.dark.max) {
+                    const group = aliveTitans.dark.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.dark.special)) {
+                        push(elementMap.dark.special);
+                        const partner = group.find((x) => x !== elementMap.dark.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        const partner = group.find((x) => x !== id);
+                        if (partner) push(partner);
+                    }
+                } else if (id < elementMap.light.max) {
+                    const group = aliveTitans.light.map((t) => normalize(t.id));
+                    if (group.includes(elementMap.light.special)) {
+                        push(elementMap.light.special);
+                        const partner = group.find((x) => x !== elementMap.light.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        const partner = group.find((x) => x !== id);
+                        if (partner) push(partner);
+                    }
+                } else if (id < elementMap.distortion.max) {
+                    const group = (aliveTitans.distortion || []).map((t) => normalize(t.id));
+                    if (group.includes(elementMap.distortion.special)) {
+                        push(elementMap.distortion.special);
+                        const partner = group.find((x) => x !== elementMap.distortion.special);
+                        if (partner) push(partner);
+                    } else {
+                        push(id);
+                        const partner = group.find((x) => x !== id);
+                        if (partner) push(partner);
+                    }
+                }
+            }
+            if (result.length < 5) {
+                for (const titan of aliveTitans.all) {
+                    if (result.length >= 5) break;
+                    push(titan.id);
+                }
+            }
+            return result;
+        }
+
+        function getDeads(option) {
+            const after = option.progress?.[0]?.attackers?.heroes || {};
+            return option.heroes.length + Number(!!option.pet) - Object.keys(after).length;
+        }
+
+        function checkTitanSurvival(titanId, energy, percentHP) {
+            const s = titanHealthSettings || defaultTitanHealthSettings;
+            const id = String(titanId);
+            switch (id) {
+                case '4020': // Angus
+                    return percentHP > (s.titan4020HP ?? 0.4)
+                        || (energy >= 1000 && percentHP > (s.titan4020EnergyHP ?? 0.2));
+                case '4010': // Moloch
+                    return percentHP + energy / 2000.0 > (s.titan4010Combined ?? 0.67);
+                case '4000': // Sigurd
+                    return percentHP > (s.titan4000HP ?? 0.63)
+                        || (energy < 1000 && (
+                            (percentHP > (s.titan4000Energy400HP ?? 0.45) && energy >= 400)
+                            || (percentHP > (s.titan4000Energy670HP ?? 0.34) && energy >= 670)
+                        ));
+                default:
+                    return true;
+            }
+        }
+
+        function passesDungeonSurvival(option) {
+            if (!option?.result?.win) {
+                return false;
+            }
+            if (option.result.stars != null && option.result.stars < 3) {
+                return false;
+            }
+            if (getDeads(option) > 0) {
+                return false;
+            }
+            if (titanHealthSettings.enforceTankSurvival === false) {
+                return true;
+            }
+            const beforeTitans = option.battleData?.attackers || {};
+            const afterTitans = option.progress?.[0]?.attackers?.heroes || {};
+            for (const [id, titan] of Object.entries(afterTitans)) {
+                const before = beforeTitans[id] || beforeTitans[Number(id)];
+                const maxHp = before?.hp || titan.hp || 1;
+                const percentHP = titan.hp / maxHp;
+                const energy = titan.energy ?? 0;
+                if (!checkTitanSurvival(id, energy, percentHP)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function getElementalPool(aliveTitans, attackerType) {
+            let pool = [...(aliveTitans[attackerType] || aliveTitans.all || [])];
+            if (titanHealthSettings.excludeFragileElemental) {
+                const fragileId = FRAGILE_ELEMENTAL_TITANS[attackerType];
+                if (fragileId) {
+                    pool = pool.filter((t) => Number(t.id) !== fragileId);
+                }
+            }
+            return pool;
+        }
+
+        function isElementalAttemptBetter(best, option) {
+            if (!option?.win) return false;
+            if (!best) return true;
+            const bestDeads = getDeads(best);
+            const thisDeads = getDeads(option);
+            if (thisDeads !== bestDeads) {
+                return thisDeads < bestDeads;
+            }
+            const bestSafe = best.passesSurvival === true;
+            const thisSafe = option.passesSurvival === true;
+            if (thisSafe !== bestSafe) {
+                return thisSafe;
+            }
+            return (option.state ?? 0) > (best.state ?? 0);
+        }
+
+        // Re-sim the same elemental team up to N times; keep lowest deaths / best state.
+        async function simulateElementalTeam(teamNum, heroes, attackerType) {
+            let best = null;
+            let attempts = 0;
+            for (let attempt = 1; attempt <= MAX_ELEMENTAL_ATTEMPTS; attempt++) {
+                if (stopDung || end) break;
+                attempts = attempt;
+                const option = await startAndSimulate(teamNum, heroes, null, attackerType);
+                if (option?.win) {
+                    option.passesSurvival = passesDungeonSurvival(option);
+                }
+                if (isElementalAttemptBetter(best, option)) {
+                    best = option;
+                    if (DUNGEON_VERBOSE) {
+                        console.log(`[Dungeon] ${attackerType} attempt ${attempt}/${MAX_ELEMENTAL_ATTEMPTS}: better candidate dead=${getDeads(option)}`);
+                    }
+                }
+                if (option?.win && getDeads(option) === 0) {
+                    break;
+                }
+            }
+            return { option: best, attempts };
+        }
+
+        async function evaluateElementalDoor(teamNum, attackerType, aliveTitans) {
+            const pool = getElementalPool(aliveTitans, attackerType);
+            if (!pool.length) {
+                return null;
+            }
+
+            const maxSize = Math.min(5, pool.length);
+            const heroes = pool.slice(0, maxSize).map((t) => Number(t.id));
+            const { option: fullTeamOption, attempts } = await simulateElementalTeam(teamNum, heroes, attackerType);
+            if (fullTeamOption?.win) {
+                fullTeamOption.elementalAttempts = attempts;
+                return fullTeamOption;
+            }
+
+            // Optional Auto Daily improvement: shrink earth/fire if full team never wins.
+            const shouldShrink = titanHealthSettings.shrinkEarthFireTeams !== false
+                && (attackerType === 'earth' || attackerType === 'fire');
+            if (!shouldShrink || maxSize <= 2) {
+                return null;
+            }
+
+            let bestWin = null;
+            for (let size = maxSize - 1; size >= 2; size--) {
+                if (stopDung || end) break;
+                const shrinkHeroes = pool.slice(0, size).map((t) => Number(t.id));
+                const option = await startAndSimulate(teamNum, shrinkHeroes, null, attackerType);
+                if (!option?.win) continue;
+                option.passesSurvival = passesDungeonSurvival(option);
+                if (isElementalAttemptBetter(bestWin, option)) {
+                    bestWin = option;
+                }
+                if (getDeads(option) === 0) break;
+            }
+            return bestWin;
+        }
+
+        function debugString(option, attackerType) {
+            if (!option) return 'INVALID';
+            let s = `[${option.teamNum}]${attackerType}`;
+            s += option.result?.win ? ' OK' : ' FAIL';
+            const damage = option.heroes.length ? (option.state / option.heroes.length) * 100 : 0;
+            s += ` dmg:${damage.toFixed(0)}% dead:${getDeads(option)}`;
+            return s;
+        }
+
+        function isOptionBetter(bestOption, thisOption) {
+            if (!thisOption) return false;
+            if (!bestOption) return true;
+            const bestTeam = bestOption.heroes || [];
+            const thisTeam = thisOption.heroes || [];
+            if (thisTeam.length !== bestTeam.length) {
+                return thisTeam.length > bestTeam.length;
+            }
+            const bestState = bestOption.state ?? 0;
+            const thisState = thisOption.state ?? 0;
+            const bestNorm = bestTeam.length ? bestState * bestTeam.length : 0;
+            const thisNorm = thisTeam.length ? thisState * thisTeam.length : 0;
+            return thisNorm > bestNorm;
+        }
+
+        function isHealingSuccessful(healingTeam, progress, states) {
+            const afterHeroes = progress?.[0]?.attackers?.heroes;
+            if (!afterHeroes) return false;
+            // Use >= so flat HP after heal still counts as success.
+            return healingTeam.filter((id) => id >= 4010).every((id) => {
+                const after = afterHeroes[id] || afterHeroes[String(id)];
+                const beforeHp = states[id]?.hp || states[String(id)]?.hp || 0;
+                return after && after.hp >= beforeHp;
+            });
+        }
+
+        async function findHealingOption(teamNum, aliveTitans, states) {
+            for (let index = 0; ; index++) {
+                if (stopDung || end) return null;
+                const healingTeam = getTitansForPotentialHealingTeam(aliveTitans, states, index);
+                if (!healingTeam) return null;
+                const option = await startAndSimulate(teamNum, healingTeam, null, 'neutral');
+                if (!option?.win) continue;
+                const healedCleanly = isHealingSuccessful(healingTeam, option.progress, states)
+                    && getDeads(option) === 0;
+                if (healedCleanly) {
+                    return { heroes: healingTeam, option };
+                }
+            }
+        }
+
+        function createBattleArgs(teamNum, heroes, pet, favor = {}) {
+            return {
+                name: 'dungeonStartBattle',
+                args: {
+                    heroes,
+                    favor: favor || {},
+                    teamNum: Number(teamNum),
+                    ...(pet ? { pet } : {}),
+                },
+                ident: 'body',
+            };
+        }
+
+        async function startAndSimulateOnce(teamNum, heroes, pet, attackerType, favor = {}, bruteforceMs = EVAL_BRUTEFORCE_MS) {
+            lastSimulatedOption = null;
+            const raw = await Send({ calls: [createBattleArgs(teamNum, heroes, pet, favor)] });
+            const apiResult = getApiResult(raw);
+            if (apiResult?.error || apiResult?.validation) {
+                const errMsg = apiResult.validation
+                    ? JSON.stringify(apiResult.validation)
+                    : (typeof apiResult.error === 'string'
+                        ? apiResult.error
+                        : `${apiResult.error?.name || apiResult.error?.title || 'Error'}: ${apiResult.error?.description || apiResult.error?.title || ''}`);
+                console.warn(`[Dungeon] dungeonStartBattle failed (${attackerType}, team ${teamNum}):`, errMsg, raw);
+                setBattleOpen(false);
+                return null;
+            }
+            const battleData = apiResult?.response;
+            if (!battleData) {
+                console.warn(`[Dungeon] dungeonStartBattle empty response (${attackerType}, team ${teamNum})`, raw);
+                setBattleOpen(false);
+                return null;
+            }
+
+            battleStartTime = Date.now();
+            setBattleOpen(true);
+
+            try {
+                const option = await simulateOnBattleData(
+                    battleData,
+                    teamNum,
+                    heroes,
+                    pet,
+                    attackerType,
+                    favor,
+                    {
+                        bruteforceMs,
+                        maxTimerTries: MAX_TIMER_TRIES,
+                    }
+                );
+                if (option?.win) {
+                    option.passesSurvival = passesDungeonSurvival(option);
+                }
+                lastSimulatedOption = option;
+                return option;
+            } catch (err) {
+                console.warn(`[Dungeon] BattleCalc failed (${attackerType}, team ${teamNum}):`, err);
+                setBattleOpen(false);
+                return null;
+            }
+        }
+
+        async function startAndSimulate(teamNum, heroes, pet, attackerType, favor = {}, bruteforceMs = EVAL_BRUTEFORCE_MS) {
+            const first = await startAndSimulateOnce(teamNum, heroes, pet, attackerType, favor, bruteforceMs);
+            if (first) {
+                return first;
+            }
+            await sleep(500);
+            return startAndSimulateOnce(teamNum, heroes, pet, attackerType, favor, bruteforceMs);
+        }
+
+        function isNotFoundError(err) {
+            if (!err) {
+                return false;
+            }
+            if (typeof err === 'string') {
+                return /not\s*found|NotFound/i.test(err);
+            }
+            const name = String(err.name || err.title || '');
+            const desc = String(err.description || err.message || '');
+            return /not\s*found|NotFound/i.test(name) || /not\s*found|NotFound/i.test(desc);
+        }
+
+        function setBattleOpen(isOpen) {
+            setDungeonBattleOpen(isOpen);
+        }
+
+        function wrapBattleOption(teamNum, heroes, pet, favor, battle, battleData, handler, handlerResult) {
+            const wrapped = {
+                ...battle,
+                battleData: battle.battleData ?? battleData,
+            };
+            const battleTime = Number(wrapped.battleTime ?? handlerResult.timer ?? 0) || 0;
+            // Prefer BattleCalc battleTimer (subscription-adjusted); fall back to getTimer(battleTime).
+            const battleTimer = Number(wrapped.battleTimer) > 0
+                ? Number(wrapped.battleTimer)
+                : (typeof getTimer === 'function' ? getTimer(battleTime) : battleTime);
+            return {
+                teamNum,
+                heroes,
+                pet,
+                favor,
+                result: wrapped.result,
+                progress: wrapped.progress,
+                timer: battleTimer,
+                battleTime,
+                battleTimer,
+                simTimer: battle.timer ?? battle.battleTime ?? handlerResult.timer ?? 0,
+                win: wrapped.result?.win,
+                state: handler.getState(wrapped),
+            };
+        }
+
+        async function simulateOnBattleData(battleData, teamNum, heroes, pet, attackerType, favor, simOpts = {}) {
+            const isBruteForceBattle = attackerType !== 'hero';
+            const battleType = battleData.type === 'dungeon_titan' ? 'get_titan' : 'get_tower';
+            const handler = new DungeonBattleHandler(battleData, battleType);
+            const maxTimerTries = simOpts.maxTimerTries ?? MAX_TIMER_TRIES;
+
+            const handlerResult = await runBattleHandler(
+                handler,
+                isBruteForceBattle,
+                isBruteForceBattle,
+                {
+                    bruteforceMs: simOpts.bruteforceMs ?? BRUTEFORCE_MS,
+                    maxTimerTries,
+                }
+            );
+            const battle = handlerResult.bestBattle ?? handlerResult.initBattle;
+            if (!battle?.result) {
+                setBattleOpen(false);
+                return null;
+            }
+            return wrapBattleOption(teamNum, heroes, pet, favor, battle, battleData, handler, handlerResult);
+        }
+
+        function getRequiredBattleWaitSec(option) {
+            const add = Math.max(0, Number(window.addBattleTimer) || 4);
+            const battleTimer = Number(option?.battleTimer);
+            const optionTimer = Number(option?.timer);
+            const fromGetTimer = typeof getTimer === 'function'
+                ? Number(getTimer(Number(option?.battleTime) || 0))
+                : 0;
+            let need = 0;
+            if (Number.isFinite(battleTimer) && battleTimer > 0) {
+                need = battleTimer;
+            } else if (Number.isFinite(optionTimer) && optionTimer > 0) {
+                need = optionTimer;
+            } else if (Number.isFinite(fromGetTimer) && fromGetTimer > 0) {
+                need = fromGetTimer;
+            }
+            // Match HWH dungeonEndBattle interceptor: battleTimer + addBattleTimer, min ~4s.
+            return Math.max(4, Math.ceil(need + add));
+        }
+
+        async function waitForBattleFullTimer(option, debug = '') {
+            // Server checks wall-clock since dungeonStartBattle; credit time spent simulating.
+            const required = getRequiredBattleWaitSec(option);
+            const startedAt = battleStartTime > 0 ? battleStartTime : Date.now();
+            const elapsed = Math.max(0, Math.ceil((Date.now() - startedAt) / 1000));
+            const totalTimer = Math.max(0, required - elapsed);
+            if (totalTimer <= 0) {
+                if (DUNGEON_VERBOSE) {
+                    console.log('[Dungeon] battle wait skipped (elapsed', elapsed, 's >= required', required, 's)', debug || '');
+                }
+                return;
+            }
+            if (DUNGEON_VERBOSE) {
+                console.log('[Dungeon] battle wait:', totalTimer, 's (required', required, 'elapsed', elapsed, ')', debug || '');
+            }
+            const msg = `${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`;
+            await countdownTimer(totalTimer, msg);
+        }
+
+        // Hero doors can spend a prediction card to skip the wait and end with isRaid.
+        async function waitOrUseOracleCard(option, attackerType, debug = '') {
+            if (shouldUseOracleCard(attackerType)) {
+                const cards = getOracleCards();
+                if (DUNGEON_VERBOSE || LOG_PREDICTION_CARDS) {
+                    console.log(`[Dungeon] Using prediction card via isRaid (${cards} available; HWH will decrement)`, debug || '');
+                }
+                setProgress(
+                    `${I18N('DUNGEON')}: \uD83C\uDCCF ${cards} | ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity}${debug ? ' | ' + debug : ''} ${talentMsg}`,
+                    true
+                );
+                await sleep(0);
+                return true;
+            }
+            await waitForBattleFullTimer(option, debug);
+            return false;
+        }
+
+        // Skip re-sim when the chosen option is already the latest server battle.
+        async function executeChosenOption(option, attackerType, debug = '', skipRestart = false) {
+            if (stopDung || end) {
+                return false;
+            }
+            let finalOption = option;
+            const isLastSimulated = lastSimulatedOption === option;
+            if (!skipRestart && !isLastSimulated) {
+                const restarted = await startAndSimulate(
+                    option.teamNum,
+                    option.heroes,
+                    option.pet,
+                    attackerType,
+                    option.favor || {},
+                    RESTART_BRUTEFORCE_MS
+                );
+                if (!restarted?.win) {
+                    lastError = 'Restart failed';
+                    endDungeon(lastError);
+                    return false;
+                }
+                finalOption = restarted;
+                lastDebugString += debugString(restarted, attackerType) + ' [restart]';
+                if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
+            }
+            const useOracleCard = await waitOrUseOracleCard(finalOption, attackerType, debug);
+            if (stopDung || end) {
+                return false;
+            }
+            return endBattleOption(finalOption, attackerType, false, useOracleCard);
+        }
+
+        async function evaluateTeam(teamNum, attackerType, aliveTitans, states) {
+            if (attackerType === 'neutral') {
+                if (isAbleToHeal) {
+                    const healing = await findHealingOption(teamNum, aliveTitans, states);
+                    if (healing) {
+                        return { immediate: true, option: healing.option, attackerType };
+                    }
+                }
+                const heroes = getNeutralTitans(aliveTitans, !isAbleToHeal);
+                if (heroes.length === 0) return null;
+                const option = await startAndSimulate(teamNum, heroes, null, attackerType);
+                if (!option?.win) return null;
+                option.passesSurvival = passesDungeonSurvival(option);
+                return { immediate: false, option, attackerType, passesSurvival: option.passesSurvival };
+            }
+
+            const elementalOption = await evaluateElementalDoor(teamNum, attackerType, aliveTitans);
+            if (!elementalOption?.win) return null;
+            return {
+                immediate: false,
+                option: elementalOption,
+                attackerType,
+                attempts: elementalOption.elementalAttempts,
+                passesSurvival: elementalOption.passesSurvival !== false,
+            };
+        }
+
+        async function endBattleOption(option, attackerType, isRetry = false, useOracleCard = false) {
+            if (!option?.result?.win) {
+                endDungeon('Hero or Titan may have died in battle!', option);
+                return false;
+            }
+            const args = {
+                result: option.result,
+                progress: option.progress,
+            };
+            if (useOracleCard) { // isRaid only when a prediction card was spent
+                args.isRaid = true;
+            }
+
+            let e;
+            try {
+                e = await Send({ calls: [{ name: 'dungeonEndBattle', args, ident: 'body' }] });
+            } catch (err) {
+                setBattleOpen(false);
+                if (!isRetry && isNotFoundError(err)) {
+                    return retryEndBattleAfterNotFound(option, attackerType);
+                }
+                if (isAbnormalSpeedError(err)) {
+                    endDungeon(
+                        'Dungeon stopped: abnormal completion speed (server anti-cheat). Wait for battle timers / disable third-party tools.',
+                        formatDungeonError(err)
+                    );
+                    return false;
+                }
+                endDungeon('errorRequest', err);
+                return false;
+            }
+
+            if (e?.error) {
+                if (isNotFoundError(e.error)) {
+                    setBattleOpen(false);
+                    if (!isRetry) {
+                        return retryEndBattleAfterNotFound(option, attackerType);
+                    }
+                    console.warn('[Dungeon] Battle not found after retry, refreshing floor state...', e.error);
+                    return true;
+                }
+                setBattleOpen(false);
+                if (isAbnormalSpeedError(e.error)) {
+                    endDungeon(
+                        'Dungeon stopped: abnormal completion speed (server anti-cheat). Wait for battle timers / disable third-party tools.',
+                        formatDungeonError(e.error)
+                    );
+                    return false;
+                }
+                endDungeon('errorRequest', e.error);
+                return false;
+            }
+
+            if (!e?.results) {
+                setBattleOpen(false);
+                endDungeon('Lost connection to game server!', 'break');
+                return false;
+            }
+
+            const result = e.results[0]?.result;
+            if (!result) {
+                setBattleOpen(false);
+                if (!isRetry && isNotFoundError(e)) {
+                    return retryEndBattleAfterNotFound(option, attackerType);
+                }
+                endDungeon('errorRequest', 'empty dungeonEndBattle result');
+                return false;
+            }
+            if (result.error) {
+                if (isNotFoundError(result.error)) {
+                    setBattleOpen(false);
+                    if (!isRetry) {
+                        return retryEndBattleAfterNotFound(option, attackerType);
+                    }
+                    console.warn('[Dungeon] Battle not found in result after retry, refreshing floor state...', result.error);
+                    return true;
+                }
+                setBattleOpen(false);
+                if (isAbnormalSpeedError(result.error)) {
+                    endDungeon(
+                        'Dungeon stopped: abnormal completion speed (server anti-cheat). Wait for battle timers / disable third-party tools.',
+                        formatDungeonError(result.error)
+                    );
+                    return false;
+                }
+                endDungeon('errorBattleResult', result.error);
+                return false;
+            }
+
+            const battleResult = result.response;
+            if (!battleResult) {
+                setBattleOpen(false);
+                console.warn('[Dungeon] No battle result, continuing...');
+                return true;
+            }
+
+            if (battleResult.error) {
+                setBattleOpen(false);
+                if (isNotFoundError(battleResult.error)) {
+                    if (!isRetry) {
+                        return retryEndBattleAfterNotFound(option, attackerType);
+                    }
+                    return true;
+                }
+                endDungeon('errorBattleResult', battleResult);
+                return false;
+            }
+
+            setBattleOpen(false);
+
+            if (!battleResult.dungeon && !battleResult.floor) {
+                try {
+                    await Send({ calls: [{ name: 'dungeonSaveProgress', args: {}, ident: 'body' }] });
+                } catch (_) { /* ignore */ }
+            }
+
+            dungeonActivity += battleResult.reward?.dungeonActivity ?? 0;
+            return true;
+        }
+
+        async function retryEndBattleAfterNotFound(option, attackerType) {
+            console.warn('[Dungeon] NotFound on end battle — restarting battle on server and retrying once');
+            const refreshed = await startAndSimulate(
+                option.teamNum,
+                option.heroes,
+                option.pet,
+                attackerType,
+                option.favor || {},
+                RESTART_BRUTEFORCE_MS
+            );
+            if (!refreshed?.win) {
+                lastError = 'NotFound recovery failed (could not restart battle)';
+                return false;
+            }
+            const useOracleCard = await waitOrUseOracleCard(refreshed, attackerType);
+            return endBattleOption(refreshed, attackerType, true, useOracleCard);
+        }
+
+        async function checkTalent(dungeonInfo) {
+            const talent = dungeonInfo.talent;
+            if (!talent) return;
+            const dungeonFloor = +dungeonInfo.floorNumber;
+            const talentFloor = +talent.floorRandValue;
+            let doorsAmount = 3 - talent.conditions.doorsAmount;
+            if (dungeonFloor === talentFloor && (!doorsAmount || !talent.conditions?.farmedDoors[dungeonFloor])) {
+                const rewardRes = await Send({
+                    calls: [
+                        { name: 'heroTalent_getReward', args: { talentType: 'tmntDungeonTalent', reroll: false }, ident: 'group_0_body' },
+                        { name: 'heroTalent_farmReward', args: { talentType: 'tmntDungeonTalent' }, ident: 'group_1_body' },
+                    ],
+                });
+                const reward = rewardRes.results[0].result.response;
+                const type = Object.keys(reward).pop();
+                const itemId = Object.keys(reward[type]).pop();
+                const count = reward[type][itemId];
+                const itemName = cheats.translate(`LIB_${type.toUpperCase()}_NAME_${itemId}`);
+                talentMsgReward += `<br> ${count} ${itemName}`;
+                doorsAmount++;
+            }
+            talentMsg = `<br>TMNT Talent: ${doorsAmount}/3 ${talentMsgReward}<br>`;
+        }
+
+        async function fetchDungeonData(retries = 3) {
+            for (let attempt = 1; attempt <= retries; attempt++) {
+                const result = await Send({ calls: [{ name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' }] });
+                if (Array.isArray(result.results)) {
+                    const dungeonGetInfo = getResponse(result);
+                    if (dungeonGetInfo) {
+                        lastError = null;
+                        return { dungeonGetInfo };
+                    }
+                    lastError = 'No dungeon data';
+                } else {
+                    lastError = 'Error fetching dungeonGetInfo';
+                }
+                if (attempt < retries) {
+                    console.warn(`[Dungeon] fetchDungeonData attempt ${attempt}/${retries} failed, retrying...`);
+                    await sleep(500);
+                }
+            }
+            return null;
+        }
+
+        async function handleRestart(dungeonGetInfo) {
+            if (!dungeonGetInfo.floor && !isRestart) {
+                isRestart = true;
+                await Send({ calls: [{ name: 'dungeonSaveProgress', args: {}, ident: 'body' }] });
+                return true;
+            }
+            if (isRestart) {
+                lastError = 'Error in dungeonGetInfo: missing floor';
+                return false;
+            }
+            isRestart = false;
+            return false;
+        }
+
+        async function runStep() {
+            const stepStart = Date.now();
+            if (STEP_DELAY_MS > 0) {
+                await sleep(STEP_DELAY_MS);
+            }
+            if (!isRestart) {
+                lastDebugString = '';
+            }
+
+            maxDungeonActivity = getInput('countTitanit') || maxDungeonActivity;
+            setProgress(`${I18N('DUNGEON')}: ${I18N('TITANIT')} ${dungeonActivity}/${maxDungeonActivity} ${talentMsg}`, true);
+
+            if (dungeonActivity >= maxDungeonActivity) {
+                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
+                return false;
+            }
+            if (stopDung) {
+                endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
+                return false;
+            }
+
+            const data = await fetchDungeonData();
+            if (!data) {
+                return false;
+            }
+            if (titansList.length === 0) {
+                lastError = lastError || 'No titans loaded';
+                return false;
+            }
+
+            const { dungeonGetInfo } = data;
+
+            if (!('floor' in dungeonGetInfo) || dungeonGetInfo.floor?.state === 2) {
+                await Send({ calls: [{ name: 'dungeonSaveProgress', args: {}, ident: 'body' }] });
+                endDungeon('Dungeon completed,', 'floor saved');
+                return false;
+            }
+
+            const didRestart = await handleRestart(dungeonGetInfo);
+            if (didRestart) {
+                return true;
+            }
+            if (lastError) {
+                return false;
+            }
+
+            await checkTalent(dungeonGetInfo);
+
+            if (!dungeonGetInfo.elements) {
+                lastError = 'Error in dungeonGetInfo: missing primeElement';
+                endDungeon(lastError);
+                return false;
+            }
+            if (!dungeonGetInfo.states) {
+                lastError = 'Error in dungeonGetInfo: missing states';
+                endDungeon(lastError);
+                return false;
+            }
+
+            const userData = dungeonGetInfo.floor?.userData;
+            if (!userData) {
+                consecutiveNoWin++;
+                console.warn(`[Dungeon] Missing floor userData, retrying (${consecutiveNoWin}/${NO_WIN_RETRIES})`);
+                if (consecutiveNoWin <= NO_WIN_RETRIES) {
+                    await sleep(1000);
+                    return true;
+                }
+                lastError = 'No dungeon data';
+                return false;
+            }
+
+            const states = dungeonGetInfo.states.titans;
+            const aliveTitans = getTitans(titansList, states);
+            const heroBattleIndex = userData.findIndex((ud) => ud.attackerType === 'hero');
+            if (heroBattleIndex !== -1) {
+                const heroBattle = getHeroTeamForBattle(dungeonGetInfo.states?.heroes);
+                if (!heroBattle) {
+                    lastError = 'No alive heroes for hero battle';
+                    endDungeon(lastError);
+                    return false;
+                }
+                const option = await startAndSimulate(
+                    heroBattleIndex,
+                    heroBattle.heroes,
+                    heroBattle.pet,
+                    'hero',
+                    heroBattle.favor
+                );
+                if (!option) {
+                    consecutiveNoWin++;
+                    console.warn(`[Dungeon] Hero battle start/sim failed, retrying (${consecutiveNoWin}/${NO_WIN_RETRIES})`);
+                    if (consecutiveNoWin <= NO_WIN_RETRIES) {
+                        await sleep(1200);
+                        return true;
+                    }
+                    lastError = 'Failed to start hero battle (check console for API/BattleCalc details)';
+                    endDungeon(lastError);
+                    return false;
+                }
+                if (!option.result?.win) {
+                    lastError = 'Hero battle would lose';
+                    endDungeon(lastError, option);
+                    return false;
+                }
+                lastDebugString += debugString(option, 'hero');
+                if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
+                const useOracleCard = await waitOrUseOracleCard(option, 'hero', lastDebugString);
+                if (stopDung || end) {
+                    return false;
+                }
+                const ok = await endBattleOption(option, 'hero', false, useOracleCard);
+                timeDungeon.steps += Date.now() - stepStart;
+                return ok !== false;
+            }
+
+            const candidates = [];
+            const floorsPassed = dungeonGetInfo.todayFloorsPassed ?? '';
+            lastDebugString += `${floorsPassed} | `;
+
+            for (let teamNum = 0; teamNum < userData.length; teamNum++) {
+                if (stopDung) break;
+                const { attackerType } = userData[teamNum];
+                const candidate = await evaluateTeam(teamNum, attackerType, aliveTitans, states);
+                if (candidate?.immediate) {
+                    lastDebugString += debugString(candidate.option, candidate.attackerType) + ' [heal]';
+                    if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
+                    const ok = await executeChosenOption(candidate.option, candidate.attackerType, lastDebugString, true);
+                    timeDungeon.steps += Date.now() - stepStart;
+                    return ok !== false;
+                }
+                candidates.push(candidate);
+            }
+
+            // Rank by win quality; survival is a soft preference, not a hard stop.
+            const winning = candidates.filter((v) => v?.option?.win);
+            let valid = winning.filter((v) => v.passesSurvival !== false);
+            if (valid.length === 0) {
+                consecutiveNoWin++;
+                const doorSummary = userData.map((ud, i) => {
+                    const picked = candidates[i];
+                    if (!picked?.option) return `${ud.attackerType}:none`;
+                    return `${ud.attackerType}:${picked.option.win ? 'win' : 'lose'}${picked.passesSurvival ? '' : '/unsafe'}`;
+                }).join(', ');
+                console.warn(`[Dungeon] No survival-safe door (${consecutiveNoWin}/${NO_WIN_RETRIES}): ${doorSummary}`);
+                if (winning.length > 0) {
+                    valid = winning; // prefer a winning door over stalling
+                } else if (consecutiveNoWin <= NO_WIN_RETRIES) {
+                    HWHFuncs.setProgress(
+                        `${I18N('DUNGEON')}: retrying floor (${consecutiveNoWin}/${NO_WIN_RETRIES}) ${dungeonActivity}/${maxDungeonActivity}`,
+                        true
+                    );
+                    await sleep(1200);
+                    return true;
+                } else {
+                    lastError = 'No winnable battles available';
+                    endDungeon(lastError);
+                    return false;
+                }
+            }
+            consecutiveNoWin = 0;
+
+            lastDebugString += valid.map((v) => debugString(v.option, v.attackerType)).join(' | ');
+
+            const best = valid.length === 1
+                ? valid[0]
+                : valid.reduce((b, cur) => {
+                    // Soft prefer survival-safe doors when quality is otherwise close.
+                    if ((b.passesSurvival === true) !== (cur.passesSurvival === true)
+                        && !isOptionBetter(b.option, cur.option)
+                        && !isOptionBetter(cur.option, b.option)) {
+                        return cur.passesSurvival === true ? cur : b;
+                    }
+                    return isOptionBetter(b.option, cur.option) ? cur : b;
+                });
+
+            if (!best?.option) {
+                lastError = 'No best battle found';
+                endDungeon(lastError);
+                return false;
+            }
+
+            lastDebugString += ` -> ${best.option.teamNum} `;
+
+            if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
+            const ok = await executeChosenOption(best.option, best.attackerType, lastDebugString);
+            stepCount++;
+            timeDungeon.steps += Date.now() - stepStart;
+            return ok !== false;
+        }
+
+        function showStats() {
+            if (!DUNGEON_VERBOSE) return;
+            const activity = dungeonActivity - startDungeonActivity;
+            const totalSec = Math.round((Date.now() - timeDungeon.all) / 1000);
+            console.log('[Dungeon] Titanite collected:', activity);
+            console.log('[Dungeon] Steps:', stepCount);
+            if (totalSec > 0) {
+                console.log('[Dungeon] Speed:', Math.round((3600 * activity) / totalSec), 'titanite/hour');
+            }
+            console.log('[Dungeon] Sim time (ms):', timeDungeon.steps);
+        }
+
+        function endDungeon(reason, info) {
+            if (end) return;
+            end = true;
+            dungeonRunning = false;
+            window.HWH_DUNGEON_RUNNING = false;
+            setBattleOpen(false);
+            console.log('[Dungeon]', reason, info != null && info !== '' ? info : '');
+            showStats();
+            if (info === 'break') {
+                setProgress(
+                    'Dungeon stopped: Titanite ' + dungeonActivity + '/' + maxDungeonActivity + '\r\nLost connection to game server!',
+                    false,
+                    hideProgress
+                );
+            } else {
+                setProgress('Dungeon completed: Titanite ' + dungeonActivity + '/' + maxDungeonActivity, false, hideProgress);
+            }
+            const reasonText = String(reason || '');
+            const shouldRefresh = reasonText.includes('titanite collected')
+                || reasonText.includes('floor saved')
+                || reasonText.includes('Dungeon completed');
+            if (shouldRefresh) {
+                if (titanHealthSettings.autoRefreshPage) {
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    setTimeout(cheats.refreshGame, 1000);
+                }
+            }
+            resolve();
+        }
+
+        async function initialize() {
+            const res = await Send({
+                calls: [
+                    { name: 'dungeonGetInfo', args: {}, ident: 'dungeonGetInfo' },
+                    { name: 'teamGetAll', args: {}, ident: 'teamGetAll' },
+                    { name: 'teamGetFavor', args: {}, ident: 'teamGetFavor' },
+                    { name: 'clanGetInfo', args: {}, ident: 'clanGetInfo' },
+                    { name: 'titanGetAll', args: {}, ident: 'titanGetAll' },
+                    { name: 'inventoryGet', args: {}, ident: 'inventoryGet' },
+                ],
+            });
+
+            const dungeonGetInfo = res.results[0]?.result?.response;
+            if (!dungeonGetInfo) {
+                lastError = 'noDungeon';
+                return false;
+            }
+
+            teamGetAll = res.results[1]?.result?.response;
+            teamGetFavor = res.results[2]?.result?.response;
+            const clanStat = res.results[3]?.result?.response?.stat;
+            const dungeonStat = dungeonGetInfo?.stat;
+            const todayAct = clanStat?.todayDungeonActivity ?? dungeonStat?.todayDungeonActivity ?? 0;
+            dungeonActivity = todayAct;
+            startDungeonActivity = todayAct;
+            syncPredictionCardsFromInventory(res.results[5]);
+
+            const titanRaw = res.results[4]?.result?.response;
+            titansList = Array.isArray(titanRaw)
+                ? titanRaw
+                : Object.values(titanRaw || {}).filter((t) => t && t.id != null);
+
+            const layout = getTitans(titansList);
+            const waterPower = layout.water.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            const earthPower = layout.earth.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            const firePower = layout.fire.reduce((sum, titan) => sum + effectiveTitanPower(titan), 0);
+            const waterStrongest = waterPower >= earthPower && waterPower >= firePower;
+            const waterWithin50Percent = earthPower <= waterPower * 1.5 && firePower <= waterPower * 1.5;
+            isAbleToHeal = waterStrongest || waterWithin50Percent;
+
+            if (DUNGEON_VERBOSE) {
+                console.log('[Dungeon] Water', waterPower, '| Earth', earthPower, '| Fire', firePower, '| canHeal:', isAbleToHeal);
+                console.log('[Dungeon] Oracle/prediction cards:', getOracleCards());
+                console.log('[Dungeon] Starting full dungeon run (Stealther 1.012):', new Date());
+                console.log('[Dungeon] Settings:', {
+                    elementalAttempts: MAX_ELEMENTAL_ATTEMPTS,
+                    excludeFragileElemental: !!titanHealthSettings.excludeFragileElemental,
+                    shrinkEarthFireTeams: titanHealthSettings.shrinkEarthFireTeams !== false,
+                    enforceTankSurvival: titanHealthSettings.enforceTankSurvival !== false,
+                });
+            }
+            return true;
+        }
+
+        this.start = async function (titanit) {
+            await waitForAutoBattleIdle();
+            if (window.HWH_AUTOBATTLE_RUNNING) {
+                lastError = 'AutoBattle still running — dungeon aborted to avoid API conflict';
+                endDungeon(lastError);
+                return;
+            }
+
+            maxDungeonActivity = titanit || getInput('countTitanit');
+            stopDung = false;
+            end = false;
+            isRestart = false;
+            lastError = null;
+            lastSimulatedOption = null;
+            battleStartTime = 0;
+            stepCount = 0;
+            consecutiveNoWin = 0;
+            dungeonRunning = true;
+            window.HWH_DUNGEON_RUNNING = true;
+            timeDungeon = { all: Date.now(), steps: 0 };
+
+            try {
+                const ok = await initialize();
+                if (!ok) {
+                    endDungeon('Failed to initialize dungeon', lastError);
+                    return;
+                }
+                while (!end && !stopDung) {
+                    const success = await runStep();
+                    if (!success) {
+                        if (lastError && !end) {
+                            endDungeon(lastError);
+                        }
+                        break;
+                    }
+                }
+                if (!end && stopDung) {
+                    endDungeon('Dungeon stopped,', 'titanite collected: ' + dungeonActivity + '/' + maxDungeonActivity);
+                } else if (!end && !lastError) {
+                    console.warn('[Dungeon] Run loop ended without error (possible silent stop)');
+                }
+            } catch (err) {
+                console.error('[Dungeon] Fatal error:', err);
+                endDungeon('Fatal dungeon error', err);
+                reject(err);
+            } finally {
+                if (dungeonRunning) {
+                    dungeonRunning = false;
+                    window.HWH_DUNGEON_RUNNING = false;
+                }
+            }
+        };
+    }
+
+    const STEALTHER_DUNGEON_ALGORITHM_ID = 'stealther-1.011';
+
+    function installDefaultDungeonAlgorithm({ quiet = false } = {}) {
+        const { HWHClasses, HWHData } = window;
+        if (!HWHClasses || typeof executeDungeon !== 'function') {
+            return false;
+        }
+
+        if (!HWHClasses.__HWH_ORIGINAL_EXECUTE_DUNGEON && HWHClasses.executeDungeon
+            && HWHClasses.executeDungeon !== executeDungeon) {
+            HWHClasses.__HWH_ORIGINAL_EXECUTE_DUNGEON = HWHClasses.executeDungeon;
+        }
+
+        // Default for every HWH dungeon entry point (menu, Do All, quests).
+        HWHClasses.executeDungeon = executeDungeon;
+        HWHClasses.__HWH_DUNGEON_ALGORITHM = STEALTHER_DUNGEON_ALGORITHM_ID;
+        window.HWH_DUNGEON_ALGORITHM = STEALTHER_DUNGEON_ALGORITHM_ID;
+        window.HWHClasses = HWHClasses;
+
+        // Keep menu metadata pointing at Stealther so later UI rebuilds stay on this path.
+        const dungeonButton = HWHData?.buttons?.testDungeon;
+        if (dungeonButton?.combineList?.[0]) {
+            const dungeonAction = dungeonButton.combineList[0];
+            if (!dungeonAction.__stealtherDungeonOnClick) {
+                const previousOnClick = dungeonAction.onClick;
+                dungeonAction.__stealtherDungeonOnClick = true;
+                dungeonAction.onClick = function stealtherDungeonMenuClick(...args) {
+                    installDefaultDungeonAlgorithm({ quiet: true });
+                    if (typeof previousOnClick === 'function') {
+                        return previousOnClick.apply(this, args);
+                    }
+                    return executeTestDungeon();
+                };
+            }
+        }
+
+        // HWH binds click listeners at button creation time; ensure install runs before that handler.
+        const dungeonRow = dungeonButton?.button;
+        if (dungeonRow && dungeonRow.dataset.stealtherRebound !== '1') {
+            const dungeonHalf = dungeonRow.querySelector('.scriptMenu_btnGap.left') || dungeonRow.children?.[0];
+            if (dungeonHalf) {
+                dungeonHalf.addEventListener('click', () => {
+                    installDefaultDungeonAlgorithm({ quiet: true });
+                }, true);
+                dungeonRow.dataset.stealtherRebound = '1';
+            }
+        }
+
+        wrapDoYourBestDungeonFunction();
+
+        if (!quiet && !window.__HWH_STEALTHER_DUNGEON_LOGGED__) {
+            window.__HWH_STEALTHER_DUNGEON_LOGGED__ = true;
+            console.log(`[Auto Daily] Default dungeon algorithm: ${STEALTHER_DUNGEON_ALGORITHM_ID}`);
+        }
+        return true;
+    }
+
+    function wrapDoYourBestDungeonFunction() {
+        const { HWHClasses } = window;
+        const Current = HWHClasses?.doYourBest;
+        if (typeof Current !== 'function' || Current.__wrappedForStealtherDungeon) {
+            return false;
+        }
+
+        class StealtherDoYourBest extends Current {
+            constructor(...args) {
+                super(...args);
+                if (this.functions) {
+                    this.functions.testDungeon = executeTestDungeon;
+                }
+            }
+        }
+        StealtherDoYourBest.__wrappedForStealtherDungeon = true;
+        // Preserve AutoFarmer / other extension markers when present.
+        if (Current.__HWHX_HWHAUTO_PATCHED__) {
+            StealtherDoYourBest.__HWHX_HWHAUTO_PATCHED__ = Current.__HWHX_HWHAUTO_PATCHED__;
+        }
+        HWHClasses.doYourBest = StealtherDoYourBest;
+        return true;
+    }
+
+    function keepDefaultDungeonAlgorithmInstalled() {
+        let tries = 0;
+        const maxTries = 40; // ~20s
+        const timer = setInterval(() => {
+            tries += 1;
+            installDefaultDungeonAlgorithm({ quiet: true });
+            if (tries >= maxTries) {
+                clearInterval(timer);
+            }
+        }, 500);
+    }
+
+    async function executeTestDungeon() {
+        const { HWHFuncs } = window;
+
+        installDefaultDungeonAlgorithm({ quiet: true });
+
+        await waitForAutoBattleIdle();
+        if (window.HWH_AUTOBATTLE_RUNNING) {
+            console.warn('[Dungeon] AutoBattle still running — aborting dungeon start');
+            HWHFuncs.setProgress('Dungeon: AutoBattle still running', true);
+            return;
+        }
+
+        if (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
+            console.warn('[Dungeon] Already running — ignoring duplicate start');
+            HWHFuncs.setProgress('Dungeon: already running', true);
+            return;
+        }
+        dungeonRunning = true;
+        window.HWH_DUNGEON_RUNNING = true;
+
+        const dungeonRunTimeoutMs = Math.max(
+            20 * 60 * 1000,
+            Number(window.HWH_DUNGEON_RUN_TIMEOUT_MS) || 10 * 60 * 60 * 1000
+        );
+
+        try {
+            HWHFuncs.setProgress('Executing: Dungeon (Stealther 1.012)', true);
+            return await withTimeout(
+                new Promise((resolve, reject) => {
+                    try {
+                        const dung = new executeDungeon(resolve, reject);
+                        Promise.resolve(dung.start()).catch(reject);
+                    } catch (e) {
+                        reject(e);
+                    }
+                }),
+                dungeonRunTimeoutMs,
+                'Dungeon timed out'
+            );
+        } catch (err) {
+            // Stop the in-flight loop and force flag cleanup so a hung Calc cannot
+            // leave dungeonRunning stuck (BattleCalc calls are also timed out via runBattleCalc).
+            stopDung = true;
+            dungeonRunning = false;
+            window.HWH_DUNGEON_RUNNING = false;
+            setDungeonBattleOpen(false);
+            console.warn('[Dungeon] Run aborted — flags cleared:', err?.message || err);
+            throw err;
+        }
+    }
+
+    // --- DUNGEON SETTINGS GUI ---
+    function createDungeonSettingsGUI() {
+        if (document.getElementById('titanSettingsGUI')) {
+            ensureDungeonSettingsToggle();
+            return; // Already created
+        }
+
+        const style = document.createElement('style');
+        style.textContent = `
+            #titanSettingsGUI {
+                position: fixed;
+                top: 50px;
+                right: 10px;
+                width: 280px;
+                background-color: rgba(0, 0, 0, 0.85);
+                border: 1px solid #444;
+                border-radius: 10px;
+                padding: 15px 20px;
+                color: #E0E0E0;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 14px;
+                z-index: 10000;
+                box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                transition: all 0.3s ease-in-out;
+                max-height: calc(100vh - 70px);
+                overflow-y: auto;
+            }
+            #titanSettingsGUI h3 {
+                margin-top: 0;
+                color: #FFD700;
+                text-align: center;
+                font-size: 18px;
+                border-bottom: 1px solid #555;
+                padding-bottom: 8px;
+                margin-bottom: 15px;
+            }
+            #titanSettingsGUI h4 {
+                margin-top: 5px;
+                margin-bottom: 8px;
+                color: #87CEEB;
+                font-size: 15px;
+                text-align: center;
+            }
+            #titanSettingsGUI label {
+                display: block;
+                margin-bottom: 4px;
+                color: #ADD8E6;
+                font-weight: bold;
+            }
+            #titanSettingsGUI input[type="number"] {
+                width: calc(100% - 22px);
+                padding: 9px 10px;
+                margin-bottom: 10px;
+                border: 1px solid #666;
+                border-radius: 5px;
+                background-color: #2a2a2a;
+                color: white;
+                box-sizing: border-box;
+                font-size: 14px;
+                -moz-appearance: textfield;
+            }
+            #titanSettingsGUI input[type="number"]::-webkit-outer-spin-button,
+            #titanSettingsGUI input[type="number"]::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+            #titanSettingsGUI button {
+                background-color: #32CD32;
+                color: white;
+                padding: 10px 15px;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: bold;
+                transition: background-color 0.3s ease, transform 0.1s ease;
+                margin-top: 10px;
+            }
+            #titanSettingsGUI button:hover {
+                background-color: #228B22;
+                transform: translateY(-1px);
+            }
+            #titanSettingsGUI #resetTitanSettings {
+                background-color: #FF6347;
+                width: fit-content;
+                margin: 10px auto 0;
+                display: block;
+                padding: 8px 12px;
+                font-size: 14px;
+                border-radius: 5px;
+            }
+            #titanSettingsGUI #resetTitanSettings:hover {
+                background-color: #e5533d;
+            }
+            #titanSettingsGUI .setting-check {
+                display: flex;
+                align-items: flex-start;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            #titanSettingsGUI .setting-check input[type="checkbox"] {
+                margin-top: 3px;
+                flex-shrink: 0;
+            }
+            #titanSettingsGUI .setting-check label {
+                display: inline;
+                font-weight: normal;
+                color: #E0E0E0;
+                margin-bottom: 0;
+            }
+            #titanSettingsGUI .setting-hint {
+                display: block;
+                font-size: 11px;
+                color: #9fb3d1;
+                margin-top: 2px;
+                font-weight: normal;
+            }
+        `;
+        document.head.appendChild(style);
+
+        const gui = document.createElement('div');
+        gui.id = 'titanSettingsGUI';
+        gui.innerHTML = `
+            <h3>Dungeon Cutoff Settings 1.1.0</h3>
+            <div class="setting-check">
+                <input type="checkbox" id="autoRefreshPage">
+                <label for="autoRefreshPage">Refresh(F5) after dungeon</label>
+            </div>
+            <h4>Team building</h4>
+            <div class="setting-check">
+                <input type="checkbox" id="excludeFragileElemental">
+                <label for="excludeFragileElemental">
+                    Exclude fragile titans on elemental doors
+                    <span class="setting-hint">Tidus / Asherona / Verdoc — off by default (they're strong). Turn on if long farms keep dying.</span>
+                </label>
+            </div>
+            <div class="setting-check">
+                <input type="checkbox" id="shrinkEarthFireTeams">
+                <label for="shrinkEarthFireTeams">
+                    Shrink earth/fire teams when unsafe
+                    <span class="setting-hint">Try 5→4→3→2 titans if full team fails survival checks.</span>
+                </label>
+            </div>
+            <div class="setting-check">
+                <input type="checkbox" id="enforceTankSurvival">
+                <label for="enforceTankSurvival">
+                    Enforce tank HP/energy cutoffs
+                    <span class="setting-hint">Reject sims that leave Angus / Moloch / Sigurd too low.</span>
+                </label>
+            </div>
+            <div>
+                <label for="minOverallHP">General Thresholds (%) (>=30):</label>
+                <input type="number" id="minOverallHP" min="0" max="100" step="1">
+            </div>
+            <h4>Titan 4020 - Agnus</h4>
+            <div>
+                <label for="titan4020HP">Minimum HP (%) (>=25):</label>
+                <input type="number" id="titan4020HP" min="0" max="100" step="1">
+            </div>
+            <div>
+                <label for="titan4020EnergyHP">Minimum HP with Max Energy (%) (>=5):</label>
+                <input type="number" id="titan4020EnergyHP" min="0" max="100" step="1">
+            </div>
+            <h4>Titan 4010 - Moloch</h4>
+            <div>
+                <label for="titan4010Combined">HP + Energy combined (%) (>=63):</label>
+                <input type="number" id="titan4010Combined" min="0" max="200" step="1">
+            </div>
+            <h4>Titan 4000 - Sigurd</h4>
+            <div>
+                <label for="titan4000HP">Minimum HP (%) (>=62):</label>
+                <input type="number" id="titan4000HP" min="0" max="100" step="1">
+            </div>
+            <div>
+                <label for="titan4000Energy400HP">Minimum HP With Energy >= 400 (%) (>=45):</label>
+                <input type="number" id="titan4000Energy400HP" min="0" max="100" step="1">
+            </div>
+            <div>
+                <label for="titan4000Energy670HP">Minimum HP With Energy >= 670 (%) (>=30):</label>
+                <input type="number" id="titan4000Energy670HP" min="0" max="100" step="1">
+            </div>
+            <button id="saveTitanSettings">Save & Apply</button>
+            <button id="resetTitanSettings" type="button">Reset to Defaults</button>
+        `;
+        document.body.appendChild(gui);
+
+        const resetButton = document.getElementById('resetTitanSettings');
+        gui.style.display = 'none';
+
+        function updateGUIFields() {
+            document.getElementById('minOverallHP').value = titanHealthSettings.minOverallHP * 100;
+            document.getElementById('titan4020HP').value = titanHealthSettings.titan4020HP * 100;
+            document.getElementById('titan4020EnergyHP').value = titanHealthSettings.titan4020EnergyHP * 100;
+            document.getElementById('titan4010Combined').value = titanHealthSettings.titan4010Combined * 100;
+            document.getElementById('titan4000HP').value = titanHealthSettings.titan4000HP * 100;
+            document.getElementById('titan4000Energy400HP').value = titanHealthSettings.titan4000Energy400HP * 100;
+            document.getElementById('titan4000Energy670HP').value = titanHealthSettings.titan4000Energy670HP * 100;
+            document.getElementById('autoRefreshPage').checked = !!titanHealthSettings.autoRefreshPage;
+            document.getElementById('excludeFragileElemental').checked = !!titanHealthSettings.excludeFragileElemental;
+            document.getElementById('shrinkEarthFireTeams').checked = titanHealthSettings.shrinkEarthFireTeams !== false;
+            document.getElementById('enforceTankSurvival').checked = titanHealthSettings.enforceTankSurvival !== false;
+        }
+
+        updateGUIFields();
+
+        document.getElementById('saveTitanSettings').addEventListener('click', () => {
+            titanHealthSettings.minOverallHP = parseFloat(document.getElementById('minOverallHP').value) / 100;
+            titanHealthSettings.titan4020HP = parseFloat(document.getElementById('titan4020HP').value) / 100;
+            titanHealthSettings.titan4020EnergyHP = parseFloat(document.getElementById('titan4020EnergyHP').value) / 100;
+            titanHealthSettings.titan4010Combined = parseFloat(document.getElementById('titan4010Combined').value) / 100;
+            titanHealthSettings.titan4000HP = parseFloat(document.getElementById('titan4000HP').value) / 100;
+            titanHealthSettings.titan4000Energy400HP = parseFloat(document.getElementById('titan4000Energy400HP').value) / 100;
+            titanHealthSettings.titan4000Energy670HP = parseFloat(document.getElementById('titan4000Energy670HP').value) / 100;
+            titanHealthSettings.autoRefreshPage = document.getElementById('autoRefreshPage').checked;
+            titanHealthSettings.excludeFragileElemental = document.getElementById('excludeFragileElemental').checked;
+            titanHealthSettings.shrinkEarthFireTeams = document.getElementById('shrinkEarthFireTeams').checked;
+            titanHealthSettings.enforceTankSurvival = document.getElementById('enforceTankSurvival').checked;
+            saveTitanHealthSettings();
+            const { HWHFuncs } = window;
+            if (HWHFuncs) HWHFuncs.setProgress('Dungeon settings saved!', true);
+        });
+
+        resetButton.addEventListener('click', () => {
+            if (confirm('Are you sure you want to reset to default values?')) {
+                titanHealthSettings = Object.assign({}, defaultTitanHealthSettings);
+                saveTitanHealthSettings();
+                updateGUIFields();
+                const { HWHFuncs } = window;
+                if (HWHFuncs) HWHFuncs.setProgress('Settings reset to defaults!', true);
+            }
+        });
+
+        const inputs = gui.querySelectorAll('input[type="number"], input[type="checkbox"]');
+        inputs.forEach(input => {
+            input.addEventListener('change', () => {
+                const id = input.id;
+                if (Object.prototype.hasOwnProperty.call(defaultTitanHealthSettings, id)) {
+                    if (input.type === 'checkbox') {
+                        titanHealthSettings[id] = input.checked;
+                    } else {
+                        titanHealthSettings[id] = parseFloat(input.value) / 100;
+                    }
+                    saveTitanHealthSettings();
+                }
+            });
+        });
+
+        // Toggle GUI visibility from menu / Auto Daily popup
+        ensureDungeonSettingsToggle();
+    }
+
+    function ensureDungeonSettingsToggle() {
+        window.toggleDungeonSettingsGUI = () => {
+            createDungeonSettingsGUI();
+            const panel = document.getElementById('titanSettingsGUI');
+            if (!panel) return;
+            const hidden = panel.style.display === 'none' || !panel.style.display;
+            panel.style.display = hidden ? 'flex' : 'none';
+        };
+    }
+
+    async function executeOfferFarmAllReward() {
+        const { Send, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Easter Eggs', true);
+        try {
+            const data = await Send({ calls: [{ name: "offerGetAll", args: {}, ident: "offerGetAll" }] });
+            const offers = data.results[0].result.response.filter(e => e.type == "reward" && !e.freeRewardObtained && e.reward);
+            if (offers.length === 0) return;
+            const calls = offers.map(reward => ({ name: "offerFarmReward", args: { offerId: reward.id }, ident: `offerFarmReward_${reward.id}` }));
+            await Send({ calls });
+            HWHFuncs.setProgress('Easter Eggs: Done!', true);
+        } catch (e) { console.error("Error in executeOfferFarmAllReward", e); HWHFuncs.setProgress('Easter Eggs: Error!', true); }
+    }
+    async function executeQuestAllFarm() {
+         const { Send } = window;
+         const quests = await getQuestData();
+         // state 2 = completed (ready to collect); skip event quests (id >= 1e6)
+         const questsToFarm = quests.filter(q => q && q.id < 1000000 && q.state === 2);
+         if (questsToFarm.length === 0) return;
+         const questCalls = questsToFarm.map(q => ({
+             name: "questFarm",
+             args: { questId: q.id },
+             ident: `questFarm_${q.id}`
+         }));
+         await Send({ calls: questCalls });
+         invalidateQuestCache();
+    }
+    async function executeMailGetAll() {
+         const { Send, HWHClasses } = window;
+         const mailData = await Send({ calls: [{ name: "mailGetAll", args: {}, ident: "body" }] });
+         const letters = mailData.results[0].result.response.letters;
+         const letterIds = HWHClasses.Letters.filter(letters);
+         if (letterIds.length > 0) await Send({ calls: [{ name: "mailFarm", args: { letterIds }, ident: "body" }] });
+    }
+    async function executeRewardsAndMailFarm() {
+        const { HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Rewards & Mail', true);
+        try {
+            await executeQuestAllFarm();
+            await executeMailGetAll();
+            HWHFuncs.setProgress('Rewards & Mail: Done!', true);
+        } catch (e) { console.error("Error in executeRewardsAndMailFarm", e); HWHFuncs.setProgress('Rewards & Mail: Error!', true); }
+    }
+    async function executeRollAscension() {
+        const { Send, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Seer', true);
+        try {
+            const data = await Send({ calls: [{ name: "userGetInfo", args: {}, ident: "userGetInfo" }] });
+            const refillable = data.results[0].result.response.refillable;
+            const seerCharges = refillable.find(i => i.id == 47);
+            if (seerCharges && seerCharges.amount > 0) await Send({ calls: [{ name: "ascensionChest_open", args: { paid: false, amount: 1 }, ident: "body" }] });
+            HWHFuncs.setProgress('Seer: Done!', true);
+        } catch (e) { console.error("Error in executeRollAscension", e); HWHFuncs.setProgress('Seer: Error!', true); }
+    }
+    async function executeGetDailyBonus() {
+    const { HWHClasses, HWHFuncs } = window;
+    HWHFuncs.setProgress('Executing: Daily Bonus', true);
+    try {
+        if (HWHClasses && HWHClasses.doYourBest) {
+            const doYourBestInstance = new HWHClasses.doYourBest(() => {}, () => {});
+            if (doYourBestInstance.functions && doYourBestInstance.functions.getDailyBonus) {
+                await doYourBestInstance.functions.getDailyBonus();
+                if (doYourBestInstance.functions.collectAllStuff) {
+                    const { Send } = window;
+                    await Send({
+                        calls: [
+                            { name: "subscriptionFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "body" },
+                            { name: "zeppelinGiftFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "zeppelinGiftFarm" }
+                        ]
+                    });
+                }
+                
+                HWHFuncs.setProgress('Daily Bonus: Done!', true);
+                return;
+            }
+        }
+        
+        // Fallback: implement our own if doYourBest is not available
+        const { Send, lib } = window;
+        const response = await Send({
+            calls: [
+                { name: "dailyBonusGetInfo", args: {}, ident: "dailyBonus" },
+                { name: "userGetInfo", args: {}, ident: "userInfo" }
+            ]
+        });
+
+        const dailyBonusInfo = response.results.find(r => r.ident === 'dailyBonus').result.response;
+        const userInfo = response.results.find(r => r.ident === 'userInfo').result.response;
+
+        if (!dailyBonusInfo.availableToday) {
+            HWHFuncs.setProgress('Daily Bonus already collected', true);
+            return;
+        }
+
+        const vipInfo = lib.getData('level').vip;
+        let currentVipLevel = 0;
+        for (let i in vipInfo) {
+            if (+userInfo.vipPoints >= vipInfo[i].vipPoints) {
+                currentVipLevel = vipInfo[i].level;
+            }
+        }
+        const dailyBonusStat = lib.getData('dailyBonusStatic');
+        const vipLevelDouble = dailyBonusStat[`${dailyBonusInfo.currentDay}_0_0`].vipLevelDouble;
+        const collectVipBonus = dailyBonusInfo.availableVip && currentVipLevel >= vipLevelDouble;
+
+        await Send({
+            calls: [
+                { name: "dailyBonusFarm", args: { vip: collectVipBonus ? 1 : 0 }, context: { actionTs: Math.floor(performance.now()) }, ident: "body" },
+                { name: "subscriptionFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "body" },
+                { name: "zeppelinGiftFarm", args: {}, context: { actionTs: Math.floor(performance.now()) }, ident: "zeppelinGiftFarm" }
+            ]
+        });
+        
+        HWHFuncs.setProgress('Daily Bonus: Done!', true);
+    } catch (e) {
+        console.error("Error in executeGetDailyBonus", e);
+        HWHFuncs.setProgress('Daily Bonus: Error!', true);
+    }
+}
+    async function executeGachaRefill() {
+        const { Send, HWHFuncs } = window;
+        HWHFuncs.setProgress('Executing: Gacha Refill', true);
+        try {
+            await Send({
+                calls: [{
+                    name: "gacha_refill",
+                    args: {
+                        ident: "heroGacha"
+                    },
+                    ident: "body"
+                }]
+            });
+            HWHFuncs.setProgress('Gacha Refill: Done!', true);
+        } catch (e) {
+            console.error("Error in executeGachaRefill", e);
+            HWHFuncs.setProgress('Gacha Refill: Error!', true);
+        }
+    }
+
+
+    // =========================================================================
+    // --- AUTOBATTLE MODULE (merged from AutoBattle HwH Ext.user.js) ---
+    // =========================================================================
+    let autoBattleInitialized = false;
+
+    /** True when HWHAutoFixBattleExt AutoFix checkbox is on.
+     *  Must live at IIFE scope — Cosmic (executeEpicBrawl) runs outside initializeAutoBattle. */
+    function isHwhAutoFixEnabled() {
+        const HWHFuncs = window.HWHFuncs;
+        try {
+            if (typeof HWHFuncs?.isChecked === 'function' && HWHFuncs.isChecked('autoFixIt')) {
+                return true;
+            }
+        } catch (_) { /* ignore */ }
+        try {
+            const box = window.HWHData?.checkboxes?.autoFixIt;
+            if (box?.cbox) return !!box.cbox.checked;
+            // Before menu paint, fall back to persisted checkbox default/storage.
+            if (typeof HWHFuncs?.getSaveVal === 'function') {
+                const saved = HWHFuncs.getSaveVal('autoFixIt', null);
+                if (saved !== null && saved !== undefined) return !!saved;
+            }
+            return !!box?.default;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /** Drop HWH progress / leftover confirm UI so Auto Daily is not blocked after AutoFix or errors. */
+    function dismissBlockingUi(reason = '') {
+        try {
+            const { HWHFuncs } = window;
+            if (typeof HWHFuncs?.isHideProgress === 'function' && typeof HWHFuncs?.hideProgress === 'function') {
+                if (!HWHFuncs.isHideProgress()) {
+                    HWHFuncs.hideProgress();
+                }
+            } else if (typeof HWHFuncs?.hideProgress === 'function') {
+                HWHFuncs.hideProgress();
+            }
+        } catch (_) { /* ignore */ }
+
+        try {
+            // Auto-click common HWH/game confirm/close buttons left after a failed battle.
+            const root = document.querySelector('.PopUp_Container') || document;
+            const buttons = root.querySelectorAll('button, .btn, [role="button"], .PopUp_Button, .button');
+            for (const btn of buttons) {
+                const text = String(btn.textContent || btn.value || '').trim().toLowerCase();
+                if (!text) continue;
+                if (/^(ok|okay|close|закрыть|подтвердить|continue|продолжить|got it|dismiss)$/i.test(text)
+                    || text === '×' || text === 'x') {
+                    btn.click();
+                    if (reason) {
+                        console.log(`[Auto Daily] Dismissed blocking UI (${reason}):`, text);
+                    }
+                    break;
+                }
+            }
+        } catch (_) { /* ignore */ }
+    }
+
+    /** Local HWH FixBattle salvage (AutoFix ext needs live Scheduler logs Auto Daily never fills). */
+    async function salvageWithHwhFixBattle(battleData, options = {}) {
+        const {
+            mode = 'pvp', // 'pvp' | 'boss'
+            label = 'AutoFix',
+            durationMs = 120000,
+            maxCount = 500,
+        } = options;
+        if (!battleData) {
+            return null;
+        }
+        const FixClass = mode === 'boss'
+            ? window.HWHClasses?.BossFixBattle
+            : window.HWHClasses?.BestOrWinFixBattle;
+        if (typeof FixClass !== 'function') {
+            console.warn(`[${label}] HWH FixBattle class unavailable — salvage skipped`);
+            return null;
+        }
+
+        const clone = structuredClone(battleData);
+        const endTime = Math.max(Date.now() + Math.min(durationMs, 180000), Date.now() + 30000);
+        clone.endTime = endTime;
+        if (typeof window.HWHFuncs?.setProgress === 'function') {
+            // true = non-blocking toast; avoid the click-to-dismiss AutoFix form.
+            window.HWHFuncs.setProgress(`${label}: AutoFix searching...`, true);
+        }
+        console.log(`[${label}] Running local HWH FixBattle salvage (${mode})`);
+
+        try {
+            const bFix = new FixClass(clone, true);
+            const fixed = await bFix.start(endTime, maxCount);
+            if (!fixed) return null;
+            if (mode === 'boss') {
+                if (!(fixed.value > 0) || !fixed.result || !fixed.progress) return null;
+                return {
+                    win: !!fixed.result.win,
+                    result: fixed.result,
+                    progress: fixed.progress,
+                    value: fixed.value,
+                    salvaged: true,
+                };
+            }
+            // PvP / Cosmic / GW: only accept a flipped win (loss with better score still loses).
+            if (!fixed.result?.win || !fixed.progress) return null;
+            console.log(`[${label}] AutoFix salvaged a win`);
+            return {
+                win: true,
+                result: fixed.result,
+                progress: fixed.progress,
+                value: fixed.value,
+                salvaged: true,
+            };
+        } catch (err) {
+            console.warn(`[${label}] AutoFix salvage failed:`, err);
+            return null;
+        } finally {
+            dismissBlockingUi(`${label} AutoFix`);
+        }
+    }
+
+    /** Normalize raid-boss progress keys so AutoFix can read defenders.heroes[1].extra. */
+    function prepareRaidBossProgressForAutoFix(progress) {
+        const wave = progress?.[0];
+        const heroes = wave?.defenders?.heroes;
+        if (!heroes || typeof heroes !== 'object') {
+            return { ok: false, damage: 0, progress };
+        }
+        const boss = heroes[1] || heroes['1'];
+        if (!boss) {
+            return { ok: false, damage: 0, progress };
+        }
+        if (!heroes[1]) {
+            heroes[1] = boss;
+        }
+        const extra = boss.extra || {};
+        if (typeof extra.damageTaken !== 'number') {
+            extra.damageTaken = Number(extra.damageTaken) || 0;
+        }
+        if (typeof extra.damageTakenNextLevel !== 'number') {
+            extra.damageTakenNextLevel = Number(extra.damageTakenNextLevel) || 0;
+        }
+        boss.extra = extra;
+        return {
+            ok: true,
+            damage: extra.damageTaken + extra.damageTakenNextLevel,
+            progress,
+        };
+    }
+
+    function initializeAutoBattle() {
+    if (autoBattleInitialized) {
+        return;
+    }
+    autoBattleInitialized = true;
+    console.log('AutoBattle: initializing merged module inside Auto Daily...');
+
+    const { HWHClasses, HWHFuncs, Send, cheats } = window;
+
+    // Helper function to get battle type
+    function getBattleType(strBattleType) {
+        if (!strBattleType) {
+            return null;
+        }
+        switch (strBattleType) {
+            case 'titan_pvp':
+                return 'get_titanPvp';
+            case 'titan_pvp_manual':
+            case 'titan_clan_pvp':
+            case 'clan_pvp_titan':
+            case 'clan_global_pvp_titan':
+            case 'brawl_titan':
+            case 'challenge_titan':
+            case 'titan_mission':
+            case 'epic_brawl_titan':
+                return 'get_titanPvpManual';
+            case 'clan_raid':
+            case 'adventure':
+            case 'clan_global_pvp':
+            case 'epic_brawl':
+            case 'clan_pvp':
+                return 'get_clanPvp';
+            case 'dungeon_titan':
+            case 'titan_tower':
+                return 'get_titan';
+            case 'tower':
+            case 'clan_dungeon':
+                return 'get_tower';
+            case 'pve':
+            case 'mission':
+                return 'get_pve';
+            case 'mission_boss':
+                return 'get_missionBoss';
+            case 'challenge':
+            case 'pvp_manual':
+                return 'get_pvpManual';
+            case 'grand':
+            case 'arena':
+            case 'pvp':
+            case 'clan_domination':
+                return 'get_pvp';
+            case 'core':
+                return 'get_core';
+            default: {
+                if (strBattleType.includes('invasion')) {
+                    return 'get_invasion';
+                }
+                if (strBattleType.includes('boss')) {
+                    return 'get_boss';
+                }
+                if (strBattleType.includes('titan_arena')) {
+                    return 'get_titanPvpManual';
+                }
+                return 'get_clanPvp';
+            }
+        }
+    }
+
+    function I18N(constant, replace) {
+        const fallbacks = {
+            GUILD_WAR: 'Guild War',
+            MINION_RAID: 'Minion Raid',
+            INITIALIZING: 'Initializing',
+            COMPLETED: 'Completed',
+            BATTLES_CANCELED: 'Battles Canceled',
+            REMAINING_ATTEMPTS: 'Remaining Attempts',
+            TITAN_ARENA: 'Titan Arena',
+        };
+        if (Object.prototype.hasOwnProperty.call(fallbacks, constant)) {
+            let result = fallbacks[constant];
+            if (replace) {
+                for (const key in replace) {
+                    result = result.replace(`{${key}}`, replace[key]);
+                }
+            }
+            return result;
+        }
+        if (typeof window.I18N === 'function') {
+            try { return window.I18N(constant, replace); } catch (_) { /* fall through */ }
+        }
+        return constant;
+    }
+
+    function getUserInfo() {
+        if (window.getUserInfo && typeof window.getUserInfo === 'function') {
+            return window.getUserInfo();
+        }
+        return {};
+    }
+
+    function setIsCancalBattle(value) {
+        if (window.setIsCancalBattle && typeof window.setIsCancalBattle === 'function') {
+            window.setIsCancalBattle(value);
+        }
+    }
+
+    function setProgress(text, hide) {
+        HWHFuncs.setProgress(text, hide);
+    }
+
+    function getInput(name) {
+        if (HWHFuncs && typeof HWHFuncs.getInput === 'function') {
+            return HWHFuncs.getInput(name);
+        }
+        if (window.getInput && typeof window.getInput === 'function') {
+            return window.getInput(name);
+        }
+        if (name === 'countTestBattle') return 10;
+        if (name === 'countAutoBattle') return 10;
+        return 0;
+    }
+
+    /** Main-menu countTestBattle — each sample is a local BattleCalc. */
+    function getTestFightCount() {
+        const raw = parseInt(getInput('countTestBattle'), 10);
+        if (!Number.isFinite(raw) || raw < 1) {
+            return 10;
+        }
+        return raw;
+    }
+
+    function random(min, max) {
+        return Math.floor(Math.random() * (max - min + 1) + min);
+    }
+
+    function SendRequest(json, callback) {
+        if (typeof Send === 'function') {
+            Send(json).then(result => {
+                if (callback) callback(result);
+            }).catch(error => {
+                if (callback) callback({ error: error });
+            });
+        } else {
+            console.error('Send function not available');
+            if (callback) callback({ error: 'Send function not available' });
+        }
+    }
+
+    /** Callback-style send for stock HWH ToE / raid-node flows. */
+    function send(payload, callback) {
+        SendRequest(typeof payload === 'string' ? payload : JSON.stringify(payload), callback);
+    }
+
+    const BattleCalc = cheats.BattleCalc;
+
+    const CONSTANTS = {
+        WIN_RATE_THRESHOLD: 89,
+        SIMULATION_COUNT: 10,
+        BATTLE_VERSION: 296,       // Arena demo endBattle
+        TITAN_BATTLE_VERSION: 298, // Titan demo endBattle
+        DELAY_BETWEEN_BATTLES: 1000,
+        // Fallback GW map when lib.data.clanWar missing (4=Bridge; 7/8/9 unlock Citadel).
+        GUILD_WAR_FORTIFICATION_FALLBACK: {
+            1: { id: 1, pointReward: 40, tier: 1, tierUnlock: null },
+            2: { id: 2, pointReward: 40, tier: 1, tierUnlock: null },
+            3: { id: 3, pointReward: 40, tier: 1, tierUnlock: null },
+            4: { id: 4, pointReward: 60, tier: 1, tierUnlock: 2 },
+            5: { id: 5, pointReward: 60, tier: 2, tierUnlock: null },
+            6: { id: 6, pointReward: 60, tier: 2, tierUnlock: null },
+            7: { id: 7, pointReward: 60, tier: 2, tierUnlock: 3 },
+            8: { id: 8, pointReward: 60, tier: 2, tierUnlock: 3 },
+            9: { id: 9, pointReward: 60, tier: 2, tierUnlock: 3 },
+            10: { id: 10, pointReward: 120, tier: 3, tierUnlock: null },
+        },
+        GUILD_WAR_SLOT_FALLBACK: {
+            1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3,
+            7: 4, 8: 4, 9: 4, 34: 4,
+            10: 5, 11: 5, 12: 5, 35: 5,
+            13: 6, 14: 6, 15: 6, 36: 6,
+            16: 7, 17: 7, 18: 7, 37: 7,
+            19: 8, 20: 8, 21: 8, 38: 8,
+            22: 9, 23: 9, 24: 9, 39: 9,
+            25: 10, 26: 10, 27: 10, 28: 10, 29: 10, 30: 10, 40: 10,
+            31: 1, 32: 2, 33: 3,
+        },
+        ARENA_ATTEMPTS_REFILLABLE_ID: 6,
+        GRAND_ARENA_ATTEMPTS_REFILLABLE_ID: 21,
+        DEFAULT_PET_ID: 6005,
+        PET_ID_RANGE_MIN: 6000,
+        PET_ID_RANGE_MAX: 7000,
+        DAYS: {
+            SUNDAY: 0,
+            MONDAY: 1,
+            SATURDAY: 6
+        }
+    };
+
+    const Utils = {
+        getDayOfWeek: function() {
+            return new Date().getDay();
+        },
+
+        isTitanArenaDay: function() {
+            const day = this.getDayOfWeek();
+            return day >= CONSTANTS.DAYS.MONDAY && day <= CONSTANTS.DAYS.SATURDAY;
+        },
+
+        isRaidBossDay: function() {
+            const day = this.getDayOfWeek();
+            return day === CONSTANTS.DAYS.SUNDAY || day === CONSTANTS.DAYS.SATURDAY;
+        },
+
+        getDayName: function(dayOfWeek) {
+            return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+        },
+
+        log: function(level, ...args) {
+            if (window.DEBUG !== false) {
+                console[level](...args);
+            }
+        },
+
+        getActionTs: function() {
+            return Date.now();
+        },
+
+        isValidBattleResult: function(result) {
+            return result && result.result && typeof result.result.win === 'boolean';
+        }
+    };
+
+    /** Arena lineups: id lists, {id} objects, id-keyed maps, or [id, level, ...] tuples. */
+    function parseArenaLineup(team, explicitPet, petMin = 6000, petMax = 7000) {
+        if (team == null) {
+            return null;
+        }
+
+        let pairs;
+        if (Array.isArray(team)) {
+            pairs = team.map((item) => [null, item]);
+        } else if (typeof team === 'object') {
+            pairs = Object.entries(team);
+        } else {
+            return null;
+        }
+        if (!pairs.length) {
+            return null;
+        }
+
+        if (!Array.isArray(team)) {
+            const wrapped = team.units || team.heroes || team.heroIds || team.list || team.lineup;
+            if (wrapped && wrapped !== team) {
+                const parsedWrapped = parseArenaLineup(wrapped, explicitPet ?? team.pet ?? team.petId, petMin, petMax);
+                if (parsedWrapped) {
+                    return parsedWrapped;
+                }
+            }
+        }
+
+        const values = pairs.map(([, item]) => item);
+        const allTuples = values.every((item) => Array.isArray(item) && (typeof item[0] === 'number' || typeof item[0] === 'string'));
+        if (allTuples) {
+            pairs = values.map((item) => [item[0], { id: item[0] }]);
+        } else if (values.some((item) => Array.isArray(item))) {
+            return null;
+        }
+
+        const slotKeyed = pairs.every(([key], index) => key == null || String(key) === String(index));
+        const readId = (item) => {
+            if (typeof item === 'number' && Number.isFinite(item) && item > 0) {
+                return item;
+            }
+            if (typeof item === 'string' && /^\d+$/.test(item.trim())) {
+                return parseInt(item.trim(), 10);
+            }
+            if (!item || typeof item !== 'object') {
+                return null;
+            }
+            const nested = [item.hero, item.state, item.unit].find((value) => value && typeof value === 'object');
+            const raw = item.id ?? item.heroId ?? item.hero_id ?? item.unitId ?? item.unit_id
+                ?? item.petId ?? item.pet_id ?? item.typeId ?? item.libId
+                ?? (typeof item.hero === 'number' || typeof item.hero === 'string' ? item.hero : null)
+                ?? (typeof item.type === 'number' ? item.type : null)
+                ?? nested?.id ?? nested?.heroId ?? nested?.hero_id ?? nested?.unitId;
+            const n = Number(raw);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        };
+        const toId = (key, item) => {
+            const direct = readId(item);
+            if (direct) {
+                return direct;
+            }
+            if (slotKeyed) {
+                return null;
+            }
+            const keyNum = Number(key);
+            return Number.isFinite(keyNum) && keyNum > 0 ? keyNum : null;
+        };
+
+        const isPet = (item, id) => {
+            if (item && typeof item === 'object' && String(item.type || '').toLowerCase() === 'pet') {
+                return true;
+            }
+            return id >= petMin && id < petMax;
+        };
+
+        const heroIds = [];
+        let petId = null;
+        for (const [key, item] of pairs) {
+            const id = toId(key, item);
+            if (!id) {
+                continue;
+            }
+            if (isPet(item, id)) {
+                petId = id;
+            } else if (heroIds.length < 5) {
+                heroIds.push(id);
+            }
+        }
+
+        const explicitId = Number(explicitPet && typeof explicitPet === 'object' ? (explicitPet.id ?? explicitPet.petId) : explicitPet);
+        if (Number.isFinite(explicitId) && explicitId >= petMin && explicitId < petMax) {
+            petId = explicitId;
+        }
+        if (!petId) {
+            petId = 6005;
+        }
+        if (heroIds.length !== 5) {
+            return null;
+        }
+        return { heroes: heroIds, pet: petId };
+    }
+
+    // ========== EXECUTE ARENA CLASS ==========
+    function executeArena(resolve, reject) {
+        this.resolve = resolve;
+        this.reject = reject;
+        this.arenaType = 'arena';
+        this.attemptsRemaining = 0;
+        this.victories = 0;
+        this.arenaInfo = null;
+        this.teamInfo = null;
+        this.opponents = [];
+        this.myUserId = null;
+        this.myClanId = null;
+        this.allyUserIds = new Set();
+
+        this.start = async function(arenaType = 'arena') {
+            this.arenaType = arenaType;
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            setProgress(`${arenaName}: Initializing...`);
+
+            try {
+                // Get arena status and team data
+                await this.getArenaStatus();
+
+                if (this.attemptsRemaining <= 0) {
+                    if (this.arenaInfo && this.arenaInfo.status === 'peace_time') {
+                        this.end('Arena is in peace time - no battles available');
+                    } else if (this.arenaInfo && this.arenaInfo.status === 'disabled') {
+                        this.end('Arena is disabled - no battles available');
+                    } else if (this.arenaInfo && this.arenaInfo.status === 'error') {
+                        const errorMsg = this.arenaInfo.errorMessage || 'Arena API error - no battles available';
+                        this.end(errorMsg);
+                    } else {
+                        this.end('No attempts remaining');
+                    }
+                    return;
+                }
+
+                await this.getAvailableTeams();
+                await this.loadAllyUserIds();
+
+                // Get detailed opponent information
+                const detailedOpponents = await this.getArenaOpponents();
+                if (detailedOpponents && (detailedOpponents.array || detailedOpponents.map)) {
+                    // Store both map and array to preserve API order
+                    this.opponentsData = detailedOpponents;
+                } else if (detailedOpponents && typeof detailedOpponents === 'object' && Object.keys(detailedOpponents).length > 0) {
+                    // Fallback: old format (just map)
+                    this.opponents = detailedOpponents;
+                }
+
+                // Process opponents in API order (one by one, no sorting)
+                this.findEasiestOpponents();
+
+                // Execute battles
+                await this.executeBattles();
+
+            } catch (error) {
+                console.error('Arena execution error:', error);
+                this.end('Error: ' + error.message);
+            }
+        }
+
+        this.getArenaStatus = async function() {
+            try {
+                const calls = [{
+                    name: "userGetInfo",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                console.log('User info response:', response);
+
+                if (response && response.results && response.results[0] && response.results[0].result) {
+                    const userInfo = response.results[0].result.response;
+                    console.log('User info:', userInfo);
+
+                    this.myUserId = userInfo.userId != null ? String(userInfo.userId) : null;
+                    this.myClanId = userInfo.clanId != null ? String(userInfo.clanId) : null;
+
+                    if (this.arenaType === 'grand') {
+                        // Grand Arena attempts are stored in refillable array with id: 21
+                        const grandAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === CONSTANTS.GRAND_ARENA_ATTEMPTS_REFILLABLE_ID) : null;
+                        const grandAttempts = grandAttemptsItem ? grandAttemptsItem.amount : 0;
+
+                        this.arenaInfo = {
+                            attempts: grandAttempts,
+                            rank: userInfo.grandPlace || 1000,
+                            status: grandAttempts > 0 ? 'active' : 'no_attempts',
+                            rivals: [],
+                            canUpdateDefenders: false,
+                            battleStartTs: 0
+                        };
+                        this.attemptsRemaining = grandAttempts;
+
+                        if (grandAttempts <= 0) {
+                            setProgress(`Grand Arena: No attempts remaining (${grandAttempts})`);
+                            return;
+                        }
+
+                        setProgress(`Grand Arena: ${grandAttempts} attempts available`);
+                        return;
+                    } else {
+                        // Arena attempts are stored in refillable array with id: 6
+                        const arenaAttemptsItem = userInfo.refillable ? userInfo.refillable.find(r => r.id === CONSTANTS.ARENA_ATTEMPTS_REFILLABLE_ID) : null;
+                        const arenaAttempts = arenaAttemptsItem ? arenaAttemptsItem.amount : 0;
+
+                        this.arenaInfo = {
+                            attempts: arenaAttempts,
+                            rank: userInfo.arenaPlace || 1000,
+                            status: arenaAttempts > 0 ? 'active' : 'no_attempts',
+                            rivals: [],
+                            canUpdateDefenders: false,
+                            battleStartTs: 0
+                        };
+                        this.attemptsRemaining = arenaAttempts;
+
+                        if (arenaAttempts <= 0) {
+                            setProgress(`Arena: No attempts remaining (${arenaAttempts})`);
+                            return;
+                        }
+
+                        setProgress(`Arena: ${arenaAttempts} attempts available`);
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.log('Could not get user info:', error);
+            }
+
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            this.arenaInfo = {
+                attempts: 0,
+                rank: 1000,
+                status: 'error',
+                errorMessage: `${arenaName}: could not read attempts`,
+                rivals: [],
+                canUpdateDefenders: false,
+                battleStartTs: 0
+            };
+            this.attemptsRemaining = 0;
+            setProgress(`${arenaName}: could not read attempts`);
+            return;
+        }
+
+        this.getAvailableTeams = async function() {
+            const calls = [{
+                name: "teamGetAll",
+                args: {},
+                ident: "teamGetAll"
+            }, {
+                name: "teamGetFavor",
+                args: {},
+                ident: "teamGetFavor"
+            }, {
+                name: "heroGetAll",
+                args: {},
+                ident: "heroGetAll"
+            }];
+
+            const response = await Send(JSON.stringify({calls}));
+            console.log('Team API response:', response);
+
+            if (!response || !response.results || response.results.length < 3) {
+                throw new Error('Invalid team API response structure');
+            }
+
+            if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                throw new Error('Invalid teamGetAll response');
+            }
+            if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
+                throw new Error('Invalid teamGetFavor response');
+            }
+            if (!response.results[2] || !response.results[2].result || !response.results[2].result.response) {
+                throw new Error('Invalid heroGetAll response');
+            }
+
+            this.teamInfo = {
+                teams: response.results[0].result.response,
+                favor: response.results[1].result.response,
+                heroes: Object.values(response.results[2].result.response)
+            };
+
+            console.log('Team info:', this.teamInfo);
+        }
+
+        this.getArenaOpponents = async function() {
+            console.log('Getting arena opponents...');
+
+            const apiName = this.arenaType === 'grand' ? 'grandFindEnemies' : 'arenaFindEnemies';
+                const calls = [{
+                    name: apiName,
+                    args: {},
+                    context: {
+                        actionTs: Utils.getActionTs()
+                    },
+                    ident: "body"
+                }];
+
+            try {
+                const response = await Send(JSON.stringify({calls}));
+                console.log('Arena opponents API response:', response);
+
+                if (!response || !response.results || !response.results[0] || !response.results[0].result) {
+                    throw new Error(`Invalid API response structure for ${apiName}`);
+                }
+
+                let opponents = response.results[0].result.response;
+                if (opponents && !Array.isArray(opponents) && typeof opponents === 'object') {
+                    const wrapped = [opponents.enemies, opponents.list, opponents.users, opponents.opponents, opponents.data]
+                        .find((value) => Array.isArray(value));
+                    if (wrapped) {
+                        opponents = wrapped;
+                    } else {
+                        const values = Object.values(opponents).filter((value) => (
+                            value && typeof value === 'object' && !Array.isArray(value)
+                            && (value.userId != null || value.heroes || value.team || value.heroIds || value.defenceTeam)
+                        ));
+                        if (values.length) {
+                            opponents = values;
+                        }
+                    }
+                }
+                console.log('Detailed opponents info:', opponents);
+
+                // Return both map (for lookup) and array (for order preservation)
+                const opponentsMap = {};
+                const opponentsArray = [];
+                
+                if (Array.isArray(opponents)) {
+                    // Preserve the order from API response
+                    opponents.forEach(opponent => {
+                        opponentsMap[opponent.userId] = opponent;
+                        opponentsArray.push(opponent);
+                    });
+                }
+
+                return {
+                    map: opponentsMap,
+                    array: opponentsArray  // Preserve API order
+                };
+            } catch (error) {
+                console.error('Error getting arena opponents:', error);
+                return { map: {}, array: [] };
+            }
+        }
+
+        this.findEasiestOpponents = function() {
+            // Process opponents in the exact order they come from API
+            // Arena will try them one by one as returned by the server (no sorting)
+            if (this.opponentsData && this.opponentsData.array && Array.isArray(this.opponentsData.array)) {
+                const availableOpponents = [];
+
+                // Process in API order (preserve original array order)
+                this.opponentsData.array.forEach(opponentData => {
+                    availableOpponents.push({
+                        opponent: {
+                            ...opponentData,
+                            id: opponentData.userId ?? opponentData.id,
+                            power: parseInt(opponentData.power) || 0,
+                            place: parseInt(opponentData.place) || 1000,
+                            heroes: opponentData.heroes ?? opponentData.heroIds ?? opponentData.team?.heroes ?? opponentData.team?.units ?? [],
+                            banners: opponentData.banners || (opponentData.banner != null ? [opponentData.banner] : []),
+                            user: opponentData.user || {}
+                        },
+                        rank: parseInt(opponentData.place) || 1000,
+                        difficulty: parseInt(opponentData.power) || 0
+                    });
+                });
+
+                this.opponents = availableOpponents.sort((a, b) => a.rank - b.rank);
+                console.log(`[OPPONENTS] Highest ranking first (place 1 = top). Order:`, this.opponents.map(o => ({
+                    id: o.opponent.id,
+                    place: o.rank,
+                    power: o.difficulty
+                })));
+            } else if (this.opponents && typeof this.opponents === 'object') {
+                // Fallback: if we have the old format (map), convert to array
+                // Note: Object.entries() may not preserve order, but we'll try
+                const availableOpponents = [];
+                for (const [opponentId, opponentData] of Object.entries(this.opponents)) {
+                    availableOpponents.push({
+                        opponent: {
+                            ...opponentData,
+                            id: opponentData.userId ?? opponentData.id ?? opponentId,
+                            power: parseInt(opponentData.power) || 0,
+                            place: parseInt(opponentData.place) || 1000,
+                            heroes: opponentData.heroes ?? opponentData.heroIds ?? opponentData.team?.heroes ?? opponentData.team?.units ?? [],
+                            banners: opponentData.banners || (opponentData.banner != null ? [opponentData.banner] : []),
+                            user: opponentData.user || {}
+                        },
+                        rank: parseInt(opponentData.place) || 1000,
+                        difficulty: parseInt(opponentData.power) || 0
+                    });
+                }
+                this.opponents = availableOpponents.sort((a, b) => a.rank - b.rank);
+                console.log(`[OPPONENTS] Highest ranking first (fallback). Order:`, this.opponents.map(o => ({
+                    id: o.opponent.id,
+                    place: o.rank,
+                    power: o.difficulty
+                })));
+            } else {
+                console.log('[OPPONENTS] No opponents data to process');
+                this.opponents = [];
+            }
+        }
+
+        this.loadAllyUserIds = async function() {
+            this.allyUserIds = new Set();
+
+            if (!this.myUserId) {
+                try {
+                    const userInfo = getUserInfo();
+                    if (userInfo?.userId != null) {
+                        this.myUserId = String(userInfo.userId);
+                    }
+                    if (userInfo?.clanId != null) {
+                        this.myClanId = String(userInfo.clanId);
+                    }
+                } catch (e) {
+                    console.warn('[ALLIES] Could not read user info from getUserInfo():', e);
+                }
+            }
+
+            if (this.myUserId) {
+                this.allyUserIds.add(String(this.myUserId));
+            }
+
+            if (this.myClanId && this.myClanId !== '0') {
+                try {
+                    const response = await Send(JSON.stringify({
+                        calls: [{
+                            name: 'clanGetInfo',
+                            args: {},
+                            context: { actionTs: Utils.getActionTs() },
+                            ident: 'clanGetInfo'
+                        }]
+                    }));
+                    const members = response?.results?.[0]?.result?.response?.clan?.members;
+                    if (members && typeof members === 'object') {
+                        for (const memberId of Object.keys(members)) {
+                            this.allyUserIds.add(String(memberId));
+                        }
+                        console.log(`[ALLIES] Loaded ${Object.keys(members).length} guild members`);
+                    }
+                } catch (error) {
+                    console.warn('[ALLIES] Could not load guild members from clanGetInfo:', error);
+                }
+            }
+
+            try {
+                const response = await Send(JSON.stringify({
+                    calls: [{
+                        name: 'crossClanWar_getAttackMap',
+                        args: {},
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: 'body'
+                    }]
+                }));
+                const clanTries = response?.results?.[0]?.result?.response?.clanTries;
+                if (clanTries && typeof clanTries === 'object') {
+                    const teamCountBefore = this.allyUserIds.size;
+                    for (const userId of Object.keys(clanTries)) {
+                        this.allyUserIds.add(String(userId));
+                    }
+                    console.log(`[ALLIES] Loaded ${this.allyUserIds.size - teamCountBefore} cross-clan team members`);
+                }
+            } catch (error) {
+                console.warn('[ALLIES] Could not load cross-clan team members:', error);
+            }
+
+            console.log(`[ALLIES] Total ally user IDs to skip: ${this.allyUserIds.size}`);
+        }
+
+        this.getAllySkipReason = function(opponent) {
+            const opponentId = String(opponent?.opponent?.id || '');
+            if (!opponentId) {
+                return null;
+            }
+
+            if (this.myUserId && opponentId === String(this.myUserId)) {
+                return 'self';
+            }
+
+            if (this.allyUserIds.has(opponentId)) {
+                return 'guild or team member';
+            }
+
+            const opponentClanId = opponent?.opponent?.user?.clanId;
+            if (this.myClanId && opponentClanId &&
+                String(this.myClanId) !== '0' && String(opponentClanId) !== '0' &&
+                String(this.myClanId) === String(opponentClanId)) {
+                return 'same guild';
+            }
+
+            return null;
+        }
+
+        this.executeBattles = async function() {
+            let battlesSkipped = 0;
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+
+            // One real arenaAttack per trigger: try highest rank first, skip unsuitable, stop if none.
+            while (this.opponents.length > 0) {
+                const opponent = this.opponents.shift();
+                const opponentId = opponent.opponent.id;
+                const place = opponent.rank;
+
+                console.log(`[EXECUTE] Evaluating place ${place} opponent ${opponentId} (${this.opponents.length} remaining)`);
+                setProgress(`${arenaName}: Checking rank ${place} (${opponentId})`);
+
+                try {
+                    const allySkipReason = this.getAllySkipReason(opponent);
+                    if (allySkipReason) {
+                        console.log(`[EXECUTE] Skipping opponent ${opponentId} (${allySkipReason})`);
+                        battlesSkipped++;
+                        continue;
+                    }
+
+                    if (this.arenaType === 'grand') {
+                        const canAttack = await this.checkTargetRange(opponentId);
+                        if (!canAttack) {
+                            console.log(`[EXECUTE] Target ${opponentId} is not in range, skipping`);
+                            battlesSkipped++;
+                            continue;
+                        }
+                    }
+
+                    const result = await this.executeBattle(opponent);
+
+                    if (result.skipped) {
+                        console.log(`[EXECUTE] Opponent ${opponentId} not suitable (${result.reason || `win rate ${result.winRate?.toFixed(2)}%`})`);
+                        battlesSkipped++;
+                        continue;
+                    }
+
+                    if (result.win) {
+                        this.victories++;
+                        console.log(`[EXECUTE] ✓ Victory against rank ${place} opponent ${opponentId}`);
+                    } else {
+                        console.log(`[EXECUTE] ✗ Defeat against rank ${place} opponent ${opponentId}`);
+                    }
+
+                    this.end(`Attacked rank ${place}${result.win ? ' (win)' : ' (loss)'}${battlesSkipped > 0 ? `, skipped ${battlesSkipped}` : ''}`);
+                    return;
+                } catch (error) {
+                    console.error(`[EXECUTE] Battle error for opponent ${opponentId}:`, error);
+                    this.end(`Stopped after error at rank ${place}: ${error.message || error}`);
+                    return;
+                }
+            }
+
+            this.end(`No suitable opponent${battlesSkipped > 0 ? ` (${battlesSkipped} skipped)` : ''}`);
+        }
+
+        this.executeBattle = async function(opponent) {
+            let attackSent = false;
+            try {
+                if (!opponent || !opponent.opponent || !opponent.opponent.id) {
+                    console.error('[DEMO] Invalid opponent data:', opponent);
+                    return { win: false, skipped: true, reason: 'invalid opponent data' };
+                }
+
+                const opponentId = opponent.opponent.id;
+                this.demoApiCount = 0;
+                console.log(`[Arena pre-check] ===== Opponent ${opponentId}: 1 server demo per matchup, then local BattleCalc =====`);
+
+                console.log('[DEMO] Getting team configurations...');
+                const myTeamConfig = this.getTeamConfiguration();
+                let opponentTeamConfig = this.getOpponentTeamConfig(opponent);
+                
+                console.log('[DEMO] My team config:', JSON.stringify(myTeamConfig, null, 2));
+                console.log('[DEMO] Opponent team config:', JSON.stringify(opponentTeamConfig, null, 2));
+
+                if (!opponentTeamConfig || !opponentTeamConfig.hasValidTeam) {
+                    if (this.arenaType !== 'grand') {
+                        console.warn('[DEMO] Cannot get opponent team data, skipping as unsuitable');
+                        return { win: false, skipped: true, reason: 'no opponent team data' };
+                    }
+                    console.log('[DEMO] Grand Arena: no readable defenses — attacking anyway');
+                    opponentTeamConfig = { hasValidTeam: true, visibleSlots: [], heroes: [], pets: [], banners: [], favor: {} };
+                }
+
+                let attackTeam = myTeamConfig;
+                let simulationResult;
+
+                if (this.arenaType === 'grand') {
+                    const arrangement = await this.pickGrandTeamArrangement(myTeamConfig, opponentTeamConfig);
+                    if (!arrangement) {
+                        return {
+                            win: false,
+                            skipped: true,
+                            reason: 'no winning arrangement vs visible teams'
+                        };
+                    }
+                    attackTeam = arrangement.team;
+                    simulationResult = {
+                        total: arrangement.testedSlots,
+                        wins: arrangement.slotRates.filter((s) => s.rate > CONSTANTS.WIN_RATE_THRESHOLD).length,
+                        losses: arrangement.slotRates.filter((s) => s.rate <= CONSTANTS.WIN_RATE_THRESHOLD).length,
+                        winRate: arrangement.winRate,
+                        averageBattleTime: 0
+                    };
+                    console.log('[DEMO] Grand arrangement:', arrangement.perm, arrangement.slotRates);
+                } else {
+                    const candidates = this.listArenaPreFightCandidates(myTeamConfig);
+                    if (!candidates.length) {
+                        console.warn('[DEMO] No Arena pre-fight candidates; testing the Arena team only');
+                        candidates.push(myTeamConfig);
+                    }
+                    let chosen = null;
+                    for (let i = 0; i < candidates.length; i++) {
+                        const candidate = candidates[i];
+                        const label = candidate.label || (candidate.index != null ? `Grand team ${candidate.index + 1}` : 'Arena team');
+                        Utils.log('log', `[DEMO] ${label} (${i + 1}/${candidates.length}) vs opponent ${opponentId}: ${getTestFightCount()} local test fights`);
+                        setProgress(`Arena: ${label} ${i + 1}/${candidates.length}`);
+                        const sample = await this.simulateWithDemoBattles(candidate, opponentTeamConfig);
+                        console.log(`[DEMO] ${label}: ${sample.wins}W/${sample.losses}L (${sample.winRate.toFixed(1)}%)`);
+                        if (sample.winRate > CONSTANTS.WIN_RATE_THRESHOLD) {
+                            chosen = { team: candidate, simulationResult: sample, label };
+                            break;
+                        }
+                        console.log(`[DEMO] ${label} below ${CONSTANTS.WIN_RATE_THRESHOLD}%, ${i + 1 < candidates.length ? 'trying next team' : 'no candidates left'}`);
+                    }
+                    if (!chosen) {
+                        return {
+                            win: false,
+                            skipped: true,
+                            winRate: 0,
+                            reason: `all ${candidates.length} Arena pre-fight teams below threshold`
+                        };
+                    }
+                    attackTeam = chosen.team;
+                    simulationResult = chosen.simulationResult;
+                    console.log(`[DEMO] Using ${chosen.label} for the attack`);
+                }
+                
+                console.log('[DEMO] Simulation results:', {
+                    totalSimulations: simulationResult.total,
+                    wins: simulationResult.wins,
+                    losses: simulationResult.losses,
+                    winRate: simulationResult.winRate.toFixed(2) + '%',
+                    averageBattleTime: simulationResult.averageBattleTime.toFixed(2) + 's'
+                });
+
+                // Grand already accepted a passing team sequence (or 0-visible default); Arena still needs overall win rate.
+                const shouldProceed = this.arenaType === 'grand'
+                    ? true
+                    : simulationResult.winRate > CONSTANTS.WIN_RATE_THRESHOLD;
+
+                Utils.log('log', `[DEMO] Step 3: Win rate check (threshold: ${CONSTANTS.WIN_RATE_THRESHOLD}%)`);
+                Utils.log('log', `[DEMO] Win rate: ${simulationResult.winRate.toFixed(2)}%`);
+                Utils.log('log', `[DEMO] Decision: ${shouldProceed ? 'PROCEED' : 'SKIP'} (${shouldProceed ? 'Win rate above threshold' : 'Win rate below threshold'})`);
+
+                if (!shouldProceed) {
+                    Utils.log('warn', `[DEMO] ⚠️ Win rate ${simulationResult.winRate.toFixed(2)}% is below ${CONSTANTS.WIN_RATE_THRESHOLD}%, skipping this opponent`);
+                    console.log(`[DEMO] ✓ No battle attempt consumed - using demo battles API`);
+                    console.log(`[DEMO] Looking for next opponent...`);
+                    return { win: false, skipped: true, winRate: simulationResult.winRate, reason: 'win rate below threshold' };
+                }
+
+                console.log(`[DEMO] ✓ Win rate ${simulationResult.winRate.toFixed(2)}% is above threshold, proceeding with actual attack`);
+                console.log('[DEMO] Step 4: Executing actual battle...');
+
+                attackSent = true;
+                const battleResult = await this.startArenaBattle(opponentId, attackTeam);
+                
+                console.log('[DEMO] Actual battle result:', {
+                    win: battleResult.win,
+                    note: 'Actual battle may differ from simulation due to seed variance'
+                });
+
+                await this.endArenaBattle(battleResult);
+
+                console.log(`[DEMO] ===== Battle completed for opponent ${opponentId} =====`);
+                return battleResult;
+            } catch (error) {
+                console.error('[DEMO] Error in executeBattle:', error);
+                console.error('[DEMO] Error stack:', error.stack);
+                // After arenaAttack/grandAttack, never treat this as "skip and try next".
+                return {
+                    win: false,
+                    skipped: !attackSent,
+                    reason: error.message || 'executeBattle error'
+                };
+            }
+        }
+
+        this.checkTargetRange = async function(targetId) {
+            if (this.arenaType !== 'grand') {
+                return true;
+            }
+
+            const targetIdStr = String(targetId);
+
+            try {
+                const calls = [{
+                    name: "grandCheckTargetRange",
+                    args: {
+                        ids: [targetIdStr]
+                    },
+                    context: {
+                        actionTs: Utils.getActionTs()
+                    },
+                    ident: "body"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                console.log('Target range check response:', response);
+
+                if (response && response.results && response.results[0] && response.results[0].result) {
+                    const result = response.results[0].result.response;
+                    return result[targetIdStr] === true || result[targetId] === true;
+                }
+
+                return false;
+            } catch (error) {
+                console.error('Error checking target range:', error);
+                return false;
+            }
+        }
+
+        /** Hero→favor-pet map for one Grand slot (supports flat or per-index favor). */
+        this.favorForGrandSlot = function(grandFavor, index, heroes) {
+            let source = grandFavor;
+            if (Array.isArray(grandFavor)) {
+                source = grandFavor[index] || {};
+            } else if (grandFavor && typeof grandFavor === 'object') {
+                const nested = grandFavor[index] ?? grandFavor[String(index)];
+                if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+                    source = nested;
+                }
+            }
+            const favor = {};
+            for (const id of heroes || []) {
+                const petId = source?.[id] ?? source?.[String(id)];
+                if (petId) favor[String(id)] = Number(petId);
+            }
+            return favor;
+        }
+
+        this.mergeGrandFavorForSequence = function(grandFavor, perm, heroTeams) {
+            const favor = {};
+            for (let pos = 0; pos < perm.length; pos++) {
+                const srcIdx = perm[pos];
+                Object.assign(favor, this.favorForGrandSlot(grandFavor, srcIdx, heroTeams[srcIdx]));
+            }
+            return favor;
+        }
+
+        this.getArenaBannerList = function() {
+            let banners = [];
+            try {
+                const userInfo = getUserInfo();
+                if (Array.isArray(userInfo?.banners) && userInfo.banners.length) {
+                    banners = userInfo.banners.slice(0, 3);
+                } else if (typeof userInfo?.banners === 'number') {
+                    banners = [userInfo.banners, userInfo.banners, userInfo.banners];
+                } else if (typeof userInfo?.banner === 'number') {
+                    banners = [userInfo.banner, userInfo.banner, userInfo.banner];
+                } else if (Array.isArray(userInfo?.banner) && userInfo.banner.length) {
+                    banners = [userInfo.banner[0], userInfo.banner[0], userInfo.banner[0]];
+                }
+            } catch (e) {
+                console.log('[DEMO] Could not read banners for Arena candidates');
+            }
+            while (banners.length < 3) {
+                banners.push(banners[banners.length - 1] || 1);
+            }
+            return banners;
+        }
+
+        this.parseHeroPetLineup = function(raw) {
+            if (!Array.isArray(raw) || raw.length < 6) return null;
+            const heroes = raw.slice(0, 5).map(Number).filter((id) => Number.isFinite(id) && id > 0 && id < 6000);
+            const pet = Number(raw[5]);
+            if (heroes.length !== 5 || !Number.isFinite(pet) || pet < CONSTANTS.PET_ID_RANGE_MIN) return null;
+            return { heroes, pet };
+        }
+
+        this.listGrandArenaAttackTeams = function() {
+            const grandTeams = this.teamInfo?.teams?.grand || [];
+            const grandFavor = this.teamInfo?.favor?.grand || {};
+            const banners = this.getArenaBannerList();
+            const teams = [];
+            for (let i = 0; i < grandTeams.length; i++) {
+                const parsed = this.parseHeroPetLineup(grandTeams[i]);
+                if (!parsed) continue;
+                teams.push({
+                    index: i,
+                    label: `Grand team ${i + 1}`,
+                    source: 'grand',
+                    heroes: parsed.heroes,
+                    pet: parsed.pet,
+                    favor: this.favorForGrandSlot(grandFavor, i, parsed.heroes),
+                    banners: [banners[i] || 1]
+                });
+            }
+            console.log(`[DEMO] Grand Arena attack teams: ${teams.length}`, teams.map((team) => team.heroes));
+            return teams;
+        }
+
+        /**
+         * Arena pre-fight attack choices: Arena + Grand + CoW defence heroes + GW defence heroes
+         * (+ clan_pvp_hero / clan_global_pvp). Deduped by heroes+pet.
+         */
+        this.listArenaPreFightCandidates = function(arenaTeamConfig) {
+            const teamData = this.teamInfo?.teams || {};
+            const favorData = this.teamInfo?.favor || {};
+            const banners = this.getArenaBannerList();
+            const defaultBanner = banners[0] || 1;
+            const seen = new Set();
+            const candidates = [];
+
+            const addParsed = (parsed, favorSource, index, label, source, banner) => {
+                if (!parsed) return;
+                const key = `${parsed.heroes.join(',')}:${parsed.pet}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                candidates.push({
+                    index,
+                    label,
+                    source,
+                    heroes: parsed.heroes,
+                    pet: parsed.pet,
+                    favor: this.favorForGrandSlot(favorSource || {}, index, parsed.heroes),
+                    banners: [banner || defaultBanner]
+                });
+            };
+
+            const addRawTeam = (raw, favorSource, index, label, source, banner) => {
+                addParsed(this.parseHeroPetLineup(raw), favorSource, index, label, source, banner);
+            };
+
+            const addTeamList = (list, favorSource, labelPrefix, source) => {
+                if (!Array.isArray(list)) return;
+                // Flat single team: [h,h,h,h,h,pet]
+                if (list.length >= 6 && typeof list[0] === 'number') {
+                    addRawTeam(list, favorSource, 0, labelPrefix, source, defaultBanner);
+                    return;
+                }
+                for (let i = 0; i < list.length; i++) {
+                    addRawTeam(list[i], favorSource, i, `${labelPrefix} ${i + 1}`, source, banners[i] || defaultBanner);
+                }
+            };
+
+            if (arenaTeamConfig?.heroes?.length === 5 && arenaTeamConfig?.pet) {
+                addParsed(
+                    { heroes: arenaTeamConfig.heroes.map(Number), pet: Number(arenaTeamConfig.pet) },
+                    arenaTeamConfig.favor || favorData.arena || {},
+                    0,
+                    'Arena team',
+                    'arena',
+                    Array.isArray(arenaTeamConfig.banners) ? arenaTeamConfig.banners[0] : defaultBanner
+                );
+            } else {
+                addRawTeam(teamData.arena, favorData.arena || {}, 0, 'Arena team', 'arena', defaultBanner);
+            }
+
+            for (const team of this.listGrandArenaAttackTeams()) {
+                const key = `${team.heroes.join(',')}:${team.pet}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                candidates.push(team);
+            }
+
+            // Clash of Worlds defence hero teams (crossClanDefence_heroes)
+            addTeamList(
+                teamData.crossClanDefence_heroes,
+                favorData.crossClanDefence_heroes || {},
+                'CoW defence',
+                'crossClanDefence_heroes'
+            );
+            // Guild War defence hero team(s)
+            addTeamList(
+                teamData.clanDefence_heroes,
+                favorData.clanDefence_heroes || {},
+                'GW defence',
+                'clanDefence_heroes'
+            );
+            // Related war attack lineups
+            addRawTeam(teamData.clan_pvp_hero, favorData.clan_pvp_hero || {}, 0, 'GW attack', 'clan_pvp_hero', defaultBanner);
+            addRawTeam(teamData.clan_global_pvp, favorData.clan_global_pvp || {}, 0, 'CoW attack', 'clan_global_pvp', defaultBanner);
+
+            console.log(
+                `[DEMO] Arena pre-fight candidates: ${candidates.length}`,
+                candidates.map((c) => `${c.label}=[${c.heroes.join(',')}] pet ${c.pet}`)
+            );
+            return candidates;
+        }
+
+        this.getTeamConfiguration = function() {
+            if (!this.teamInfo || !this.teamInfo.teams) {
+                throw new Error('Team info not available');
+            }
+
+            const teamData = this.teamInfo.teams;
+            const favorData = this.teamInfo.favor;
+
+            if (this.arenaType === 'grand') {
+                const grandTeams = teamData.grand || [];
+                const grandFavor = favorData.grand || {};
+
+                console.log('Grand Arena teams from system:', grandTeams);
+                console.log('Grand Arena favor from system:', grandFavor);
+
+                const heroes = [];
+                const pets = [];
+
+                for (let i = 0; i < grandTeams.length; i++) {
+                    const team = grandTeams[i];
+                    if (team && team.length >= 6) {
+                        heroes.push(team.slice(0, 5));
+                        pets.push(team[5]);
+                    }
+                }
+
+                let banners = [1, 2, 3];
+                try {
+                    const userInfo = getUserInfo();
+                    if (userInfo && userInfo.banners) {
+                        if (Array.isArray(userInfo.banners)) {
+                            banners = userInfo.banners.length >= 3 ? userInfo.banners.slice(0, 3) : 
+                                     userInfo.banners.length === 1 ? [userInfo.banners[0], userInfo.banners[0], userInfo.banners[0]] : [1, 2, 3];
+                        } else if (typeof userInfo.banners === 'number') {
+                            banners = [userInfo.banners, userInfo.banners, userInfo.banners];
+                        }
+                    }
+                } catch (e) {
+                    console.log('Could not get banners from userInfo, using defaults');
+                }
+                while (banners.length < 3) {
+                    banners.push(banners[banners.length - 1] || 1);
+                }
+
+                return {
+                    heroes: heroes,
+                    pets: pets,
+                    favor: grandFavor,
+                    banners: banners.slice(0, 3)
+                };
+            } else {
+                const arenaTeam = teamData.arena || [];
+                const arenaFavor = favorData.arena || {};
+
+                console.log('Regular Arena team from system:', arenaTeam);
+                console.log('Regular Arena favor from system:', arenaFavor);
+
+                let heroes = [];
+                let pet = null;
+
+                if (arenaTeam && arenaTeam.length >= 6) {
+                    heroes = arenaTeam.slice(0, 5);
+                    pet = arenaTeam[5];
+                }
+
+                let banners = [1];
+                try {
+                    const userInfo = getUserInfo();
+                    if (userInfo && userInfo.banner) {
+                        banners = typeof userInfo.banner === 'number' ? [userInfo.banner] : 
+                                 Array.isArray(userInfo.banner) ? userInfo.banner : [1];
+                    }
+                } catch (e) {
+                    console.log('Could not get banner from userInfo, using default');
+                }
+
+                return {
+                    heroes: heroes,
+                    pet: pet,
+                    favor: arenaFavor,
+                    banners: banners
+                };
+            }
+        }
+
+        this.parseLineup = function(team, explicitPet) {
+            return parseArenaLineup(team, explicitPet, CONSTANTS.PET_ID_RANGE_MIN, CONSTANTS.PET_ID_RANGE_MAX);
+        }
+
+        this.opponentLineupSources = function(opp) {
+            const pet = opp.pet ?? opp.petId ?? opp.team?.pet ?? opp.team?.petId
+                ?? opp.defenceTeam?.pet ?? opp.defence?.pet ?? opp.squad?.pet;
+            return [
+                ['heroes', opp.heroes],
+                ['heroIds', opp.heroIds],
+                ['team', Array.isArray(opp.team) ? opp.team : null],
+                ['team.units', opp.team?.units],
+                ['team.heroes', opp.team?.heroes],
+                ['defenceTeam', Array.isArray(opp.defenceTeam) ? opp.defenceTeam : null],
+                ['defenceTeam.units', opp.defenceTeam?.units],
+                ['defence.units', opp.defence?.units],
+                ['squad.heroes', opp.squad?.heroes || opp.squad?.units],
+                ['units', opp.units],
+                ['lineup', opp.lineup]
+            ].map(([name, source]) => ({ name, source, pet }));
+        }
+
+        this.readOpponentLineup = function(opp) {
+            for (const { name, source, pet } of this.opponentLineupSources(opp)) {
+                const parsed = this.parseLineup(source, pet);
+                if (parsed) {
+                    console.log(`[DEMO] Opponent lineup read from ${name}:`, parsed.heroes, 'pet', parsed.pet);
+                    return parsed;
+                }
+            }
+            return null;
+        }
+
+        this.permute = function(items) {
+            if (items.length <= 1) {
+                return [items.slice()];
+            }
+            const result = [];
+            for (let i = 0; i < items.length; i++) {
+                const rest = items.slice(0, i).concat(items.slice(i + 1));
+                for (const perm of this.permute(rest)) {
+                    result.push([items[i], ...perm]);
+                }
+            }
+            return result;
+        }
+
+        this.simulateTeamMatchup = async function(attack, defence) {
+            // Same path as Arena pre-fight: 1 demoBattles_startBattle, then local BattleCalc x N.
+            // Attack banner stays 0 in sims; real grandAttack still sends banners.
+            const mechanic = 'arena';
+            const matchup = {
+                team: { units: attack.units, pet: attack.pet },
+                banner: 0,
+                favor: attack.favor || {},
+                defenceTeam: { units: defence.units, pet: defence.pet },
+                defenceBanner: defence.banner || 1,
+                defenceFavor: defence.favor || {}
+            };
+            Utils.log('log', `[DEMO] Grand slot pre-fight: 1 server demo + ${getTestFightCount()} local test fights`);
+            const battleData = await this.fetchDemoBattle(null, null, mechanic, 0, 0, matchup);
+            const summary = await this.runLocalTestFights(battleData, mechanic, getTestFightCount());
+            const calcResult = summary.simulations.find((sample) => sample.result)?.result;
+            await this.closeDemoBattle(calcResult, battleData);
+            return { winRate: summary.winRate, wins: summary.wins, total: summary.total };
+        }
+
+        this.pickGrandTeamArrangement = async function(myTeam, oppTeam) {
+            if (!myTeam?.heroes || myTeam.heroes.length < 3 || !myTeam.pets || myTeam.pets.length < 3) {
+                console.warn('[DEMO] Need 3 of our Grand Arena teams to rearrange');
+                return null;
+            }
+
+            const defaultPerm = [0, 1, 2];
+            const buildTeam = (perm) => {
+                const banners = perm.map((i) => myTeam.banners?.[i] || 1);
+                while (banners.length < 3) {
+                    banners.push(banners[banners.length - 1] || 1);
+                }
+                return {
+                    heroes: perm.map((i) => myTeam.heroes[i]),
+                    pets: perm.map((i) => myTeam.pets[i]),
+                    banners,
+                    favor: this.mergeGrandFavorForSequence(myTeam.favor || {}, perm, myTeam.heroes)
+                };
+            };
+
+            const visibleSlots = oppTeam.visibleSlots || [];
+            if (!visibleSlots.length) {
+                console.log('[DEMO] No visible Grand Arena teams — attacking with default lineup');
+                return {
+                    perm: defaultPerm,
+                    winRate: 100,
+                    slotRates: [],
+                    testedSlots: 0,
+                    team: buildTeam(defaultPerm)
+                };
+            }
+
+            const cache = {};
+            const rateFor = async (myIdx, slot) => {
+                const key = `${myIdx}:${slot}`;
+                if (cache[key] != null) {
+                    return cache[key];
+                }
+                const heroes = myTeam.heroes[myIdx];
+                if (!Array.isArray(heroes) || !heroes.length || !oppTeam.heroes?.[slot]?.length) {
+                    cache[key] = 0;
+                    return 0;
+                }
+                setProgress(`Grand Arena: sim team ${myIdx + 1} vs defence ${slot + 1}`);
+                const sim = await this.simulateTeamMatchup({
+                    units: heroes,
+                    pet: myTeam.pets[myIdx],
+                    banner: myTeam.banners?.[myIdx] || 1,
+                    favor: this.favorForGrandSlot(myTeam.favor || {}, myIdx, heroes)
+                }, {
+                    units: oppTeam.heroes[slot],
+                    pet: oppTeam.pets[slot],
+                    banner: oppTeam.banners?.[slot] || 1,
+                    favor: oppTeam.favor || {}
+                });
+                cache[key] = sim.winRate;
+                Utils.log('log', `[DEMO] Our team ${myIdx + 1} vs visible slot ${slot + 1}: ${sim.winRate.toFixed(1)}% (${sim.wins}/${sim.total})`);
+                return sim.winRate;
+            };
+
+            // 3 visible: need 2 projected wins. 1–2 visible: every visible slot must pass.
+            const neededWins = visibleSlots.length >= 3 ? 2 : visibleSlots.length;
+            const sequences = this.permute(defaultPerm); // [0,1,2] first, then rearrangements
+            let best = null;
+
+            for (let s = 0; s < sequences.length; s++) {
+                const perm = sequences[s];
+                const slotRates = [];
+                for (const slot of visibleSlots) {
+                    const myIdx = perm[slot];
+                    const rate = await rateFor(myIdx, slot);
+                    slotRates.push({ slot, myIdx, rate });
+                }
+                const passing = slotRates.filter((row) => row.rate > CONSTANTS.WIN_RATE_THRESHOLD);
+                const avg = passing.length
+                    ? passing.reduce((sum, row) => sum + row.rate, 0) / passing.length
+                    : 0;
+                console.log(
+                    `[DEMO] Grand sequence [${perm.map((i) => i + 1).join(',')}] ` +
+                    `${passing.length}/${neededWins} projected wins` +
+                    (s === 0 ? ' (default order)' : ' (rearranged)')
+                );
+
+                if (passing.length < neededWins) {
+                    console.log('[DEMO] Sequence failed threshold — changing team order to match defenses');
+                    continue;
+                }
+
+                const better = !best
+                    || passing.length > best.passing
+                    || (passing.length === best.passing && avg > best.avg);
+                if (better) {
+                    best = { perm, avg, slotRates, passing: passing.length };
+                }
+                // First passing sequence is enough when it meets neededWins; keep searching only to prefer more wins.
+                if (passing.length === visibleSlots.length) {
+                    break;
+                }
+            }
+
+            if (!best) {
+                console.log(`[DEMO] No team sequence projected ${neededWins} win(s) on visible defenses`);
+                return null;
+            }
+
+            if (best.perm.join(',') !== defaultPerm.join(',')) {
+                console.log(`[DEMO] Using rearranged Grand order [${best.perm.map((i) => i + 1).join(',')}]`);
+            } else {
+                console.log('[DEMO] Using default Grand team order [1,2,3]');
+            }
+
+            return {
+                perm: best.perm,
+                winRate: best.avg,
+                slotRates: best.slotRates,
+                testedSlots: visibleSlots.length,
+                team: buildTeam(best.perm)
+            };
+        }
+
+        this.getOpponentTeamConfig = function(opponent) {
+            console.log('[DEMO] Extracting opponent team configuration...');
+            
+            if (!opponent || !opponent.opponent) {
+                console.warn('[DEMO] No opponent data available');
+                return { hasValidTeam: false };
+            }
+
+            const opp = opponent.opponent;
+            let hasValidTeam = false;
+            let config = {};
+
+            const extractBannerId = (banner) => {
+                if (typeof banner === 'number' && banner > 0) {
+                    return banner;
+                }
+                if (banner && typeof banner === 'object' && banner.id != null) {
+                    const n = Number(banner.id);
+                    return Number.isFinite(n) && n > 0 ? n : 1;
+                }
+                return 1;
+            };
+
+            const rawHeroes = Array.isArray(opp.heroes)
+                ? opp.heroes
+                : (opp.heroes && typeof opp.heroes === 'object' ? Object.values(opp.heroes) : []);
+            const nestedTeams = rawHeroes.filter((entry) => Array.isArray(entry) && entry.length >= 5 && !Array.isArray(entry[0]) && typeof entry[0] !== 'number' && typeof entry[0] !== 'string');
+            const looksNested = nestedTeams.length > 0;
+
+            if (this.arenaType === 'grand' || looksNested) {
+                const teams = [];
+                const pets = [];
+                const banners = [];
+                const visibleSlots = [];
+
+                if (!looksNested) {
+                    const parsed = this.readOpponentLineup(opp);
+                    if (parsed) {
+                        teams[0] = parsed.heroes;
+                        pets[0] = parsed.pet;
+                        banners[0] = extractBannerId(opp.banners?.[0] ?? opp.banner);
+                        visibleSlots.push(0);
+                        hasValidTeam = true;
+                    }
+                } else {
+                    for (let i = 0; i < 3; i++) {
+                        const parsed = this.parseLineup(rawHeroes[i]);
+                        const banner = extractBannerId(opp.banners?.[i]);
+                        if (parsed) {
+                            teams[i] = parsed.heroes;
+                            pets[i] = parsed.pet;
+                            banners[i] = banner;
+                            visibleSlots.push(i);
+                            hasValidTeam = true;
+                        } else {
+                            teams[i] = null;
+                            pets[i] = null;
+                            banners[i] = banner || 1;
+                        }
+                    }
+                }
+
+                if (this.arenaType === 'grand') {
+                    config = {
+                        hasValidTeam: true,
+                        heroes: teams,
+                        pets: pets,
+                        banners: banners,
+                        favor: {},
+                        visibleSlots
+                    };
+                    console.log('[DEMO] Grand Arena visible defenses:', visibleSlots.length, 'slots', visibleSlots);
+                } else if (hasValidTeam) {
+                    config = {
+                        hasValidTeam: true,
+                        heroes: teams[visibleSlots[0]],
+                        pet: pets[visibleSlots[0]],
+                        banner: banners[visibleSlots[0]] || 1,
+                        favor: {}
+                    };
+                }
+            } else {
+                const parsed = this.readOpponentLineup(opp);
+                const bannerId = extractBannerId(opp.banners?.[0] ?? opp.banner);
+                if (parsed) {
+                    hasValidTeam = true;
+                    config = {
+                        hasValidTeam: true,
+                        heroes: parsed.heroes,
+                        pet: parsed.pet,
+                        banner: bannerId,
+                        favor: {}
+                    };
+                    console.log('[DEMO] Regular Arena config extracted:', {
+                        heroes: parsed.heroes,
+                        pet: parsed.pet,
+                        banner: bannerId
+                    });
+                } else {
+                    console.warn('[DEMO] Regular Arena lineup incomplete:', {
+                        rawLength: rawHeroes.length,
+                        first: rawHeroes[0]
+                    });
+                }
+            }
+
+            if (!hasValidTeam) {
+                console.warn('[DEMO] Could not extract valid opponent team configuration');
+                console.log('[DEMO] Opponent data structure:', {
+                    keys: Object.keys(opp),
+                    hasHeroes: !!opp.heroes,
+                    heroesType: opp.heroes ? (Array.isArray(opp.heroes) ? 'array' : typeof opp.heroes) : 'none',
+                    heroesLength: opp.heroes ? (Array.isArray(opp.heroes) ? opp.heroes.length : Object.keys(opp.heroes).length) : 0,
+                    firstHeroType: opp.heroes && Array.isArray(opp.heroes) && opp.heroes.length > 0 
+                        ? (typeof opp.heroes[0]) : 'N/A',
+                    firstHero: Array.isArray(opp.heroes) ? opp.heroes[0] : opp.heroes,
+                    hasBanners: !!opp.banners,
+                    pet: opp.pet ?? opp.team?.pet ?? null
+                });
+                console.log('[DEMO] Full opponent data:', JSON.stringify(opp, null, 2));
+            } else {
+                console.log('[DEMO] Successfully extracted opponent team configuration');
+            }
+
+            return config;
+        }
+
+        this.simulateWithDemoBattles = async function(myTeam, opponentTeam) {
+            const simulationCount = getTestFightCount();
+            Utils.log('log', `[DEMO] One server battle, then ${simulationCount} local test fights`);
+            Utils.log('log', `[DEMO] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
+            Utils.log('log', '[DEMO] Pre-fight attack banner disabled (real arenaAttack still uses banner)');
+
+            // demoBattles builds the battle. Later samples only change the seed locally.
+            const mechanic = 'arena';
+            const battleData = await this.fetchDemoBattle(myTeam, opponentTeam, mechanic, 0, 0, null);
+            const summary = await this.runLocalTestFights(battleData, mechanic, simulationCount);
+            const calcResult = summary.simulations.find((sample) => sample.result)?.result;
+            await this.closeDemoBattle(calcResult, battleData);
+            return summary;
+        }
+
+        this.calcBattleCopy = async function(battleData, mechanic, seed) {
+            const battle = structuredClone(battleData);
+            if (seed != null) {
+                battle.seed = seed;
+            }
+            const battleType = battle?.effects?.battleConfig ?? battle?.type ?? mechanic;
+            const battleConfigType = getBattleType(battleType);
+            const calcResult = await runBattleCalc(BattleCalc, battle, battleConfigType);
+            if (!Utils.isValidBattleResult(calcResult)) {
+                return { win: false, battleTime: 0, error: 'Invalid calculation result' };
+            }
+            return {
+                win: !!calcResult.result?.win,
+                battleTime: calcResult.battleTime || 0,
+                result: calcResult
+            };
+        }
+
+        this.runLocalTestFights = async function(battleData, mechanic, count) {
+            const total = Math.max(1, count);
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            const serverSeed = battleData?.seed;
+            const simulations = [];
+            console.log(`[Arena pre-check] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
+            for (let i = 0; i < total; i++) {
+                // First sample keeps the server seed. Each later sample gets its own copy and seed.
+                const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + random(0, 1e3) + i;
+                const usedSeed = seed == null ? serverSeed : seed;
+                setProgress(`${arenaName}: BattleCalc local ${i + 1}/${total}`);
+                try {
+                    const sample = await this.calcBattleCopy(battleData, mechanic, seed);
+                    simulations.push(sample);
+                    console.log(`[Arena pre-check] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
+                } catch (error) {
+                    console.error(`[Arena pre-check] BattleCalc local ${i + 1}/${total} failed:`, error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message });
+                }
+            }
+            const wins = simulations.filter((s) => s.win).length;
+            const losses = simulations.length - wins;
+            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
+            const battleTimes = simulations.map((s) => s.battleTime).filter((t) => t > 0);
+            const averageBattleTime = battleTimes.length
+                ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length
+                : 0;
+            const summary = `${arenaName}: BattleCalc local ${wins}W/${losses}L (${winRate.toFixed(0)}% of ${simulations.length})`;
+            console.log(`[Arena pre-check] ${summary}. Server demo calls this matchup: 1.`);
+            setProgress(summary);
+            return {
+                total: simulations.length,
+                wins,
+                losses,
+                winRate,
+                averageBattleTime,
+                simulations
+            };
+        }
+
+        this.closeDemoBattle = async function(calcResult, battleData) {
+            if (!calcResult?.result) {
+                return null;
+            }
+            try {
+                return await this.endDemoBattle(calcResult, battleData);
+            } catch (error) {
+                Utils.log('warn', '[DEMO] Failed to call endBattle:', error);
+                return null;
+            }
+        }
+
+        this.fetchDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0, matchup = null) {
+            const attackMaxUpgrade = getSimAttackMaxUpgrade();
+            const args = {
+                mechanic: mechanic,
+                defenceMaxUpgrade: true,
+                maxUpgrade: attackMaxUpgrade,
+                defenceBuffs: {},
+                buffs: {},
+                parentId: parentId,
+                entryId: 0
+            };
+
+            if (matchup) {
+                args.defenceTeam = matchup.defenceTeam;
+                args.defenceBanner = matchup.defenceBanner || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = matchup.defenceFavor || {};
+                args.team = matchup.team;
+                // Pre-fight only: never apply attack banner (|| 1 used to force a false buff).
+                args.banner = 0;
+                args.bannerStones = {};
+                args.favor = matchup.favor || {};
+            } else if (this.arenaType === 'grand') {
+                const visibleSlots = opponentTeam.visibleSlots?.length
+                    ? opponentTeam.visibleSlots
+                    : [0, 1, 2].filter((i) => Array.isArray(opponentTeam.heroes?.[i]) && opponentTeam.heroes[i].length);
+                const teamIndex = visibleSlots.length
+                    ? visibleSlots[seedOffset % visibleSlots.length]
+                    : (seedOffset % 3);
+                args.defenceTeam = {
+                    units: opponentTeam.heroes[teamIndex] || [],
+                    pet: opponentTeam.pets[teamIndex] || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.defenceBanner = opponentTeam.banners[teamIndex] || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = opponentTeam.favor || {};
+                args.team = {
+                    units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
+                    pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.banner = 0;
+                args.bannerStones = {};
+                args.favor = myTeam.favor || {};
+            } else {
+                args.defenceTeam = {
+                    units: opponentTeam.heroes || [],
+                    pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.defenceBanner = opponentTeam.banner || 1;
+                args.defenceBannerStones = {};
+                args.defenceFavor = opponentTeam.favor || {};
+                args.team = {
+                    units: myTeam.heroes || [],
+                    pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID
+                };
+                args.banner = 0;
+                args.bannerStones = {};
+                args.favor = myTeam.favor || {};
+            }
+
+            if (!args.team || !args.team.units || args.team.units.length === 0) {
+                throw new Error('Invalid team configuration: missing or empty hero units');
+            }
+            if (!args.defenceTeam || !args.defenceTeam.units || args.defenceTeam.units.length === 0) {
+                throw new Error('Invalid defence team configuration: missing or empty hero units');
+            }
+            if (!args.team.pet || typeof args.team.pet !== 'number') {
+                throw new Error('Invalid team pet: must be a number');
+            }
+            if (!args.defenceTeam.pet || typeof args.defenceTeam.pet !== 'number') {
+                throw new Error('Invalid defence team pet: must be a number');
+            }
+
+            this.demoApiCount = (this.demoApiCount || 0) + 1;
+            console.log(`[Arena pre-check] demoBattles_startBattle API #${this.demoApiCount} (server builds this matchup once)`);
+            const response = await Send(JSON.stringify({
+                calls: [{
+                    name: "demoBattles_startBattle",
+                    args: args,
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }]
+            }));
+
+            if (response.error) {
+                console.error('[DEMO] API error:', response.error);
+                throw new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`);
+            }
+            if (!response.results || !response.results[0] || !response.results[0].result) {
+                console.error('[DEMO] Invalid API response structure');
+                throw new Error('Invalid demo battle API response');
+            }
+
+            const responseData = response.results[0].result.response;
+            const battleData = responseData?.battle || responseData;
+            if (!battleData) {
+                console.error('[DEMO] No battle data found in response');
+                throw new Error('No battle data in API response');
+            }
+            return battleData;
+        }
+
+        this.endDemoBattle = async function(calcResult, battleData) {
+            return new Promise((resolve, reject) => {
+                try {
+                    // Prepare progress data from battle calculation result
+                    const progress = calcResult.progress || [];
+                    
+                    // Ensure progress array has at least one entry
+                    if (progress.length === 0 && calcResult.result) {
+                        // Create minimal progress entry from result
+                        progress.push({
+                            v: CONSTANTS.BATTLE_VERSION,
+                            b: 0,
+                            seed: battleData?.seed || Math.floor(Math.random() * 1000000000),
+                            attackers: {
+                                input: [],
+                                heroes: {}
+                            },
+                            defenders: {
+                                input: [],
+                                heroes: {}
+                            }
+                        });
+                    }
+
+                    const endBattleArgs = {
+                        result: {
+                            win: calcResult.result.win || false,
+                            stars: calcResult.result.stars || 0
+                        },
+                        progress: progress
+                    };
+
+                    const calls = [{
+                        name: "demoBattles_endBattle",
+                        args: endBattleArgs,
+                        context: {
+                            actionTs: Utils.getActionTs()
+                        },
+                        ident: "body"
+                    }];
+
+                    Send(JSON.stringify({calls}))
+                        .then(response => {
+                            if (response.error) {
+                                Utils.log('warn', '[DEMO] EndBattle API error:', response.error);
+                                resolve(null); // Return null on error, will use original parentId
+                                return;
+                            }
+
+                            if (!response.results || !response.results[0] || !response.results[0].result) {
+                                Utils.log('warn', '[DEMO] Invalid endBattle response structure');
+                                resolve(null);
+                                return;
+                            }
+
+                            const endBattleResponse = response.results[0].result.response;
+                            
+                            const battle = endBattleResponse?.battle;
+                            resolve({
+                                parentId: battle?.parentId ?? null,
+                                battleId: battle?.id ?? null
+                            });
+                        })
+                        .catch(error => {
+                            Utils.log('warn', '[DEMO] Error calling endBattle:', error);
+                            resolve(null);
+                        });
+                } catch (error) {
+                    Utils.log('warn', '[DEMO] Error preparing endBattle:', error);
+                    resolve(null);
+                }
+            });
+        }
+
+        this.startArenaBattle = async function(rivalId, team) {
+            const apiName = this.arenaType === 'grand' ? 'grandAttack' : 'arenaAttack';
+
+            // Ensure rivalId is a number
+            const userId = typeof rivalId === 'string' ? parseInt(rivalId, 10) : rivalId;
+
+            let args;
+            if (this.arenaType === 'grand') {
+                // Grand Arena: heroes is array of 3 arrays, pets is array of 3 numbers
+                if (!team.heroes || !Array.isArray(team.heroes) || team.heroes.length !== 3) {
+                    throw new Error('Grand Arena requires 3 hero teams');
+                }
+                if (!team.pets || !Array.isArray(team.pets) || team.pets.length !== 3) {
+                    throw new Error('Grand Arena requires 3 pets');
+                }
+                if (!team.banners || !Array.isArray(team.banners) || team.banners.length !== 3) {
+                    throw new Error('Grand Arena requires 3 banners');
+                }
+                
+                args = {
+                    userId: userId,
+                    heroes: team.heroes,  // Array of 3 arrays: [[team1], [team2], [team3]]
+                    pets: team.pets,      // Array of 3 pet IDs
+                    favor: team.favor || {},  // Object mapping hero IDs (strings) to pet IDs
+                    banners: team.banners // Array of 3 banner IDs
+                };
+            } else {
+                // Regular Arena: heroes is flat array of 5 numbers, pet is single number
+                if (!team.heroes || !Array.isArray(team.heroes) || team.heroes.length !== 5) {
+                    throw new Error('Arena requires exactly 5 heroes');
+                }
+                if (!team.pet || typeof team.pet !== 'number') {
+                    throw new Error('Arena requires a valid pet ID');
+                }
+                
+                // Ensure banners is an array (even if single banner)
+                const banners = Array.isArray(team.banners) ? team.banners : 
+                               team.banners ? [team.banners] : [1];
+                
+                args = {
+                    userId: userId,
+                    heroes: team.heroes,  // Flat array of 5 hero IDs
+                    pet: team.pet,       // Single pet ID (number)
+                    favor: team.favor || {},  // Object mapping hero IDs (strings) to pet IDs
+                    banners: banners      // Array of banner IDs (usually single element)
+                };
+            }
+
+            const calls = [{
+                name: apiName,
+                args: args,
+                context: {
+                    actionTs: Utils.getActionTs()
+                },
+                ident: "body"
+            }];
+
+            console.log(`[ARENA] Calling ${apiName} with args:`, JSON.stringify(args, null, 2));
+            console.log(`[ARENA] Full API call:`, JSON.stringify({calls}, null, 2));
+
+            const response = await Send(JSON.stringify({calls}));
+            console.log('[ARENA] Battle API response:', response);
+
+            if (response.error) {
+                const errorName = response.error.name || 'Unknown';
+                const errorDesc = response.error.description || '';
+
+                let errorMessage = `API error: ${errorName}`;
+                if (errorDesc) {
+                    errorMessage += ` - ${errorDesc}`;
+                }
+
+                if (errorName === 'NotAvailable') {
+                    errorMessage = 'Arena not available - may be in peace time, no attempts left, or arena locked';
+                } else if (errorName === 'InvalidRequest') {
+                    errorMessage = 'Invalid request - check opponent IDs and team configuration';
+                } else if (errorName === 'ArgumentError') {
+                    errorMessage = 'Missing required arguments - check team data';
+                }
+
+                throw new Error(errorMessage);
+            }
+
+            // arenaAttack / grandAttack return { battles: [...], win, state, ... } — not { battle }.
+            const responseBody = response.results?.[0]?.result?.response
+                || response.results?.[0]?.response
+                || response.results?.[0]?.result
+                || null;
+            const battles = Array.isArray(responseBody?.battles)
+                ? responseBody.battles
+                : (responseBody?.battle ? [responseBody.battle] : []);
+
+            if (!battles.length) {
+                throw new Error('Attack response had no battle data');
+            }
+
+            // Server often already sets battles[i].result.win / top-level win — trust that over re-Calc.
+            const serverWins = battles.filter((b) => b?.result && typeof b.result.win === 'boolean');
+            if (serverWins.length === battles.length) {
+                const wins = serverWins.filter((b) => b.result.win).length;
+                const last = serverWins[serverWins.length - 1];
+                const overallWin = typeof responseBody.win === 'boolean'
+                    ? responseBody.win
+                    : wins >= Math.ceil(battles.length / 2);
+                console.log(`[ARENA] Using server battle result: ${overallWin ? 'WIN' : 'LOSS'} (${wins}/${battles.length})`);
+                return {
+                    win: overallWin,
+                    progress: last.progress || [],
+                    result: last.result,
+                    battleTimer: 0,
+                    battleTime: 0
+                };
+            }
+
+            let wins = 0;
+            let battleTimer = 0;
+            let battleTime = 0;
+            let lastProgress = [];
+            let lastResult = { win: false };
+            for (const battleData of battles) {
+                const calcResult = await runBattleCalc(BattleCalc, battleData, getBattleType(this.arenaType));
+                if (!calcResult || !calcResult.result) {
+                    console.error('BattleCalc returned invalid result:', calcResult);
+                    continue;
+                }
+                if (calcResult.result.win) {
+                    wins++;
+                }
+                battleTimer += Number(calcResult.battleTimer) || 0;
+                battleTime += Number(calcResult.battleTime) || 0;
+                lastProgress = calcResult.progress || lastProgress;
+                lastResult = calcResult.result;
+            }
+            return {
+                win: wins >= Math.ceil(battles.length / 2),
+                progress: lastProgress,
+                result: lastResult,
+                battleTimer,
+                battleTime
+            };
+        }
+
+        this.waitForArenaBattle = async function(battleResult) {
+            const countdownTimer = HWHFuncs.countdownTimer;
+            const getTimer = HWHFuncs.getTimer;
+            let waitSec = Math.ceil(Number(battleResult?.battleTimer) || 0);
+            if (waitSec <= 0) {
+                const rawTime = Number(battleResult?.battleTime) || 0;
+                if (rawTime > 0 && typeof getTimer === 'function') {
+                    waitSec = Math.ceil(getTimer(rawTime));
+                }
+            }
+            const predictionCards = Math.max(0, Math.floor(Number(window.HWHData?.countPredictionCard)) || 0);
+            if (predictionCards > 0) {
+                waitSec = 0;
+            }
+            if (waitSec > 0) {
+                const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+                console.log(`[ARENA] Waiting ${waitSec}s for battle to finish`);
+                if (typeof countdownTimer === 'function') {
+                    await countdownTimer(waitSec, `${arenaName}: waiting for battle (${waitSec}s)`);
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, waitSec * 1000));
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+        }
+
+        this.endArenaBattle = async function(battleResult) {
+            // Skip stashClient — battles auto-close; stashClient can 404 if type doesn't match.
+            console.log('Battle completed, waiting before next arena attack');
+            await this.waitForArenaBattle(battleResult);
+        }
+
+        this.end = function(message) {
+            const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
+            console.log(`${arenaName} execution ended:`, message);
+            setProgress(`${arenaName}: ${message}`, true);
+            this.resolve();
+        }
+    }
+
+    // ========== EXECUTE GUILD WAR CLASS ==========
+    function executeGuildWar(resolve, reject) {
+        this.resolve = resolve;
+        this.reject = reject;
+        this.victories = 0;
+        this.guildWarInfo = null;
+        this.teamInfo = null;
+        this.myTries = null;
+
+        this.start = async function() {
+            setProgress(`${I18N('GUILD_WAR')}: ${I18N('INITIALIZING')}...`);
+
+            try {
+                const hasAttempts = await this.getGuildWarInfo();
+                if (!hasAttempts) {
+                    // getGuildWarInfo already handled the end message, just return
+                    return;
+                }
+                await this.getTeamData();
+                await this.attackDirectSlots();
+            } catch (error) {
+                console.error('Guild War error:', error);
+                this.end(`Error: ${error.message}`);
+            }
+        }
+
+        this.getGuildWarInfo = async function() {
+            console.log('Getting Guild War info...');
+            
+            const calls = [{
+                name: "clanWarGetInfo",
+                args: {},
+                context: { actionTs: Utils.getActionTs() },
+                ident: "clanWarGetInfo"
+            }];
+
+            const response = await Send(JSON.stringify({calls}));
+            
+            if (response.error) {
+                console.log(`Guild War info API error: ${response.error.name} - ${response.error.description}`);
+                this.end(`Guild War not available: ${response.error.description || response.error.name}`);
+                return false;
+            }
+            
+            if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                console.log('Invalid clanWarGetInfo response');
+                this.end('Guild War: Invalid response from server');
+                return false;
+            }
+
+            this.guildWarInfo = response.results[0].result.response;
+            
+            // Check if myTries exists (only exists when war is active)
+            if ('myTries' in this.guildWarInfo) {
+                this.myTries = this.guildWarInfo.myTries;
+                console.log(`Guild War attempts remaining: ${this.myTries}`);
+                
+                if (this.myTries <= 0) {
+                    console.log('No Guild War attempts remaining');
+                    this.end('No Guild War attempts remaining');
+                    return false;
+                }
+            } else {
+                console.log('Guild War is not currently active - myTries field not available');
+                this.end('Guild War is not currently active');
+                return false;
+            }
+
+            console.log('Guild War info loaded');
+            return true;
+        }
+
+        this.refreshGuildWarAttempts = async function() {
+            try {
+                const calls = [{
+                    name: "clanWarGetInfo",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "clanWarGetInfo"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    console.warn('Failed to refresh Guild War attempts:', response.error);
+                    return false;
+                }
+                
+                if (response.results && response.results[0] && response.results[0].result && response.results[0].result.response) {
+                    const guildWarInfo = response.results[0].result.response;
+                    if ('myTries' in guildWarInfo) {
+                        this.myTries = guildWarInfo.myTries;
+                        this.guildWarInfo = guildWarInfo;
+                        console.log(`Refreshed Guild War attempts: ${this.myTries}`);
+                        return true;
+                    }
+                }
+                return false;
+            } catch (error) {
+                console.warn('Error refreshing Guild War attempts:', error);
+                return false;
+            }
+        }
+
+        this.getTeamData = async function() {
+            console.log('Getting team data...');
+            
+            const calls = [
+                {
+                    name: "teamGetAll",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "teamGetAll"
+                },
+                {
+                    name: "teamGetFavor",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "teamGetFavor"
+                },
+                {
+                    name: "heroGetAll",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "heroGetAll"
+                },
+                {
+                    // Needed for Guild War titan team power comparisons
+                    name: "titanGetAll",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "titanGetAll"
+                }
+            ];
+
+            const response = await Send(JSON.stringify({calls}));
+            
+            if (response.error) {
+                throw new Error(`Team data API error: ${response.error.name} - ${response.error.description}`);
+            }
+            
+            if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                throw new Error('Invalid teamGetAll response - team data not available');
+            }
+            if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
+                throw new Error('Invalid teamGetFavor response - favor data not available');
+            }
+            if (!response.results[2] || !response.results[2].result || !response.results[2].result.response) {
+                throw new Error('Invalid heroGetAll response - hero data not available');
+            }
+            if (!response.results[3] || !response.results[3].result || !response.results[3].result.response) {
+                throw new Error('Invalid titanGetAll response - titan data not available');
+            }
+
+            const heroesById = response.results[2].result.response || {};
+            const titansById = response.results[3].result.response || {};
+
+            this.teamInfo = {
+                teams: response.results[0].result.response,
+                favor: response.results[1].result.response,
+                heroesById: heroesById,
+                titansById: titansById
+            };
+
+            console.log('Team data loaded');
+        }
+
+        this.getUnitPower = function(unitId, isTitan) {
+            if (!this.teamInfo) return 0;
+            const source = isTitan ? this.teamInfo.titansById : this.teamInfo.heroesById;
+            if (!source) return 0;
+            const unit = source[unitId] || source[String(unitId)];
+            const p = unit && unit.power !== undefined ? Number(unit.power) : 0;
+            return Number.isFinite(p) ? p : 0;
+        }
+
+        this.getMyTeamPower = function(teamConfig, isTitanBattle) {
+            const ids = isTitanBattle ? (teamConfig?.titans || []) : (teamConfig?.heroes || []);
+            return ids.slice(0, 5).reduce((sum, id) => sum + this.getUnitPower(id, isTitanBattle), 0);
+        }
+
+        this.inferUnitType = function(unit) {
+            if (!unit || unit.id == null) return null;
+            if (unit.type) return unit.type;
+            const id = Number(unit.id);
+            if (!Number.isFinite(id)) return null;
+            if (id >= CONSTANTS.PET_ID_RANGE_MIN && id < CONSTANTS.PET_ID_RANGE_MAX) return 'pet';
+            if (id >= 4000 && id < 5000) return 'titan';
+            return 'hero';
+        }
+
+        this.parseSlotUnits = function(slotData) {
+            const team = slotData?.team;
+            if (!team) return [];
+            const units = [];
+            const pushUnit = (unit) => {
+                if (!unit || unit.id == null) return;
+                const type = this.inferUnitType(unit);
+                units.push(type && !unit.type ? { ...unit, type } : unit);
+            };
+            if (Array.isArray(team)) {
+                for (const entry of team) {
+                    if (!entry || typeof entry !== 'object') continue;
+                    if (entry.id != null) {
+                        pushUnit(entry);
+                    } else {
+                        const pos = Object.keys(entry)[0];
+                        pushUnit(entry[pos]);
+                    }
+                }
+            } else if (typeof team === 'object') {
+                Object.values(team).forEach(pushUnit);
+            }
+            return units;
+        }
+
+        /** Fortification / slot maps from lib.data.clanWar (falls back to CONSTANTS). */
+        this.getClanWarFortMaps = function() {
+            let forts = null;
+            let slots = null;
+            try {
+                const cw = window.lib?.data?.clanWar
+                    || (typeof window.lib?.getData === 'function' ? window.lib.getData('clanWar') : null);
+                if (cw?.fortification) forts = cw.fortification;
+                if (cw?.fortificationSlot) slots = cw.fortificationSlot;
+            } catch (e) {
+                // use fallback
+            }
+            if (!forts || typeof forts !== 'object') {
+                forts = CONSTANTS.GUILD_WAR_FORTIFICATION_FALLBACK;
+            }
+            if (!slots || typeof slots !== 'object') {
+                // Build slot map objects shaped like lib entries for uniform access
+                slots = {};
+                for (const [sid, fid] of Object.entries(CONSTANTS.GUILD_WAR_SLOT_FALLBACK)) {
+                    slots[sid] = { id: Number(sid), fortificationId: fid };
+                }
+            }
+            return { forts, slots };
+        }
+
+        /** Slot fort meta (4=Bridge; 7/8/9 unlock Citadel; 10=Citadel). */
+        this.getSlotFortMeta = function(slotId) {
+            const { forts, slots } = this.getClanWarFortMaps();
+            const slotEntry = slots[slotId] || slots[String(slotId)];
+            const fortificationId = Number(
+                slotEntry?.fortificationId
+                ?? CONSTANTS.GUILD_WAR_SLOT_FALLBACK[slotId]
+                ?? CONSTANTS.GUILD_WAR_SLOT_FALLBACK[String(slotId)]
+                ?? 0
+            );
+            const fort = forts[fortificationId] || forts[String(fortificationId)]
+                || CONSTANTS.GUILD_WAR_FORTIFICATION_FALLBACK[fortificationId]
+                || {};
+            const tierUnlock = fort.tierUnlock == null ? null : Number(fort.tierUnlock);
+            const fortTier = fort.tier == null ? 99 : Number(fort.tier);
+            const hasTierUnlock = Number.isFinite(tierUnlock);
+            return {
+                fortificationId,
+                fortTier,
+                tierUnlock: hasTierUnlock ? tierUnlock : null,
+                hasTierUnlock,
+                isBridge: fortificationId === 4,
+                isBastionUnlock: fortificationId === 7 || fortificationId === 8 || fortificationId === 9,
+                isCitadel: fortificationId === 10,
+            };
+        }
+
+        this.getSlotIdsForFort = function(fortificationId) {
+            const { slots } = this.getClanWarFortMaps();
+            const ids = [];
+            const fid = Number(fortificationId);
+            for (const [sid, entry] of Object.entries(slots)) {
+                const entryFid = Number(entry?.fortificationId ?? CONSTANTS.GUILD_WAR_SLOT_FALLBACK[sid]);
+                if (entryFid === fid) ids.push(Number(sid));
+            }
+            if (!ids.length) {
+                for (const [sid, entryFid] of Object.entries(CONSTANTS.GUILD_WAR_SLOT_FALLBACK)) {
+                    if (Number(entryFid) === fid) ids.push(Number(sid));
+                }
+            }
+            return ids;
+        }
+
+        this.isFortBeaten = function(fortificationId) {
+            const enemySlots = this.guildWarInfo?.enemySlots || {};
+            const slotIds = this.getSlotIdsForFort(fortificationId);
+            if (!slotIds.length) return false;
+
+            let sawSlot = false;
+            for (const slotId of slotIds) {
+                const slotData = enemySlots[slotId] || enemySlots[String(slotId)];
+                if (!slotData) continue;
+                sawSlot = true;
+                const units = this.parseSlotUnits(slotData);
+                const alive = units.filter((u) => {
+                    const t = u.type || this.inferUnitType(u);
+                    return t !== 'pet' && (!u.state || u.state.isDead !== true);
+                });
+                const pointsLeft = Math.max(0, (Number(slotData.pointsTotal) || 0) - (Number(slotData.pointsFarmed) || 0));
+                // Still defending if any unit alive and points remain (or points unknown but units alive)
+                if (alive.length > 0 && (pointsLeft > 0 || !slotData.pointsTotal)) {
+                    return false;
+                }
+            }
+            return sawSlot;
+        }
+
+        /** Bridge→tier2; any bastion 7/8/9→tier3; also honors fort.tierUnlock. */
+        this.getGuildWarState = function() {
+            const bastionForts = [7, 8, 9];
+            const beatenBastions = bastionForts.filter((fid) => this.isFortBeaten(fid));
+            const anyBastionBeaten = beatenBastions.length > 0;
+            const bridgeBeaten = this.isFortBeaten(4);
+            let maxUnlockedTier = 1;
+            if (bridgeBeaten) maxUnlockedTier = Math.max(maxUnlockedTier, 2);
+            if (anyBastionBeaten) maxUnlockedTier = Math.max(maxUnlockedTier, 3);
+
+            try {
+                const { forts } = this.getClanWarFortMaps();
+                for (const [fid, fort] of Object.entries(forts || {})) {
+                    if (!this.isFortBeaten(Number(fid))) continue;
+                    const unlock = fort?.tierUnlock == null ? null : Number(fort.tierUnlock);
+                    if (Number.isFinite(unlock)) maxUnlockedTier = Math.max(maxUnlockedTier, unlock);
+                }
+            } catch (e) {
+                // keep derived unlocks
+            }
+
+            return { anyBastionBeaten, beatenBastions, bridgeBeaten, maxUnlockedTier };
+        }
+
+        /** Lower = attack first: Bridge 0 → bastions/citadel 1 → other unlocked 3 → locked 9. */
+        this.getFortPriorityRank = function(slot, warState) {
+            if (slot.fortTier > warState.maxUnlockedTier) return 9;
+            if (slot.isBridge) return 0;
+            if (slot.isBastionUnlock) {
+                return warState.anyBastionBeaten ? 3 : 1;
+            }
+            if (slot.isCitadel) {
+                return warState.anyBastionBeaten ? 1 : 9;
+            }
+            return 3;
+        }
+
+        /** Attackable GW slots (allows 1+ living defenders on partially cleared forts). */
+        this.listAttackableSlots = function(opts = {}) {
+            const includeUnavailable = !!opts.includeUnavailable;
+            const diagnose = !!opts.diagnose;
+            const enemySlots = this.guildWarInfo?.enemySlots || {};
+            const slots = [];
+            const skip = {
+                total: 0, notReady: 0, busy: 0, noTeam: 0, allDead: 0,
+                noCombatUnits: 0, noPoints: 0, attackable: 0,
+            };
+
+            for (const [slotKey, slotData] of Object.entries(enemySlots)) {
+                if (!slotData || typeof slotData !== 'object') continue;
+                const slotId = Number(slotData.id != null ? slotData.id : slotKey);
+                if (!Number.isFinite(slotId)) continue;
+                skip.total++;
+
+                if (!includeUnavailable) {
+                    if (slotData.status && slotData.status !== 'ready') {
+                        skip.notReady++;
+                        continue;
+                    }
+                    if (slotData.attackerId != null && slotData.attackerId !== 0 && slotData.attackerId !== '0') {
+                        skip.busy++;
+                        continue;
+                    }
+                }
+
+                const units = this.parseSlotUnits(slotData);
+                if (!units.length) {
+                    skip.noTeam++;
+                    continue;
+                }
+
+                const alive = units.filter((u) => !u.state || u.state.isDead !== true);
+                if (!alive.length) {
+                    skip.allDead++;
+                    continue;
+                }
+
+                const pointsLeft = Math.max(0, (Number(slotData.pointsTotal) || 0) - (Number(slotData.pointsFarmed) || 0));
+                // If points are known and fully farmed, nothing left to attack
+                if (slotData.pointsTotal != null && pointsLeft <= 0) {
+                    skip.noPoints++;
+                    continue;
+                }
+
+                const titanCount = alive.filter((u) => u.type === 'titan').length;
+                const heroCount = alive.filter((u) => u.type === 'hero').length;
+                let isTitan = null;
+                if (titanCount > heroCount) isTitan = true;
+                else if (heroCount > titanCount) isTitan = false;
+                else if (titanCount > 0) isTitan = true;
+                else if (heroCount > 0) isTitan = false;
+                else {
+                    skip.noCombatUnits++;
+                    continue;
+                }
+
+                // Keep 1+ living defenders — partially cleared slots are still valid targets
+                const typedAlive = alive.filter((u) => u.type === (isTitan ? 'titan' : 'hero'));
+                if (!typedAlive.length) {
+                    skip.noCombatUnits++;
+                    continue;
+                }
+
+                const power = typedAlive.reduce((sum, u) => {
+                    const p = Number(u.power);
+                    return sum + (Number.isFinite(p) ? p : 0);
+                }, 0);
+                const unitIds = typedAlive.map((u) => Number(u.id)).filter((id) => Number.isFinite(id));
+                const defenderName = slotData.user?.name || slotData.user?.id || '?';
+                const fortMeta = this.getSlotFortMeta(slotId);
+
+                slots.push({
+                    slotId,
+                    isTitan,
+                    power,
+                    unitIds,
+                    units: typedAlive,
+                    pointsLeft,
+                    defenderName,
+                    status: slotData.status,
+                    aliveCount: typedAlive.length,
+                    ...fortMeta,
+                });
+                skip.attackable++;
+            }
+
+            if (diagnose) {
+                console.log(
+                    `[GUILD_WAR] Slot scan: total=${skip.total}, notReady=${skip.notReady}, busy=${skip.busy}, `
+                    + `noTeam=${skip.noTeam}, allDead=${skip.allDead}, noPoints=${skip.noPoints}, `
+                    + `noCombat=${skip.noCombatUnits}, attackable=${skip.attackable}`
+                );
+            }
+            return slots;
+        }
+
+        /** Bridge → bastions → Citadel → leftovers; demo-sim and keep above win-rate threshold. */
+        this.selectStrongestBeatableSlots = async function(heroTeam, titanTeam, maxTargets, options = {}) {
+            const warState = this.getGuildWarState();
+            const { anyBastionBeaten, beatenBastions, bridgeBeaten, maxUnlockedTier } = warState;
+
+            const raw = this.listAttackableSlots({ diagnose: true });
+            // Remaining attackable slots per fort — fewer = closer to beaten
+            const fortRemain = {};
+            for (const s of raw) {
+                const fid = s.fortificationId;
+                fortRemain[fid] = (fortRemain[fid] || 0) + 1;
+            }
+
+            // Prefer unlocked-tier slots; if none (API quirks), fall back to all ready slots
+            let pool = raw.filter((s) => s.fortTier <= maxUnlockedTier);
+            if (!pool.length && raw.length) {
+                console.warn(
+                    `[GUILD_WAR] No slots on unlocked tiers (maxTier=${maxUnlockedTier}); `
+                    + `falling back to all ${raw.length} ready slots`
+                );
+                pool = raw.slice();
+            }
+
+            const candidates = pool.sort((a, b) => {
+                const ra = this.getFortPriorityRank(a, warState);
+                const rb = this.getFortPriorityRank(b, warState);
+                if (ra !== rb) return ra - rb;
+
+                // High-prio bastions (none beaten yet): finish the closest fort first
+                if (!anyBastionBeaten && a.isBastionUnlock && b.isBastionUnlock) {
+                    const remA = fortRemain[a.fortificationId] ?? 99;
+                    const remB = fortRemain[b.fortificationId] ?? 99;
+                    if (remA !== remB) return remA - remB;
+                }
+
+                // Low-prio / leftovers: finish closest fort, then strongest remaining
+                if (ra >= 3 && rb >= 3) {
+                    const remA = fortRemain[a.fortificationId] ?? 99;
+                    const remB = fortRemain[b.fortificationId] ?? 99;
+                    if (remA !== remB) return remA - remB;
+                }
+
+                return b.power - a.power || b.pointsLeft - a.pointsLeft || a.slotId - b.slotId;
+            });
+
+            const bridgeCount = candidates.filter((s) => this.getFortPriorityRank(s, warState) === 0).length;
+            const bastionCount = candidates.filter((s) => s.isBastionUnlock && this.getFortPriorityRank(s, warState) === 1).length;
+            const citadelCount = candidates.filter((s) => s.isCitadel && this.getFortPriorityRank(s, warState) === 1).length;
+            const lowCount = candidates.filter((s) => this.getFortPriorityRank(s, warState) === 3).length;
+            console.log(
+                `[GUILD_WAR] ${candidates.length} attackable | bridgeBeaten=${bridgeBeaten} `
+                + `| bastions beaten: [${beatenBastions.join(',') || 'none'}] `
+                + `| maxUnlockedTier=${maxUnlockedTier} `
+                + `| prio: bridge=${bridgeCount}, bastion=${bastionCount}, citadel=${citadelCount}, low=${lowCount}`
+            );
+            if (!candidates.length) return [];
+
+            // With AutoFix, accept lower pre-sim WR so borderline losses can be salvaged on endBattle.
+            const useAutoFix = !!options.useAutoFix;
+            const winThreshold = useAutoFix
+                ? Math.min(CONSTANTS.WIN_RATE_THRESHOLD, 25)
+                : CONSTANTS.WIN_RATE_THRESHOLD;
+            if (useAutoFix) {
+                console.log(`[GUILD_WAR] AutoFix target threshold: ${winThreshold}% (default ${CONSTANTS.WIN_RATE_THRESHOLD}%)`);
+            }
+
+            const myHeroPower = this.getMyTeamPower(heroTeam, false);
+            const myTitanPower = this.getMyTeamPower(titanTeam, true);
+            const beatable = [];
+            const limit = Math.max(1, maxTargets || 1);
+
+            for (let i = 0; i < candidates.length; i++) {
+                if (beatable.length >= limit) break;
+                const slot = candidates[i];
+                const myPower = slot.isTitan ? myTitanPower : myHeroPower;
+                const prio = this.getFortPriorityRank(slot, warState);
+                const fortTag = slot.isBridge ? 'BRIDGE'
+                    : slot.isBastionUnlock ? `BASTION fort${slot.fortificationId}${anyBastionBeaten ? ' low' : ''}`
+                    : slot.isCitadel ? `CITADEL${anyBastionBeaten ? '' : ' locked'}`
+                    : `fort${slot.fortificationId}`;
+                const label = `slot ${slot.slotId} [${fortTag} p${prio} t${slot.fortTier}] `
+                    + `(${slot.isTitan ? 'titan' : 'hero'}, ${slot.defenderName}, pwr ${slot.power}, alive ${slot.aliveCount})`;
+
+                // Hopeless by power — skip expensive sim (slightly looser with AutoFix)
+                const powerFloor = useAutoFix ? 0.3 : 0.4;
+                if (myPower > 0 && slot.power > 0 && myPower < slot.power * powerFloor) {
+                    console.log(`[GUILD_WAR] Skip ${label}: power too low (mine ${myPower})`);
+                    continue;
+                }
+
+                // Partial defenses (<5): demo teams are unreliable — accept if we clearly outgun remnants
+                if (slot.unitIds.length < 5) {
+                    const partialRatio = useAutoFix ? 0.6 : 0.75;
+                    if (myPower > 0 && slot.power > 0 && myPower >= slot.power * partialRatio) {
+                        beatable.push({ ...slot, winRate: 85 });
+                        console.log(`[GUILD_WAR] ✓ Partial defense outgunned — queued (${beatable.length}/${limit}) ${label}`);
+                        continue;
+                    }
+                    console.log(`[GUILD_WAR] Skip ${label}: partial defense, power not decisive (mine ${myPower})`);
+                    continue;
+                }
+
+                setProgress(`${I18N('GUILD_WAR')}: Sim ${i + 1}/${candidates.length} ${label}`);
+                console.log(`[GUILD_WAR] Simulating ${label}...`);
+
+                try {
+                    let sim;
+                    if (slot.isTitan) {
+                        if (!titanTeam?.titans || titanTeam.titans.length < 5) {
+                            console.warn('[GUILD_WAR] No titan team — skip titan slot', slot.slotId);
+                            continue;
+                        }
+                        sim = await this.simulateGuildWarTitanBattle(
+                            titanTeam,
+                            { titans: slot.unitIds.slice(0, 5), units: slot.units },
+                            CONSTANTS.SIMULATION_COUNT
+                        );
+                    } else {
+                        if (!heroTeam?.heroes || heroTeam.heroes.length < 5) {
+                            console.warn('[GUILD_WAR] No hero team — skip hero slot', slot.slotId);
+                            continue;
+                        }
+                        sim = await this.simulateGuildWarHeroBattle(
+                            heroTeam,
+                            {
+                                heroes: slot.unitIds.slice(0, 5),
+                                pet: CONSTANTS.DEFAULT_PET_ID,
+                                favor: {},
+                                banner: 1,
+                            },
+                            CONSTANTS.SIMULATION_COUNT
+                        );
+                    }
+
+                    console.log(`[GUILD_WAR] ${label}: ${sim.wins}W/${sim.losses}L (${sim.winRate.toFixed(1)}%)`);
+                    if (sim.winRate > winThreshold) {
+                        beatable.push({ ...slot, winRate: sim.winRate });
+                        console.log(`[GUILD_WAR] ✓ Beatable — queued (${beatable.length}/${limit})`);
+                    } else {
+                        console.log(`[GUILD_WAR] ✗ Below ${winThreshold}% — skip`);
+                    }
+                } catch (err) {
+                    console.warn(`[GUILD_WAR] Sim failed for ${label}:`, err);
+                }
+            }
+
+            return beatable;
+        }
+
+        this.attackDirectSlots = async function() {
+            console.log('[GUILD_WAR] Selecting strongest beatable targets via demo sim...');
+
+            let heroTeam = null;
+            let titanTeam = null;
+            try {
+                heroTeam = this.getHeroTeamConfiguration();
+            } catch (e) {
+                console.warn('[GUILD_WAR] Hero team unavailable:', e.message);
+            }
+            try {
+                titanTeam = this.getTitanTeamConfiguration();
+            } catch (e) {
+                console.warn('[GUILD_WAR] Titan team unavailable:', e.message);
+            }
+            if (!heroTeam && !titanTeam) {
+                this.end('No Guild War attack teams configured (clan_pvp_hero / clan_pvp_titan)');
+                return;
+            }
+
+            await this.refreshGuildWarAttempts();
+            const tries = this.myTries || 0;
+            if (tries <= 0) {
+                this.end('No Guild War attempts remaining');
+                return;
+            }
+
+            const useAutoFix = isHwhAutoFixEnabled();
+            if (useAutoFix) {
+                console.log('[GUILD_WAR] HWH AutoFix on — using clanWarAttack → Calc → clanWarEndBattle');
+            }
+
+            setProgress(
+                useAutoFix
+                    ? `${I18N('GUILD_WAR')}: Finding targets (${tries} tries, AutoFix)...`
+                    : `${I18N('GUILD_WAR')}: Finding strongest beatable targets (${tries} tries)...`
+            );
+            const readyCount = this.listAttackableSlots().length;
+            const targets = await this.selectStrongestBeatableSlots(heroTeam, titanTeam, tries, { useAutoFix });
+
+            if (!targets.length) {
+                if (!readyCount) {
+                    this.end('No attackable Guild War slots left (all cleared, busy, or locked)');
+                } else {
+                    this.end('No beatable Guild War slots found (sim win rate too low)');
+                }
+                return;
+            }
+
+            console.log('[GUILD_WAR] Attack order (strongest beatable):',
+                targets.map((t) => `#${t.slotId} ${t.isTitan ? 'T' : 'H'} pwr=${t.power} wr=${t.winRate.toFixed(0)}%`));
+
+            for (let i = 0; i < targets.length; i++) {
+                const target = targets[i];
+                await this.refreshGuildWarAttempts();
+                if (this.myTries === null || this.myTries === undefined || this.myTries <= 0) {
+                    console.log(`[GUILD_WAR] No attempts remaining, stopping`);
+                    break;
+                }
+
+                const label = `slot ${target.slotId} (${target.isTitan ? 'titan' : 'hero'}, ${target.defenderName})`;
+                try {
+                    console.log(`[GUILD_WAR] Attacking ${label}... (${this.myTries} tries, sim ${target.winRate.toFixed(0)}%)`);
+                    setProgress(
+                        useAutoFix
+                            ? `${I18N('GUILD_WAR')}: Attacking ${label} (AutoFix, ${this.myTries} tries)`
+                            : `${I18N('GUILD_WAR')}: Attacking ${label} (${this.myTries} tries)`
+                    );
+                    const outcome = await this.attackSlot(target.slotId, {
+                        skipSim: true,
+                        heroTeam,
+                        titanTeam,
+                        useAutoFix,
+                    });
+                    if (outcome?.win !== false) {
+                        this.victories++;
+                    }
+                    await this.refreshGuildWarAttempts();
+                } catch (error) {
+                    console.error(`[GUILD_WAR] Error attacking ${label}:`, error);
+                    Utils.log('warn', `Failed to attack ${label}: ${error.message}, continuing`);
+                }
+
+                if (i < targets.length - 1) {
+                    await new Promise((resolve) => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+                }
+            }
+
+            await this.refreshGuildWarAttempts();
+            const summary = `Completed ${this.victories} Guild War attacks${this.myTries > 0 ? ` (${this.myTries} attempts remaining)` : ''}`;
+            this.end(summary);
+        }
+
+        this.extractGuildWarBattle = function(attackResponse) {
+            const apiResult = attackResponse?.results?.[0]?.result;
+            const response = apiResult?.response ?? apiResult;
+            if (!response) return null;
+            return response.battle || response.replay || response;
+        }
+
+        this.calculateGuildWarBattleResult = async function(battleData, isTitanBattle) {
+            const typeHint = battleData?.type
+                || (isTitanBattle ? 'clan_pvp_titan' : 'clan_pvp');
+            const battleConfigType = getBattleType(typeHint);
+            const calcResult = await runBattleCalc(BattleCalc, battleData, battleConfigType);
+            if (!calcResult || !calcResult.result || !calcResult.progress) {
+                throw new Error('Invalid Guild War BattleCalc result');
+            }
+            // Keep progress seed aligned with the started battle (required by clanWarEndBattle).
+            const expectedSeed = Number(battleData?.seed);
+            if (Number.isFinite(expectedSeed) && Array.isArray(calcResult.progress)) {
+                for (const entry of calcResult.progress) {
+                    if (entry && entry.seed == null) {
+                        entry.seed = expectedSeed;
+                    }
+                }
+            }
+            return {
+                win: !!calcResult.result.win,
+                progress: calcResult.progress,
+                result: calcResult.result,
+                battleData,
+            };
+        }
+
+        this.endGuildWarBattle = async function(battleResult, useAutoFix = false) {
+            if (useAutoFix && !battleResult.win) {
+                setProgress(`${I18N('GUILD_WAR')}: AutoFix searching (Calc loss)...`, true);
+                console.log('[GUILD_WAR] Calc loss — submitting clanWarEndBattle for AutoFix salvage');
+            }
+
+            const calls = [{
+                name: 'clanWarEndBattle',
+                args: {
+                    result: battleResult.result || {
+                        win: !!battleResult.win,
+                        stars: battleResult.result?.stars || 0,
+                    },
+                    progress: battleResult.progress,
+                },
+                context: { actionTs: Utils.getActionTs() },
+                ident: 'body',
+            }];
+
+            // When AutoFix is on, HWHAutoFixBattleExt rewrites loss payloads inside this Send.
+            const response = await Send(JSON.stringify({ calls }));
+            if (response.error) {
+                throw new Error(
+                    `clanWarEndBattle failed: ${response.error.name} - ${response.error.description || ''}`
+                );
+            }
+
+            const endResponse = response.results?.[0]?.result?.response
+                ?? response.results?.[0]?.result
+                ?? null;
+            let won = !!battleResult.win;
+            if (endResponse?.win != null) {
+                won = !!endResponse.win;
+            } else if (endResponse?.result?.win != null) {
+                won = !!endResponse.result.win;
+            } else if (useAutoFix && !battleResult.win) {
+                // AutoFix may have flipped the payload; end response shape varies — treat as unknown win.
+                console.log('[GUILD_WAR] AutoFix path finished after Calc loss (server outcome not parsed)');
+            }
+            return { win: won, response: endResponse };
+        }
+
+        this.attackSlot = async function(slotId, options = {}) {
+            console.log(`Attacking slot ${slotId}...`);
+            const useAutoFix = options.useAutoFix === true || (options.useAutoFix == null && isHwhAutoFixEnabled());
+
+            if (this.myTries === null || this.myTries === undefined) {
+                throw new Error('Guild War attempts not available - war may not be active');
+            }
+            if (this.myTries <= 0) {
+                throw new Error(`No Guild War attempts remaining (myTries: ${this.myTries})`);
+            }
+
+            const slotMeta = this.listAttackableSlots({ includeUnavailable: true })
+                .find((s) => s.slotId === Number(slotId));
+            const isTitanBattle = slotMeta
+                ? slotMeta.isTitan
+                : (slotId === 7 || slotId === 8 || slotId === 9 || slotId === 34);
+
+            let teamConfig;
+            if (isTitanBattle) {
+                teamConfig = options.titanTeam || this.getTitanTeamConfiguration();
+                if (!teamConfig.titans || teamConfig.titans.length < 5) {
+                    throw new Error('Titan team not properly configured - need at least 5 titans');
+                }
+            } else {
+                teamConfig = options.heroTeam || this.getHeroTeamConfiguration();
+                if (!teamConfig.heroes || teamConfig.heroes.length < 5) {
+                    throw new Error('Hero team not properly configured - need at least 5 heroes');
+                }
+            }
+
+            const winThreshold = useAutoFix
+                ? Math.min(CONSTANTS.WIN_RATE_THRESHOLD, 25)
+                : CONSTANTS.WIN_RATE_THRESHOLD;
+
+            // Re-sim only if caller did not already evaluate this slot
+            if (!options.skipSim) {
+                const myPower = this.getMyTeamPower(teamConfig, isTitanBattle);
+                const oppPower = slotMeta?.power || 0;
+                if (myPower > 0 && oppPower > 0 && myPower < (oppPower * 0.5)) {
+                    throw new Error(`Skipped: Power check failed (my ${myPower} vs enemy ${oppPower})`);
+                }
+                if (isTitanBattle) {
+                    const oppTeam = {
+                        titans: (slotMeta?.unitIds || []).slice(0, 5),
+                        units: slotMeta?.units,
+                    };
+                    if (oppTeam.titans.length >= 5) {
+                        const sim = await this.simulateGuildWarTitanBattle(teamConfig, oppTeam, CONSTANTS.SIMULATION_COUNT);
+                        if (sim.winRate <= winThreshold) {
+                            throw new Error(`Skipped: Win rate ${sim.winRate.toFixed(2)}% below threshold`);
+                        }
+                    }
+                } else {
+                    const oppTeam = {
+                        heroes: (slotMeta?.unitIds || []).slice(0, 5),
+                        pet: CONSTANTS.DEFAULT_PET_ID,
+                        favor: {},
+                        banner: 1,
+                    };
+                    if (oppTeam.heroes.length >= 5) {
+                        const sim = await this.simulateGuildWarHeroBattle(teamConfig, oppTeam, CONSTANTS.SIMULATION_COUNT);
+                        if (sim.winRate <= winThreshold) {
+                            throw new Error(`Skipped: Win rate ${sim.winRate.toFixed(2)}% below threshold`);
+                        }
+                    }
+                }
+            }
+
+            const attackArgs = {
+                slotId: slotId,
+                heroes: isTitanBattle ? teamConfig.titans.slice(0, 5) : teamConfig.heroes.slice(0, 5)
+            };
+
+            if (isTitanBattle) {
+                attackArgs.favor = {};
+            } else {
+                attackArgs.pet = teamConfig.pet;
+                attackArgs.favor = teamConfig.favor;
+                attackArgs.banner = teamConfig.banners && teamConfig.banners.length > 0 ? teamConfig.banners[0] : 1;
+            }
+
+            const calls = [{
+                name: 'clanWarAttack',
+                args: attackArgs,
+                context: { actionTs: Utils.getActionTs() },
+                ident: 'body'
+            }];
+
+            const response = await Send(JSON.stringify({ calls }));
+
+            if (response.error) {
+                if (response.error.name === 'NotAvailable') {
+                    throw new Error('Guild War is not currently available');
+                } else if (response.error.name === 'InvalidRequest') {
+                    throw new Error('Invalid attack request - check team configuration');
+                } else if (response.error.name === 'ArgumentError') {
+                    throw new Error('Missing required attack arguments');
+                } else if (response.error.name === 'NotFound') {
+                    throw new Error(`Target slot ${slotId} not found`);
+                } else {
+                    throw new Error(`Attack failed: ${response.error.name} - ${response.error.description}`);
+                }
+            }
+
+            if (!response.results || !response.results[0]) {
+                throw new Error('Invalid attack response - no results received');
+            }
+
+            const result = response.results[0].result;
+            if (!result) {
+                throw new Error('Invalid attack response - no result data');
+            }
+
+            if (!useAutoFix) {
+                console.log(`Slot ${slotId} attack completed successfully`);
+                return { win: true, result };
+            }
+
+            const battleData = this.extractGuildWarBattle(response);
+            if (!battleData?.attackers || battleData.seed == null) {
+                throw new Error('clanWarAttack did not return a usable battle snapshot for AutoFix endBattle');
+            }
+
+            let battleResult = await this.calculateGuildWarBattleResult(battleData, isTitanBattle);
+            console.log(`[GUILD_WAR] Slot ${slotId} Calc: ${battleResult.win ? 'WIN' : 'LOSS'}`);
+
+            if (!battleResult.win) {
+                const salvaged = await salvageWithHwhFixBattle(battleData, {
+                    mode: 'pvp',
+                    label: 'GUILD_WAR',
+                    durationMs: 120000,
+                    maxCount: 500,
+                });
+                if (salvaged?.win) {
+                    battleResult = {
+                        win: true,
+                        result: salvaged.result,
+                        progress: salvaged.progress,
+                        battleData,
+                    };
+                }
+            }
+
+            const ended = await this.endGuildWarBattle(battleResult, true);
+            console.log(`Slot ${slotId} attack completed (${ended.win ? 'WIN' : 'LOSS/unknown'})`);
+            return { win: ended.win || battleResult.win, result: ended.response, calc: battleResult };
+        }
+
+        /** Guild War hero attack team; falls back to Arena. */
+        this.getHeroTeamConfiguration = function() {
+            if (!this.teamInfo || !this.teamInfo.teams) {
+                throw new Error('Guild War team info not available');
+            }
+
+            const teamData = this.teamInfo.teams;
+            const favorData = this.teamInfo.favor || {};
+
+            const gwTeam = teamData.clan_pvp_hero || teamData.arena || [];
+            const gwFavor = favorData.clan_pvp_hero || favorData.arena || {};
+
+            console.log('[GUILD_WAR] Hero attack team:', gwTeam, '(source:', teamData.clan_pvp_hero ? 'clan_pvp_hero' : 'arena', ')');
+
+            let heroes = [];
+            let pet = null;
+            if (gwTeam && gwTeam.length >= 6) {
+                heroes = gwTeam.slice(0, 5).map(Number);
+                pet = Number(gwTeam[5]);
+            } else if (gwTeam && gwTeam.length >= 5) {
+                heroes = gwTeam.slice(0, 5).map(Number);
+                pet = CONSTANTS.DEFAULT_PET_ID;
+            }
+
+            if (heroes.length < 5) {
+                throw new Error('Hero team is not configured (need 5 heroes in clan_pvp_hero or arena)');
+            }
+            if (!pet || pet < CONSTANTS.PET_ID_RANGE_MIN) {
+                pet = CONSTANTS.DEFAULT_PET_ID;
+            }
+
+            let banners = [1];
+            try {
+                const userInfo = getUserInfo();
+                if (userInfo && userInfo.banner) {
+                    banners = typeof userInfo.banner === 'number' ? [userInfo.banner]
+                        : Array.isArray(userInfo.banner) ? userInfo.banner : [1];
+                }
+            } catch (e) {
+                console.log('Could not get banner from userInfo, using default');
+            }
+
+            return {
+                heroes,
+                pet,
+                favor: gwFavor,
+                banners,
+            };
+        }
+
+        this.getTitanTeamConfiguration = function() {
+            if (!this.teamInfo || !this.teamInfo.teams) {
+                throw new Error('Guild War titan team info not available');
+            }
+
+            const teamData = this.teamInfo.teams;
+            const titanTeam = teamData.clan_pvp_titan || teamData.titan_arena || [];
+
+            console.log('[GUILD_WAR] Titan attack team:', titanTeam);
+
+            if (!titanTeam || titanTeam.length < 5) {
+                throw new Error('Titan team is not configured (need 5 titans)');
+            }
+
+            return {
+                titans: titanTeam.slice(0, 5).map(Number)
+            };
+        }
+
+        /** Titan element from lib.data.titan or ID range. */
+        this.getTitanElementById = function(titanId) {
+            const id = Number(titanId);
+            if (!Number.isFinite(id)) return null;
+            try {
+                const t = window.lib?.data?.titan?.[id] || window.lib?.data?.titan?.[String(id)]
+                    || (typeof window.lib?.getData === 'function' ? window.lib.getData('titan')?.[id] : null);
+                if (t?.element) return String(t.element).toLowerCase();
+            } catch (e) {
+                // fall through to ranges
+            }
+            if (id >= 4050 && id < 4060) return 'distortion';
+            if (id >= 4040 && id < 4050) return 'light';
+            if (id >= 4030 && id < 4040) return 'dark';
+            if (id >= 4020 && id < 4030) return 'earth';
+            if (id >= 4010 && id < 4020) return 'fire';
+            if (id >= 4000 && id < 4010) return 'water';
+            return null;
+        }
+
+        this.spiritSkillKind = function(skillId) {
+            try {
+                const root = window.lib?.data?.titanSpirit
+                    || (typeof window.lib?.getData === 'function' ? window.lib.getData('titanSpirit') : null);
+                const skills = root?.skills || root;
+                const skill = skills?.[skillId] || skills?.[String(skillId)];
+                if (!skill || typeof skill !== 'object') return null;
+                const label = String(skill.type || skill.group || skill.category || skill.kind || skill.slot || '').toLowerCase();
+                if (label.includes('primal')) return 'primal';
+                if (label.includes('element')) return 'elemental';
+            } catch (e) {
+                // fall through to list order
+            }
+            return null;
+        }
+
+        this.spiritSkillPair = function(unit) {
+            const list = Array.isArray(unit?.elementSpiritSkills) ? unit.elementSpiritSkills : [];
+            const ids = list
+                .map((entry) => Number(entry?.skillId ?? entry?.id))
+                .filter((id) => Number.isFinite(id) && id > 0);
+            if (ids.length < 2) return null;
+            let elemental = null;
+            let primal = null;
+            for (const id of ids) {
+                const kind = this.spiritSkillKind(id);
+                if (kind === 'elemental' && elemental == null) elemental = id;
+                if (kind === 'primal' && primal == null) primal = id;
+            }
+            if (elemental == null) elemental = ids[0];
+            if (primal == null) primal = ids.find((id) => id !== elemental);
+            if (!elemental || !primal) return null;
+            return { elemental, primal };
+        }
+
+        this.rankTitanElements = function(ids) {
+            const counts = {};
+            const order = [];
+            for (const id of ids || []) {
+                const el = this.getTitanElementById(id);
+                if (!el) continue;
+                if (!counts[el]) {
+                    counts[el] = 0;
+                    order.push(el);
+                }
+                counts[el] += 1;
+            }
+            return Object.keys(counts).sort((a, b) => {
+                if (counts[b] !== counts[a]) return counts[b] - counts[a];
+                return order.indexOf(a) - order.indexOf(b);
+            });
+        }
+
+        this.skillsForElement = function(element, ids, units, useOwnedTitans) {
+            for (const id of ids || []) {
+                if (this.getTitanElementById(id) !== element) continue;
+                const listed = (units || []).find((unit) => Number(unit?.id) === Number(id));
+                const fromSlot = this.spiritSkillPair(listed);
+                if (fromSlot) return fromSlot;
+                if (!useOwnedTitans) continue;
+                const owned = this.teamInfo?.titansById?.[id] || this.teamInfo?.titansById?.[String(id)];
+                const fromOwned = this.spiritSkillPair(owned);
+                if (fromOwned) return fromOwned;
+            }
+            return null;
+        }
+
+        /**
+         * Spirit args for GW titan demoBattles (up to 2 elements).
+         * Live client: maxUpgrade / defenceMaxUpgrade true → that side's *SpiritSkills are {};
+         * false → { elemental, primal } from elementSpiritSkills.
+         */
+        this.getGuildWarTitanSpiritArgs = function(attackTitanIds, defenceTitanIds, defenceUnits, attackMaxUpgrade, defenceMaxUpgrade) {
+            const atkRanked = this.rankTitanElements(attackTitanIds).slice(0, 2);
+            const defRanked = this.rankTitanElements(defenceTitanIds).slice(0, 2);
+            const args = {};
+            const put = (elementKey, skillsKey, element, maxUpgrade, resolveSkills) => {
+                if (!element) return;
+                args[elementKey] = element;
+                if (maxUpgrade) {
+                    args[skillsKey] = {};
+                    return;
+                }
+                const skills = resolveSkills();
+                if (skills) {
+                    args[skillsKey] = {
+                        elemental: skills.elemental,
+                        primal: skills.primal
+                    };
+                } else {
+                    args[skillsKey] = {};
+                    console.warn(`[GUILD_WAR_TITAN] No spirit skill ids for ${elementKey} (${element}); sending {}`);
+                }
+            };
+            put(
+                'firstSpiritElement',
+                'firstSpiritSkills',
+                atkRanked[0],
+                !!attackMaxUpgrade,
+                () => this.skillsForElement(atkRanked[0], attackTitanIds, null, true)
+            );
+            put(
+                'secondSpiritElement',
+                'secondSpiritSkills',
+                atkRanked[1],
+                !!attackMaxUpgrade,
+                () => this.skillsForElement(atkRanked[1], attackTitanIds, null, true)
+            );
+            put(
+                'defenceFirstSpiritElement',
+                'defenceFirstSpiritSkills',
+                defRanked[0],
+                !!defenceMaxUpgrade,
+                () => this.skillsForElement(defRanked[0], defenceTitanIds, defenceUnits, false)
+            );
+            put(
+                'defenceSecondSpiritElement',
+                'defenceSecondSpiritSkills',
+                defRanked[1],
+                !!defenceMaxUpgrade,
+                () => this.skillsForElement(defRanked[1], defenceTitanIds, defenceUnits, false)
+            );
+            return args;
+        }
+
+        this.simulateGuildWarHeroBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
+            Utils.log('log', `[GUILD_WAR_HERO] Starting ${simulationCount} demo battle simulations...`);
+            Utils.log('log', `[GUILD_WAR_HERO] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
+            const mechanic = 'arena';
+            const simulations = [];
+            let parentId = 0;
+            let firstBattleId = null;
+
+            for (let i = 0; i < simulationCount; i++) {
+                try {
+                    const result = await this.runSingleGuildWarHeroDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
+                    simulations.push(result);
+                    if (i === 0 && result.battleId) {
+                        firstBattleId = result.battleId;
+                        parentId = firstBattleId;
+                    } else if (i > 0 && firstBattleId) {
+                        parentId = firstBattleId;
+                    } else if (result.parentId) {
+                        parentId = result.parentId;
+                    }
+                } catch (error) {
+                    console.error(`[GUILD_WAR_HERO] Simulation ${i + 1} failed:`, error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId });
+                }
+            }
+
+            const wins = simulations.filter((s) => s.win).length;
+            const losses = simulations.length - wins;
+            const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
+            Utils.log('log', `[GUILD_WAR_HERO] Simulation complete: ${wins}W/${losses}L (${winRate.toFixed(1)}% win rate)`);
+            return {
+                total: simulations.length,
+                wins,
+                losses,
+                winRate,
+                simulations,
+            };
+        }
+
+        this.runSingleGuildWarHeroDemoBattle = async function(myTeam, opponentTeam, mechanic, _seedOffset = 0, parentId = 0) {
+            const self = this;
+            return new Promise((resolve, reject) => {
+                try {
+                    const attackMaxUpgrade = getSimAttackMaxUpgrade();
+                    const args = {
+                        mechanic,
+                        defenceMaxUpgrade: true,
+                        defenceTeam: {
+                            units: opponentTeam.heroes || [],
+                            pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID,
+                        },
+                        defenceBanner: opponentTeam.banner || 1,
+                        defenceBannerStones: {},
+                        defenceFavor: opponentTeam.favor || {},
+                        maxUpgrade: attackMaxUpgrade,
+                        team: {
+                            units: myTeam.heroes || [],
+                            pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID,
+                        },
+                        banner: (myTeam.banners && myTeam.banners[0]) || 1,
+                        bannerStones: {},
+                        favor: myTeam.favor || {},
+                        defenceBuffs: {},
+                        buffs: {},
+                        parentId,
+                        entryId: 0,
+                    };
+
+                    if (!args.team.units.length || !args.defenceTeam.units.length) {
+                        reject(new Error('Invalid hero team for GW demo battle'));
+                        return;
+                    }
+
+                    const calls = [{
+                        name: 'demoBattles_startBattle',
+                        args,
+                        context: { actionTs: Utils.getActionTs() },
+                        ident: 'body',
+                    }];
+
+                    Send(JSON.stringify({ calls }))
+                        .then((response) => {
+                            if (response.error) {
+                                reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
+                                return;
+                            }
+                            const responseData = response.results?.[0]?.result?.response;
+                            const battleData = responseData?.battle || responseData;
+                            if (!battleData) {
+                                reject(new Error('No battle data in API response'));
+                                return;
+                            }
+
+                            const battleType = battleData?.type ?? mechanic;
+                            const battleConfigType = getBattleType(battleType);
+                            runBattleCalc(BattleCalc, battleData, battleConfigType)
+                                .then((calcResult) => {
+                                    if (!Utils.isValidBattleResult(calcResult)) {
+                                        resolve({ win: false, battleTime: 0, error: 'Invalid calculation result', parentId });
+                                        return;
+                                    }
+                                    const win = !!calcResult.result.win;
+                                    const battleTime = calcResult.battleTime || 0;
+                                    self.endGuildWarTitanDemoBattle(calcResult, battleData)
+                                        .then((endBattleResult) => {
+                                            const battleId = endBattleResult?.battleId;
+                                            let nextParentId = parentId;
+                                            if (parentId === 0 && battleId) nextParentId = battleId;
+                                            else if (parentId !== 0) nextParentId = parentId;
+                                            else if (endBattleResult?.parentId) nextParentId = endBattleResult.parentId;
+                                            resolve({ win, battleTime, result: calcResult, parentId: nextParentId, battleId });
+                                        })
+                                        .catch(() => resolve({ win, battleTime, result: calcResult, parentId, battleId: null }));
+                                })
+                                .catch(reject);
+                        })
+                        .catch(reject);
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+
+        this.simulateGuildWarTitanBattle = async function(myTeam, opponentTeam, simulationCount = 10) {
+            Utils.log('log', `[GUILD_WAR_TITAN] Starting ${simulationCount} demo battle simulations...`);
+            Utils.log('log', `[GUILD_WAR_TITAN] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
+            
+            const mechanic = 'clan_pvp_titan';
+            
+            const simulations = [];
+            let parentId = 0; // Start with 0 for first battle
+            let firstBattleId = null; // Store first battle's ID to use as parentId for subsequent battles
+            
+            for (let i = 0; i < simulationCount; i++) {
+                try {
+                    // First battle uses parentId=0, subsequent battles use first battle's ID as parentId
+                    const result = await this.runSingleGuildWarTitanDemoBattle(myTeam, opponentTeam, mechanic, i, parentId);
+                    simulations.push(result);
+                    
+                    if (i === 0 && result.battleId) {
+                        firstBattleId = result.battleId;
+                        parentId = firstBattleId;
+                    } else if (i > 0 && firstBattleId) {
+                        parentId = firstBattleId;
+                    } else if (result.parentId) {
+                        parentId = result.parentId;
+                    }
+                } catch (error) {
+                    console.error(`[GUILD_WAR_TITAN] Simulation ${i + 1} failed:`, error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message, parentId: parentId });
+                }
+            }
+
+            const wins = simulations.filter(s => s.win).length;
+            const losses = simulations.length - wins;
+            const winRate = (wins / simulations.length) * 100;
+            const battleTimes = simulations.map(s => s.battleTime).filter(t => t > 0);
+            const averageBattleTime = battleTimes.length > 0 
+                ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length 
+                : 0;
+            
+            Utils.log('log', `[GUILD_WAR_TITAN] Simulation complete: ${wins}W/${losses}L (${winRate.toFixed(1)}% win rate)`);
+            
+            return {
+                total: simulations.length,
+                wins: wins,
+                losses: losses,
+                winRate: winRate,
+                averageBattleTime: averageBattleTime,
+                simulations: simulations
+            };
+        }
+
+        this.runSingleGuildWarTitanDemoBattle = async function(myTeam, opponentTeam, mechanic, seedOffset = 0, parentId = 0) {
+            return new Promise((resolve, reject) => {
+                try {
+                    const attackUnits = (myTeam.titans || []).map(Number).filter((id) => Number.isFinite(id));
+                    const defenceUnits = (opponentTeam.titans || []).map(Number).filter((id) => Number.isFinite(id));
+                    if (!attackUnits.length) {
+                        reject(new Error('Invalid team configuration: missing or empty titan units'));
+                        return;
+                    }
+                    if (!defenceUnits.length) {
+                        reject(new Error('Invalid defence team configuration: missing or empty titan units'));
+                        return;
+                    }
+
+                    // Match live titan demoBattles_startBattle: maxUpgrade from BATTLE SIM;
+                    // defenceMaxUpgrade=true → defence *SpiritSkills {}; attack skills filled only when maxUpgrade false.
+                    const attackMaxUpgrade = getSimAttackMaxUpgrade();
+                    const defenceMaxUpgrade = true;
+                    const spiritArgs = this.getGuildWarTitanSpiritArgs(
+                        attackUnits,
+                        defenceUnits,
+                        opponentTeam.units,
+                        attackMaxUpgrade,
+                        defenceMaxUpgrade
+                    );
+                    if (seedOffset === 0 && parentId === 0) {
+                        console.log('[GUILD_WAR_TITAN] Demo spirit args:', spiritArgs,
+                            '| attack', attackUnits, '| defence', defenceUnits,
+                            '| maxUpgrade', attackMaxUpgrade,
+                            '| defenceMaxUpgrade', defenceMaxUpgrade);
+                    }
+
+                    const args = {
+                        mechanic: mechanic,
+                        defenceMaxUpgrade: defenceMaxUpgrade,
+                        defenceTeam: {
+                            units: defenceUnits
+                        },
+                        defenceFavor: {},
+                        maxUpgrade: attackMaxUpgrade,
+                        team: {
+                            units: attackUnits
+                        },
+                        favor: {},
+                        defenceBuffs: {},
+                        buffs: {},
+                        ...spiritArgs,
+                        parentId: parentId,
+                        entryId: 0
+                    };
+
+                    const calls = [{
+                        name: "demoBattles_startBattle",
+                        args: args,
+                        context: {
+                            actionTs: Utils.getActionTs()
+                        },
+                        ident: "body"
+                    }];
+
+                    Send(JSON.stringify({calls}))
+                        .then(response => {
+                            if (response.error) {
+                                console.error('[GUILD_WAR_TITAN] API error:', response.error);
+                                reject(new Error(`Demo battle API error: ${response.error.name} - ${response.error.description}`));
+                                return;
+                            }
+
+                            if (!response.results || !response.results[0] || !response.results[0].result) {
+                                console.error('[GUILD_WAR_TITAN] Invalid API response structure');
+                                reject(new Error('Invalid demo battle API response'));
+                                return;
+                            }
+
+                            const responseData = response.results[0].result.response;
+                            const battleData = responseData?.battle || responseData;
+
+                            if (!battleData) {
+                                console.error('[GUILD_WAR_TITAN] No battle data found in response');
+                                reject(new Error('No battle data in API response'));
+                                return;
+                            }
+
+                            // Calculate with the same config HWH uses for clan_pvp_titan
+                            const battleType = battleData?.type ?? mechanic;
+                            const battleConfigType = getBattleType(battleType);
+
+                            runBattleCalc(BattleCalc, battleData, battleConfigType)
+                                .then((calcResult) => {
+                                    if (!Utils.isValidBattleResult(calcResult)) {
+                                        Utils.log('error', '[GUILD_WAR_TITAN] BattleCalc returned invalid result');
+                                        resolve({
+                                            win: false,
+                                            battleTime: 0,
+                                            error: 'Invalid calculation result',
+                                            parentId: parentId
+                                        });
+                                        return;
+                                    }
+
+                                    const battleTime = calcResult.battleTime || 0;
+                                    const win = !!calcResult.result.win;
+
+                                    this.endGuildWarTitanDemoBattle(calcResult, battleData)
+                                        .then(endBattleResult => {
+                                            const extractedParentId = endBattleResult?.parentId;
+                                            const battleId = endBattleResult?.battleId;
+
+                                            let nextParentId = parentId;
+                                            if (parentId === 0 && battleId) {
+                                                nextParentId = battleId;
+                                            } else if (parentId !== 0) {
+                                                nextParentId = parentId;
+                                            } else if (extractedParentId && extractedParentId !== 0) {
+                                                nextParentId = extractedParentId;
+                                            }
+
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: nextParentId,
+                                                battleId: battleId
+                                            });
+                                        })
+                                        .catch(endError => {
+                                            Utils.log('warn', '[GUILD_WAR_TITAN] Failed to call endBattle:', endError);
+                                            resolve({
+                                                win: win,
+                                                battleTime: battleTime,
+                                                result: calcResult,
+                                                parentId: parentId,
+                                                battleId: null
+                                            });
+                                        });
+                                })
+                                .catch(reject);
+                        })
+                        .catch(error => {
+                            console.error('[GUILD_WAR_TITAN] Error in demo battle:', error);
+                            reject(error);
+                        });
+                } catch (error) {
+                    console.error('[GUILD_WAR_TITAN] Error preparing demo battle:', error);
+                    reject(error);
+                }
+            });
+        }
+
+        this.endGuildWarTitanDemoBattle = async function(calcResult, battleData) {
+            return new Promise((resolve, reject) => {
+                try {
+                    // startBattle.seed is unsigned. endBattle progress.seed is that value as a signed int32.
+                    const toSignedSeed = (value) => {
+                        const n = Number(value);
+                        if (!Number.isFinite(n)) return value;
+                        return n | 0;
+                    };
+                    const progress = Array.isArray(calcResult.progress) ? calcResult.progress.slice() : [];
+                    const seed = toSignedSeed(battleData?.seed ?? Math.floor(Math.random() * 1000000000));
+
+                    if (progress.length === 0 && calcResult.result) {
+                        progress.push({
+                            v: CONSTANTS.TITAN_BATTLE_VERSION,
+                            b: 0,
+                            seed,
+                            attackers: {
+                                input: [],
+                                heroes: {}
+                            },
+                            defenders: {
+                                input: [],
+                                heroes: {}
+                            }
+                        });
+                    } else {
+                        for (const entry of progress) {
+                            if (!entry || typeof entry !== 'object') continue;
+                            entry.seed = toSignedSeed(entry.seed == null ? battleData?.seed : entry.seed);
+                            if (entry.v == null) entry.v = CONSTANTS.TITAN_BATTLE_VERSION;
+                        }
+                    }
+
+                    const endBattleArgs = {
+                        result: {
+                            win: !!calcResult.result?.win,
+                            stars: calcResult.result?.stars || (calcResult.result?.win ? 1 : 0)
+                        },
+                        progress: progress
+                    };
+                    
+                    const calls = [{
+                        name: "demoBattles_endBattle",
+                        args: endBattleArgs,
+                        context: {
+                            actionTs: Utils.getActionTs()
+                        },
+                        ident: "body"
+                    }];
+                    
+                    Send(JSON.stringify({calls}))
+                        .then(response => {
+                            if (response.error) {
+                                Utils.log('warn', '[GUILD_WAR_TITAN] EndBattle API error:', response.error);
+                                resolve(null);
+                                return;
+                            }
+                            
+                            if (!response.results || !response.results[0] || !response.results[0].result) {
+                                Utils.log('warn', '[GUILD_WAR_TITAN] Invalid endBattle response structure');
+                                resolve(null);
+                                return;
+                            }
+                            
+                            const endBattleResponse = response.results[0].result.response;
+                            
+                            const battle = endBattleResponse?.battle;
+                            resolve({
+                                parentId: battle?.parentId ?? null,
+                                battleId: battle?.id ?? null
+                            });
+                        })
+                        .catch(error => {
+                            Utils.log('warn', '[GUILD_WAR_TITAN] Error calling endBattle:', error);
+                            resolve(null);
+                        });
+                } catch (error) {
+                    Utils.log('warn', '[GUILD_WAR_TITAN] Error preparing endBattle:', error);
+                    resolve(null);
+                }
+            });
+        }
+
+        this.end = function(reason) {
+            setProgress(`${I18N('GUILD_WAR')}: ${reason}`, true);
+            console.log('Guild War completed:', reason);
+            this.resolve();
+        }
+    }
+
+    // ========== EXECUTE RAID NODES CLASS ==========
+    function executeRaidNodes(resolve, reject) {
+        let raidData = {
+            teams: [],
+            favor: {},
+            nodes: [],
+            attempts: 0,
+            countExecuteBattles: 0,
+            cancelBattle: 0,
+        }
+
+        const callsExecuteRaidNodes = {
+            calls: [{
+                name: "clanRaid_getInfo",
+                args: {},
+                context: { actionTs: Utils.getActionTs() },
+                ident: "clanRaid_getInfo"
+            }, {
+                name: "teamGetAll",
+                args: {},
+                context: { actionTs: Utils.getActionTs() },
+                ident: "teamGetAll"
+            }, {
+                name: "teamGetFavor",
+                args: {},
+                context: { actionTs: Utils.getActionTs() },
+                ident: "teamGetFavor"
+            }]
+        }
+
+        this.start = function () {
+            SendRequest(JSON.stringify(callsExecuteRaidNodes), startRaidNodes);
+        }
+
+        async function startRaidNodes(data) {
+            // Validate response structure
+            if (data.error) {
+                console.error('Raid Nodes: API error:', data.error);
+                endRaidNodes('APIError', data.error);
+                return;
+            }
+            
+            if (!data.results || !Array.isArray(data.results) || data.results.length < 3) {
+                console.error('Raid Nodes: Invalid response structure - missing results');
+                endRaidNodes('InvalidResponse', 'Missing or invalid results array');
+                return;
+            }
+            
+            if (!data.results[0] || !data.results[0].result || !data.results[0].result.response) {
+                console.error('Raid Nodes: Invalid clanRaid_getInfo response');
+                endRaidNodes('InvalidResponse', 'Invalid clanRaid_getInfo response');
+                return;
+            }
+            
+            if (!data.results[1] || !data.results[1].result || !data.results[1].result.response) {
+                console.error('Raid Nodes: Invalid teamGetAll response');
+                endRaidNodes('InvalidResponse', 'Invalid teamGetAll response');
+                return;
+            }
+            
+            if (!data.results[2] || !data.results[2].result || !data.results[2].result.response) {
+                console.error('Raid Nodes: Invalid teamGetFavor response');
+                endRaidNodes('InvalidResponse', 'Invalid teamGetFavor response');
+                return;
+            }
+            
+            const res = data.results;
+            const clanRaidInfo = res[0].result.response;
+            const teamGetAll = res[1].result.response;
+            const teamGetFavor = res[2].result.response;
+
+            // Check attempts from clanRaid_getInfo - if 0, skip minion attack
+            const attempts = clanRaidInfo.attempts || 0;
+            if (attempts === 0) {
+                console.log('AutoBattle: Minion attempts is 0, skipping minion attack');
+                setProgress(`${I18N('MINION_RAID')}: No attempts remaining (attempts: 0)`, true);
+                endRaidNodes('NoAttempts');
+                return;
+            }
+
+            let index = 0;
+            let isNotFullPack = false;
+            
+            // Validate teamGetAll structure
+            if (!teamGetAll || !teamGetAll.clanRaid_nodes || !Array.isArray(teamGetAll.clanRaid_nodes)) {
+                console.error('Raid Nodes: Invalid teamGetAll structure - missing clanRaid_nodes');
+                endRaidNodes('InvalidTeamData', 'Invalid teamGetAll structure');
+                return;
+            }
+            
+            for (let team of teamGetAll.clanRaid_nodes) {
+                if (!Array.isArray(team)) {
+                    console.warn('Raid Nodes: Skipping invalid team (not an array):', team);
+                    continue;
+                }
+                
+                if (team.length < 6) {
+                    isNotFullPack = true;
+                }
+                
+                const heroes = team.filter(id => id < 6000);
+                const pets = team.filter(id => id >= 6000);
+                const pet = pets.length > 0 ? pets.pop() : null;
+                
+                if (heroes.length < 5) {
+                    console.warn(`Raid Nodes: Team ${index} has less than 5 heroes (${heroes.length}), skipping`);
+                    index++;
+                    continue;
+                }
+                
+                if (!pet) {
+                    console.warn(`Raid Nodes: Team ${index} has no pet, using default`);
+                }
+                
+                raidData.teams.push({
+                    data: {},
+                    heroes: heroes,
+                    pet: pet || CONSTANTS.DEFAULT_PET_ID,
+                    battleIndex: index++
+                });
+            }
+            
+            if (raidData.teams.length === 0) {
+                console.error('Raid Nodes: No valid teams found');
+                endRaidNodes('NoTeams', 'No valid teams found');
+                return;
+            }
+            raidData.favor = teamGetFavor.clanRaid_nodes;
+
+            if (isNotFullPack) {
+                // Skip the popup confirmation for auto-execution
+                // Just continue with the raid
+            }
+
+            raidData.nodes = clanRaidInfo.nodes;
+            raidData.attempts = attempts;
+            setIsCancalBattle(false);
+
+            checkNodes();
+        }
+
+        function getAttackNode() {
+            if (!raidData.nodes || typeof raidData.nodes !== 'object') {
+                return null;
+            }
+            
+            for (let nodeId in raidData.nodes) {
+                let node = raidData.nodes[nodeId];
+                if (!node || typeof node !== 'object') {
+                    continue;
+                }
+                
+                // Validate node structure
+                if (!node.teams || !Array.isArray(node.teams)) {
+                    continue;
+                }
+                
+                if (!node.timestamps || typeof node.timestamps !== 'object') {
+                    continue;
+                }
+                
+                let points = 0;
+                for (let team of node.teams) {
+                    if (team && typeof team === 'object' && typeof team.points === 'number') {
+                        points += team.points;
+                    }
+                }
+                
+                let now = Date.now() / 1000;
+                if (!points && 
+                    typeof node.timestamps.start === 'number' && 
+                    typeof node.timestamps.end === 'number' &&
+                    now > node.timestamps.start && 
+                    now < node.timestamps.end) {
+                    let countTeam = node.teams.length;
+                    delete raidData.nodes[nodeId];
+                    return {
+                        nodeId,
+                        countTeam
+                    };
+                }
+            }
+            return null;
+        }
+
+        function checkNodes() {
+            setProgress(`${I18N('REMAINING_ATTEMPTS')}: ${raidData.attempts}`);
+            let nodeInfo = getAttackNode();
+            if (nodeInfo && raidData.attempts) {
+                startNodeBattles(nodeInfo);
+                return;
+            }
+
+            endRaidNodes('EndRaidNodes');
+        }
+
+        function startNodeBattles(nodeInfo) {
+            let {nodeId, countTeam} = nodeInfo;
+            let teams = raidData.teams.slice(0, countTeam);
+            let heroes = raidData.teams.map(e => e.heroes).flat();
+            let favor = {...raidData.favor};
+            for (let heroId in favor) {
+                if (!heroes.includes(+heroId)) {
+                    delete favor[heroId];
+                }
+            }
+
+            let calls = [{
+                name: "clanRaid_startNodeBattles",
+                args: {
+                    nodeId,
+                    teams,
+                    favor
+                },
+                context: { actionTs: Utils.getActionTs() },
+                ident: "body"
+            }];
+
+            SendRequest(JSON.stringify({calls}), resultNodeBattles);
+        }
+
+        function resultNodeBattles(e) {
+            if (e['error']) {
+                endRaidNodes('nodeBattlesError', e['error']);
+                return;
+            }
+
+            // Validate response structure
+            if (!e.results || !Array.isArray(e.results) || e.results.length === 0) {
+                console.error('Raid Nodes: Invalid resultNodeBattles response - missing results');
+                endRaidNodes('InvalidResponse', 'Missing results in node battles response');
+                return;
+            }
+            
+            if (!e.results[0] || !e.results[0].result || !e.results[0].result.response) {
+                console.error('Raid Nodes: Invalid resultNodeBattles response structure');
+                endRaidNodes('InvalidResponse', 'Invalid node battles response structure');
+                return;
+            }
+            
+            const response = e.results[0].result.response;
+            if (!response.battles || !Array.isArray(response.battles) || response.battles.length === 0) {
+                console.error('Raid Nodes: No battles in response');
+                endRaidNodes('NoBattles', 'No battles found in response');
+                return;
+            }
+
+            console.log('Raid Nodes: Processing', response.battles.length, 'battles');
+            let battles = response.battles;
+            let promises = [];
+            let battleIndex = 0;
+            for (let battle of battles) {
+                battle.battleIndex = battleIndex++;
+                promises.push(calcBattleResult(battle));
+            }
+
+            Promise.all(promises)
+                .then(results => {
+                    if (!results || results.length === 0) {
+                        console.error('Raid Nodes: No battle results calculated');
+                        endRaidNodes('NoResults', 'No battle results calculated');
+                        return;
+                    }
+                    
+                    const endResults = {};
+                    let isAllWin = true;
+                    for (let r of results) {
+                        if (!r || !r.result) {
+                            console.warn('Raid Nodes: Invalid battle result:', r);
+                            isAllWin = false;
+                            continue;
+                        }
+                        isAllWin &&= r.result.win;
+                    }
+                    if (!isAllWin) {
+                        if (results[0]) {
+                            cancelEndNodeBattle(results[0]);
+                        } else {
+                            console.error('Raid Nodes: Cannot cancel battle - no results');
+                            endRaidNodes('CancelError', 'Cannot cancel battle - no results');
+                        }
+                        return;
+                    }
+                    raidData.countExecuteBattles = results.length;
+                    let timeout = 500;
+                    for (let r of results) {
+                        setTimeout(endNodeBattle, timeout, r);
+                        timeout += 500;
+                    }
+                })
+                .catch(error => {
+                    console.error('Raid Nodes: Error calculating battle results:', error);
+                    endRaidNodes('CalculationError', error);
+                });
+        }
+
+        function calcBattleResult(battleData) {
+            if (!battleData) {
+                return Promise.reject(new Error('No battle data provided'));
+            }
+            return runBattleCalc(BattleCalc, battleData, 'get_clanPvp').then((result) => {
+                if (!result || !result.result) {
+                    console.error('Raid Nodes: BattleCalc returned invalid result:', result);
+                    throw new Error('Invalid battle calculation result');
+                }
+                return result;
+            }).catch((error) => {
+                console.error('Raid Nodes: Error in BattleCalc:', error);
+                throw error;
+            });
+        }
+
+        function cancelEndNodeBattle(r) {
+            const fixBattle = function (heroes) {
+                for (const ids in heroes) {
+                    let hero = heroes[ids];
+                    hero.energy = random(1, 999);
+                    if (hero.hp > 0) {
+                        hero.hp = random(1, hero.hp);
+                    }
+                }
+            }
+            fixBattle(r.progress[0].attackers.heroes);
+            fixBattle(r.progress[0].defenders.heroes);
+            endNodeBattle(r);
+        }
+
+        function endNodeBattle(r) {
+            // Validate battle result structure
+            if (!r) {
+                console.error('Raid Nodes: No battle result provided to endNodeBattle');
+                return;
+            }
+            
+            if (!r.battleData || !r.battleData.result) {
+                console.error('Raid Nodes: Invalid battle data structure:', r);
+                return;
+            }
+            
+            if (!r.result) {
+                console.error('Raid Nodes: Missing result in battle data');
+                return;
+            }
+            
+            if (!r.progress || !Array.isArray(r.progress)) {
+                console.error('Raid Nodes: Missing or invalid progress array');
+                return;
+            }
+            
+            let nodeId = r.battleData.result.nodeId;
+            let battleIndex = r.battleData.battleIndex;
+            
+            if (!nodeId) {
+                console.error('Raid Nodes: Missing nodeId in battle result');
+                return;
+            }
+            
+            if (battleIndex === undefined || battleIndex === null) {
+                console.error('Raid Nodes: Missing battleIndex in battle result');
+                return;
+            }
+            
+            let calls = [{
+                name: "clanRaid_endNodeBattle",
+                args: {
+                    nodeId,
+                    battleIndex,
+                    result: r.result,
+                    progress: r.progress
+                },
+                context: { actionTs: Utils.getActionTs() },
+                ident: "body"
+            }];
+
+            SendRequest(JSON.stringify({calls}), battleResult);
+        }
+
+        function battleResult(e) {
+            if (e['error']) {
+                endRaidNodes('missionEndError', e['error']);
+                return;
+            }
+            
+            // Validate response structure
+            if (!e.results || !Array.isArray(e.results) || e.results.length === 0) {
+                console.error('Raid Nodes: Invalid battleResult response - missing results');
+                endRaidNodes('InvalidResponse', 'Missing results in battle result response');
+                return;
+            }
+            
+            if (!e.results[0] || !e.results[0].result || !e.results[0].result.response) {
+                console.error('Raid Nodes: Invalid battleResult response structure');
+                endRaidNodes('InvalidResponse', 'Invalid battle result response structure');
+                return;
+            }
+            
+            let r = e.results[0].result.response;
+            if (r['error']) {
+                if (r.reason == "invalidBattle") {
+                    raidData.cancelBattle++;
+                    checkNodes();
+                } else {
+                    endRaidNodes('missionEndError', r['error'] || e['error']);
+                }
+                return;
+            }
+
+            if (!(--raidData.countExecuteBattles)) {
+                raidData.attempts--;
+                checkNodes();
+            }
+        }
+
+        function endRaidNodes(reason, info) {
+            setIsCancalBattle(true);
+            let textCancel = raidData.cancelBattle ? ` ${I18N('BATTLES_CANCELED')}: ${raidData.cancelBattle}` : '';
+            setProgress(`${I18N('MINION_RAID')} ${I18N('COMPLETED')}! ${textCancel}`, true);
+            console.log(reason, info);
+            resolve();
+        }
+    }
+
+    // ========== EXECUTE RAID BOSS CLASS ==========
+    function executeRaidBoss(resolve, reject) {
+        this.resolve = resolve;
+        this.reject = reject;
+        this.bossAttempts = 0;
+        this.attacksCompleted = 0;
+        this.heroTeams = [
+            [46, 52, 48, 40, 37],
+            [58, 50, 42, 9, 51],
+            [64, 13, 29, 1, 43],
+            [16, 65, 57, 31, 61],
+            [56, 62, 55, 63, 28]
+        ];
+        this.pets = [6005, 6005, 6005, 6005, 6006];
+        this.favorTeams = [
+            { "37": 6000, "40": 6004, "46": 6001, "48": 6005, "52": 6006 },
+            { "9": 6004, "42": 6006, "50": 6001, "58": 6005 },
+            { "1": 6004, "13": 6008, "29": 6006, "43": 6002, "64": 6005 },
+            { "16": 6004, "31": 6006, "57": 6003, "61": 6001, "65": 6000 },
+            { "28": 6004, "55": 6005, "56": 6006, "62": 6008, "63": 6003 }
+        ];
+
+        this.start = async function() {
+            setProgress('Raid Boss: Initializing...');
+            try {
+                await this.getRaidInfo();
+                
+                if (this.bossAttempts <= 0) {
+                    this.end('No boss attempts remaining');
+                    return;
+                }
+
+                await this.attackBoss();
+            } catch (error) {
+                console.error('Raid Boss error:', error);
+                this.end(`Error: ${error.message}`);
+            }
+        }
+
+        this.getRaidInfo = async function() {
+            const calls = [{
+                name: "clanRaid_getInfo",
+                args: {},
+                context: { actionTs: Utils.getActionTs() },
+                ident: "clanRaid_getInfo"
+            }];
+
+            const response = await Send(JSON.stringify({calls}));
+            
+            if (response.error) {
+                throw new Error(`Raid info API error: ${response.error.name} - ${response.error.description}`);
+            }
+            
+            if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                throw new Error('Invalid clanRaid_getInfo response');
+            }
+
+            this.raidInfo = response.results[0].result.response;
+            this.bossAttempts = this.raidInfo.bossAttempts || 0;
+            
+            const currentBoss = this.raidInfo.stats?.currentBoss || "1";
+            const bossName = currentBoss === "1" ? "OSH" : "Mastro";
+            
+            console.log(`Raid Boss: ${bossName}, Attempts: ${this.bossAttempts}`);
+            setProgress(`Raid Boss: ${bossName} - ${this.bossAttempts} attempts available`);
+        }
+
+
+        this.attackBoss = async function() {
+            const maxAttacks = Math.min(5, this.bossAttempts);
+            const useAutoFix = isHwhAutoFixEnabled();
+            if (useAutoFix) {
+                console.log('[Raid Boss] HWH AutoFix is on — endBattle will run AutoFix damage search before send');
+            }
+
+            for (let i = 0; i < maxAttacks; i++) {
+                if (this.bossAttempts <= 0) {
+                    break;
+                }
+
+                setProgress(
+                    useAutoFix
+                        ? `Raid Boss: Attack ${i + 1}/${maxAttacks} (AutoFix enabled)`
+                        : `Raid Boss: Attack ${i + 1}/${maxAttacks}`
+                );
+
+                try {
+                    const teamIndex = i % this.heroTeams.length;
+                    const heroes = this.heroTeams[teamIndex];
+                    const pet = this.pets[teamIndex];
+                    const favor = this.favorTeams[teamIndex];
+
+                    const battleData = await this.startBossBattle(heroes, pet, favor);
+                    let battleResult = await this.calculateBattleResult(battleData);
+
+                    if (useAutoFix) {
+                        const baseline = prepareRaidBossProgressForAutoFix(battleResult.progress);
+                        const salvaged = await salvageWithHwhFixBattle(battleData, {
+                            mode: 'boss',
+                            label: 'Raid Boss',
+                            durationMs: 160000,
+                            maxCount: 1000,
+                        });
+                        if (salvaged?.progress && salvaged.value > (baseline.damage || 0)) {
+                            battleResult = {
+                                win: salvaged.win,
+                                result: salvaged.result,
+                                progress: salvaged.progress,
+                                battleData,
+                            };
+                            console.log(
+                                `[Raid Boss] AutoFix damage ${baseline.damage} → ${salvaged.value}`
+                            );
+                        }
+                    }
+
+                    await this.endBossBattle(battleResult, useAutoFix);
+
+                    this.attacksCompleted++;
+                    this.bossAttempts--;
+
+                    if (i < maxAttacks - 1) {
+                        await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+                    }
+                } catch (error) {
+                    console.error(`Error in attack ${i + 1}:`, error);
+                    break; // Stop on error to avoid wasting attempts
+                }
+            }
+
+            this.end(`Completed ${this.attacksCompleted} boss attacks`);
+        }
+
+
+        this.startBossBattle = async function(heroes, pet, favor) {
+            const calls = [{
+                name: "clanRaid_startBossBattle",
+                args: {
+                    heroes: heroes,
+                    pet: pet,
+                    favor: favor
+                },
+                context: { actionTs: Utils.getActionTs() },
+                ident: "body"
+            }];
+
+            const response = await Send(JSON.stringify({calls}));
+
+            if (response.error) {
+                throw new Error(`Start boss battle failed: ${response.error.name} - ${response.error.description}`);
+            }
+
+            if (!response.results || !response.results[0] || !response.results[0].result) {
+                throw new Error('Invalid start boss battle response');
+            }
+
+            const battleData = response.results[0].result.response;
+            if (!battleData || !battleData.battle) {
+                throw new Error('No battle data in response');
+            }
+
+            // HWHAutoFixBattleExt caches this start via checkChangeResponse (lastBattleInfo + endTime).
+            return battleData.battle;
+        }
+
+        this.calculateBattleResult = async function(battleData) {
+            const result = await runBattleCalc(BattleCalc, battleData, getBattleType('clan_raid'));
+            if (!result || !result.result) {
+                console.error('BattleCalc returned invalid result:', result);
+                throw new Error('Invalid battle calculation result');
+            }
+            return {
+                win: result.result.win,
+                progress: result.progress,
+                result: result.result,
+                battleData: battleData
+            };
+        }
+
+        this.endBossBattle = async function(battleResult, useAutoFix = false) {
+            const prepared = prepareRaidBossProgressForAutoFix(battleResult.progress);
+            if (useAutoFix) {
+                if (!prepared.ok) {
+                    console.warn('[Raid Boss] AutoFix on, but boss damage progress is missing — AutoFix may no-op/error');
+                } else {
+                    setProgress(
+                        `Raid Boss: AutoFix searching (baseline ${prepared.damage.toLocaleString()})...`,
+                        true
+                    );
+                    console.log('[Raid Boss] Baseline damage before AutoFix:', prepared.damage);
+                }
+            }
+
+            // Full result + normalized progress so HWHAutoFixBattleExt can rewrite args on checkChangeSend.
+            const calls = [{
+                name: "clanRaid_endBossBattle",
+                args: {
+                    result: battleResult.result || {
+                        win: battleResult.win,
+                        stars: battleResult.result?.stars || 0
+                    },
+                    progress: prepared.progress
+                },
+                context: { actionTs: Utils.getActionTs() },
+                ident: "group_1_body"
+            }];
+
+            // Send is awaited through HWH; when AutoFix is checked it blocks here while searching.
+            const response = await Send(JSON.stringify({calls}));
+
+            if (response.error) {
+                throw new Error(`End boss battle failed: ${response.error.name} - ${response.error.description}`);
+            }
+
+            if (useAutoFix) {
+                console.log('[Raid Boss] endBossBattle finished (AutoFix ran inside HWH send hook if installed)');
+            }
+        }
+
+        this.end = function(reason) {
+            setProgress(`Raid Boss: ${reason}`, true);
+            console.log('Raid Boss completed:', reason);
+            this.resolve();
+        }
+    }
+
+    // ========== EXECUTE CROSS CLAN WAR CLASS ==========
+    function executeCrossClanWar(resolve, reject) {
+        this.resolve = resolve;
+        this.reject = reject;
+        this.currentUserId = null;
+        this.attackMapData = null;
+        this.teamInfo = null;
+        this.victories = 0;
+        this.attacksCompleted = 0;
+
+        this.start = async function() {
+            const useAutoFix = isHwhAutoFixEnabled();
+            setProgress(useAutoFix ? 'Cross Clan War: Initializing (AutoFix)...' : 'Cross Clan War: Initializing...');
+            if (useAutoFix) {
+                console.log('[Clash] HWH AutoFix on — losses on crossClanWar_endBattle will be salvaged');
+            }
+            try {
+                await this.getCurrentUserId();
+                if (!this.currentUserId) {
+                    this.end('Could not get current user ID');
+                    return;
+                }
+
+                await this.getAttackMap();
+                await this.getTeamData();
+                await this.attackAssignedTargets();
+            } catch (error) {
+                console.error('Cross Clan War error:', error);
+                this.end(`Error: ${error.message}`);
+            }
+        }
+
+        this.getCurrentUserId = async function() {
+            try {
+                const calls = [{
+                    name: "userGetInfo",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "body"
+                }];
+
+                const response = await Send(JSON.stringify({calls}));
+                
+                if (response.error) {
+                    throw new Error(`User info API error: ${response.error.name} - ${response.error.description}`);
+                }
+                
+                if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                    throw new Error('Invalid userGetInfo response');
+                }
+
+                const userInfo = response.results[0].result.response;
+                this.currentUserId = userInfo.id ? parseInt(userInfo.id, 10) : null;
+                
+                if (!this.currentUserId) {
+                    throw new Error('User ID not found in response');
+                }
+
+                console.log(`Cross Clan War: Current user ID: ${this.currentUserId}`);
+                return this.currentUserId;
+            } catch (error) {
+                console.error('Error getting current user ID:', error);
+                throw error;
+            }
+        }
+
+        this.getAttackMap = async function() {
+            console.log('Getting Cross Clan War attack map...');
+            
+            const calls = [{
+                name: "crossClanWar_getAttackMap",
+                args: {},
+                context: { actionTs: Utils.getActionTs() },
+                ident: "body"
+            }];
+
+            const response = await Send(JSON.stringify({calls}));
+            
+            if (response.error) {
+                throw new Error(`Attack map API error: ${response.error.name} - ${response.error.description}`);
+            }
+            
+            if (!response.results || !response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                throw new Error('Invalid crossClanWar_getAttackMap response');
+            }
+
+            this.attackMapData = response.results[0].result.response;
+            console.log('Cross Clan War attack map loaded');
+        }
+
+        this.getTeamData = async function() {
+            console.log('Getting team data...');
+            
+            const calls = [
+                {
+                    name: "teamGetAll",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "teamGetAll"
+                },
+                {
+                    name: "teamGetFavor",
+                    args: {},
+                    context: { actionTs: Utils.getActionTs() },
+                    ident: "teamGetFavor"
+                }
+            ];
+
+            const response = await Send(JSON.stringify({calls}));
+            
+            if (response.error) {
+                throw new Error(`Team data API error: ${response.error.name} - ${response.error.description}`);
+            }
+            
+            if (!response.results[0] || !response.results[0].result || !response.results[0].result.response) {
+                throw new Error('Invalid teamGetAll response');
+            }
+            if (!response.results[1] || !response.results[1].result || !response.results[1].result.response) {
+                throw new Error('Invalid teamGetFavor response');
+            }
+
+            this.teamInfo = {
+                teams: response.results[0].result.response,
+                favor: response.results[1].result.response
+            };
+
+            console.log('Team data loaded');
+        }
+
+        this.attackAssignedTargets = async function() {
+            if (!this.attackMapData || !this.attackMapData.targets) {
+                this.end('No targets available');
+                return;
+            }
+
+            const targets = this.attackMapData.targets;
+            const enemySlots = this.attackMapData.enemySlots || {};
+
+            // Filter targets assigned to current user with state === 0
+            const myTargets = [];
+            Object.entries(targets).forEach(([slotId, target]) => {
+                if (target.userId === this.currentUserId && target.state === 0) {
+                    myTargets.push({ slotId, target });
+                }
+            });
+
+            if (myTargets.length === 0) {
+                this.end('No targets assigned to you or all targets already completed');
+                return;
+            }
+
+            console.log(`Cross Clan War: Found ${myTargets.length} targets assigned to you`);
+            setProgress(`Cross Clan War: Attacking ${myTargets.length} targets...`);
+
+            let skippedCount = 0;
+            for (let i = 0; i < myTargets.length; i++) {
+                const { slotId, target } = myTargets[i];
+                const enemySlot = enemySlots[slotId];
+                try {
+                    setProgress(`Cross Clan War: Slot ${slotId} (${i + 1}/${myTargets.length})`);
+                    await this.attackSlot(slotId, target, enemySlot);
+                    this.attacksCompleted++;
+                    this.victories++;
+                } catch (error) {
+                    const errorMsg = error.message || String(error);
+                    if (/dead units|not available|skipping/i.test(errorMsg)) {
+                        skippedCount++;
+                        console.warn(`Cross Clan War: Skipping slot ${slotId}: ${errorMsg}`);
+                    } else {
+                        this.attacksCompleted++;
+                        console.error(`Cross Clan War: Error attacking slot ${slotId}:`, error);
+                    }
+                }
+                if (i < myTargets.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, CONSTANTS.DELAY_BETWEEN_BATTLES));
+                }
+            }
+
+            console.log(`Cross Clan War: Done — ${this.victories}/${this.attacksCompleted} wins, ${skippedCount} skipped`);
+            let summary = `Completed ${this.victories}/${this.attacksCompleted} attacks`;
+            if (skippedCount > 0) summary += ` (${skippedCount} skipped)`;
+            this.end(summary);
+        }
+
+        this.attackSlot = async function(slotId, target, enemySlot) {
+            let battleData = null;
+            let battleResult = null;
+
+            try {
+                if (enemySlot) {
+                    if (enemySlot.status !== "ready" || enemySlot.attackerId !== null) {
+                        throw new Error(`Slot ${slotId} is not available for attack (status: ${enemySlot.status}, attackerId: ${enemySlot.attackerId})`);
+                    }
+                    const teamValues = Object.values(enemySlot.team || {});
+                    if (teamValues.some(unit => unit?.state?.isDead === true)) {
+                        throw new Error(`Slot ${slotId} has dead units - skipping`);
+                    }
+                }
+
+                let battleType = null;
+                if (enemySlot?.team) {
+                    for (const unit of Object.values(enemySlot.team)) {
+                        if (unit.type === "hero") { battleType = "hero"; break; }
+                        if (unit.type === "titan") { battleType = "titan"; break; }
+                    }
+                }
+                if (!battleType) {
+                    battleType = parseInt(slotId, 10) <= 16 ? "hero" : "titan";
+                }
+
+                let teamConfig;
+                try {
+                    teamConfig = this.getTeamConfiguration(target.teamIndex, battleType);
+                } catch (error) {
+                    throw new Error(`Failed to get team configuration: ${error.message}`);
+                }
+
+                try {
+                    battleData = await this.startBattle(parseInt(slotId), teamConfig, battleType);
+                } catch (error) {
+                    throw new Error(`Failed to start battle: ${error.message}`);
+                }
+
+                try {
+                    battleResult = await this.calculateBattleResult(battleData, battleType);
+                } catch (error) {
+                    throw new Error(`Failed to calculate battle result: ${error.message}`);
+                }
+
+                if (isHwhAutoFixEnabled() && !battleResult.win && battleData) {
+                    const salvaged = await salvageWithHwhFixBattle(battleData, {
+                        mode: 'pvp',
+                        label: `Clash slot ${slotId}`,
+                        durationMs: 120000,
+                        maxCount: 500,
+                    });
+                    if (salvaged?.win) {
+                        battleResult = {
+                            win: true,
+                            result: salvaged.result,
+                            progress: salvaged.progress,
+                            battleData,
+                        };
+                        console.log(`Cross Clan War: AutoFix salvaged win for slot ${slotId}`);
+                    }
+                }
+
+                try {
+                    await this.endBattle(parseInt(slotId), battleResult);
+                } catch (error) {
+                    throw new Error(`Failed to end battle: ${error.message}`);
+                }
+
+                console.log(`Cross Clan War: Slot ${slotId} ${battleResult.win ? 'WIN' : 'LOSS'}`);
+            } catch (error) {
+                console.error(`Cross Clan War: attackSlot ${slotId} failed:`, error);
+                throw error;
+            }
+        }
+
+        this.getTeamConfiguration = function(teamIndex, battleType) {
+            if (!this.teamInfo || !this.teamInfo.teams) {
+                throw new Error('Team info not available');
+            }
+
+            const teamData = this.teamInfo.teams;
+            const favorData = this.teamInfo.favor;
+
+            if (battleType === "hero") {
+                const crossClanDefenceHeroes = teamData.crossClanDefence_heroes || [];
+                
+                if (teamIndex < 0 || teamIndex >= crossClanDefenceHeroes.length) {
+                    throw new Error(`Invalid teamIndex ${teamIndex} for crossClanDefence_heroes`);
+                }
+
+                const team = crossClanDefenceHeroes[teamIndex];
+                if (!team || team.length < 6) {
+                    throw new Error(`Invalid team configuration at index ${teamIndex}`);
+                }
+
+                const heroes = team.slice(0, 5);
+                const pet = team[5];
+
+                // favorData.crossClanDefence_heroes: flat {heroId: petId} or nested {teamIndex: favorObj}
+                const rawFavor = favorData?.crossClanDefence_heroes || {};
+                let favor = {};
+                const favorFromFlat = () => {
+                    const out = {};
+                    for (const heroId of heroes) {
+                        const petId = rawFavor[heroId] ?? rawFavor[String(heroId)];
+                        if (typeof petId === 'number') out[String(heroId)] = petId;
+                    }
+                    return out;
+                };
+                if (rawFavor && typeof rawFavor === 'object' && !Array.isArray(rawFavor)) {
+                    const firstHeroId = heroes[0];
+                    const isFlat = firstHeroId != null
+                        && (rawFavor[firstHeroId] !== undefined || rawFavor[String(firstHeroId)] !== undefined);
+                    if (isFlat) {
+                        favor = favorFromFlat();
+                    } else {
+                        const nested = rawFavor[teamIndex] ?? rawFavor[String(teamIndex)];
+                        favor = (nested && typeof nested === 'object' && !Array.isArray(nested))
+                            ? nested
+                            : favorFromFlat();
+                    }
+                }
+                if (typeof favor !== 'object' || Array.isArray(favor)) favor = {};
+
+                let banner = 1;
+                try {
+                    const userInfo = getUserInfo();
+                    if (userInfo?.banner != null) {
+                        banner = typeof userInfo.banner === 'number' ? userInfo.banner
+                            : Array.isArray(userInfo.banner) ? userInfo.banner[0] : 1;
+                    }
+                } catch (_) { /* default banner */ }
+
+                return {
+                    type: 'hero',
+                    heroes,
+                    pet,
+                    favor,
+                    banner
+                };
+            } else {
+                const crossClanDefenceTitans = teamData.crossClanDefence_titans || [];
+                
+                if (teamIndex < 0 || teamIndex >= crossClanDefenceTitans.length) {
+                    throw new Error(`Invalid teamIndex ${teamIndex} for crossClanDefence_titans`);
+                }
+
+                const titans = crossClanDefenceTitans[teamIndex];
+                if (!titans || titans.length < 5) {
+                    throw new Error(`Invalid titan team configuration at index ${teamIndex}`);
+                }
+
+                return {
+                    type: 'titan',
+                    titans: titans.slice(0, 5)
+                };
+            }
+        }
+
+        this.startBattle = async function(slotId, teamConfig, battleType) {
+            let args = {
+                slotId: slotId
+            };
+
+            if (battleType === "hero") {
+                args.team = {
+                    units: teamConfig.heroes,
+                    pet: teamConfig.pet
+                };
+                
+                // Ensure favor is always an object (hero IDs as string keys, pet IDs as values)
+                let favor = teamConfig.favor || {};
+                if (typeof favor !== 'object' || Array.isArray(favor)) {
+                    console.warn(`Cross Clan War: Invalid favor type (${typeof favor}), using empty object. Value:`, favor);
+                    favor = {};
+                }
+                args.favor = favor;
+                
+                args.banner = teamConfig.banner || 1;
+                
+                // Log the request for debugging
+                console.log(`Cross Clan War: Battle args for slot ${slotId}:`, {
+                    slotId: args.slotId,
+                    team: args.team,
+                    favor: args.favor,
+                    banner: args.banner,
+                    favorType: typeof args.favor,
+                    favorIsArray: Array.isArray(args.favor)
+                });
+            } else {
+                // Titan battle
+                args.team = {
+                    units: teamConfig.titans
+                };
+                // Include favor even for titan battles (should be empty object)
+                let favor = teamConfig.favor || {};
+                if (typeof favor !== 'object' || Array.isArray(favor)) {
+                    console.warn(`Cross Clan War: Invalid favor type for titan battle (${typeof favor}), using empty object. Value:`, favor);
+                    favor = {};
+                }
+                args.favor = favor;
+                
+                // Log the request for debugging
+                console.log(`Cross Clan War: Battle args for slot ${slotId} (titan):`, {
+                    slotId: args.slotId,
+                    team: args.team,
+                    favor: args.favor,
+                    favorType: typeof args.favor,
+                    favorIsArray: Array.isArray(args.favor)
+                });
+            }
+
+            const calls = [{
+                name: "crossClanWar_startBattle",
+                args: args,
+                context: { actionTs: Utils.getActionTs() },
+                ident: "body"
+            }];
+
+            console.log(`Cross Clan War: Starting battle for slot ${slotId} (${battleType})`);
+            const response = await Send(JSON.stringify({calls}));
+            
+            if (response.error) {
+                throw new Error(`Start battle failed: ${response.error.name} - ${response.error.description}`);
+            }
+            
+            if (!response.results || !response.results[0] || !response.results[0].result) {
+                throw new Error('Invalid start battle response');
+            }
+
+            const battleData = response.results[0].result.response;
+            if (!battleData || !battleData.battle) {
+                throw new Error('No battle data in response');
+            }
+
+            return battleData.battle;
+        }
+
+        this.calculateBattleResult = async function(battleData, battleType) {
+            const battleTypeStr = battleType === "hero" ? "clan_global_pvp" : "clan_global_pvp_titan";
+            const result = await runBattleCalc(BattleCalc, battleData, getBattleType(battleTypeStr));
+            if (!result || !result.result) {
+                console.error('BattleCalc returned invalid result:', result);
+                throw new Error('Invalid battle calculation result');
+            }
+            return {
+                win: result.result.win,
+                progress: result.progress,
+                result: result.result,
+                battleData: battleData
+            };
+        }
+
+        this.endBattle = async function(slotId, battleResult) {
+            const calls = [{
+                name: "crossClanWar_endBattle",
+                args: {
+                    slotId: slotId,
+                    result: {
+                        win: battleResult.win,
+                        stars: battleResult.result.stars || 0
+                    },
+                    progress: battleResult.progress
+                },
+                context: { actionTs: Utils.getActionTs() },
+                ident: "body"
+            }];
+
+            const response = await Send(JSON.stringify({calls}));
+            
+            if (response.error) {
+                throw new Error(`End battle failed: ${response.error.name} - ${response.error.description}`);
+            }
+        }
+
+        this.end = function(reason) {
+            setProgress(`Cross Clan War: ${reason}`, true);
+            console.log('Cross Clan War completed:', reason);
+            this.resolve();
+        }
+    }
+
+    /** ToE with elemental counter switching when stuck (overrides HWHClasses.executeTitanArena). */
+    function executeTitanArena(resolve, reject) {
+        let titan_arena = [];
+        let finishListBattle = [];
+        let allTitans = [];
+        let triedTeamsByRival = {};
+        let currentRival = 0;
+        let attempts = 0;
+        let isCheckCurrentTier = false;
+        let currTier = 0;
+        let countRivalsTier = 0;
+
+        const TOE_COUNTER_ELEMENT = {
+            water: 'earth',
+            fire: 'water',
+            earth: 'fire',
+            dark: 'light',
+            light: 'dark',
+            distortion: 'water',
+        };
+
+        const callsStart = {
+            calls: [{
+                name: 'titanArenaGetStatus',
+                args: {},
+                ident: 'titanArenaGetStatus'
+            }, {
+                name: 'teamGetAll',
+                args: {},
+                ident: 'teamGetAll'
+            }, {
+                name: 'titanGetAll',
+                args: {},
+                ident: 'titanGetAll'
+            }]
+        };
+
+        this.start = function () {
+            send(callsStart, startTitanArena);
+        };
+
+        function startAgain() {
+            send(callsStart, startTitanArena);
+        }
+
+        function toeTitanElement(id) {
+            id = Number(id);
+            if (id < 4010) return 'water';
+            if (id < 4020) return 'fire';
+            if (id < 4030) return 'earth';
+            if (id < 4040) return 'dark';
+            if (id < 4050) return 'light';
+            if (id < 4060) return 'distortion';
+            return 'unknown';
+        }
+
+        function toeTeamKey(team) {
+            return (team || []).map(Number).filter(Boolean).sort((a, b) => a - b).join(',');
+        }
+
+        function toeGetDefenderIds(battle) {
+            const raw = battle?.defenders?.[0] ?? battle?.defenders ?? {};
+            const ids = [];
+            const pushId = (v) => {
+                const id = Number(v?.id ?? v);
+                if (id >= 4000 && id < 5000) ids.push(id);
+            };
+            if (Array.isArray(raw)) {
+                for (const entry of raw) {
+                    if (entry && typeof entry === 'object' && !Array.isArray(entry) && entry.id == null) {
+                        Object.values(entry).forEach(pushId);
+                    } else {
+                        pushId(entry);
+                    }
+                }
+            } else if (raw && typeof raw === 'object') {
+                Object.values(raw).forEach(pushId);
+            }
+            return ids;
+        }
+
+        function toeDominantElement(ids) {
+            const counts = {};
+            for (const id of ids) {
+                const el = toeTitanElement(id);
+                if (el === 'unknown') continue;
+                counts[el] = (counts[el] || 0) + 1;
+            }
+            let best = null;
+            let bestCount = 0;
+            for (const [el, count] of Object.entries(counts)) {
+                if (count > bestCount) {
+                    best = el;
+                    bestCount = count;
+                }
+            }
+            return best;
+        }
+
+        function toeBuildElementTeam(element) {
+            if (!allTitans.length) return null;
+            const pool = allTitans
+                .filter((t) => toeTitanElement(t.id) === element)
+                .sort((a, b) => (b.power || 0) - (a.power || 0));
+            if (!pool.length) return null;
+            const team = pool.slice(0, 5).map((t) => Number(t.id));
+            if (team.length < 5) {
+                const used = new Set(team);
+                const rest = allTitans
+                    .filter((t) => !used.has(Number(t.id)))
+                    .sort((a, b) => (b.power || 0) - (a.power || 0));
+                for (const t of rest) {
+                    if (team.length >= 5) break;
+                    team.push(Number(t.id));
+                }
+            }
+            return team;
+        }
+
+        function toeCounterTeamCandidates(enemyElement) {
+            const candidates = [];
+            const seen = new Set();
+            const push = (element, team) => {
+                if (!team?.length) return;
+                const key = toeTeamKey(team);
+                if (seen.has(key)) return;
+                seen.add(key);
+                candidates.push({ element, team });
+            };
+
+            const primary = TOE_COUNTER_ELEMENT[enemyElement];
+            if (primary) {
+                push(primary, toeBuildElementTeam(primary));
+            }
+
+            let fallback;
+            if (enemyElement === 'distortion') {
+                fallback = ['fire', 'earth', 'water', 'light', 'dark'];
+            } else if (enemyElement === 'unknown' || !enemyElement) {
+                fallback = ['earth', 'water', 'fire', 'light', 'dark', 'distortion'];
+            } else {
+                fallback = ['water', 'fire', 'earth', 'light', 'dark', 'distortion'];
+            }
+            for (const el of fallback) {
+                if (el === primary) continue;
+                const pureCount = allTitans.filter((t) => toeTitanElement(t.id) === el).length;
+                if (pureCount < 3) continue;
+                push(el, toeBuildElementTeam(el));
+            }
+
+            const strongest = [...allTitans]
+                .sort((a, b) => (b.power || 0) - (a.power || 0))
+                .slice(0, 5)
+                .map((t) => Number(t.id));
+            push('strongest', strongest);
+            return candidates;
+        }
+
+        function trySwitchTitanTeam(battleResult) {
+            if (!allTitans.length) return false;
+            const rivalId = String(currentRival);
+            if (!triedTeamsByRival[rivalId]) {
+                triedTeamsByRival[rivalId] = new Set();
+            }
+            const tried = triedTeamsByRival[rivalId];
+            tried.add(toeTeamKey(titan_arena));
+
+            const battle = battleResult?.battleData || battleResult;
+            const defenderIds = toeGetDefenderIds(battle);
+            const enemyElement = toeDominantElement(defenderIds);
+            console.log('[ToE] Stuck — current team', titan_arena, 'vs', enemyElement || 'unknown', defenderIds);
+
+            const candidates = toeCounterTeamCandidates(enemyElement || 'unknown');
+            for (const { element, team } of candidates) {
+                const key = toeTeamKey(team);
+                if (tried.has(key)) continue;
+                tried.add(key);
+                titan_arena = team;
+                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier} </br>⇄ ${element}`);
+                console.log('[ToE] Switching attack team to', element, team);
+                attempts = +currentRival;
+                titanArenaStartBattle(currentRival);
+                return true;
+            }
+            console.log('[ToE] No more counter teams to try for rival', rivalId);
+            return false;
+        }
+
+        function startTitanArena(data) {
+            if (data?.error || !data?.results) {
+                console.error('[ToE] start failed', data);
+                endTitanArena('start_error', data);
+                return;
+            }
+            const titanArena = data.results[0].result.response;
+            if (titanArena.status === 'disabled') {
+                endTitanArena('disabled', titanArena);
+                return;
+            }
+
+            const teamGetAll = data.results[1].result.response;
+            titan_arena = teamGetAll.titan_arena;
+            const titanGetAllRes = data.results[2]?.result?.response;
+            allTitans = titanGetAllRes ? Object.values(titanGetAllRes) : [];
+
+            if (isHwhAutoFixEnabled()) {
+                console.log('[ToE] HWH AutoFix on — losses on titanArenaEndBattle will be salvaged');
+            }
+
+            checkTier(titanArena);
+        }
+
+        function checkTier(titanArena) {
+            if (titanArena.status === 'peace_time') {
+                endTitanArena('Peace_time', titanArena);
+                return;
+            }
+            currTier = titanArena.tier;
+            if (currTier) {
+                const autoFixHint = isHwhAutoFixEnabled() ? ' (AutoFix)' : '';
+                setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier}${autoFixHint}`);
+            }
+
+            if (titanArena.status === 'completed_tier') {
+                titanArenaCompleteTier();
+                return;
+            }
+            if (titanArena.canRaid) {
+                titanArenaStartRaid();
+                return;
+            }
+            if (!isCheckCurrentTier) {
+                checkRivals(titanArena.rivals);
+                return;
+            }
+
+            endTitanArena('Done or not canRaid', titanArena);
+        }
+
+        function checkResultInfo(data) {
+            if (!data?.results) {
+                console.error(data);
+                startAgain();
+                return;
+            }
+            const titanArena = data.results[0].result.response;
+            checkTier(titanArena);
+        }
+
+        function titanArenaCompleteTier() {
+            isCheckCurrentTier = false;
+            send({
+                calls: [{
+                    name: 'titanArenaCompleteTier',
+                    args: {},
+                    ident: 'body'
+                }]
+            }, checkResultInfo);
+        }
+
+        function checkRivals(rivals) {
+            finishListBattle = [];
+            for (const n in rivals) {
+                if (rivals[n].attackScore < 250) {
+                    finishListBattle.push(n);
+                }
+            }
+            console.log('[ToE] checkRivals', finishListBattle);
+            countRivalsTier = finishListBattle.length;
+            roundRivals();
+        }
+
+        function roundRivals() {
+            const countRivals = finishListBattle.length;
+            if (!countRivals) {
+                isCheckCurrentTier = true;
+                titanArenaGetStatus();
+                return;
+            }
+            currentRival = finishListBattle.pop();
+            attempts = +currentRival;
+            titanArenaStartBattle(currentRival);
+        }
+
+        function titanArenaStartBattle(rivalId) {
+            send({
+                calls: [{
+                    name: 'titanArenaStartBattle',
+                    args: {
+                        rivalId: rivalId,
+                        titans: titan_arena
+                    },
+                    ident: 'body'
+                }]
+            }, calcResult);
+        }
+
+        function calcResult(data) {
+            if (!data?.results?.[0]?.result?.response?.battle) {
+                console.error('[ToE] calcResult missing battle', data);
+                roundRivals();
+                return;
+            }
+            const battlesInfo = data.results[0].result.response.battle;
+            if (attempts == currentRival) {
+                preCalcBattle(battlesInfo);
+                return;
+            }
+            if (attempts > 0) {
+                attempts--;
+                calcBattleResult(battlesInfo).then(resultCalcBattle);
+                return;
+            }
+            roundRivals();
+        }
+
+        async function resultCalcBattle(resultBattle) {
+            if (resultBattle.result.win || !attempts) {
+                let { progress, result } = resultBattle;
+                const battleData = resultBattle.battleData;
+                if (isHwhAutoFixEnabled() && !result?.win && battleData) {
+                    const salvaged = await salvageWithHwhFixBattle(battleData, {
+                        mode: 'pvp',
+                        label: 'ToE',
+                        durationMs: 120000,
+                        maxCount: 500,
+                    });
+                    if (salvaged?.win) {
+                        result = salvaged.result;
+                        progress = salvaged.progress;
+                    }
+                }
+                titanArenaEndBattle({
+                    progress,
+                    result,
+                    rivalId: battleData?.typeId,
+                });
+                return;
+            }
+            titanArenaStartBattle(resultBattle.battleData.typeId);
+        }
+
+        function getBattleInfo(battle, isRandSeed) {
+            battle = structuredClone(battle);
+            if (isRandSeed) {
+                battle.seed = Math.floor(Date.now() / 1000) + random(0, 1e3);
+            }
+            return runBattleCalc(BattleCalc, battle, 'get_titanClanPvp');
+        }
+
+        function preCalcBattle(battle) {
+            const actions = [getBattleInfo(battle, false)];
+            const countTestBattle = getInput('countTestBattle');
+            for (let i = 0; i < countTestBattle; i++) {
+                actions.push(getBattleInfo(battle, true));
+            }
+            Promise.all(actions).then(resultPreCalcBattle);
+        }
+
+        function resultPreCalcBattle(e) {
+            const wins = e.map((n) => n.result.win);
+            const firstBattle = e.shift();
+            const countWin = wins.reduce((w, s) => w + s, 0);
+            const countTestBattle = getInput('countTestBattle');
+            console.log('[ToE] resultPreCalcBattle', `${countWin}/${countTestBattle}`);
+            if (countWin > 0) {
+                attempts = getInput('countAutoBattle');
+                resultCalcBattle(firstBattle);
+                return;
+            }
+            // 0 predicted wins → switch elemental attack team and retry same rival
+            if (trySwitchTitanTeam(firstBattle)) {
+                return;
+            }
+            attempts = 0;
+            resultCalcBattle(firstBattle);
+        }
+
+        function titanArenaEndBattle(args) {
+            send({
+                calls: [{
+                    name: 'titanArenaEndBattle',
+                    args,
+                    ident: 'body'
+                }]
+            }, resultTitanArenaEndBattle);
+        }
+
+        function resultTitanArenaEndBattle(e) {
+            const attackScore = e.results[0].result.response.attackScore;
+            const numReval = countRivalsTier - finishListBattle.length;
+            setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier} </br>Battles: ${numReval}/${countRivalsTier} - ${attackScore}`);
+            console.log('[ToE] endBattle', numReval + '/' + countRivalsTier, attempts);
+            roundRivals();
+        }
+
+        function titanArenaGetStatus() {
+            send({
+                calls: [{
+                    name: 'titanArenaGetStatus',
+                    args: {},
+                    ident: 'body'
+                }]
+            }, checkResultInfo);
+        }
+
+        function titanArenaStartRaid() {
+            send({
+                calls: [{
+                    name: 'titanArenaStartRaid',
+                    args: {
+                        titans: titan_arena
+                    },
+                    ident: 'body'
+                }]
+            }, calcResults);
+        }
+
+        function calcResults(data) {
+            const battlesInfo = data.results[0].result.response;
+            const { attackers, rivals } = battlesInfo;
+
+            const promises = [];
+            for (const n in rivals) {
+                const rival = rivals[n];
+                promises.push(calcBattleResult({
+                    attackers: attackers,
+                    defenders: [rival.team],
+                    seed: rival.seed,
+                    typeId: n,
+                }));
+            }
+
+            Promise.all(promises).then((results) => {
+                const endResults = {};
+                for (const info of results) {
+                    const id = info.battleData.typeId;
+                    endResults[id] = {
+                        progress: info.progress,
+                        result: info.result,
+                    };
+                }
+                titanArenaEndRaid(endResults);
+            });
+        }
+
+        function calcBattleResult(battleData) {
+            return runBattleCalc(BattleCalc, battleData, 'get_titanClanPvp');
+        }
+
+        function titanArenaEndRaid(results) {
+            send({
+                calls: [{
+                    name: 'titanArenaEndRaid',
+                    args: { results },
+                    ident: 'body'
+                }]
+            }, checkRaidResults);
+        }
+
+        function checkRaidResults(data) {
+            const results = data.results[0].result.response.results;
+            let isSucsesRaid = true;
+            for (const i in results) {
+                isSucsesRaid = isSucsesRaid && (results[i].attackScore >= 250);
+            }
+
+            if (isSucsesRaid) {
+                titanArenaCompleteTier();
+            } else {
+                titanArenaGetStatus();
+            }
+        }
+
+        function titanArenaFarmDailyReward() {
+            send({
+                calls: [{
+                    name: 'titanArenaFarmDailyReward',
+                    args: {},
+                    ident: 'body'
+                }]
+            }, () => { console.log('[ToE] Done farm daily reward'); });
+        }
+
+        function endTitanArena(reason, info) {
+            if (!['Peace_time', 'disabled'].includes(reason)) {
+                titanArenaFarmDailyReward();
+            }
+            console.log('[ToE]', reason, info);
+            setProgress(`${I18N('TITAN_ARENA')} completed!`, true);
+            resolve();
+        }
+    }
+
+    // Store classes in HWHClasses for consistency
+    HWHClasses.executeArena = executeArena;
+    HWHClasses.executeGuildWar = executeGuildWar;
+    HWHClasses.executeRaidNodes = executeRaidNodes;
+    HWHClasses.executeRaidBoss = executeRaidBoss;
+    HWHClasses.executeCrossClanWar = executeCrossClanWar;
+    // Override stock ToE with elemental team-switch version (Auto Daily)
+    if (!HWHClasses.__HWH_ORIGINAL_EXECUTE_TITAN_ARENA && HWHClasses.executeTitanArena
+        && HWHClasses.executeTitanArena !== executeTitanArena) {
+        HWHClasses.__HWH_ORIGINAL_EXECUTE_TITAN_ARENA = HWHClasses.executeTitanArena;
+    }
+    HWHClasses.executeTitanArena = executeTitanArena;
+
+    // Individual battle functions for manual triggers / Do All
+    async function runArena() {
+        try {
+            HWHFuncs.setProgress('AutoBattle: Running Arena...');
+            await new Promise((resolve, reject) => {
+                const arena = new executeArena(resolve, reject);
+                arena.start('arena');
+            });
+            HWHFuncs.setProgress('AutoBattle: Arena complete!', true);
+        } catch (error) {
+            console.error('Arena error:', error);
+            HWHFuncs.setProgress(`Arena error: ${error.message}`, true);
+        }
+    }
+
+    async function runGrandArena() {
+        try {
+            HWHFuncs.setProgress('AutoBattle: Running Grand Arena...');
+            await new Promise((resolve, reject) => {
+                const grandArena = new executeArena(resolve, reject);
+                grandArena.start('grand');
+            });
+            HWHFuncs.setProgress('AutoBattle: Grand Arena complete!', true);
+        } catch (error) {
+            console.error('Grand Arena error:', error);
+            HWHFuncs.setProgress(`Grand Arena error: ${error.message}`, true);
+        }
+    }
+
+    async function runGuildWar() {
+        try {
+            HWHFuncs.setProgress('AutoBattle: Running Guild War...');
+            await new Promise((resolve, reject) => {
+                const guildWar = new executeGuildWar(resolve, reject);
+                guildWar.start();
+            });
+            HWHFuncs.setProgress('AutoBattle: Guild War complete!', true);
+        } catch (error) {
+            console.error('Guild War error:', error);
+            HWHFuncs.setProgress(`Guild War error: ${error.message}`, true);
+        }
+    }
+
+    async function runRaidNodes() {
+        try {
+            HWHFuncs.setProgress('AutoBattle: Running Raid Nodes...');
+            await new Promise((resolve, reject) => {
+                const raidNodes = new executeRaidNodes(resolve, reject);
+                raidNodes.start();
+            });
+            HWHFuncs.setProgress('AutoBattle: Raid Nodes complete!', true);
+        } catch (error) {
+            console.error('Raid Nodes error:', error);
+            HWHFuncs.setProgress(`Raid Nodes error: ${error.message}`, true);
+        }
+    }
+
+    async function runTitanArena() {
+        try {
+            if (Utils.isTitanArenaDay()) {
+                HWHFuncs.setProgress('AutoBattle: Running Titan Arena (ToE)...');
+                // Local executeTitanArena (elemental switch when stuck) is registered on HWHClasses above.
+                await new Promise((resolve, reject) => {
+                    const titanArena = new executeTitanArena(resolve, reject);
+                    titanArena.start();
+                });
+                HWHFuncs.setProgress('AutoBattle: Titan Arena (ToE) complete!', true);
+            } else {
+                const dayName = Utils.getDayName(Utils.getDayOfWeek());
+                HWHFuncs.setProgress(`Titan Arena: Only available Monday-Saturday (today is ${dayName})`, true);
+                Utils.log('log', `Titan Arena: Skipped - today is ${dayName}, only runs Monday-Saturday`);
+            }
+        } catch (error) {
+            console.error('Titan Arena error:', error);
+            HWHFuncs.setProgress(`Titan Arena error: ${error.message}`, true);
+        }
+    }
+
+    async function runRaidBoss() {
+        try {
+            if (Utils.isRaidBossDay()) {
+                HWHFuncs.setProgress('AutoBattle: Running Raid Boss...');
+                await new Promise((resolve, reject) => {
+                    const raidBoss = new executeRaidBoss(resolve, reject);
+                    raidBoss.start();
+                });
+                HWHFuncs.setProgress('AutoBattle: Raid Boss complete!', true);
+            } else {
+                const dayName = Utils.getDayName(Utils.getDayOfWeek());
+                HWHFuncs.setProgress(`Raid Boss: Only available on Saturday or Sunday (today is ${dayName})`, true);
+                Utils.log('log', `Raid Boss: Skipped - today is ${dayName}, only runs on Saturday/Sunday`);
+            }
+        } catch (error) {
+            console.error('Raid Boss error:', error);
+            HWHFuncs.setProgress(`Raid Boss error: ${error.message}`, true);
+        }
+    }
+
+    async function runCrossClanWar() {
+        try {
+            HWHFuncs.setProgress('AutoBattle: Running Cross Clan War...');
+            await new Promise((resolve, reject) => {
+                const crossClanWar = new executeCrossClanWar(resolve, reject);
+                crossClanWar.start();
+            });
+            HWHFuncs.setProgress('AutoBattle: Cross Clan War complete!', true);
+        } catch (error) {
+            console.error('Cross Clan War error:', error);
+            HWHFuncs.setProgress(`Cross Clan War error: ${error.message}`, true);
+        }
+    }
+
+    async function runGuildRaid() {
+        await runRaidNodes();
+        await runRaidBoss();
+    }
+
+    // Expose for Auto Daily DO ALL tasks / external callers
+    window.__HWH_runArena = runArena;
+    window.__HWH_runGrandArena = runGrandArena;
+    window.__HWH_runGuildWar = runGuildWar;
+    window.__HWH_runGuildRaid = runGuildRaid;
+    window.__HWH_runTitanArena = runTitanArena;
+    window.__HWH_runCrossClanWar = runCrossClanWar;
+
+    console.log('AutoBattle: runners ready for Do All.');
+
+    }
+
+    const AUTO_BATTLE_TASK_IDS = ['abArena', 'abGrandArena', 'abToE', 'abGuildWar', 'abGuildRaid', 'abClashOfWorld'];
+
+    function ensureAutoBattleReady() {
+        if (typeof window.__HWH_runArena === 'function') return;
+        initializeAutoBattle();
+        if (typeof window.__HWH_runArena !== 'function') {
+            throw new Error('AutoBattle module failed to initialize');
+        }
+    }
+
+    let autoBattleRunCount = 0;
+
+    async function withAutoBattleFlag(runner) {
+        ensureAutoBattleReady();
+        autoBattleRunCount++;
+        window.HWH_AUTOBATTLE_RUNNING = true;
+        window.HWH_AUTO_DAILY_RUNNING = true;
+        try {
+            await runner();
+        } finally {
+            dismissBlockingUi('autobattle task end');
+            autoBattleRunCount = Math.max(0, autoBattleRunCount - 1);
+            if (autoBattleRunCount === 0) {
+                window.HWH_AUTOBATTLE_RUNNING = false;
+            }
+            if (!autoRunInProgress && autoBattleRunCount === 0) {
+                window.HWH_AUTO_DAILY_RUNNING = false;
+            }
+        }
+    }
+
+    async function executeAbArena() {
+        await withAutoBattleFlag(() => window.__HWH_runArena());
+    }
+    async function executeAbGrandArena() {
+        await withAutoBattleFlag(() => window.__HWH_runGrandArena());
+    }
+    async function executeAbToE() {
+        await withAutoBattleFlag(() => window.__HWH_runTitanArena());
+    }
+    async function executeAbGuildWar() {
+        await withAutoBattleFlag(() => window.__HWH_runGuildWar());
+    }
+    async function executeAbGuildRaid() {
+        await withAutoBattleFlag(() => window.__HWH_runGuildRaid());
+    }
+    async function executeAbClashOfWorld() {
+        await withAutoBattleFlag(() => window.__HWH_runCrossClanWar());
+    }
+
+    function getAutoFarmRunner() {
+        // Menu Auto Farm onClick uses source "button" and opens the stamina/activity prompt.
+        // Checklist source skips that prompt and starts the run.
+        const DoYourBestClass = window.HWHClasses?.doYourBest;
+        if (typeof DoYourBestClass !== 'function') return null;
+        try {
+            const instance = new DoYourBestClass(() => {}, () => {});
+            const fn = instance?.functions?.runAutoFarmChecklistTask;
+            if (typeof fn === 'function') {
+                return () => fn.call(instance);
+            }
+        } catch (e) {
+            // AutoFarmer may still be patching doYourBest
+        }
+        return null;
+    }
+
+    async function waitForAutoFarmRunner({ timeoutMs = 15000, intervalMs = 250 } = {}) {
+        const found = await waitFor(() => !!getAutoFarmRunner(), { timeoutMs, intervalMs });
+        return found ? getAutoFarmRunner() : null;
+    }
+
+    async function executeTidyInventoryIfAvailable() {
+        const { HWHClasses, HWHFuncs } = window;
+        const InventoryTidier = HWHClasses?.InventoryTidier;
+        let runner = null;
+        if (typeof InventoryTidier === 'function') {
+            runner = async () => {
+                await new InventoryTidier().runSilent();
+            };
+        } else {
+            try {
+                const instance = typeof HWHClasses?.doYourBest === 'function'
+                    ? new HWHClasses.doYourBest(() => {}, () => {})
+                    : null;
+                const fn = instance?.functions?.tidyInventory;
+                if (typeof fn === 'function') {
+                    runner = () => fn.call(instance);
+                }
+            } catch (e) {
+                // Inventory tidier may not be registered yet
+            }
+        }
+        if (!runner) {
+            console.log('[Auto Daily] Tidy Inventory is not available; skipping auto-start.');
+            return false;
+        }
+        HWHFuncs.setProgress('Executing: Tidy Inventory', true);
+        try {
+            await runner();
+            HWHFuncs.setProgress('Tidy Inventory: Done!', true);
+            return true;
+        } catch (e) {
+            console.error('[Auto Daily] Tidy Inventory auto-start failed:', e);
+            HWHFuncs.setProgress('Tidy Inventory: Error!', true);
+            return false;
+        }
+    }
+
+    async function executeAutoFarmIfAvailable() {
+        const { HWHFuncs } = window;
+        const runner = await waitForAutoFarmRunner();
+        if (!runner) {
+            console.log('[Auto Daily] AutoFarm is not available; skipping auto-start.');
+            return false;
+        }
+        HWHFuncs.setProgress('Executing: Auto Farm', true);
+        try {
+            await runner();
+            HWHFuncs.setProgress('Auto Farm: Done!', true);
+            return true;
+        } catch (e) {
+            console.error('[Auto Daily] AutoFarm auto-start failed:', e);
+            HWHFuncs.setProgress('Auto Farm: Error!', true);
+            return false;
+        }
+    }
+
+    /** Migrate legacy single `autoBattle` checkbox into split battle options. */
+    function migrateAutoBattleExecutionState(state) {
+        if (!state || !state.autoBattle) return state;
+        AUTO_BATTLE_TASK_IDS.forEach((id) => { state[id] = true; });
+        delete state.autoBattle;
+        return state;
+    }
+
+    // --- DATA STRUCTURES ---
+    const doAllTasks = [
+        { id: 'abArena', label: 'Arena', func: executeAbArena },
+        { id: 'abGrandArena', label: 'Grand Arena', func: executeAbGrandArena },
+        { id: 'abToE', label: 'ToE', func: executeAbToE },
+        { id: 'abGuildWar', label: 'Guild War', func: executeAbGuildWar },
+        { id: 'abGuildRaid', label: 'Guild Raid', func: executeAbGuildRaid },
+        { id: 'abClashOfWorld', label: 'Clash of the World', func: executeAbClashOfWorld },
+        { id: 'getOutland', label: 'Outland', func: executeGetOutland }, { id: 'testTower', label: 'Tower', func: executeTestTower },
+        { id: 'testDungeon', label: 'Dungeon', func: executeTestDungeon }, { id: 'checkExpedition', label: 'Expeditions', func: executeCheckExpedition },
+        { id: 'offerFarmAllReward', label: 'Easter Eggs', func: executeOfferFarmAllReward },
+        { id: 'questAllFarm', label: 'Rewards', func: executeQuestAllFarm }, { id: 'mailGetAll', label: 'Mail', func: executeMailGetAll },
+        { id: 'rewardsAndMailFarm', label: 'Rewards & Mail', func: executeRewardsAndMailFarm }, { id: 'rollAscension', label: 'Seer', func: executeRollAscension },
+        { id: 'getDailyBonus', label: 'Daily Bonus', func: executeGetDailyBonus },
+        { id: 'gachaRefill', label: 'Gacha Refill', func: executeGachaRefill }
+    ];
+    const upgradeTasks = [
+        { id: '10001', label: 'Upgrade Skills' }, { id: '10018', label: 'Use EXP Potion' },
+        { id: '10023', label: 'Gift of Elements (x2)' }, { id: '10024', label: 'Upgrade Artifact' },
+        { id: '10028', label: 'Upgrade Titan Artifact' }, { id: '10030', label: 'Upgrade Skin' },
+    ];
+    const questTasks = [
+        { id: '10003', label: 'Heroic Missions' }, { id: '10006', label: 'Exchange Emeralds' },
+        { id: '10007', label: 'Soul Atrium' }, { id: '10016', label: 'Send Gifts' },
+        { id: '10020', label: 'Outland Chests' }, { id: '10022', label: 'Guild Dungeon' },
+        { id: '10029', label: 'Titan Artifact Orbs' }, { id: '10044', label: 'Summon Pets' },
+        { id: '10047', label: 'Guild Activity' }
+    ];
+    const othersTasks = [
+        { id: 'GET_ENERGY', label: 'Get Energy' }, { id: 'ITEM_EXCHANGE', label: 'Item Exchange' },
+        { id: 'BUY_SOULS', label: 'Buy Souls' }, { id: 'BUY_FOR_GOLD', label: 'Buy for Gold' },
+        { id: 'BUY_OUTLAND', label: 'Buy Outland' }, { id: 'CLAN_STAT', label: 'Clan Statistics' },
+        { id: 'EPIC_BRAWL', label: 'Cosmic Battle' }, { id: 'ARTIFACTS_UPGRADE', label: 'Artifacts Upgrade' },
+        { id: 'SKINS_UPGRADE', label: 'Skins Upgrade' }, { id: 'SEASON_REWARD', label: 'Season Rewards' },
+        { id: 'SELL_HERO_SOULS', label: 'Sell Souls' }
+    ];
+
+    // --- STATE MANAGEMENT ---
+    function getDefaultEventSettingsState() {
+        return {
+            epicBrawlEnabled: true,
+            epicBrawlMode: 'auto', // 'hero' | 'titan' | 'auto'
+        };
+    }
+
+    function normalizeEventSettingsState(state = {}) {
+        const defaults = getDefaultEventSettingsState();
+        const mode = state.epicBrawlMode;
+        return {
+            epicBrawlEnabled: state.epicBrawlEnabled !== false,
+            epicBrawlMode: (mode === 'hero' || mode === 'titan' || mode === 'auto') ? mode : defaults.epicBrawlMode,
+        };
+    }
+
+    function normalizeBattleSimSettingsState(state = {}) {
+        // Default on: demoBattles maxUpgrade for our attack team. Explicit false = current power.
+        return { attackMaxPower: state.attackMaxPower !== false };
+    }
+
+    function getSimAttackMaxUpgrade() {
+        return battleSimSettingsState.attackMaxPower !== false;
+    }
+
+    function syncEpicBrawlOthersSetting() {
+        othersSettingsState.EPIC_BRAWL = eventSettingsState.epicBrawlEnabled !== false;
+    }
+
+    /** Cosmic Battle live status via refillable 52 + team slots (+ optional getWinStreak). */
+    async function checkEpicBrawlStatus(options = {}) {
+        const { Caller } = window;
+        const skipWinStreak = options.skipWinStreak === true;
+        const status = {
+            live: false,
+            attempts: 0,
+            hasHeroTeam: false,
+            hasTitanTeam: false,
+            error: null,
+        };
+        try {
+            const [userGetInfo, teamGetAll] = await Caller.send(['userGetInfo', 'teamGetAll']);
+            const refill = (userGetInfo?.refillable || []).find((n) => Number(n.id) === 52);
+            status.attempts = Number(refill?.amount) || 0;
+            status.hasHeroTeam = !!(teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl'));
+            status.hasTitanTeam = !!(teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl_titan'));
+            status.live = !!refill;
+        } catch (e) {
+            status.error = e?.message || String(e);
+        }
+
+        if (!skipWinStreak) {
+            try {
+                const winStreak = await Caller.send('epicBrawl_getWinStreak');
+                if (winStreak && !winStreak.error) {
+                    status.live = true;
+                }
+            } catch (e) {
+                // Streak call failing while refill is missing → treat as off
+                if (!status.live) {
+                    status.error = status.error || e?.message || String(e);
+                }
+            }
+        }
+
+        return status;
+    }
+
+    function resolveEpicBrawlTeam(teamGetAll, teamGetFavor, mode) {
+        const hasHero = teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl');
+        const hasTitan = teamGetAll && Object.prototype.hasOwnProperty.call(teamGetAll, 'epic_brawl_titan');
+        let useHero = false;
+        if (mode === 'hero') {
+            if (!hasHero) return { error: 'No Cosmic Battle hero team saved. Fight once manually first.' };
+            useHero = true;
+        } else if (mode === 'titan') {
+            if (!hasTitan) return { error: 'No Cosmic Battle titan team saved. Fight once manually first.' };
+            useHero = false;
+        } else {
+            // auto: prefer heroes (HWH default), else titans
+            if (!hasHero && !hasTitan) {
+                return { error: 'No Cosmic Battle team saved. Fight once manually first.' };
+            }
+            useHero = hasHero;
+        }
+
+        if (useHero) {
+            const team = teamGetAll.epic_brawl || [];
+            return {
+                kind: 'hero',
+                args: {
+                    units: team.filter((e) => e < 1000),
+                    pet: team.filter((e) => e > 6000).pop(),
+                    favor: teamGetFavor?.epic_brawl || {},
+                },
+            };
+        }
+        return {
+            kind: 'titan',
+            args: {
+                units: teamGetAll.epic_brawl_titan,
+                favor: {},
+            },
+        };
+    }
+
+    async function executeEpicBrawl(options = {}) {
+        const { HWHFuncs, Caller } = window;
+        const setProgress = HWHFuncs?.setProgress || (() => {});
+        const mode = options.mode || eventSettingsState.epicBrawlMode || 'auto';
+
+        setProgress('Cosmic Battle: checking...', true);
+        const status = await checkEpicBrawlStatus({ skipWinStreak: true });
+        if (!status.live) {
+            // Confirm with win-streak only when refillable is missing
+            const confirmed = await checkEpicBrawlStatus({ skipWinStreak: false });
+            if (!confirmed.live) {
+                setProgress('Cosmic Battle: OFF (event not live)', true);
+                return { ok: false, reason: 'off' };
+            }
+            Object.assign(status, confirmed);
+        }
+
+        const [teamGetAll, teamGetFavor, userGetInfo] = await Caller.send(['teamGetAll', 'teamGetFavor', 'userGetInfo']);
+        const refill = (userGetInfo?.refillable || []).find((n) => Number(n.id) === 52);
+        const attempts = Number(refill?.amount) || 0;
+        if (!attempts) {
+            setProgress('Cosmic Battle: no attempts left', true);
+            return { ok: false, reason: 'no_attempts' };
+        }
+
+        const resolved = resolveEpicBrawlTeam(teamGetAll, teamGetFavor, mode);
+        if (resolved.error) {
+            setProgress(`Cosmic Battle: ${resolved.error}`, true);
+            return { ok: false, reason: 'no_team', error: resolved.error };
+        }
+
+        // Use window.Calc (Promise + getBattleType). Raw BattleCalc needs a config string or getF crashes.
+        const Calc = window.Calc;
+        if (typeof Calc !== 'function') {
+            setProgress('Cosmic Battle: Calc unavailable (is HeroWarsHelper loaded?)', true);
+            return { ok: false, reason: 'no_calc' };
+        }
+
+        const useAutoFix = isHwhAutoFixEnabled();
+        if (useAutoFix) {
+            console.log('[Cosmic Battle] HWH AutoFix on — losses on epicBrawl_endBattle will be salvaged');
+        }
+
+        setProgress(
+            useAutoFix
+                ? `Cosmic Battle (${resolved.kind}): ${attempts} attempt(s), AutoFix...`
+                : `Cosmic Battle (${resolved.kind}): ${attempts} attempt(s)...`,
+            true
+        );
+        let wins = 0;
+        let coins = 0;
+        let streak = { progress: 0, nextStage: 0 };
+
+        // Emerald-safe: only getEnemy when startBattle says "no target" (prefetch costs ~50 emeralds).
+        async function startEpicBrawlBattle(teamArgs) {
+            try {
+                return await Caller.send({ name: 'epicBrawl_startBattle', args: teamArgs });
+            } catch (e) {
+                const msg = e?.message || String(e);
+                if (!/no target/i.test(msg)) {
+                    throw e;
+                }
+                console.log('[Auto Daily] Cosmic Battle: no target — getEnemy once (should be free first match)');
+                setProgress('Cosmic Battle: finding opponent (no current target)...', true);
+                await Caller.send('epicBrawl_getEnemy');
+                return Caller.send({ name: 'epicBrawl_startBattle', args: teamArgs });
+            }
+        }
+
+        function alignEpicBrawlProgressSeed(battle, progress) {
+            const expectedSeed = Number(battle?.seed);
+            if (!Number.isFinite(expectedSeed) || !Array.isArray(progress)) {
+                return progress;
+            }
+            for (const entry of progress) {
+                if (entry && entry.seed == null) {
+                    entry.seed = expectedSeed;
+                }
+            }
+            return progress;
+        }
+
+        for (let i = attempts; i > 0; i--) {
+            let battleStart;
+            try {
+                battleStart = await startEpicBrawlBattle(resolved.args);
+            } catch (e) {
+                setProgress(`Cosmic Battle: ${e?.message || e}`, true);
+                throw e;
+            }
+
+            const battle = battleStart?.battle || battleStart;
+            if (!battle) {
+                setProgress('Cosmic Battle: no battle data from startBattle', true);
+                return { ok: false, reason: 'no_battle' };
+            }
+
+            let calcResult;
+            try {
+                calcResult = await withTimeout(Calc(battle), getBattleCalcTimeoutMs(), 'Cosmic Battle Calc timed out');
+            } catch (e) {
+                console.error('[Auto Daily] Cosmic Battle Calc failed:', e, battle);
+                setProgress(`Cosmic Battle: battle sim failed — ${e?.message || e}`, true);
+                throw e;
+            }
+            let { progress, result } = calcResult || {};
+            if (!progress || !result) {
+                setProgress('Cosmic Battle: Calc returned empty progress/result', true);
+                return { ok: false, reason: 'bad_calc' };
+            }
+
+            progress = alignEpicBrawlProgressSeed(battle, progress);
+            let calcWin = !!result.win;
+
+            if (useAutoFix && !calcWin) {
+                const salvaged = await salvageWithHwhFixBattle(battle, {
+                    mode: 'pvp',
+                    label: `Cosmic Battle (${resolved.kind})`,
+                    durationMs: 120000,
+                    maxCount: 500,
+                });
+                if (salvaged?.win) {
+                    result = salvaged.result;
+                    progress = alignEpicBrawlProgressSeed(battle, salvaged.progress);
+                    calcWin = true;
+                }
+            }
+
+            // When AutoFix is on, send endBattle alone (clearer progress; avoid batching with streak).
+            let endBattle;
+            let winStreak;
+            if (useAutoFix) {
+                endBattle = await Caller.send({
+                    name: 'epicBrawl_endBattle',
+                    args: { progress, result },
+                });
+                try {
+                    winStreak = await Caller.send('epicBrawl_getWinStreak');
+                } catch (e) {
+                    console.warn('[Auto Daily] epicBrawl_getWinStreak failed after AutoFix end:', e);
+                    winStreak = streak;
+                }
+            } else {
+                [endBattle, winStreak] = await Caller.send([
+                    { name: 'epicBrawl_endBattle', args: { progress, result } },
+                    'epicBrawl_getWinStreak',
+                ]);
+            }
+
+            const resultInfo = endBattle?.result || endBattle || {};
+            streak = winStreak || streak;
+            const serverWin = resultInfo.win != null ? Number(resultInfo.win) : (calcWin ? 1 : 0);
+            wins += serverWin || 0;
+            coins += resultInfo.reward?.coin?.[39] || 0;
+            if (winStreak && winStreak.progress == winStreak.nextStage) {
+                try {
+                    const farm = await Caller.send('epicBrawl_farmWinStreak');
+                    coins += farm?.coin?.[39] || 0;
+                } catch (e) {
+                    console.warn('[Auto Daily] epicBrawl_farmWinStreak failed:', e);
+                }
+            }
+
+            const fought = attempts - i + 1;
+            setProgress(
+                `Cosmic Battle (${resolved.kind}): ${wins}W / ${fought} fought, coins ${coins}, streak ${streak.progress}/${streak.nextStage}`,
+                true
+            );
+            // No getEnemy here — next loop iteration startBattle reuses/fetches only if needed.
+        }
+
+        setProgress(
+            `Cosmic Battle done (${resolved.kind}): ${wins}/${attempts} wins, ${coins} coins`,
+            true
+        );
+        return { ok: true, wins, attempts, coins, kind: resolved.kind, autoFix: useAutoFix };
+    }
+
+    function getDefaultOthersSettingsState() {
+        return othersTasks.reduce((acc, task) => {
+            acc[task.id] = true;
+            return acc;
+        }, {});
+    }
+
+    function normalizeOthersSettingsState(state = {}) {
+        const normalized = getDefaultOthersSettingsState();
+        for (const task of othersTasks) {
+            if (Object.prototype.hasOwnProperty.call(state, task.id)) {
+                normalized[task.id] = state[task.id] !== false;
+            }
+        }
+        return normalized;
+    }
+
+    function isOthersTaskEnabled(taskId) {
+        return othersSettingsState[taskId] !== false;
+    }
+
+    function loadAllSettings() {
+        const { HWHFuncs } = window;
+        if (typeof window.getAutoDailySettings === 'function') {
+            console.log(`${EXTENSION_NAME}: Settings Provider found. Loading settings from Provider.`);
+            isProviderActive = true;
+            const providerSettings = window.getAutoDailySettings();
+            executionState = migrateAutoBattleExecutionState(providerSettings.executionState || {});
+            hideButtonsState = providerSettings.hideButtonsState || {};
+            othersSettingsState = normalizeOthersSettingsState(providerSettings.othersSettingsState || {});
+            eventSettingsState = normalizeEventSettingsState(providerSettings.eventSettingsState || {});
+            battleSimSettingsState = normalizeBattleSimSettingsState(providerSettings.battleSimSettingsState || {});
+            if (!providerSettings.eventSettingsState || providerSettings.eventSettingsState.epicBrawlEnabled === undefined) {
+                eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
+            }
+        } else {
+            console.log(`${EXTENSION_NAME}: Settings Provider not found. Loading account-specific settings.`);
+            isProviderActive = false;
+            executionState = migrateAutoBattleExecutionState(HWHFuncs.getSaveVal('autoDaily_executionState', {}));
+            hideButtonsState = HWHFuncs.getSaveVal('autoDaily_hideButtonsState', { doAll: false, quests: false, actions: false, newSync: false });
+            othersSettingsState = normalizeOthersSettingsState(
+                HWHFuncs.getSaveVal('autoDaily_othersSettingsState', getDefaultOthersSettingsState())
+            );
+            eventSettingsState = normalizeEventSettingsState(
+                HWHFuncs.getSaveVal('autoDaily_eventSettingsState', null) || {}
+            );
+            battleSimSettingsState = normalizeBattleSimSettingsState(
+                HWHFuncs.getSaveVal('autoDaily_battleSimSettingsState', null) || {}
+            );
+            const rawEvents = HWHFuncs.getSaveVal('autoDaily_eventSettingsState', null);
+            if (!rawEvents || rawEvents.epicBrawlEnabled === undefined) {
+                eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
+            }
+        }
+        syncEpicBrawlOthersSetting();
+    }
+
+    function saveAllSettings() {
+        const { HWHFuncs } = window;
+        syncEpicBrawlOthersSetting();
+        // We only save if the provider is NOT active. The provider is the source of truth when present.
+        if (!isProviderActive) {
+            HWHFuncs.setSaveVal('autoDaily_executionState', executionState);
+            HWHFuncs.setSaveVal('autoDaily_hideButtonsState', hideButtonsState);
+            HWHFuncs.setSaveVal('autoDaily_othersSettingsState', othersSettingsState);
+            HWHFuncs.setSaveVal('autoDaily_eventSettingsState', eventSettingsState);
+            HWHFuncs.setSaveVal('autoDaily_battleSimSettingsState', battleSimSettingsState);
+        }
+    }
+
+    // --- UI & CORE LOGIC ---
+    function waitForHWH(callback) {
+        let tries = 0;
+        const maxTries = 120; // ~60s
+        const interval = setInterval(() => {
+            tries += 1;
+            const buttons = window.HWHData?.buttons;
+            if (
+                window.HWHData
+                && window.HWHClasses
+                && window.HWHFuncs
+                && buttons?.doActions?.button
+                && buttons?.doOthers?.button
+            ) {
+                clearInterval(interval);
+                callback();
+                return;
+            }
+            if (tries >= maxTries) {
+                clearInterval(interval);
+                console.error(`[${EXTENSION_NAME}] HWH UI not ready after ${maxTries * 500 / 1000}s — giving up`);
+            }
+        }, 500);
+    }
+
+    function ensurePopupStyles() {
+        if (document.getElementById(AUTO_DAILY_STYLE_ID)) return;
+        const styles = `
+            .auto-daily-popup-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 10001; }
+            .auto-daily-popup-main { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #190e08e6; border: 3px #ce9767 solid; border-radius: 10px; z-index: 10002; color: #fce1ac; padding: 20px; min-width: 900px; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+            .auto-daily-columns-container { display: flex; gap: 20px; flex-grow: 1; }
+            .auto-daily-popup-main h2 { text-align: center; margin-top: 0; border-bottom: 1px solid #ce9767; padding-bottom: 10px; }
+            .auto-daily-popup-column { flex: 1; }
+            .auto-daily-task-list { list-style: none; padding: 0; margin: 0; }
+            .auto-daily-task-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 5px; border-bottom: 1px solid #4a3422; }
+            .auto-daily-task-item:last-child { border-bottom: none; }
+            .auto-daily-task-item label { display: flex; align-items: center; gap: 10px; cursor: pointer; flex-grow: 1; color: #fce1ac; }
+            .auto-daily-fire-btn { cursor: pointer; font-size: 20px; background: none; border: none; padding: 0 5px; transition: transform 0.2s; color: #fce1ac;}
+            .auto-daily-fire-btn:hover { transform: scale(1.2); }
+            .auto-daily-status-icon { font-size: 20px; min-width: 28px; text-align: center; }
+            .auto-daily-close-btn { position: absolute; top: 5px; right: 10px; font-size: 24px; color: #ce9767; cursor: pointer; border: none; background: none;}
+            .auto-daily-footer { border-top: 1px solid #ce9767; margin-top: 15px; padding-top: 15px; display: flex; flex-wrap: wrap; gap: 15px 20px; font-size: 14px; align-items: center; }
+            .auto-daily-footer a, .auto-daily-footer .sync-button { color: #fce1ac; text-decoration: none; cursor: pointer; background: none; border: none; font-size: 20px; padding: 0; margin-right: 10px; }
+            .auto-daily-footer a:hover { text-decoration: underline; }
+            .auto-daily-events-section { border-top: 1px solid #ce9767; padding-top: 12px; }
+            .auto-daily-events-section h2 { text-align: left; margin: 0 0 10px 0; border-bottom: none; padding-bottom: 0; font-size: 18px; }
+            .auto-daily-event-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 5px; border-bottom: 1px solid #4a3422; }
+            .auto-daily-event-row label.event-enable { display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 160px; color: #fce1ac; }
+            .auto-daily-event-row select { background: #2a1a10; color: #fce1ac; border: 1px solid #ce9767; border-radius: 4px; padding: 4px 8px; }
+            .auto-daily-live-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: bold; padding: 3px 10px; border-radius: 12px; min-width: 70px; justify-content: center; }
+            .auto-daily-live-badge.live { background: #1a4a1a; color: #7dffa0; border: 1px solid #3a8a3a; }
+            .auto-daily-live-badge.off { background: #3a1a1a; color: #ff9a9a; border: 1px solid #8a3a3a; }
+            .auto-daily-live-badge.checking { background: #3a3422; color: #fce1ac; border: 1px solid #ce9767; }
+            .auto-daily-event-meta { font-size: 12px; color: #c9a67a; }
+            .sync-settings-popup-main, .others-settings-popup-main { min-width: 400px !important; }
+            .sync-settings-footer, .others-settings-footer { display: flex; justify-content: space-around; margin-top: 15px; }
+        `;
+        const styleSheet = document.createElement("style");
+        styleSheet.id = AUTO_DAILY_STYLE_ID;
+        styleSheet.innerText = styles;
+        document.head.appendChild(styleSheet);
+    }
+
+    function createPopup() {
+        if (document.getElementById('auto-daily-popup-container')) return;
+        ensurePopupStyles();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'auto-daily-popup-backdrop';
+        backdrop.id = 'auto-daily-popup-container';
+        const popup = document.createElement('div');
+        popup.className = 'auto-daily-popup-main';
+        popup.innerHTML = `
+            <button class="auto-daily-close-btn">&times;</button>
+            <div class="auto-daily-columns-container">
+                <div class="auto-daily-popup-column"><h2>DO ALL</h2><ul class="auto-daily-task-list" id="auto-daily-doall-list"></ul></div>
+                <div class="auto-daily-popup-column"><h2>QUESTS</h2><ul class="auto-daily-task-list" id="auto-daily-quests-list"></ul></div>
+                <div class="auto-daily-popup-column"><h2>UPGRADE</h2><ul class="auto-daily-task-list" id="auto-daily-upgrade-list"></ul></div>
+            </div>
+            <div class="auto-daily-events-section">
+                <h2>EVENTS</h2>
+                <div class="auto-daily-event-row" id="epic-brawl-event-row">
+                    <label class="event-enable">
+                        <input type="checkbox" id="epic-brawl-enabled" ${eventSettingsState.epicBrawlEnabled ? 'checked' : ''}>
+                        <span>Cosmic Battle</span>
+                    </label>
+                    <select id="epic-brawl-mode" title="Team type for Cosmic Battle">
+                        <option value="auto" ${eventSettingsState.epicBrawlMode === 'auto' ? 'selected' : ''}>Auto (hero if set)</option>
+                        <option value="hero" ${eventSettingsState.epicBrawlMode === 'hero' ? 'selected' : ''}>Hero</option>
+                        <option value="titan" ${eventSettingsState.epicBrawlMode === 'titan' ? 'selected' : ''}>Titan</option>
+                    </select>
+                    <span class="auto-daily-live-badge checking" id="epic-brawl-live-badge">…</span>
+                    <span class="auto-daily-event-meta" id="epic-brawl-meta"></span>
+                    <button class="auto-daily-fire-btn" id="epic-brawl-run-btn" title="Run Cosmic Battle now">${UI_ICON.fire}</button>
+                </div>
+            </div>
+            <div class="auto-daily-events-section">
+                <h2>BATTLE SIM</h2>
+                <div class="auto-daily-event-row">
+                    <label class="event-enable" title="Pre-fight demo battles for Arena, Grand Arena, and Guild War">
+                        <input type="checkbox" id="sim-attack-max-power" ${battleSimSettingsState.attackMaxPower !== false ? 'checked' : ''}>
+                        <span>Attack team max power</span>
+                    </label>
+                    <span class="auto-daily-event-meta">On = max upgrades in sims. Off = your current power. (Arena / Grand Arena / Guild War)</span>
+                </div>
+            </div>
+            <div class="auto-daily-footer">
+                <button class="sync-button" id="sync-settings-btn" title="Save/Load Settings">${UI_ICON.save}</button>
+                <label><input type="checkbox" id="hide-doall-btn" ${hideButtonsState.doAll ? 'checked' : ''}> Hide 'Do All'</label>
+                <label><input type="checkbox" id="hide-quests-btn" ${hideButtonsState.quests ? 'checked' : ''}> Hide 'Quests'</label>
+                <label><input type="checkbox" id="hide-actions-btn" ${hideButtonsState.actions ? 'checked' : ''}> Hide 'Actions'</label>
+                <a id="other-settings-link">Other Settings</a>
+                <a id="dungeon-settings-link" title="Open dungeon team / tank survival settings">Dungeon Settings</a>
+                <label><input type="checkbox" id="new-sync-btn" ${hideButtonsState.newSync ? 'checked' : ''}> New Sync</label>
+            </div>
+        `;
+        backdrop.appendChild(popup);
+        document.body.appendChild(backdrop);
+        populateList('auto-daily-doall-list', doAllTasks, false);
+        populateList('auto-daily-quests-list', questTasks, true);
+        populateList('auto-daily-upgrade-list', upgradeTasks, true);
+        function populateList(listId, tasks, isQuest) {
+             const list = document.getElementById(listId);
+             tasks.forEach(task => {
+                const li = document.createElement('li');
+                li.className = 'auto-daily-task-item';
+                li.dataset.taskId = task.id;
+                const checkboxHTML = `<label><input type="checkbox" data-task-id="${task.id}" ${executionState[task.id] ? 'checked' : ''}><span>${task.label}</span></label>`;
+                const actionHTML = isQuest
+                    ? `<div class="auto-daily-status-icon" data-task-id="${task.id}">${UI_ICON.pending}</div>`
+                    : `<button class="auto-daily-fire-btn" data-task-id="${task.id}">${UI_ICON.fire}</button>`;
+                li.innerHTML = checkboxHTML + actionHTML;
+                list.appendChild(li);
+            });
+        }
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop || e.target.classList.contains('auto-daily-close-btn')) backdrop.remove(); });
+        popup.addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') {
+                const taskId = e.target.dataset.taskId;
+                if (taskId) {
+                    executionState[taskId] = e.target.checked;
+                    saveAllSettings();
+                }
+            }
+        });
+        popup.addEventListener('click', (e) => {
+            const button = e.target.closest('.auto-daily-fire-btn');
+            if (button) {
+                const taskId = button.dataset.taskId;
+                const task = [...doAllTasks, ...questTasks, ...upgradeTasks].find(t => t.id === taskId);
+                if (task) executeSingleTask(task);
+            }
+        });
+        document.getElementById('hide-doall-btn').addEventListener('change', (e) => { hideButtonsState.doAll = e.target.checked; saveAllSettings(); applyButtonVisibility(); });
+        document.getElementById('hide-quests-btn').addEventListener('change', (e) => { hideButtonsState.quests = e.target.checked; saveAllSettings(); applyButtonVisibility(); });
+        document.getElementById('hide-actions-btn').addEventListener('change', (e) => { hideButtonsState.actions = e.target.checked; saveAllSettings(); applyButtonVisibility(); });
+        document.getElementById('new-sync-btn').addEventListener('change', (e) => { hideButtonsState.newSync = e.target.checked; saveAllSettings(); applySyncButtonState(); });
+        document.getElementById('other-settings-link').addEventListener('click', createOthersPopup);
+        document.getElementById('dungeon-settings-link').addEventListener('click', () => {
+            if (typeof window.toggleDungeonSettingsGUI === 'function') {
+                window.toggleDungeonSettingsGUI();
+            }
+        });
+        document.getElementById('sync-settings-btn').addEventListener('click', createSyncPopup);
+
+        const epicEnabled = document.getElementById('epic-brawl-enabled');
+        const epicMode = document.getElementById('epic-brawl-mode');
+        const epicRunBtn = document.getElementById('epic-brawl-run-btn');
+        if (epicEnabled) {
+            epicEnabled.addEventListener('change', (e) => {
+                eventSettingsState.epicBrawlEnabled = e.target.checked;
+                saveAllSettings();
+                applyOthersVisibility();
+            });
+        }
+        if (epicMode) {
+            epicMode.addEventListener('change', (e) => {
+                eventSettingsState.epicBrawlMode = e.target.value;
+                saveAllSettings();
+            });
+        }
+        if (epicRunBtn) {
+            epicRunBtn.addEventListener('click', async () => {
+                epicRunBtn.disabled = true;
+                try {
+                    await executeEpicBrawl({ mode: eventSettingsState.epicBrawlMode });
+                    await refreshEpicBrawlStatusUI();
+                } finally {
+                    epicRunBtn.disabled = false;
+                }
+            });
+        }
+        const simAttackMaxPower = document.getElementById('sim-attack-max-power');
+        if (simAttackMaxPower) {
+            simAttackMaxPower.addEventListener('change', (e) => {
+                battleSimSettingsState.attackMaxPower = !!e.target.checked;
+                saveAllSettings();
+            });
+        }
+        refreshEpicBrawlStatusUI();
+        updateQuestStatus();
+    }
+
+    async function refreshEpicBrawlStatusUI() {
+        const badge = document.getElementById('epic-brawl-live-badge');
+        const meta = document.getElementById('epic-brawl-meta');
+        if (!badge) return;
+        badge.className = 'auto-daily-live-badge checking';
+        badge.textContent = '…';
+        if (meta) meta.textContent = 'Checking…';
+        try {
+            const status = await checkEpicBrawlStatus();
+            badge.className = `auto-daily-live-badge ${status.live ? 'live' : 'off'}`;
+            badge.textContent = status.live ? 'LIVE' : 'OFF';
+            const teams = [];
+            if (status.hasHeroTeam) teams.push('hero team');
+            if (status.hasTitanTeam) teams.push('titan team');
+            const parts = [];
+            if (status.live) parts.push(`${status.attempts} attempt${status.attempts === 1 ? '' : 's'}`);
+            if (teams.length) parts.push(teams.join(' + '));
+            else if (status.live) parts.push('no saved team');
+            if (meta) meta.textContent = parts.join(' · ') || (status.error ? `Error: ${status.error}` : '');
+        } catch (e) {
+            badge.className = 'auto-daily-live-badge off';
+            badge.textContent = 'OFF';
+            if (meta) meta.textContent = e?.message || 'Status check failed';
+        }
+    }
+    function createOthersPopup() {
+        if (document.getElementById('others-settings-popup-container')) return;
+        ensurePopupStyles();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'auto-daily-popup-backdrop';
+        backdrop.id = 'others-settings-popup-container';
+        const popup = document.createElement('div');
+        popup.className = 'auto-daily-popup-main others-settings-popup-main';
+        let listHTML = othersTasks.map(task => `
+            <li class="auto-daily-task-item">
+                <label><input type="checkbox" data-task-id="${task.id}" ${isOthersTaskEnabled(task.id) ? 'checked' : ''}><span>${task.label}</span></label>
+            </li>`).join('');
+        popup.innerHTML = `
+            <button class="auto-daily-close-btn">&times;</button>
+            <div class="auto-daily-popup-column">
+                <h2>Other Settings</h2><ul class="auto-daily-task-list">${listHTML}</ul>
+                <div class="others-settings-footer">
+                   <button id="others-select-all" class="auto-daily-fire-btn" style="font-size: 16px;">Select All</button>
+                   <button id="others-select-none" class="auto-daily-fire-btn" style="font-size: 16px;">Select None</button>
+                </div>
+            </div>`;
+        backdrop.appendChild(popup);
+        document.body.appendChild(backdrop);
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop || e.target.classList.contains('auto-daily-close-btn')) backdrop.remove(); });
+        popup.addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') {
+                othersSettingsState[e.target.dataset.taskId] = e.target.checked;
+                if (e.target.dataset.taskId === 'EPIC_BRAWL') {
+                    eventSettingsState.epicBrawlEnabled = e.target.checked;
+                }
+                saveAllSettings();
+                applyOthersVisibility();
+            }
+        });
+        document.getElementById('others-select-all').addEventListener('click', () => {
+            popup.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; othersSettingsState[cb.dataset.taskId] = true; });
+            eventSettingsState.epicBrawlEnabled = true;
+            saveAllSettings();
+            applyOthersVisibility();
+        });
+        document.getElementById('others-select-none').addEventListener('click', () => {
+            popup.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; othersSettingsState[cb.dataset.taskId] = false; });
+            eventSettingsState.epicBrawlEnabled = false;
+            saveAllSettings();
+            applyOthersVisibility();
+        });
+    }
+    function createSyncPopup() {
+        if (document.getElementById('sync-settings-popup-container')) return;
+        ensurePopupStyles();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'auto-daily-popup-backdrop';
+        backdrop.id = 'sync-settings-popup-container';
+        const popup = document.createElement('div');
+        popup.className = 'auto-daily-popup-main sync-settings-popup-main';
+        popup.innerHTML = `
+            <button class="auto-daily-close-btn">&times;</button>
+            <div class="auto-daily-popup-column">
+                <h2>Import / Export Settings</h2>
+                <div class="sync-settings-footer">
+                   <button id="export-settings-btn" class="auto-daily-fire-btn" style="font-size: 16px;">Export to File</button>
+                   <button id="import-settings-btn" class="auto-daily-fire-btn" style="font-size: 16px;">Import from File</button>
+                </div>
+                ${isProviderActive ? `
+                <div class="sync-settings-footer" style="border-top: 1px solid #4a3422; margin-top: 20px; padding-top: 20px;">
+                   <button id="set-as-default-btn" class="auto-daily-fire-btn" style="font-size: 16px;">Set Current as Default</button>
+                </div>` : ''}
+            </div>`;
+        backdrop.appendChild(popup);
+        document.body.appendChild(backdrop);
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop || e.target.classList.contains('auto-daily-close-btn')) backdrop.remove(); });
+        document.getElementById('export-settings-btn').addEventListener('click', handleExport);
+        document.getElementById('import-settings-btn').addEventListener('click', handleImport);
+        if (isProviderActive) {
+            document.getElementById('set-as-default-btn').addEventListener('click', handleSetAsDefault);
+        }
+    }
+    function handleExport() {
+        const { HWHFuncs } = window;
+        const settingsToExport = { executionState, hideButtonsState, othersSettingsState, eventSettingsState, battleSimSettingsState };
+        const settingsJSON = JSON.stringify(settingsToExport, null, 2);
+        const blob = new Blob([settingsJSON], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `daily_quests.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        HWHFuncs.setProgress('Settings exported!', true);
+    }
+    function handleImport() {
+        const { HWHFuncs } = window;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = e => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = readerEvent => {
+                try {
+                    const importedSettings = JSON.parse(readerEvent.target.result);
+                    if (importedSettings.executionState && importedSettings.hideButtonsState && importedSettings.othersSettingsState) {
+                        executionState = migrateAutoBattleExecutionState(importedSettings.executionState);
+                        hideButtonsState = importedSettings.hideButtonsState;
+                        othersSettingsState = normalizeOthersSettingsState(importedSettings.othersSettingsState);
+                        eventSettingsState = normalizeEventSettingsState(importedSettings.eventSettingsState || {});
+                        battleSimSettingsState = normalizeBattleSimSettingsState(importedSettings.battleSimSettingsState || {});
+                        if (!importedSettings.eventSettingsState || importedSettings.eventSettingsState.epicBrawlEnabled === undefined) {
+                            eventSettingsState.epicBrawlEnabled = othersSettingsState.EPIC_BRAWL !== false;
+                        }
+                        syncEpicBrawlOthersSetting();
+                        saveAllSettings();
+                        applyButtonVisibility();
+                        applyOthersVisibility();
+                        applySyncButtonState();
+                        const mainPopup = document.getElementById('auto-daily-popup-container');
+                        if (mainPopup) mainPopup.remove();
+                        createPopup();
+                        HWHFuncs.setProgress('Settings imported successfully!', true);
+                    } else { throw new Error("Invalid file structure."); }
+                } catch (err) { alert('Error importing file: ' + err.message); }
+            };
+            reader.readAsText(file, 'UTF-8');
+        };
+        input.click();
+    }
+    function handleSetAsDefault() {
+        const { HWHFuncs } = window;
+        if (typeof window.setAutoDailySettings === 'function') {
+            const allSettings = { executionState, hideButtonsState, othersSettingsState, eventSettingsState, battleSimSettingsState };
+            window.setAutoDailySettings(allSettings);
+            HWHFuncs.setProgress('Current settings saved as default for the Provider!', true);
+        } else {
+            alert('Settings Provider script is not active or is missing the set function.');
+        }
+    }
+    function applyButtonVisibility() {
+        const { getOutland, dailyQuests, doActions } = window.HWHData.buttons;
+        if(getOutland && getOutland.button) getOutland.button.style.display = hideButtonsState.doAll ? 'none' : 'flex';
+        if(dailyQuests && dailyQuests.button) dailyQuests.button.style.display = hideButtonsState.quests ? 'none' : 'flex';
+        if(doActions && doActions.button) doActions.button.style.display = hideButtonsState.actions ? 'none' : 'flex';
+    }
+    function applyOthersVisibility() {
+        const isAnyChecked = othersTasks.some(task => isOthersTaskEnabled(task.id));
+        if (customOthersButton) {
+            const row = getMenuButtonRow(customOthersButton);
+            (row || customOthersButton).style.display = isAnyChecked ? '' : 'none';
+        }
+    }
+
+    /** Prefer the scriptMenu_btnRow wrapper (do not pass the row into addButton). */
+    function getMenuButtonRow(el) {
+        if (!el) return null;
+        if (el.classList?.contains('scriptMenu_btnRow')) return el;
+        return el.closest?.('.scriptMenu_btnRow') || el.parentElement;
+    }
+
+    function placeMenuRowBefore(rowEl, beforeEl) {
+        if (!rowEl) return;
+        const beforeRow = getMenuButtonRow(beforeEl);
+        const socket = beforeRow?.parentElement
+            || window.HWHClasses?.ScriptMenu?.getInst()?.btnSocket;
+        if (!socket) return;
+        if (beforeRow && beforeRow.parentElement === socket) {
+            socket.insertBefore(rowEl, beforeRow);
+        } else {
+            socket.appendChild(rowEl);
+        }
+    }
+
+    function removeMenuButtonRow(buttonOrRow) {
+        const row = getMenuButtonRow(buttonOrRow);
+        if (row) row.remove();
+    }
+
+    function applySyncButtonState() {
+        const { HWHClasses, HWHData, HWHFuncs } = window;
+        const { newDay } = HWHData.buttons;
+        const autoDailyButton = document.querySelector('[data-extension-button="auto-daily"]');
+        if (!autoDailyButton) return;
+        const actionsButton = HWHData.buttons.doActions?.button;
+        if (!actionsButton) return;
+
+        if (combinedButton) {
+            removeMenuButtonRow(combinedButton);
+            combinedButton = null;
+        }
+
+        const autoDailyRow = getMenuButtonRow(autoDailyButton);
+        if (autoDailyRow) autoDailyRow.style.display = '';
+        autoDailyButton.style.display = 'flex';
+        if (newDay && newDay.button) newDay.button.style.display = 'flex';
+
+        if (hideButtonsState.newSync) {
+            if (newDay && newDay.button) newDay.button.style.display = 'none';
+            if (autoDailyRow) autoDailyRow.style.display = 'none';
+            autoDailyButton.style.display = 'none';
+
+            const buttonList = [{
+                name: 'Auto Daily', onClick: createPopup, title: 'Open the Auto Daily control panel',
+            }, {
+                name: UI_ICON.sync,
+                onClick: () => { HWHFuncs.setProgress('Syncing...', true); window.cheats.refreshGame(); },
+                title: 'Run Sync', color: 'green',
+            }];
+            // Do NOT pass an existing btnRow — that merges into other extensions' groups.
+            combinedButton = HWHClasses.ScriptMenu.getInst().addCombinedButton(buttonList);
+            if (!combinedButton) return;
+            const autoDailyCombined = combinedButton.children[0];
+            const syncCombined = combinedButton.children[1];
+            if (autoDailyCombined) {
+                autoDailyCombined.style.flexGrow = '1';
+                const buttonText = autoDailyCombined.querySelector('.scriptMenu_buttonText, .scriptMenu_btnPlate');
+                if (buttonText) buttonText.style.whiteSpace = 'nowrap';
+            }
+            if (syncCombined) {
+                syncCombined.style.flexGrow = '0';
+                syncCombined.style.width = '45px';
+            }
+            placeMenuRowBefore(combinedButton, actionsButton);
+        }
+    }
+
+    function getOthersButtonMsg(button) {
+        try {
+            return button?.msg;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function isKnownOthersTaskButton(button) {
+        const { I18N } = window;
+        const msg = getOthersButtonMsg(button);
+        if (!msg) return false;
+        return othersTasks.some(task => msg === I18N(task.id) || msg === task.label);
+    }
+
+    function findOthersPopupButton(task) {
+        const { HWHData, I18N } = window;
+        const buttons = HWHData?.othersPopupButtons || [];
+        const translated = I18N(task.id);
+        return buttons.find(button => {
+            if (button?.isClose) return false;
+            const msg = getOthersButtonMsg(button);
+            return msg === translated || msg === task.label;
+        });
+    }
+
+    function buildFilteredOthersPopupButtons() {
+        const { HWHData } = window;
+        const sourceButtons = HWHData?.othersPopupButtons || [];
+        const popupButtons = [];
+        const used = new Set();
+
+        for (const task of othersTasks) {
+            if (!isOthersTaskEnabled(task.id)) continue;
+            const match = findOthersPopupButton(task);
+            if (!match) {
+                console.warn(`[Auto Daily] No Others handler found for ${task.id} (${task.label})`);
+                continue;
+            }
+            popupButtons.push(match);
+            used.add(match);
+        }
+
+        // Keep extension-added Others actions (e.g. Gift of the Elements) always visible.
+        for (const button of sourceButtons) {
+            if (!button || button.isClose || used.has(button)) continue;
+            if (isKnownOthersTaskButton(button)) continue;
+            popupButtons.push(button);
+        }
+
+        popupButtons.push({ result: false, isClose: true });
+        return popupButtons;
+    }
+
+    async function onCustomOthersClick() {
+        const { HWHFuncs, I18N, HWHClasses } = window;
+        if (HWHClasses?.executeBrawls?.isBrawlsAutoStart) return;
+
+        const popupButtons = buildFilteredOthersPopupButtons();
+        // Only the trailing close button means nothing is available.
+        if (popupButtons.length <= 1) {
+            HWHFuncs.setProgress('Others: no enabled actions available.', true);
+            return;
+        }
+
+        const answer = await HWHFuncs.popup.confirm(`${I18N('CHOOSE_ACTION')}:`, popupButtons);
+        if (typeof answer === 'function') {
+            await answer();
+        }
+    }
+
+    async function updateQuestStatus() {
+        const { HWHClasses } = window;
+        // Check quest completion status using cached data - following API documentation pattern
+        // API docs: state 0 = not started, 1 = in progress, 2 = completed
+        const allQuests = await getQuestData();
+        
+        const questManager = new HWHClasses.dailyQuests();
+        await questManager.autoInit();
+        [...questTasks, ...upgradeTasks].forEach(task => {
+            // Convert task.id to number for comparison (API returns numeric IDs)
+            const questId = parseInt(task.id, 10);
+            // Use direct API call result with proper ID comparison
+            const questData = allQuests.find(q => q.id === questId);
+            const questUI = document.querySelector(`.auto-daily-status-icon[data-task-id="${task.id}"]`);
+            if (!questUI) return;
+            let iconHTML = `<span title="Not available">${UI_ICON.unavailable}</span>`;
+            if (questData) {
+                 // Check if quest is completed (state === 2) - following API documentation
+                 if (questData.state === 2) {
+                    iconHTML = `<span title="Already done">${UI_ICON.done}</span>`;
+                } else {
+                    // Try numeric key first (as that's what the API uses), then string key
+                    const questHandler = questManager.dataQuests[questId] || questManager.dataQuests[task.id];
+                    if (questHandler) {
+                        // Handle quests with doItFunc (like dungeon quest 10022)
+                        // These quests can be executed even if isWeCanDo returns false
+                        if (questHandler.doItFunc && questData.state === 1) {
+                            iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">${UI_ICON.fire}</button>`;
+                        } else if (questHandler.isWeCanDo && typeof questHandler.isWeCanDo === 'function') {
+                            try {
+                                if (questHandler.isWeCanDo.call(questManager)) {
+                                    iconHTML = `<button class="auto-daily-fire-btn" data-task-id="${task.id}">${UI_ICON.fire}</button>`;
+                                }
+                            } catch (e) {
+                                // If isWeCanDo check fails, just show as not available
+                                console.warn(`[updateQuestStatus] Quest ${task.id} isWeCanDo check failed:`, e);
+                            }
+                        }
+                    }
+                }
+            }
+            questUI.innerHTML = iconHTML;
+        });
+    }
+    async function executeSingleTask(task, options = {}) {
+        const { HWHFuncs, Send, HWHClasses } = window;
+        const fromAutoRun = !!options.fromAutoRun;
+        const isDungeonTask = task.id === 'testDungeon' || task.id === '10022';
+        if (!fromAutoRun && autoRunInProgress) {
+            HWHFuncs.setProgress(`${task.label}: skipped (auto-run in progress)`, true);
+            return;
+        }
+        if (!isDungeonTask && (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN)) {
+            HWHFuncs.setProgress(`${task.label}: skipped (dungeon running)`, true);
+            return;
+        }
+        if (isDungeonTask && window.HWH_AUTOBATTLE_RUNNING) {
+            await waitForAutoBattleIdle();
+            if (window.HWH_AUTOBATTLE_RUNNING) {
+                HWHFuncs.setProgress(`${task.label}: skipped (AutoBattle still running)`, true);
+                return;
+            }
+        }
+        try {
+            if (task.func) {
+                if (task.id === 'testDungeon') {
+                    await sleep(2000);
+                }
+                HWHFuncs.setProgress(`Executing: ${task.label}`, true);
+                await task.func();
+            } else {
+                 // Check quest completion status using cached data - following API documentation pattern
+                 // API docs: state 0 = not started, 1 = in progress, 2 = completed
+                 const allQuests = await getQuestData();
+                 
+                 // Convert task.id to number for comparison (API returns numeric IDs)
+                 const questId = parseInt(task.id, 10);
+                 const questData = allQuests.find(q => q.id === questId);
+                 
+                 if (!questData) {
+                     // Quest not found - this is normal if quest is not available or not unlocked
+                     HWHFuncs.setProgress(`${task.label}: No Quest`, true);
+                     return;
+                 }
+                 
+                 // Check quest state and show appropriate message
+                 // Following API documentation pattern: state 0 = not started, 1 = in progress, 2 = completed
+                 if (questData.state === 2) {
+                     // Quest is already completed
+                     HWHFuncs.setProgress(`${task.label}: Already completed`, true);
+                     return;
+                 }
+                 
+                 if (questData.state === 0) {
+                     // Quest not started yet
+                     HWHFuncs.setProgress(`${task.label}: Not started yet`, true);
+                     return;
+                 }
+                 
+                 // Quest is in progress (state === 1) - proceed with execution
+                 HWHFuncs.setProgress(`Executing: ${task.label}`, true);
+                 
+                 // Initialize quest manager for execution
+                 const questManager = new HWHClasses.dailyQuests();
+                 await questManager.autoInit();
+                 
+                 // Use either string or numeric key to get the quest handler
+                 // Try numeric key first (as that's what the API uses)
+                 const questHandler = questManager.dataQuests[questId] || questManager.dataQuests[task.id];
+                 
+                 if (!questHandler) {
+                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) not found in dataQuests!`);
+                     HWHFuncs.setProgress(`${task.label}: Handler not found`, true);
+                     return;
+                 }
+                 
+                 // Handle quests with doItFunc (like dungeon quest 10022)
+                 if (questHandler.doItFunc) {
+                     // Quest uses a function instead of API calls
+                     if (task.id === '10022') {
+                         // Special handling for dungeon quest - ensure it executes last
+                         await sleep(2000);
+                         await executeTestDungeon();
+                         invalidateQuestCache();
+                         return;
+                     } else {
+                         // For other doItFunc quests, call the function directly
+                         await questHandler.doItFunc();
+                         invalidateQuestCache();
+                         return;
+                     }
+                 }
+                 
+                 // Check if quest can be done (only for doItCall quests)
+                 const isWeCanDo = questHandler.isWeCanDo;
+                 if (!isWeCanDo || typeof isWeCanDo !== 'function') {
+                     console.warn(`[executeSingleTask] Quest ${task.id} (${task.label}) has no isWeCanDo function!`);
+                     HWHFuncs.setProgress(`${task.label}: Invalid handler`, true);
+                     return;
+                 }
+                 
+                 let canDo = false;
+                 try {
+                     canDo = isWeCanDo.call(questManager);
+                 } catch (e) {
+                     console.error(`[executeSingleTask] Quest ${task.id} isWeCanDo check failed:`, e);
+                     HWHFuncs.setProgress(`${task.label}: Check failed - ${e.message}`, true);
+                     return;
+                 }
+                 
+                 if (!canDo) {
+                     HWHFuncs.setProgress(`${task.label}: Cannot execute now (requirements not met)`, true);
+                     return;
+                 }
+                 
+                 let calls = [];
+                 if (task.id === '10023') {
+                     const heroId = questManager.getHeroIdTitanGift();
+                     calls = [
+                         { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_1' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_1' },
+                         { name: 'heroTitanGiftLevelUp', args: { heroId }, ident: 'up_2' }, { name: 'heroTitanGiftDrop', args: { heroId }, ident: 'drop_2' }
+                     ];
+                 } else if (questHandler.doItCall) {
+                     calls = questHandler.doItCall.call(questManager);
+                 } else {
+                     HWHFuncs.setProgress(`${task.label}: No execution method available`, true);
+                     return;
+                 }
+                 
+                if(calls.length > 0) {
+                    await Send({ calls });
+                    // Invalidate cache after executing quest to get fresh data
+                    invalidateQuestCache();
+                } else {
+                    HWHFuncs.setProgress(`${task.label}: No actions available`, true);
+                    return;
+                }
+            }
+            HWHFuncs.setProgress(`${task.label} finished!`, true);
+        } catch (e) {
+            console.error(`[executeSingleTask] ERROR executing task ${task.id} (${task.label}):`, e);
+            HWHFuncs.setProgress(`Error with ${task.label}!`, true);
+        }
+    }
+    function scheduleAutoRuns() {
+        const doAllChecked = doAllTasks.filter(task => executionState[task.id]);
+        const questsAndUpgradeChecked = [...questTasks, ...upgradeTasks].filter(task => executionState[task.id]);
+
+        // Battle tasks first (in doAllTasks order), then other dailies; dungeon last to avoid API/UI conflicts.
+        const autoBattleIdSet = new Set(AUTO_BATTLE_TASK_IDS);
+        const doAllAutoBattle = doAllChecked.filter(t => autoBattleIdSet.has(t.id));
+        const doAllNonDungeon = doAllChecked.filter(t => t.id !== 'testDungeon' && !autoBattleIdSet.has(t.id));
+        const doAllDungeon = doAllChecked.filter(t => t.id === 'testDungeon');
+
+        // Quest 10022 is "Guild Dungeon" in the quest list; it also triggers dungeon logic.
+        const questsNonDungeon = questsAndUpgradeChecked.filter(t => t.id !== '10022');
+        const questsDungeon = (doAllDungeon.length > 0)
+            ? []
+            : questsAndUpgradeChecked.filter(t => t.id === '10022');
+
+        const ordered = [
+            ...doAllAutoBattle,
+            ...doAllNonDungeon,
+            ...questsNonDungeon,
+            ...doAllDungeon,
+            ...questsDungeon,
+        ];
+
+        // Run sequentially (await each). The previous setTimeout-based scheduler could overlap long tasks and stall mid-run.
+        setTimeout(async () => {
+            const { HWHFuncs } = window;
+            if (autoRunInProgress || dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
+                console.log('[Auto Daily] Skipping auto-run — dungeon already in progress');
+                return;
+            }
+            autoRunInProgress = true;
+            window.HWH_AUTO_DAILY_RUNNING = true;
+            try {
+                await executeTidyInventoryIfAvailable();
+                await executeAutoFarmIfAvailable();
+                if (eventSettingsState.epicBrawlEnabled) {
+                    try {
+                        await executeEpicBrawl({ mode: eventSettingsState.epicBrawlMode });
+                        await sleep(500);
+                    } catch (e) {
+                        console.warn('[Auto Daily] Cosmic Battle auto-run failed:', e);
+                        dismissBlockingUi('cosmic failure');
+                    }
+                }
+                for (const task of ordered) {
+                    if (dungeonRunning || window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) {
+                        console.log('[Auto Daily] Stopping auto-run — dungeon started');
+                        break;
+                    }
+                    const isDungeonTask = task.id === 'testDungeon' || task.id === '10022';
+                    if (isDungeonTask && window.HWH_AUTOBATTLE_RUNNING) {
+                        await waitForAutoBattleIdle();
+                    }
+                    try {
+                        await executeSingleTask(task, { fromAutoRun: true });
+                    } catch (taskErr) {
+                        console.warn(`[Auto Daily] Task ${task.id} failed; continuing:`, taskErr);
+                    }
+                    dismissBlockingUi(`after ${task.id}`);
+                    await sleep(500);
+                }
+                if (ordered.length > 0) {
+                    HWHFuncs.setProgress('Auto Daily: All selected tasks finished!', true);
+                }
+            } catch (e) {
+                console.error('[Auto Daily] Auto-run failed:', e);
+                HWHFuncs.setProgress(`Auto Daily: Stopped (${e.message || 'error'})`, true);
+            } finally {
+                dismissBlockingUi('auto-run end');
+                autoRunInProgress = false;
+                if (!window.HWH_AUTOBATTLE_RUNNING) {
+                    window.HWH_AUTO_DAILY_RUNNING = false;
+                }
+            }
+        }, 7000);
+    }
+    function createCustomOthersButton() {
+        const { HWHClasses, HWHData, I18N } = window;
+        const origOthersButton = HWHData.buttons?.doOthers?.button;
+        if (!origOthersButton) {
+            console.warn('[Auto Daily] Original Others button not found; skipping custom Others button.');
+            return;
+        }
+        if (customOthersButton) {
+            removeMenuButtonRow(customOthersButton);
+            customOthersButton = null;
+        }
+
+        const origRow = getMenuButtonRow(origOthersButton);
+        if (origRow) origRow.style.display = 'none';
+        else origOthersButton.style.display = 'none';
+
+        // Standalone row — do not pass origOthersButton.parentElement (a btnRow).
+        customOthersButton = HWHClasses.ScriptMenu.getInst().addButton({
+            name: I18N('OTHERS'),
+            title: I18N('OTHERS_TITLE'),
+            onClick: onCustomOthersClick
+        });
+        const referenceButton = HWHData.buttons.testTitanArena?.button
+            || HWHData.buttons.testDungeon?.button
+            || origOthersButton;
+        placeMenuRowBefore(getMenuButtonRow(customOthersButton), referenceButton);
+    }
+
+    function maindaily() {
+        const { HWHFuncs, HWHData, HWHClasses } = window;
+
+        loadAllSettings();
+        loadTitanHealthSettings(); // Load dungeon titan health settings
+        console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} is loading...`);
+        HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
+
+        installDefaultDungeonAlgorithm();
+        keepDefaultDungeonAlgorithmInstalled();
+        
+        // Create dungeon settings GUI
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', createDungeonSettingsGUI);
+        } else {
+            createDungeonSettingsGUI();
+        }
+
+        const scriptMenu = HWHClasses.ScriptMenu.getInst();
+        const actionsButton = HWHData.buttons.doActions.button;
+
+        // Each addButton without a btnRow parent creates its own row in btnSocket.
+        // Moving the whole row keeps us from merging into Action Replay / other groups.
+        const autoDailyButton = scriptMenu.addButton({
+            name: 'Auto Daily',
+            onClick: createPopup,
+            title: 'Open the Auto Daily control panel',
+        });
+        autoDailyButton.dataset.extensionButton = 'auto-daily';
+        placeMenuRowBefore(getMenuButtonRow(autoDailyButton), actionsButton);
+
+        createCustomOthersButton();
+
+        initializeAutoBattle();
+
+        applyButtonVisibility();
+        applyOthersVisibility();
+        applySyncButtonState();
+
+        setTimeout(updateQuestStatus, 9000);
+        scheduleAutoRuns();
+
+        console.log(`${EXTENSION_NAME} initialized successfully. Dungeon default: ${STEALTHER_DUNGEON_ALGORITHM_ID}`);
+    }
+
+    // Install as soon as HWHClasses exists so early dungeon clicks already use Stealther.
+    (function earlyDungeonAlgorithmHook() {
+        let tries = 0;
+        const timer = setInterval(() => {
+            tries += 1;
+            if (installDefaultDungeonAlgorithm({ quiet: true }) || tries >= 120) {
+                clearInterval(timer);
+            }
+        }, 250);
+    })();
+
+    waitForHWH(maindaily);
+
+})();
