@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.55
+// @version      3.5.56
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.55";
+    const EXTENSION_VERSION = "3.5.56";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -4226,74 +4226,63 @@
                 throw new Error(errorMessage);
             }
 
-            if (this.arenaType === 'grand') {
-                if (response.results && response.results[0] && response.results[0].result) {
-                    const result = response.results[0].result.response;
-                    if (result.battles && result.battles.length > 0) {
-                        let wins = 0;
-                        let battleTimer = 0;
-                        let battleTime = 0;
-                        let lastProgress = [];
-                        let lastResult = { win: false };
-                        for (const battleData of result.battles) {
-                            const calcResult = await runBattleCalc(BattleCalc, battleData, getBattleType(this.arenaType));
-                            if (!calcResult || !calcResult.result) {
-                                console.error('BattleCalc returned invalid result:', calcResult);
-                                continue;
-                            }
-                            if (calcResult.result.win) {
-                                wins++;
-                            }
-                            battleTimer += Number(calcResult.battleTimer) || 0;
-                            battleTime += Number(calcResult.battleTime) || 0;
-                            lastProgress = calcResult.progress || lastProgress;
-                            lastResult = calcResult.result;
-                        }
-                        return {
-                            win: wins >= Math.ceil(result.battles.length / 2),
-                            progress: lastProgress,
-                            result: lastResult,
-                            battleTimer,
-                            battleTime
-                        };
-                    }
-                }
-            } else {
-                let battleData = null;
-                if (response.results && response.results[0]) {
-                    const result = response.results[0].result || response.results[0];
-                    if (result.response && result.response.battle) {
-                        battleData = result.response.battle;
-                    } else if (result.battle) {
-                        battleData = result.battle;
-                    } else if (result.response) {
-                        battleData = result.response;
-                    }
-                }
+            // arenaAttack / grandAttack return { battles: [...], win, state, ... } — not { battle }.
+            const responseBody = response.results?.[0]?.result?.response
+                || response.results?.[0]?.response
+                || response.results?.[0]?.result
+                || null;
+            const battles = Array.isArray(responseBody?.battles)
+                ? responseBody.battles
+                : (responseBody?.battle ? [responseBody.battle] : []);
 
-                if (battleData) {
-                    const result = await runBattleCalc(BattleCalc, battleData, getBattleType(this.arenaType));
-                    if (!result || !result.result) {
-                        console.error('BattleCalc returned invalid result:', result);
-                        return {
-                            win: false,
-                            progress: [],
-                            result: { win: false },
-                            battleTimer: 0,
-                            battleTime: 0
-                        };
-                    }
-                    return {
-                        win: result.result.win,
-                        progress: result.progress,
-                        result: result.result,
-                        battleTimer: result.battleTimer || 0,
-                        battleTime: result.battleTime || 0
-                    };
-                }
+            if (!battles.length) {
+                throw new Error('Attack response had no battle data');
             }
 
-            throw new Error('Attack response had no battle data');
+            // Server often already sets battles[i].result.win / top-level win — trust that over re-Calc.
+            const serverWins = battles.filter((b) => b?.result && typeof b.result.win === 'boolean');
+            if (serverWins.length === battles.length) {
+                const wins = serverWins.filter((b) => b.result.win).length;
+                const last = serverWins[serverWins.length - 1];
+                const overallWin = typeof responseBody.win === 'boolean'
+                    ? responseBody.win
+                    : wins >= Math.ceil(battles.length / 2);
+                console.log(`[ARENA] Using server battle result: ${overallWin ? 'WIN' : 'LOSS'} (${wins}/${battles.length})`);
+                return {
+                    win: overallWin,
+                    progress: last.progress || [],
+                    result: last.result,
+                    battleTimer: 0,
+                    battleTime: 0
+                };
+            }
+
+            let wins = 0;
+            let battleTimer = 0;
+            let battleTime = 0;
+            let lastProgress = [];
+            let lastResult = { win: false };
+            for (const battleData of battles) {
+                const calcResult = await runBattleCalc(BattleCalc, battleData, getBattleType(this.arenaType));
+                if (!calcResult || !calcResult.result) {
+                    console.error('BattleCalc returned invalid result:', calcResult);
+                    continue;
+                }
+                if (calcResult.result.win) {
+                    wins++;
+                }
+                battleTimer += Number(calcResult.battleTimer) || 0;
+                battleTime += Number(calcResult.battleTime) || 0;
+                lastProgress = calcResult.progress || lastProgress;
+                lastResult = calcResult.result;
+            }
+            return {
+                win: wins >= Math.ceil(battles.length / 2),
+                progress: lastProgress,
+                result: lastResult,
+                battleTimer,
+                battleTime
+            };
         }
 
         this.waitForArenaBattle = async function(battleResult) {
