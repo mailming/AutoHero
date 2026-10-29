@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.56
+// @version      3.5.57
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.56";
+    const EXTENSION_VERSION = "3.5.57";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2612,7 +2612,7 @@
     const BattleCalc = cheats.BattleCalc;
 
     const CONSTANTS = {
-        WIN_RATE_THRESHOLD: 70,
+        WIN_RATE_THRESHOLD: 89,
         SIMULATION_COUNT: 10,
         BATTLE_VERSION: 296,       // Arena demo endBattle
         TITAN_BATTLE_VERSION: 298, // Titan demo endBattle
@@ -3295,15 +3295,15 @@
                     };
                     console.log('[DEMO] Grand arrangement:', arrangement.perm, arrangement.slotRates);
                 } else {
-                    const grandTeams = this.listGrandArenaAttackTeams();
-                    const candidates = grandTeams.length ? grandTeams : [myTeamConfig];
-                    if (!grandTeams.length) {
-                        console.warn('[DEMO] No Grand Arena teams configured; testing the Arena team only');
+                    const candidates = this.listArenaPreFightCandidates(myTeamConfig);
+                    if (!candidates.length) {
+                        console.warn('[DEMO] No Arena pre-fight candidates; testing the Arena team only');
+                        candidates.push(myTeamConfig);
                     }
                     let chosen = null;
                     for (let i = 0; i < candidates.length; i++) {
                         const candidate = candidates[i];
-                        const label = candidate.index != null ? `Grand team ${candidate.index + 1}` : 'Arena team';
+                        const label = candidate.label || (candidate.index != null ? `Grand team ${candidate.index + 1}` : 'Arena team');
                         Utils.log('log', `[DEMO] ${label} (${i + 1}/${candidates.length}) vs opponent ${opponentId}: ${getTestFightCount()} local test fights`);
                         setProgress(`Arena: ${label} ${i + 1}/${candidates.length}`);
                         const sample = await this.simulateWithDemoBattles(candidate, opponentTeamConfig);
@@ -3312,16 +3312,14 @@
                             chosen = { team: candidate, simulationResult: sample, label };
                             break;
                         }
-                        console.log(`[DEMO] ${label} below ${CONSTANTS.WIN_RATE_THRESHOLD}%, ${i + 1 < candidates.length ? 'trying the next Grand team' : 'no Grand teams left'}`);
+                        console.log(`[DEMO] ${label} below ${CONSTANTS.WIN_RATE_THRESHOLD}%, ${i + 1 < candidates.length ? 'trying next team' : 'no candidates left'}`);
                     }
                     if (!chosen) {
                         return {
                             win: false,
                             skipped: true,
                             winRate: 0,
-                            reason: grandTeams.length
-                                ? `all ${grandTeams.length} Grand Arena teams below threshold`
-                                : 'arena team below threshold'
+                            reason: `all ${candidates.length} Arena pre-fight teams below threshold`
                         };
                     }
                     attackTeam = chosen.team;
@@ -3442,9 +3440,7 @@
             return favor;
         }
 
-        this.listGrandArenaAttackTeams = function() {
-            const grandTeams = this.teamInfo?.teams?.grand || [];
-            const grandFavor = this.teamInfo?.favor?.grand || {};
+        this.getArenaBannerList = function() {
             let banners = [];
             try {
                 const userInfo = getUserInfo();
@@ -3458,29 +3454,131 @@
                     banners = [userInfo.banner[0], userInfo.banner[0], userInfo.banner[0]];
                 }
             } catch (e) {
-                console.log('[DEMO] Could not read banners for Grand Arena teams');
+                console.log('[DEMO] Could not read banners for Arena candidates');
             }
             while (banners.length < 3) {
                 banners.push(banners[banners.length - 1] || 1);
             }
+            return banners;
+        }
 
+        this.parseHeroPetLineup = function(raw) {
+            if (!Array.isArray(raw) || raw.length < 6) return null;
+            const heroes = raw.slice(0, 5).map(Number).filter((id) => Number.isFinite(id) && id > 0 && id < 6000);
+            const pet = Number(raw[5]);
+            if (heroes.length !== 5 || !Number.isFinite(pet) || pet < CONSTANTS.PET_ID_RANGE_MIN) return null;
+            return { heroes, pet };
+        }
+
+        this.listGrandArenaAttackTeams = function() {
+            const grandTeams = this.teamInfo?.teams?.grand || [];
+            const grandFavor = this.teamInfo?.favor?.grand || {};
+            const banners = this.getArenaBannerList();
             const teams = [];
             for (let i = 0; i < grandTeams.length; i++) {
-                const raw = grandTeams[i];
-                if (!Array.isArray(raw) || raw.length < 6) continue;
-                const heroes = raw.slice(0, 5).map(Number).filter((id) => Number.isFinite(id) && id > 0 && id < 6000);
-                const pet = Number(raw[5]);
-                if (heroes.length !== 5 || !Number.isFinite(pet) || pet < CONSTANTS.PET_ID_RANGE_MIN) continue;
+                const parsed = this.parseHeroPetLineup(grandTeams[i]);
+                if (!parsed) continue;
                 teams.push({
                     index: i,
-                    heroes,
-                    pet,
-                    favor: this.favorForGrandSlot(grandFavor, i, heroes),
+                    label: `Grand team ${i + 1}`,
+                    source: 'grand',
+                    heroes: parsed.heroes,
+                    pet: parsed.pet,
+                    favor: this.favorForGrandSlot(grandFavor, i, parsed.heroes),
                     banners: [banners[i] || 1]
                 });
             }
             console.log(`[DEMO] Grand Arena attack teams: ${teams.length}`, teams.map((team) => team.heroes));
             return teams;
+        }
+
+        /**
+         * Arena pre-fight attack choices: Arena + Grand + CoW defence heroes + GW defence heroes
+         * (+ clan_pvp_hero / clan_global_pvp). Deduped by heroes+pet.
+         */
+        this.listArenaPreFightCandidates = function(arenaTeamConfig) {
+            const teamData = this.teamInfo?.teams || {};
+            const favorData = this.teamInfo?.favor || {};
+            const banners = this.getArenaBannerList();
+            const defaultBanner = banners[0] || 1;
+            const seen = new Set();
+            const candidates = [];
+
+            const addParsed = (parsed, favorSource, index, label, source, banner) => {
+                if (!parsed) return;
+                const key = `${parsed.heroes.join(',')}:${parsed.pet}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                candidates.push({
+                    index,
+                    label,
+                    source,
+                    heroes: parsed.heroes,
+                    pet: parsed.pet,
+                    favor: this.favorForGrandSlot(favorSource || {}, index, parsed.heroes),
+                    banners: [banner || defaultBanner]
+                });
+            };
+
+            const addRawTeam = (raw, favorSource, index, label, source, banner) => {
+                addParsed(this.parseHeroPetLineup(raw), favorSource, index, label, source, banner);
+            };
+
+            const addTeamList = (list, favorSource, labelPrefix, source) => {
+                if (!Array.isArray(list)) return;
+                // Flat single team: [h,h,h,h,h,pet]
+                if (list.length >= 6 && typeof list[0] === 'number') {
+                    addRawTeam(list, favorSource, 0, labelPrefix, source, defaultBanner);
+                    return;
+                }
+                for (let i = 0; i < list.length; i++) {
+                    addRawTeam(list[i], favorSource, i, `${labelPrefix} ${i + 1}`, source, banners[i] || defaultBanner);
+                }
+            };
+
+            if (arenaTeamConfig?.heroes?.length === 5 && arenaTeamConfig?.pet) {
+                addParsed(
+                    { heroes: arenaTeamConfig.heroes.map(Number), pet: Number(arenaTeamConfig.pet) },
+                    arenaTeamConfig.favor || favorData.arena || {},
+                    0,
+                    'Arena team',
+                    'arena',
+                    Array.isArray(arenaTeamConfig.banners) ? arenaTeamConfig.banners[0] : defaultBanner
+                );
+            } else {
+                addRawTeam(teamData.arena, favorData.arena || {}, 0, 'Arena team', 'arena', defaultBanner);
+            }
+
+            for (const team of this.listGrandArenaAttackTeams()) {
+                const key = `${team.heroes.join(',')}:${team.pet}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                candidates.push(team);
+            }
+
+            // Clash of Worlds defence hero teams (crossClanDefence_heroes)
+            addTeamList(
+                teamData.crossClanDefence_heroes,
+                favorData.crossClanDefence_heroes || {},
+                'CoW defence',
+                'crossClanDefence_heroes'
+            );
+            // Guild War defence hero team(s)
+            addTeamList(
+                teamData.clanDefence_heroes,
+                favorData.clanDefence_heroes || {},
+                'GW defence',
+                'clanDefence_heroes'
+            );
+            // Related war attack lineups
+            addRawTeam(teamData.clan_pvp_hero, favorData.clan_pvp_hero || {}, 0, 'GW attack', 'clan_pvp_hero', defaultBanner);
+            addRawTeam(teamData.clan_global_pvp, favorData.clan_global_pvp || {}, 0, 'CoW attack', 'clan_global_pvp', defaultBanner);
+
+            console.log(
+                `[DEMO] Arena pre-fight candidates: ${candidates.length}`,
+                candidates.map((c) => `${c.label}=[${c.heroes.join(',')}] pet ${c.pet}`)
+            );
+            return candidates;
         }
 
         this.getTeamConfiguration = function() {
