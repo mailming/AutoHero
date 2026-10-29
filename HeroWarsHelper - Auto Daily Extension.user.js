@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.52
+// @version      3.5.53
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.52";
+    const EXTENSION_VERSION = "3.5.53";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -3607,9 +3607,10 @@
 
         this.simulateTeamMatchup = async function(attack, defence) {
             const mechanic = 'arena';
+            // Pre-fight sims omit the attack banner (it inflates win rate). Real grandAttack still uses banners.
             const matchup = {
                 team: { units: attack.units, pet: attack.pet },
-                banner: attack.banner || 1,
+                banner: 0,
                 favor: attack.favor || {},
                 defenceTeam: { units: defence.units, pet: defence.pet },
                 defenceBanner: defence.banner || 1,
@@ -3845,6 +3846,7 @@
             const simulationCount = getTestFightCount();
             Utils.log('log', `[DEMO] One server battle, then ${simulationCount} local test fights`);
             Utils.log('log', `[DEMO] Attack team power mode: ${getSimAttackMaxUpgrade() ? 'max' : 'current'}`);
+            Utils.log('log', '[DEMO] Pre-fight attack banner disabled (real arenaAttack still uses banner)');
 
             // demoBattles builds the battle. Later samples only change the seed locally.
             const mechanic = 'arena';
@@ -3943,7 +3945,8 @@
                 args.defenceBannerStones = {};
                 args.defenceFavor = matchup.defenceFavor || {};
                 args.team = matchup.team;
-                args.banner = matchup.banner || 1;
+                // Pre-fight only: never apply attack banner (|| 1 used to force a false buff).
+                args.banner = 0;
                 args.bannerStones = {};
                 args.favor = matchup.favor || {};
             } else if (this.arenaType === 'grand') {
@@ -3964,7 +3967,7 @@
                     units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
                     pet: myTeam.pets[teamIndex] || myTeam.pets[0] || CONSTANTS.DEFAULT_PET_ID
                 };
-                args.banner = myTeam.banners[teamIndex] || myTeam.banners[0] || 1;
+                args.banner = 0;
                 args.bannerStones = {};
                 args.favor = myTeam.favor || {};
             } else {
@@ -3979,7 +3982,7 @@
                     units: myTeam.heroes || [],
                     pet: myTeam.pet || CONSTANTS.DEFAULT_PET_ID
                 };
-                args.banner = myTeam.banners[0] || 1;
+                args.banner = 0;
                 args.bannerStones = {};
                 args.favor = myTeam.favor || {};
             }
