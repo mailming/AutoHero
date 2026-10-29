@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.54
+// @version      3.5.55
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.54";
+    const EXTENSION_VERSION = "3.5.55";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -3337,7 +3337,7 @@
                     averageBattleTime: simulationResult.averageBattleTime.toFixed(2) + 's'
                 });
 
-                // Grand already accepted a 1-visible-pass (or 0-visible default) arrangement; Arena still needs overall win rate.
+                // Grand already accepted a passing team sequence (or 0-visible default); Arena still needs overall win rate.
                 const shouldProceed = this.arenaType === 'grand'
                     ? true
                     : simulationResult.winRate > CONSTANTS.WIN_RATE_THRESHOLD;
@@ -3414,6 +3414,34 @@
             }
         }
 
+        /** Hero→favor-pet map for one Grand slot (supports flat or per-index favor). */
+        this.favorForGrandSlot = function(grandFavor, index, heroes) {
+            let source = grandFavor;
+            if (Array.isArray(grandFavor)) {
+                source = grandFavor[index] || {};
+            } else if (grandFavor && typeof grandFavor === 'object') {
+                const nested = grandFavor[index] ?? grandFavor[String(index)];
+                if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+                    source = nested;
+                }
+            }
+            const favor = {};
+            for (const id of heroes || []) {
+                const petId = source?.[id] ?? source?.[String(id)];
+                if (petId) favor[String(id)] = Number(petId);
+            }
+            return favor;
+        }
+
+        this.mergeGrandFavorForSequence = function(grandFavor, perm, heroTeams) {
+            const favor = {};
+            for (let pos = 0; pos < perm.length; pos++) {
+                const srcIdx = perm[pos];
+                Object.assign(favor, this.favorForGrandSlot(grandFavor, srcIdx, heroTeams[srcIdx]));
+            }
+            return favor;
+        }
+
         this.listGrandArenaAttackTeams = function() {
             const grandTeams = this.teamInfo?.teams?.grand || [];
             const grandFavor = this.teamInfo?.favor?.grand || {};
@@ -3436,24 +3464,6 @@
                 banners.push(banners[banners.length - 1] || 1);
             }
 
-            const favorFor = (index, heroes) => {
-                let source = grandFavor;
-                if (Array.isArray(grandFavor)) {
-                    source = grandFavor[index] || {};
-                } else if (grandFavor && typeof grandFavor === 'object') {
-                    const nested = grandFavor[index] ?? grandFavor[String(index)];
-                    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-                        source = nested;
-                    }
-                }
-                const favor = {};
-                for (const id of heroes) {
-                    const petId = source?.[id] ?? source?.[String(id)];
-                    if (petId) favor[String(id)] = Number(petId);
-                }
-                return favor;
-            };
-
             const teams = [];
             for (let i = 0; i < grandTeams.length; i++) {
                 const raw = grandTeams[i];
@@ -3465,7 +3475,7 @@
                     index: i,
                     heroes,
                     pet,
-                    favor: favorFor(i, heroes),
+                    favor: this.favorForGrandSlot(grandFavor, i, heroes),
                     banners: [banners[i] || 1]
                 });
             }
@@ -3606,8 +3616,9 @@
         }
 
         this.simulateTeamMatchup = async function(attack, defence) {
+            // Same path as Arena pre-fight: 1 demoBattles_startBattle, then local BattleCalc x N.
+            // Attack banner stays 0 in sims; real grandAttack still sends banners.
             const mechanic = 'arena';
-            // Pre-fight sims omit the attack banner (it inflates win rate). Real grandAttack still uses banners.
             const matchup = {
                 team: { units: attack.units, pet: attack.pet },
                 banner: 0,
@@ -3616,6 +3627,7 @@
                 defenceBanner: defence.banner || 1,
                 defenceFavor: defence.favor || {}
             };
+            Utils.log('log', `[DEMO] Grand slot pre-fight: 1 server demo + ${getTestFightCount()} local test fights`);
             const battleData = await this.fetchDemoBattle(null, null, mechanic, 0, 0, matchup);
             const summary = await this.runLocalTestFights(battleData, mechanic, getTestFightCount());
             const calcResult = summary.simulations.find((sample) => sample.result)?.result;
@@ -3629,25 +3641,29 @@
                 return null;
             }
 
-            const defaultTeam = {
-                heroes: myTeam.heroes.slice(0, 3),
-                pets: myTeam.pets.slice(0, 3),
-                banners: (myTeam.banners || [1, 2, 3]).slice(0, 3),
-                favor: myTeam.favor || {}
+            const defaultPerm = [0, 1, 2];
+            const buildTeam = (perm) => {
+                const banners = perm.map((i) => myTeam.banners?.[i] || 1);
+                while (banners.length < 3) {
+                    banners.push(banners[banners.length - 1] || 1);
+                }
+                return {
+                    heroes: perm.map((i) => myTeam.heroes[i]),
+                    pets: perm.map((i) => myTeam.pets[i]),
+                    banners,
+                    favor: this.mergeGrandFavorForSequence(myTeam.favor || {}, perm, myTeam.heroes)
+                };
             };
-            while (defaultTeam.banners.length < 3) {
-                defaultTeam.banners.push(defaultTeam.banners[defaultTeam.banners.length - 1] || 1);
-            }
 
             const visibleSlots = oppTeam.visibleSlots || [];
             if (!visibleSlots.length) {
                 console.log('[DEMO] No visible Grand Arena teams — attacking with default lineup');
                 return {
-                    perm: [0, 1, 2],
+                    perm: defaultPerm,
                     winRate: 100,
                     slotRates: [],
                     testedSlots: 0,
-                    team: defaultTeam
+                    team: buildTeam(defaultPerm)
                 };
             }
 
@@ -3657,11 +3673,17 @@
                 if (cache[key] != null) {
                     return cache[key];
                 }
+                const heroes = myTeam.heroes[myIdx];
+                if (!Array.isArray(heroes) || !heroes.length || !oppTeam.heroes?.[slot]?.length) {
+                    cache[key] = 0;
+                    return 0;
+                }
+                setProgress(`Grand Arena: sim team ${myIdx + 1} vs defence ${slot + 1}`);
                 const sim = await this.simulateTeamMatchup({
-                    units: myTeam.heroes[myIdx],
+                    units: heroes,
                     pet: myTeam.pets[myIdx],
                     banner: myTeam.banners?.[myIdx] || 1,
-                    favor: myTeam.favor || {}
+                    favor: this.favorForGrandSlot(myTeam.favor || {}, myIdx, heroes)
                 }, {
                     units: oppTeam.heroes[slot],
                     pet: oppTeam.pets[slot],
@@ -3669,14 +3691,17 @@
                     favor: oppTeam.favor || {}
                 });
                 cache[key] = sim.winRate;
-                Utils.log('log', `[DEMO] Our team ${myIdx} vs visible slot ${slot}: ${sim.winRate.toFixed(1)}%`);
+                Utils.log('log', `[DEMO] Our team ${myIdx + 1} vs visible slot ${slot + 1}: ${sim.winRate.toFixed(1)}% (${sim.wins}/${sim.total})`);
                 return sim.winRate;
             };
 
-            // Any visible defenses: one passing sim is enough. None visible: already attacked with default lineup.
-            const neededWins = 1;
+            // 3 visible: need 2 projected wins. 1–2 visible: every visible slot must pass.
+            const neededWins = visibleSlots.length >= 3 ? 2 : visibleSlots.length;
+            const sequences = this.permute(defaultPerm); // [0,1,2] first, then rearrangements
             let best = null;
-            for (const perm of this.permute([0, 1, 2])) {
+
+            for (let s = 0; s < sequences.length; s++) {
+                const perm = sequences[s];
                 const slotRates = [];
                 for (const slot of visibleSlots) {
                     const myIdx = perm[slot];
@@ -3684,21 +3709,41 @@
                     slotRates.push({ slot, myIdx, rate });
                 }
                 const passing = slotRates.filter((row) => row.rate > CONSTANTS.WIN_RATE_THRESHOLD);
+                const avg = passing.length
+                    ? passing.reduce((sum, row) => sum + row.rate, 0) / passing.length
+                    : 0;
+                console.log(
+                    `[DEMO] Grand sequence [${perm.map((i) => i + 1).join(',')}] ` +
+                    `${passing.length}/${neededWins} projected wins` +
+                    (s === 0 ? ' (default order)' : ' (rearranged)')
+                );
+
                 if (passing.length < neededWins) {
+                    console.log('[DEMO] Sequence failed threshold — changing team order to match defenses');
                     continue;
                 }
-                const avg = passing.reduce((sum, row) => sum + row.rate, 0) / passing.length;
+
                 const better = !best
                     || passing.length > best.passing
                     || (passing.length === best.passing && avg > best.avg);
                 if (better) {
                     best = { perm, avg, slotRates, passing: passing.length };
                 }
+                // First passing sequence is enough when it meets neededWins; keep searching only to prefer more wins.
+                if (passing.length === visibleSlots.length) {
+                    break;
+                }
             }
 
             if (!best) {
-                console.log(`[DEMO] No permutation projected ${neededWins} win(s) on visible teams`);
+                console.log(`[DEMO] No team sequence projected ${neededWins} win(s) on visible defenses`);
                 return null;
+            }
+
+            if (best.perm.join(',') !== defaultPerm.join(',')) {
+                console.log(`[DEMO] Using rearranged Grand order [${best.perm.map((i) => i + 1).join(',')}]`);
+            } else {
+                console.log('[DEMO] Using default Grand team order [1,2,3]');
             }
 
             return {
@@ -3706,12 +3751,7 @@
                 winRate: best.avg,
                 slotRates: best.slotRates,
                 testedSlots: visibleSlots.length,
-                team: {
-                    heroes: best.perm.map((i) => myTeam.heroes[i]),
-                    pets: best.perm.map((i) => myTeam.pets[i]),
-                    banners: best.perm.map((i) => myTeam.banners?.[i] || 1),
-                    favor: myTeam.favor || {}
-                }
+                team: buildTeam(best.perm)
             };
         }
 
