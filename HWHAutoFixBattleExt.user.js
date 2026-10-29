@@ -3,7 +3,7 @@
 // @name:en			HWHAutoFixBattleExt
 // @name:ru			HWHAutoFixBattleExt
 // @namespace		HeroWarsHelper
-// @version			0.0.15
+// @version			0.0.16
 // @description		Extension for HeroWarsHelper script. Enables fixes for Asgard boss fights, Guild Wars, Worlds Collide, and Brawls
 // @description:en	Extension for HeroWarsHelper script. Enables fixes for Asgard boss fights, Guild Wars, Worlds Collide, and Brawls
 // @description:ru	Р Р°СЃС€РёСЂРµРЅРёРµ РґР»СЏ СЃРєСЂРёРїС‚Р° HeroWarsHelper. Р’РєР»СЋС‡Р°РµС‚ РёСЃРїСЂР°РІР»РµРЅРёРµ Р±РѕРµРІ РЅР° Р±РѕСЃСЃРµ РђСЃРіР°СЂРґР°, РІ Р’РѕР№РЅРµ Р“РёР»СЊРґРёР№, РЎС‚РѕР»РєРЅРѕРІРµРЅРёРё РњРёСЂРѕРІ Рё РџРѕС‚Р°СЃРѕРІРєР°С…
@@ -296,6 +296,23 @@
 			}
 		}
 
+		/** Pull battle snapshot from start-battle responses (wrapped or bare). */
+		function extractBattleFromStartResponse(result) {
+			if (!result || typeof result !== 'object') return null;
+			if (result.battle && typeof result.battle === 'object') return result.battle;
+			if (result.replay && typeof result.replay === 'object') return result.replay;
+			if (Array.isArray(result.battles) && result.battles[0]) return result.battles[0];
+			if (result.response?.battle) return result.response.battle;
+			if (Array.isArray(result.response?.battles) && result.response.battles[0]) {
+				return result.response.battles[0];
+			}
+			// Bare battle object (common for clanWarAttack / crossClanWar_startBattle)
+			if (result.attackers != null && (result.seed != null || result.type != null)) {
+				return result;
+			}
+			return null;
+		}
+
 		let lastBattleInfo;
 		Events.on('checkChangeResponse', (request, call, callsIdent) => {
 			if (
@@ -305,8 +322,14 @@
 				call.ident == callsIdent['epicBrawl_startBattle'] ||
 				call.ident == callsIdent['clanRaid_startBossBattle']
 			) {
-				const result = call.result.response;
-				lastBattleInfo = result.battle || result.replay || result.response;
+				const result = call.result?.response ?? call.result;
+				const battle = extractBattleFromStartResponse(result);
+				if (!battle) {
+					console.warn('[HWHAutoFix] start battle response had no battle snapshot; AutoFix skipped for this fight');
+					lastBattleInfo = null;
+					return;
+				}
+				lastBattleInfo = battle;
 				let battleDuration = 120;
 				try {
 					const battleType = lastBattleInfo?.effects?.battleConfig ?? lastBattleInfo?.type;
@@ -320,19 +343,24 @@
 		Events.on('checkChangeSend', async (request, call) => {
 			if (
 				isChecked('autoFixIt') &&
-				(call.name == 'titanArenaEndBattle' || // РўСѓСЂРЅРёСЂ СЃС‚РёС…РёР№
-					call.name == 'clanWarEndBattle' || // Р’РѕР№РЅР° РіРёР»СЊРґРёР№
-					call.name == 'crossClanWar_endBattle' || // РЎС‚РѕР»РєРЅРѕРІРµРЅРёРµ РјРёСЂРѕРІ
+				(call.name == 'titanArenaEndBattle' || // Турнир стихий
+					call.name == 'clanWarEndBattle' || // Война гильдий
+					call.name == 'crossClanWar_endBattle' || // Столкновение миров
 					call.name == 'epicBrawl_endBattle') &&
-				!call.args.result.win
+				!call.args?.result?.win
 			) {
-				const cloneBattle = structuredClone(lastBattleInfo);
+				const cloneBattle = lastBattleInfo ? structuredClone(lastBattleInfo) : null;
 				lastBattleInfo = null;
+				if (!cloneBattle) {
+					console.warn('[HWHAutoFix] No cached start battle for endBattle; skipping AutoFix');
+					return;
+				}
 				try {
 					const bFix = new BestOrWinAutoFixBattle(cloneBattle, true);
 					let endTime = Date.now() + 6e4;
-					if (endTime < cloneBattle.endTime) {
-						endTime = cloneBattle.endTime;
+					const battleEnd = Number(cloneBattle.endTime) || 0;
+					if (endTime < battleEnd) {
+						endTime = battleEnd;
 					}
 					const result = await bFix.start(endTime, Infinity);
 					if (result.result?.win || result.value > 0) {
@@ -350,8 +378,16 @@
 				let maxDamage = bossDamage.damageTaken + bossDamage.damageTakenNextLevel;
 				const lastDamage = maxDamage;
 				setProgress(I18N('AUTO_FIX_BOSS_START'), false);
-				const cloneBattle = structuredClone(lastBattleInfo);
+				const cloneBattle = lastBattleInfo ? structuredClone(lastBattleInfo) : null;
 				lastBattleInfo = null;
+				if (!cloneBattle) {
+					console.warn('[HWHAutoFix] No cached boss battle for endBossBattle; skipping AutoFix');
+					setProgress(I18N('AUTO_FIX_BOSS_FAILED', { damage: lastDamage.toLocaleString() }), false, hideProgress);
+					return;
+				}
+				if (!cloneBattle.endTime) {
+					cloneBattle.endTime = Date.now() + 12e4;
+				}
 				const bFix = new BossAutoFixBattle(cloneBattle, true);
 				const result = await bFix.start(cloneBattle.endTime, 1000);
 				let msgResult = I18N('AUTO_FIX_BOSS_FAILED', { damage: lastDamage.toLocaleString() });
