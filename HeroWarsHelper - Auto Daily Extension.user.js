@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.57
+// @version      3.5.58
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.57";
+    const EXTENSION_VERSION = "3.5.58";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2370,6 +2370,38 @@
         }
     }
 
+    /** Drop HWH progress / leftover confirm UI so Auto Daily is not blocked after AutoFix or errors. */
+    function dismissBlockingUi(reason = '') {
+        try {
+            const { HWHFuncs } = window;
+            if (typeof HWHFuncs?.isHideProgress === 'function' && typeof HWHFuncs?.hideProgress === 'function') {
+                if (!HWHFuncs.isHideProgress()) {
+                    HWHFuncs.hideProgress();
+                }
+            } else if (typeof HWHFuncs?.hideProgress === 'function') {
+                HWHFuncs.hideProgress();
+            }
+        } catch (_) { /* ignore */ }
+
+        try {
+            // Auto-click common HWH/game confirm/close buttons left after a failed battle.
+            const root = document.querySelector('.PopUp_Container') || document;
+            const buttons = root.querySelectorAll('button, .btn, [role="button"], .PopUp_Button, .button');
+            for (const btn of buttons) {
+                const text = String(btn.textContent || btn.value || '').trim().toLowerCase();
+                if (!text) continue;
+                if (/^(ok|okay|close|закрыть|подтвердить|continue|продолжить|got it|dismiss)$/i.test(text)
+                    || text === '×' || text === 'x') {
+                    btn.click();
+                    if (reason) {
+                        console.log(`[Auto Daily] Dismissed blocking UI (${reason}):`, text);
+                    }
+                    break;
+                }
+            }
+        } catch (_) { /* ignore */ }
+    }
+
     /** Local HWH FixBattle salvage (AutoFix ext needs live Scheduler logs Auto Daily never fills). */
     async function salvageWithHwhFixBattle(battleData, options = {}) {
         const {
@@ -2393,6 +2425,7 @@
         const endTime = Math.max(Date.now() + Math.min(durationMs, 180000), Date.now() + 30000);
         clone.endTime = endTime;
         if (typeof window.HWHFuncs?.setProgress === 'function') {
+            // true = non-blocking toast; avoid the click-to-dismiss AutoFix form.
             window.HWHFuncs.setProgress(`${label}: AutoFix searching...`, true);
         }
         console.log(`[${label}] Running local HWH FixBattle salvage (${mode})`);
@@ -2424,6 +2457,8 @@
         } catch (err) {
             console.warn(`[${label}] AutoFix salvage failed:`, err);
             return null;
+        } finally {
+            dismissBlockingUi(`${label} AutoFix`);
         }
     }
 
@@ -7725,12 +7760,17 @@
         ensureAutoBattleReady();
         autoBattleRunCount++;
         window.HWH_AUTOBATTLE_RUNNING = true;
+        window.HWH_AUTO_DAILY_RUNNING = true;
         try {
             await runner();
         } finally {
+            dismissBlockingUi('autobattle task end');
             autoBattleRunCount = Math.max(0, autoBattleRunCount - 1);
             if (autoBattleRunCount === 0) {
                 window.HWH_AUTOBATTLE_RUNNING = false;
+            }
+            if (!autoRunInProgress && autoBattleRunCount === 0) {
+                window.HWH_AUTO_DAILY_RUNNING = false;
             }
         }
     }
@@ -8971,6 +9011,7 @@
                 return;
             }
             autoRunInProgress = true;
+            window.HWH_AUTO_DAILY_RUNNING = true;
             try {
                 await executeTidyInventoryIfAvailable();
                 await executeAutoFarmIfAvailable();
@@ -8980,6 +9021,7 @@
                         await sleep(500);
                     } catch (e) {
                         console.warn('[Auto Daily] Cosmic Battle auto-run failed:', e);
+                        dismissBlockingUi('cosmic failure');
                     }
                 }
                 for (const task of ordered) {
@@ -8991,7 +9033,12 @@
                     if (isDungeonTask && window.HWH_AUTOBATTLE_RUNNING) {
                         await waitForAutoBattleIdle();
                     }
-                    await executeSingleTask(task, { fromAutoRun: true });
+                    try {
+                        await executeSingleTask(task, { fromAutoRun: true });
+                    } catch (taskErr) {
+                        console.warn(`[Auto Daily] Task ${task.id} failed; continuing:`, taskErr);
+                    }
+                    dismissBlockingUi(`after ${task.id}`);
                     await sleep(500);
                 }
                 if (ordered.length > 0) {
@@ -9001,7 +9048,11 @@
                 console.error('[Auto Daily] Auto-run failed:', e);
                 HWHFuncs.setProgress(`Auto Daily: Stopped (${e.message || 'error'})`, true);
             } finally {
+                dismissBlockingUi('auto-run end');
                 autoRunInProgress = false;
+                if (!window.HWH_AUTOBATTLE_RUNNING) {
+                    window.HWH_AUTO_DAILY_RUNNING = false;
+                }
             }
         }, 7000);
     }

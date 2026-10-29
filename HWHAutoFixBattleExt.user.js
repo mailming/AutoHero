@@ -3,7 +3,7 @@
 // @name:en			HWHAutoFixBattleExt
 // @name:ru			HWHAutoFixBattleExt
 // @namespace		HeroWarsHelper
-// @version			0.0.16
+// @version			0.0.17
 // @description		Extension for HeroWarsHelper script. Enables fixes for Asgard boss fights, Guild Wars, Worlds Collide, and Brawls
 // @description:en	Extension for HeroWarsHelper script. Enables fixes for Asgard boss fights, Guild Wars, Worlds Collide, and Brawls
 // @description:ru	Р Р°СЃС€РёСЂРµРЅРёРµ РґР»СЏ СЃРєСЂРёРїС‚Р° HeroWarsHelper. Р’РєР»СЋС‡Р°РµС‚ РёСЃРїСЂР°РІР»РµРЅРёРµ Р±РѕРµРІ РЅР° Р±РѕСЃСЃРµ РђСЃРіР°СЂРґР°, РІ Р’РѕР№РЅРµ Р“РёР»СЊРґРёР№, РЎС‚РѕР»РєРЅРѕРІРµРЅРёРё РњРёСЂРѕРІ Рё РџРѕС‚Р°СЃРѕРІРєР°С…
@@ -193,16 +193,20 @@
 				console.log(
 					this.count,
 					this.avgTime.toFixed(2),
-					(this.endTime - Date.now()) / 1000,
-					this.lastResult.battleTime,
+					((this.endTime || Date.now()) - Date.now()) / 1000,
+					this.lastResult?.battleTime,
 					this.lastTimer,
-					this.bestResult.value,
+					this.bestResult?.value,
 				);
-				const endTime = ((this.endTime - Date.now()) / 1000).toFixed(2);
-				const bestValue = this.bestResult.value.toFixed(2);
-				//const avgTime = this.avgTime.toFixed(2);
+				const endTime = (((this.endTime || Date.now()) - Date.now()) / 1000).toFixed(2);
+				const bestValue = Number(this.bestResult?.value || 0).toFixed(2);
 				const msg = I18N('AUTO_FIX_STATUS_MSG', { count: this.count, maxCount: this.maxCount, bestValue, endTime });
-				setProgress(msg, false, this.stopFix.bind(this));
+				// Auto Daily / AutoBattle: non-blocking toast. Manual: click-to-stop form.
+				if (context.HWH_AUTO_DAILY_RUNNING || context.HWH_AUTOBATTLE_RUNNING) {
+					setProgress(msg, true);
+				} else {
+					setProgress(msg, false, this.stopFix.bind(this));
+				}
 			}
 
 			stopFix() {
@@ -216,17 +220,20 @@
 				super.showResult();
 				setTimeout(() => {
 					const best = this.bestResult;
-					const maxDmg = best.value.toLocaleString();
-					const endTime = ((this.endTime - Date.now()) / 1000).toFixed(2);
-					//const avgTime = this.avgTime.toLocaleString();
+					const maxDmg = Number(best?.value || 0).toLocaleString();
+					const endTime = (((this.endTime || Date.now()) - Date.now()) / 1000).toFixed(2);
 					const msg = I18N('AUTO_FIX_BOSS_STATUS_MSG', { count: this.count, maxCount: this.maxCount, maxDmg, endTime });
-					setProgress(msg, false, this.stopFix.bind(this));
+					if (context.HWH_AUTO_DAILY_RUNNING || context.HWH_AUTOBATTLE_RUNNING) {
+						setProgress(msg, true);
+					} else {
+						setProgress(msg, false, this.stopFix.bind(this));
+					}
 				}, 0);
 			}
 
 			stopFix() {
 				super.stopFix();
-				if (!isHideProgress()) addProgress('', hideProgress);
+				if (!isHideProgress()) hideProgress();
 			}
 		}
 
@@ -370,6 +377,11 @@
 					}
 				} catch (error) {
 					console.error(error);
+				} finally {
+					// Never leave the AutoFix form up — it blocks Auto Daily / AutoBattle.
+					try {
+						if (!isHideProgress()) hideProgress();
+					} catch (_) {}
 				}
 			}
 
@@ -377,31 +389,42 @@
 				const bossDamage = call.args.progress[0].defenders.heroes[1].extra;
 				let maxDamage = bossDamage.damageTaken + bossDamage.damageTakenNextLevel;
 				const lastDamage = maxDamage;
-				setProgress(I18N('AUTO_FIX_BOSS_START'), false);
+				const unattended = !!(context.HWH_AUTO_DAILY_RUNNING || context.HWH_AUTOBATTLE_RUNNING);
+				setProgress(I18N('AUTO_FIX_BOSS_START'), unattended);
 				const cloneBattle = lastBattleInfo ? structuredClone(lastBattleInfo) : null;
 				lastBattleInfo = null;
-				if (!cloneBattle) {
-					console.warn('[HWHAutoFix] No cached boss battle for endBossBattle; skipping AutoFix');
-					setProgress(I18N('AUTO_FIX_BOSS_FAILED', { damage: lastDamage.toLocaleString() }), false, hideProgress);
-					return;
+				try {
+					if (!cloneBattle) {
+						console.warn('[HWHAutoFix] No cached boss battle for endBossBattle; skipping AutoFix');
+						setProgress(
+							I18N('AUTO_FIX_BOSS_FAILED', { damage: lastDamage.toLocaleString() }),
+							unattended,
+							unattended ? undefined : hideProgress
+						);
+						return;
+					}
+					if (!cloneBattle.endTime) {
+						cloneBattle.endTime = Date.now() + 12e4;
+					}
+					const bFix = new BossAutoFixBattle(cloneBattle, true);
+					const result = await bFix.start(cloneBattle.endTime, 1000);
+					let msgResult = I18N('AUTO_FIX_BOSS_FAILED', { damage: lastDamage.toLocaleString() });
+					if (result.value > lastDamage) {
+						maxDamage = result.value;
+						call.args.result = result.result;
+						call.args.progress = result.progress;
+						request._isChangeRequest = true;
+						const firstDmg = lastDamage.toLocaleString()
+						const maxDmg = maxDamage.toLocaleString();
+						msgResult = I18N('AUTO_FIX_BOSS_SUCCESS', { firstDmg, maxDmg });
+					}
+					console.log('Dmg:', lastDamage, maxDamage);
+					setProgress(msgResult, unattended, unattended ? undefined : hideProgress);
+				} finally {
+					if (unattended && !isHideProgress()) {
+						hideProgress();
+					}
 				}
-				if (!cloneBattle.endTime) {
-					cloneBattle.endTime = Date.now() + 12e4;
-				}
-				const bFix = new BossAutoFixBattle(cloneBattle, true);
-				const result = await bFix.start(cloneBattle.endTime, 1000);
-				let msgResult = I18N('AUTO_FIX_BOSS_FAILED', { damage: lastDamage.toLocaleString() });
-				if (result.value > lastDamage) {
-					maxDamage = result.value;
-					call.args.result = result.result;
-					call.args.progress = result.progress;
-					request._isChangeRequest = true;
-					const firstDmg = lastDamage.toLocaleString()
-					const maxDmg = maxDamage.toLocaleString();
-					msgResult = I18N('AUTO_FIX_BOSS_SUCCESS', { firstDmg, maxDmg });
-				}
-				console.log('Dmg:', lastDamage, maxDamage);
-				setProgress(msgResult, false, hideProgress);
 			}
 		});
 
