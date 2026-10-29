@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.53
+// @version      3.5.54
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.53";
+    const EXTENSION_VERSION = "3.5.54";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -5360,43 +5360,60 @@
             return null;
         }
 
-        /** Spirit args for GW titan demoBattles (up to 2 elements; skills from elementSpiritSkills). */
-        this.getGuildWarTitanSpiritArgs = function(attackTitanIds, defenceTitanIds, defenceUnits) {
+        /**
+         * Spirit args for GW titan demoBattles (up to 2 elements).
+         * Live client: maxUpgrade / defenceMaxUpgrade true → that side's *SpiritSkills are {};
+         * false → { elemental, primal } from elementSpiritSkills.
+         */
+        this.getGuildWarTitanSpiritArgs = function(attackTitanIds, defenceTitanIds, defenceUnits, attackMaxUpgrade, defenceMaxUpgrade) {
             const atkRanked = this.rankTitanElements(attackTitanIds).slice(0, 2);
             const defRanked = this.rankTitanElements(defenceTitanIds).slice(0, 2);
             const args = {};
-            const put = (elementKey, skillsKey, element, skills) => {
+            const put = (elementKey, skillsKey, element, maxUpgrade, resolveSkills) => {
                 if (!element) return;
                 args[elementKey] = element;
+                if (maxUpgrade) {
+                    args[skillsKey] = {};
+                    return;
+                }
+                const skills = resolveSkills();
                 if (skills) {
-                    args[skillsKey] = skills;
+                    args[skillsKey] = {
+                        elemental: skills.elemental,
+                        primal: skills.primal
+                    };
                 } else {
-                    console.warn(`[GUILD_WAR_TITAN] No spirit skill ids for ${elementKey} (${element})`);
+                    args[skillsKey] = {};
+                    console.warn(`[GUILD_WAR_TITAN] No spirit skill ids for ${elementKey} (${element}); sending {}`);
                 }
             };
             put(
                 'firstSpiritElement',
                 'firstSpiritSkills',
                 atkRanked[0],
-                this.skillsForElement(atkRanked[0], attackTitanIds, null, true)
+                !!attackMaxUpgrade,
+                () => this.skillsForElement(atkRanked[0], attackTitanIds, null, true)
             );
             put(
                 'secondSpiritElement',
                 'secondSpiritSkills',
                 atkRanked[1],
-                this.skillsForElement(atkRanked[1], attackTitanIds, null, true)
+                !!attackMaxUpgrade,
+                () => this.skillsForElement(atkRanked[1], attackTitanIds, null, true)
             );
             put(
                 'defenceFirstSpiritElement',
                 'defenceFirstSpiritSkills',
                 defRanked[0],
-                this.skillsForElement(defRanked[0], defenceTitanIds, defenceUnits, false)
+                !!defenceMaxUpgrade,
+                () => this.skillsForElement(defRanked[0], defenceTitanIds, defenceUnits, false)
             );
             put(
                 'defenceSecondSpiritElement',
                 'defenceSecondSpiritSkills',
                 defRanked[1],
-                this.skillsForElement(defRanked[1], defenceTitanIds, defenceUnits, false)
+                !!defenceMaxUpgrade,
+                () => this.skillsForElement(defRanked[1], defenceTitanIds, defenceUnits, false)
             );
             return args;
         }
@@ -5588,18 +5605,27 @@
                         return;
                     }
 
-                    // maxUpgrade from BATTLE SIM checkbox; defenceMaxUpgrade=true.
+                    // Match live titan demoBattles_startBattle: maxUpgrade from BATTLE SIM;
+                    // defenceMaxUpgrade=true → defence *SpiritSkills {}; attack skills filled only when maxUpgrade false.
                     const attackMaxUpgrade = getSimAttackMaxUpgrade();
-                    const spiritArgs = this.getGuildWarTitanSpiritArgs(attackUnits, defenceUnits, opponentTeam.units);
+                    const defenceMaxUpgrade = true;
+                    const spiritArgs = this.getGuildWarTitanSpiritArgs(
+                        attackUnits,
+                        defenceUnits,
+                        opponentTeam.units,
+                        attackMaxUpgrade,
+                        defenceMaxUpgrade
+                    );
                     if (seedOffset === 0 && parentId === 0) {
                         console.log('[GUILD_WAR_TITAN] Demo spirit args:', spiritArgs,
                             '| attack', attackUnits, '| defence', defenceUnits,
-                            '| maxUpgrade', attackMaxUpgrade);
+                            '| maxUpgrade', attackMaxUpgrade,
+                            '| defenceMaxUpgrade', defenceMaxUpgrade);
                     }
 
                     const args = {
                         mechanic: mechanic,
-                        defenceMaxUpgrade: true,
+                        defenceMaxUpgrade: defenceMaxUpgrade,
                         defenceTeam: {
                             units: defenceUnits
                         },
