@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           HWH Battle Lab HwH Ext
 // @namespace      HeroWarsHelper.BattleLab
-// @version        0.2.366
+// @version        0.2.367
 // @description    Battle lab for opponents, simulations, best teams, and local battle history.
 // @author         Askja
 // @match          https://www.hero-wars.com/*
@@ -2218,9 +2218,15 @@
 	function getBattleLabCalcExecutor() {
 		return activeExecutor;
 	}
-	/** Сохраняет ручной размер пула; число ядер не ограничивает выбор пользователя. */
-	function resolveBattleLabCalcWorkers(requested, _hardwareConcurrency) {
-		return Number.isFinite(requested) ? Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(requested))) : 1;
+	/**
+	* Soft-cap workers so the game tab keeps CPU/RAM for reCAPTCHA and UI.
+	* Leave at least one core for the main thread; never exceed 2 workers.
+	*/
+	function resolveBattleLabCalcWorkers(requested, hardwareConcurrency = globalThis.navigator?.hardwareConcurrency) {
+		const cores = Number.isFinite(Number(hardwareConcurrency)) ? Math.max(1, Math.floor(Number(hardwareConcurrency))) : 2;
+		const softCap = Math.max(1, Math.min(2, cores - 1 || 1));
+		const n = Number.isFinite(requested) ? Math.floor(requested) : 1;
+		return Math.max(1, Math.min(softCap, n));
 	}
 	var activeExecutor;
 	var init_calc_executor = __esmMin((() => {
@@ -2229,8 +2235,8 @@
 	//#endregion
 	//#region src/scripts/hwhbattlelab/runtime/calc-workers.ts
 	init_calc_executor();
-	/** Простой пула между запусками; закрытие окна освобождает воркеры сразу. */
-	var CALC_WORKER_IDLE_TIMEOUT_MS = 15 * 6e4;
+	/** Idle pool release — keep short so RAM drops after Calculate. */
+	var CALC_WORKER_IDLE_TIMEOUT_MS = 2 * 6e4;
 	/** Держит один пул Calc-воркеров и пересоздаёт его только при смене их числа. */
 	function createBattleLabCalcWorkers(readModeId) {
 		let dispatcher = null;
@@ -2256,12 +2262,11 @@
 			}
 		};
 	}
-	/** Выбирает проверенную библиотеку Calc для текущего режима. */
+	/** Compact combat library for every mode — full lib copies per worker blew past 3GB. */
 	function readBattleLabCalcLibrary(modeId) {
 		const data = globalThis.lib?.data;
 		if (data === null || typeof data !== "object" || Object.keys(data).length === 0) return null;
-		const library = data;
-		return modeId === "asgard" ? asgardCalcLibrary(library) : library;
+		return asgardCalcLibrary(data);
 	}
 	function logBattleLabCalcWorkerEvent(event) {
 		const prefix = "[Battle Lab:calc-workers]";
@@ -2370,12 +2375,12 @@
 			autoExpandEnemyTeams: typeof settings.autoExpandEnemyTeams === "boolean" ? settings.autoExpandEnemyTeams : DEFAULT_BATTLE_LAB_SETTINGS.autoExpandEnemyTeams,
 			confirmAttack: typeof settings.confirmAttack === "boolean" ? settings.confirmAttack : DEFAULT_BATTLE_LAB_SETTINGS.confirmAttack,
 			showAdvancedStats: typeof settings.showAdvancedStats === "boolean" ? settings.showAdvancedStats : DEFAULT_BATTLE_LAB_SETTINGS.showAdvancedStats,
-			plannerWorkers: normalizeInteger(settings.plannerWorkers, DEFAULT_BATTLE_LAB_SETTINGS.plannerWorkers, 1, Number.MAX_SAFE_INTEGER),
+			plannerWorkers: normalizeInteger(settings.plannerWorkers, DEFAULT_BATTLE_LAB_SETTINGS.plannerWorkers, 1, 2),
 			calcInWorkers: typeof settings.calcInWorkers === "boolean" ? settings.calcInWorkers : DEFAULT_BATTLE_LAB_SETTINGS.calcInWorkers,
 			trainingRuns: normalizeInteger(settings.trainingRuns, DEFAULT_BATTLE_LAB_SETTINGS.trainingRuns, 1, Number.MAX_SAFE_INTEGER),
 			asgardTeamCount: normalizeInteger(settings.asgardTeamCount, DEFAULT_BATTLE_LAB_SETTINGS.asgardTeamCount, 1, 10),
 			autoTrainAfterSearch: typeof settings.autoTrainAfterSearch === "boolean" ? settings.autoTrainAfterSearch : DEFAULT_BATTLE_LAB_SETTINGS.autoTrainAfterSearch,
-			historyLimit: normalizeInteger(settings.historyLimit, DEFAULT_BATTLE_LAB_SETTINGS.historyLimit, 50, 5e4),
+			historyLimit: normalizeInteger(settings.historyLimit, DEFAULT_BATTLE_LAB_SETTINGS.historyLimit, 50, 1e3),
 			ultraTimingEnabled: typeof settings.ultraTimingEnabled === "boolean" ? settings.ultraTimingEnabled : DEFAULT_BATTLE_LAB_SETTINGS.ultraTimingEnabled,
 			ultraMinTime,
 			ultraMaxTime,
@@ -2411,12 +2416,12 @@
 			autoExpandEnemyTeams: true,
 			confirmAttack: true,
 			showAdvancedStats: true,
-			plannerWorkers: 4,
+			plannerWorkers: 1,
 			calcInWorkers: true,
 			trainingRuns: 25,
 			asgardTeamCount: 5,
 			autoTrainAfterSearch: false,
-			historyLimit: 2e3,
+			historyLimit: 200,
 			ultraTimingEnabled: true,
 			ultraMinTime: 1,
 			ultraMaxTime: 120,
@@ -9731,7 +9736,7 @@
 	}
 	function buildBattleLabTerritoryCapture(calls, response, owner, createdAt = (/* @__PURE__ */ new Date()).toISOString()) {
 		return {
-			version: "0.2.366",
+			version: "0.2.367",
 			createdAt,
 			calls: calls.map((call) => ({
 				name: call.name,
@@ -14606,7 +14611,7 @@
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(phase, {
-			version: "0.2.366",
+			version: "0.2.367",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			phase,
 			error: getErrorMessage(error),
@@ -17765,7 +17770,7 @@ self.onmessage = (event) => {
 		};
 	}
 	async function runBattleLabOpponentOptimization(options) {
-		const { accountSnapshot, caller, gameLibrary, opponent, maxCalculations, asgardTeamCount = 5, plannerWorkers = 4, direction = "attack", ultraTimingEnabled = true, ultraMinTime = 1, ultraMaxTime = 120, scenarios = opponent.scenarios, history = [], signal: hardSignal, onProgress, onProcess, seedTeams = [], fixedCandidates, fixedTeams, fixedTeamSupports, runKind = "search" } = options;
+		const { accountSnapshot, caller, gameLibrary, opponent, maxCalculations, asgardTeamCount = 5, plannerWorkers = 1, direction = "attack", ultraTimingEnabled = true, ultraMinTime = 1, ultraMaxTime = 120, scenarios = opponent.scenarios, history = [], signal: hardSignal, onProgress, onProcess, seedTeams = [], fixedCandidates, fixedTeams, fixedTeamSupports, runKind = "search" } = options;
 		const signal = combineAbortSignals(hardSignal, options.finishSignal);
 		let accountRaw = accountSnapshot;
 		if (!accountRaw) {
@@ -18286,7 +18291,7 @@ self.onmessage = (event) => {
 			completed
 		};
 	}
-	async function runBattleLabResultTraining({ accountSnapshot, caller, gameLibrary, opponent, bestResult, maxCalculations, plannerWorkers = 4, scenarios = opponent.scenarios, history = [], signal, onProgress, onProcess, ultraTimingEnabled = true, ultraMinTime = 1, ultraMaxTime = 120 }) {
+	async function runBattleLabResultTraining({ accountSnapshot, caller, gameLibrary, opponent, bestResult, maxCalculations, plannerWorkers = 1, scenarios = opponent.scenarios, history = [], signal, onProgress, onProcess, ultraTimingEnabled = true, ultraMinTime = 1, ultraMaxTime = 120 }) {
 		const account = accountSnapshot ?? (opponent.modeId === "archdemon" ? await fetchArchdemonAccount(caller, opponent, gameLibrary) : opponent.modeId === "invasion" ? await fetchBattleLabInvasionAccount(caller, opponent, gameLibrary) : await fetchAccountSnapshot(caller));
 		if (opponent.modeId === "archdemon" && bestResult.archdemonTalismanPlan) {
 			opponent = withArchdemonTalisman(opponent, readArchdemonTalismans(gameLibrary), bestResult.archdemonTalismanPlan.talismanId);
@@ -18357,6 +18362,9 @@ self.onmessage = (event) => {
 			for (const name of ACCOUNT_CALLS) resultsMap[name] = instance.result(name);
 			return normalizeAccountSnapshot(resultsMap);
 		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// A second full account batch after reCAPTCHA failure usually fails again and worsens tab load.
+			if (/recaptcha/i.test(message)) throw error;
 			console.warn("[Battle Lab]", "Primary account Caller.send failed, retrying via caller.send", error);
 		}
 		return normalizeAccountSnapshot(await caller.send(ACCOUNT_CALLS));
@@ -19393,7 +19401,7 @@ self.onmessage = (event) => {
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(`campaign:${options.mode}`, {
-			version: "0.2.366",
+			version: "0.2.367",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			mode: options.mode,
 			phase: options.phase,
@@ -27603,11 +27611,12 @@ self.onmessage = (event) => {
 			type: "number",
 			className: "hwhbl-input-number",
 			min: "1",
+			max: "2",
 			step: "1",
 			"aria-label": "Thread count",
 			onChange: () => {
 				const value = Number(threadsInput.value);
-				if (Number.isSafeInteger(value) && value > 0) callbacks.onWorkersChange?.(value);
+				if (Number.isSafeInteger(value) && value > 0) callbacks.onWorkersChange?.(Math.min(2, value));
 				else threadsInput.value = String(store.getState().settings.plannerWorkers);
 			}
 		});
@@ -27807,7 +27816,7 @@ self.onmessage = (event) => {
 			throughput.observe(state.runProgress?.completed ?? state.calculationCount, state.runState === "running");
 			if (throughput.rate !== previousRate) storeThroughput(throughput.rate);
 			budgetEta.textContent = formatBattleLabEta(currentMax, throughput.rate);
-			threadsInput.value = String(state.settings?.plannerWorkers ?? 4);
+			threadsInput.value = String(state.settings?.plannerWorkers ?? 1);
 			const isRunning = state.runState === "running";
 			const busy = isRunning || state.attackState === "attacking" || state.attackState === "checking";
 			numberInput.disabled = busy;
@@ -31952,7 +31961,7 @@ self.onmessage = (event) => {
 	function readBattleLabUserscriptInfo() {
 		return {
 			name: "HWH Battle Lab",
-			version: "0.2.366",
+			version: "0.2.367",
 			author: "Askja"
 		};
 	}
@@ -36852,7 +36861,6 @@ self.onmessage = (event) => {
 			refreshBattleLabTerritoryView();
 			preloadHeroIcons().catch(() => void 0);
 			if (model.opponentsByMode[model.activeModeId].length === 0) refreshOpponents(model.activeModeId);
-			calcWorkers.dispatcher?.warmUp().catch(() => void 0);
 			openBattleLabModal({
 				store,
 				onClose: () => {
