@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           HWH Battle Lab HwH Ext
 // @namespace      HeroWarsHelper.BattleLab
-// @version        0.2.368
+// @version        0.2.369
 // @description    Battle lab for opponents, simulations, best teams, and local battle history.
 // @author         Askja
 // @match          https://www.hero-wars.com/*
@@ -9736,7 +9736,7 @@
 	}
 	function buildBattleLabTerritoryCapture(calls, response, owner, createdAt = (/* @__PURE__ */ new Date()).toISOString()) {
 		return {
-			version: "0.2.368",
+			version: "0.2.369",
 			createdAt,
 			calls: calls.map((call) => ({
 				name: call.name,
@@ -14611,7 +14611,7 @@
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(phase, {
-			version: "0.2.368",
+			version: "0.2.369",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			phase,
 			error: getErrorMessage(error),
@@ -17726,6 +17726,7 @@ self.onmessage = (event) => {
 		fetchAccountSnapshot: () => fetchAccountSnapshot,
 		fetchAccountSnapshotCached: () => fetchAccountSnapshotCached,
 		clearAccountSnapshotCache: () => clearAccountSnapshotCache,
+		warmAccountSnapshotFromHistory: () => warmAccountSnapshotFromHistory,
 		hasAuthoritativeBattleLabDefenders: () => hasAuthoritativeBattleLabDefenders,
 		normalizeAccountSnapshot: () => normalizeAccountSnapshot,
 		optimizeBattleLabOpponent: () => optimizeBattleLabOpponent,
@@ -18352,16 +18353,17 @@ self.onmessage = (event) => {
 			approxScore: 0
 		};
 	}
-	async function fetchAccountSnapshot(caller) {
+	async function fetchAccountSnapshot(caller, callNames = ACCOUNT_CALLS) {
+		const names = Array.isArray(callNames) && callNames.length ? callNames : ACCOUNT_CALLS;
 		if (canUseCallerInstance(caller)) try {
-			const instance = new caller(ACCOUNT_CALLS.map((name) => ({
+			const instance = new caller(names.map((name) => ({
 				name,
 				args: {},
 				ident: name
 			})));
 			await instance.send();
 			const resultsMap = {};
-			for (const name of ACCOUNT_CALLS) resultsMap[name] = instance.result(name);
+			for (const name of names) resultsMap[name] = instance.result(name);
 			return normalizeAccountSnapshot(resultsMap);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -18369,32 +18371,61 @@ self.onmessage = (event) => {
 			if (/recaptcha/i.test(message)) throw error;
 			console.warn("[Battle Lab]", "Primary account Caller.send failed, retrying via caller.send", error);
 		}
-		return normalizeAccountSnapshot(await caller.send(ACCOUNT_CALLS));
+		return normalizeAccountSnapshot(await caller.send(names));
 	}
 	function clearAccountSnapshotCache() {
 		accountSnapshotCache = null;
 	}
+	function rememberAccountSnapshot(snapshot, source) {
+		accountSnapshotCache = {
+			snapshot,
+			fetchedAt: Date.now(),
+			source
+		};
+		return snapshot;
+	}
+	function warmAccountSnapshotFromHistory() {
+		const fromHistory = tryAccountSnapshotFromRequestHistory();
+		if (!fromHistory) return null;
+		return rememberAccountSnapshot(fromHistory, "request-history");
+	}
 	/**
-	* Reuse a recent roster so Calculate does not hit reCAPTCHA on every run.
-	* On captcha/network failure, falls back to a stale cache when available.
+	* Prefer already-seen game/HWH responses so Calculate does not open a fresh
+	* captcha-gated getAll storm. Falls back to a small RPC batch with timeout.
 	*/
 	async function fetchAccountSnapshotCached(caller, { force = false, allowStaleOnError = true } = {}) {
 		const now = Date.now();
 		if (!force && accountSnapshotCache && now - accountSnapshotCache.fetchedAt < ACCOUNT_SNAPSHOT_CACHE_TTL_MS) {
 			console.info("[Battle Lab]", "Using cached account snapshot", {
 				ageSec: Math.round((now - accountSnapshotCache.fetchedAt) / 1e3),
+				source: accountSnapshotCache.source ?? "cache",
 				heroes: Object.keys(accountSnapshotCache.snapshot.heroes ?? {}).length
 			});
 			return accountSnapshotCache.snapshot;
 		}
+		const fromHistory = tryAccountSnapshotFromRequestHistory();
+		if (fromHistory) {
+			console.info("[Battle Lab]", "Using roster from HWH request history (no new API call)", {
+				heroes: Object.keys(fromHistory.heroes ?? {}).length,
+				pets: Object.keys(fromHistory.pets ?? {}).length,
+				titans: Object.keys(fromHistory.titans ?? {}).length
+			});
+			return rememberAccountSnapshot(fromHistory, "request-history");
+		}
 		try {
-			const snapshot = await fetchAccountSnapshot(caller);
-			accountSnapshotCache = {
-				snapshot,
-				fetchedAt: Date.now()
-			};
-			return snapshot;
+			const snapshot = await Promise.race([
+				fetchAccountSnapshot(caller, MINIMAL_ACCOUNT_CALLS),
+				new Promise((_, reject) => {
+					setTimeout(() => reject(/* @__PURE__ */ new Error("Account roster request timed out after 12s (often reCAPTCHA stall). Open Arena in-game once, then retry Calculate.")), ACCOUNT_SNAPSHOT_FETCH_TIMEOUT_MS);
+				})
+			]);
+			return rememberAccountSnapshot(snapshot, "network-minimal");
 		} catch (error) {
+			const staleHistory = tryAccountSnapshotFromRequestHistory();
+			if (staleHistory) {
+				console.warn("[Battle Lab]", "Account fetch failed; using request-history roster", error);
+				return rememberAccountSnapshot(staleHistory, "request-history-fallback");
+			}
 			if (allowStaleOnError && accountSnapshotCache?.snapshot) {
 				console.warn("[Battle Lab]", "Account fetch failed; reusing stale cached roster", {
 					ageSec: Math.round((Date.now() - accountSnapshotCache.fetchedAt) / 1e3),
@@ -18403,6 +18434,71 @@ self.onmessage = (event) => {
 				return accountSnapshotCache.snapshot;
 			}
 			throw error;
+		}
+	}
+	/**
+	* Scrape hero/pet/titan payloads already returned in this tab (game boot, arena
+	* open, HWH actions). Avoids a new Caller.send when reCAPTCHA is broken.
+	*/
+	function tryAccountSnapshotFromRequestHistory() {
+		const getHistory = globalThis.getRequestHistory;
+		if (typeof getHistory !== "function") return null;
+		let history;
+		try {
+			history = getHistory();
+		} catch {
+			return null;
+		}
+		if (!history || typeof history !== "object") return null;
+		const collected = {};
+		const aliases = {
+			heroGetAll: ["heroGetAll", "hero_getAll"],
+			pet_getAll: ["pet_getAll", "petGetAll"],
+			titanGetAll: ["titanGetAll", "titan_getAll"],
+			titanSpirit_getAll: ["titanSpirit_getAll", "titanSpiritGetAll"],
+			userGetInfo: ["userGetInfo", "user_getInfo"],
+			teamGetFavor: ["teamGetFavor", "team_getFavor"],
+			team_getBanners: ["team_getBanners", "teamGetBanners"],
+			teamGetAll: ["teamGetAll", "team_getAll"],
+			arenaGetAll: ["arenaGetAll", "arena_getAll"],
+			offerGetAll: ["offerGetAll", "offer_getAll"],
+			roleAscension_getAll: ["roleAscension_getAll", "roleAscensionGetAll"]
+		};
+		for (const entry of Object.values(history)) {
+			if (!entry || typeof entry !== "object") continue;
+			let response = entry.response;
+			if (response == null) continue;
+			if (typeof response === "string") try {
+				response = JSON.parse(response);
+			} catch {
+				continue;
+			}
+			const results = Array.isArray(response?.results) ? response.results : null;
+			if (!results?.length) continue;
+			const callMap = asRecord$1(entry.calls);
+			for (const [canonical, names] of Object.entries(aliases)) {
+				if (collected[canonical] !== void 0) continue;
+				for (const name of names) {
+					const ident = callMap[name];
+					const matched = ident ? results.find((item) => item?.ident === ident) : results.find((item) => item?.ident === name || item?.name === name);
+					const payload = matched?.result?.response ?? matched?.result ?? matched?.response;
+					if (payload !== void 0) {
+						collected[canonical] = payload;
+						break;
+					}
+				}
+			}
+		}
+		if (collected.heroGetAll === void 0 && collected.titanGetAll === void 0) return null;
+		try {
+			const snapshot = normalizeAccountSnapshot(collected);
+			const heroCount = Object.keys(snapshot.heroes ?? {}).length;
+			const titanCount = Object.keys(snapshot.titans ?? {}).length;
+			if (heroCount < 5 && titanCount < 5) return null;
+			return snapshot;
+		} catch (error) {
+			console.warn("[Battle Lab]", "Failed to normalize roster from request history", error);
+			return null;
 		}
 	}
 	function canUseCallerInstance(caller) {
@@ -19379,7 +19475,7 @@ self.onmessage = (event) => {
 	function resolveOwnedTeamPower(unitIds, teamPetId, account) {
 		return unitIds.reduce((total, unitId) => total + finiteNumber$1(account.heroes[String(unitId)]?.power ?? account.titans[String(unitId)]?.power), 0) + finiteNumber$1(account.pets[String(teamPetId ?? 0)]?.power);
 	}
-	var ASGARD_POTENTIAL_BUDGET_SHARE, EARLY_POTENTIAL_SHARE, ACCOUNT_CALLS, ACCOUNT_SNAPSHOT_CACHE_TTL_MS, accountSnapshotCache, preparedDefendersCache, ENGINE_PROGRESS_INTERVAL_MS;
+	var ASGARD_POTENTIAL_BUDGET_SHARE, EARLY_POTENTIAL_SHARE, ACCOUNT_CALLS, MINIMAL_ACCOUNT_CALLS, ACCOUNT_SNAPSHOT_CACHE_TTL_MS, ACCOUNT_SNAPSHOT_FETCH_TIMEOUT_MS, accountSnapshotCache, preparedDefendersCache, ENGINE_PROGRESS_INTERVAL_MS;
 	var init_optimizer_adapter = __esmMin((() => {
 		init_titan_arena_mode();
 		init_titan_arena_unit_state();
@@ -19419,7 +19515,17 @@ self.onmessage = (event) => {
 			"offerGetAll",
 			"roleAscension_getAll"
 		];
+		// Smallest set that still builds a usable arena/grand planning roster.
+		MINIMAL_ACCOUNT_CALLS = [
+			"userGetInfo",
+			"heroGetAll",
+			"pet_getAll",
+			"titanGetAll",
+			"teamGetFavor",
+			"team_getBanners"
+		];
 		ACCOUNT_SNAPSHOT_CACHE_TTL_MS = 15 * 6e4;
+		ACCOUNT_SNAPSHOT_FETCH_TIMEOUT_MS = 12e3;
 		accountSnapshotCache = null;
 		preparedDefendersCache = /* @__PURE__ */ new WeakMap();
 		ENGINE_PROGRESS_INTERVAL_MS = 100;
@@ -19439,7 +19545,7 @@ self.onmessage = (event) => {
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(`campaign:${options.mode}`, {
-			version: "0.2.368",
+			version: "0.2.369",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			mode: options.mode,
 			phase: options.phase,
@@ -31931,6 +32037,7 @@ self.onmessage = (event) => {
 	//#region src/scripts/hwhbattlelab/runtime/opponent-fetch.ts
 	init_helpers();
 	init_opponent_normalizer();
+	init_optimizer_adapter();
 	var SERVER_TIMEOUT_MS = 1e4;
 	/** Запрос к серверу с лимитом ожидания: режим может быть закрыт, а игра — перезагружаться. */
 	function sendBattleLabWithTimeout(caller, calls) {
@@ -31948,7 +32055,19 @@ self.onmessage = (event) => {
 		const modeId = descriptor.id;
 		const includeArenaState = modeId === "arena" || modeId === "grand-arena";
 		const opponentCalls = typeof descriptor.opponentCall === "string" ? [descriptor.opponentCall] : [...descriptor.opponentCall];
-		const response = includeArenaState ? await sendBattleLabWithTimeout(caller, [...opponentCalls, "arenaGetAll"]) : await sendBattleLabWithTimeout(caller, descriptor.opponentCall);
+		const baseCalls = includeArenaState ? [...opponentCalls, "arenaGetAll"] : typeof descriptor.opponentCall === "string" ? [descriptor.opponentCall] : [...descriptor.opponentCall];
+		// Try to warm roster in the same round-trip. If captcha/network rejects the bigger batch, fall back to opponents-only.
+		const rosterWarmCalls = includeArenaState ? [...MINIMAL_ACCOUNT_CALLS] : [];
+		let response;
+		let warmedWithRoster = false;
+		if (rosterWarmCalls.length) try {
+			response = await sendBattleLabWithTimeout(caller, [...baseCalls, ...rosterWarmCalls]);
+			warmedWithRoster = true;
+		} catch (error) {
+			console.warn("[Battle Lab]", "Arena refresh+roster warm failed; retrying opponents only", error);
+			response = await sendBattleLabWithTimeout(caller, baseCalls);
+		}
+		else response = await sendBattleLabWithTimeout(caller, descriptor.opponentCall);
 		let opponents = normalizeBattleLabOpponents(descriptor, modeId === "epic-brawl" && Array.isArray(response) ? {
 			...asRecord$1(response[0]),
 			...asRecord$1(response[1]),
@@ -31963,8 +32082,30 @@ self.onmessage = (event) => {
 				}
 			}));
 		} catch {}
+		let accountSnapshot;
+		if (warmedWithRoster && includeArenaState && Array.isArray(response)) try {
+			const rosterValues = {};
+			rosterWarmCalls.forEach((name, index) => {
+				// response[0]=opponents, [1]=arenaGetAll, then MINIMAL_ACCOUNT_CALLS in order
+				rosterValues[name] = response[baseCalls.length + index];
+			});
+			if (rosterValues.heroGetAll !== void 0) {
+				accountSnapshot = normalizeAccountSnapshot(rosterValues);
+				rememberAccountSnapshot(accountSnapshot, "arena-refresh");
+				console.info("[Battle Lab]", "Warmed roster during Arena opponent refresh", {
+					heroes: Object.keys(accountSnapshot.heroes ?? {}).length
+				});
+			}
+		} catch (error) {
+			console.warn("[Battle Lab]", "Arena roster warm parse failed", error);
+		}
+		if (!accountSnapshot) {
+			const fromHistory = tryAccountSnapshotFromRequestHistory();
+			if (fromHistory) accountSnapshot = rememberAccountSnapshot(fromHistory, "request-history");
+		}
 		return {
 			opponents,
+			accountSnapshot,
 			...includeArenaState && Array.isArray(response) ? { accountState: normalizeBattleLabAccountState(response[1]) } : {}
 		};
 	}
@@ -31999,7 +32140,7 @@ self.onmessage = (event) => {
 	function readBattleLabUserscriptInfo() {
 		return {
 			name: "HWH Battle Lab",
-			version: "0.2.368",
+			version: "0.2.369",
 			author: "Askja"
 		};
 	}
@@ -36899,6 +37040,18 @@ self.onmessage = (event) => {
 			refreshBattleLabTerritoryView();
 			preloadHeroIcons().catch(() => void 0);
 			if (model.opponentsByMode[model.activeModeId].length === 0) refreshOpponents(model.activeModeId);
+			try {
+				const { warmAccountSnapshotFromHistory } = await Promise.resolve().then(() => (init_optimizer_adapter(), optimizer_adapter_exports));
+				const warmed = warmAccountSnapshotFromHistory();
+				if (warmed) {
+					model.planningRoster = toBattleLabPlanningRoster(warmed);
+					console.info("[Battle Lab]", "Pre-warmed roster from request history", {
+						heroes: Object.keys(warmed.heroes ?? {}).length
+					});
+				}
+			} catch (error) {
+				console.warn("[Battle Lab]", "Roster pre-warm skipped", error);
+			}
 			openBattleLabModal({
 				store,
 				onClose: () => {
@@ -37056,6 +37209,7 @@ self.onmessage = (event) => {
 					opponentCall: descriptor.opponentCall
 				});
 				if (fetched.accountState) model.accountState = fetched.accountState;
+				if (fetched.accountSnapshot) model.planningRoster = toBattleLabPlanningRoster(fetched.accountSnapshot);
 				const { opponents } = fetched;
 				setModeOpponents(modeId, opponents.map((opponent) => ({
 					...opponent,
@@ -37104,7 +37258,7 @@ self.onmessage = (event) => {
 		}
 		function formatBattleLabRunError(error) {
 			const message = getErrorMessage$1(error);
-			if (/recaptcha/i.test(message)) return "reCAPTCHA timed out while loading your roster. Refresh the game tab, click something in-game once, then Calculate again. Tip: turn off Calc-in-workers if CPU/RAM are high.";
+			if (/recaptcha/i.test(message) || /roster request timed out/i.test(message)) return "Could not refresh roster (reCAPTCHA/network). Open Arena once in the game client so heroes load, then retry Calculate — Battle Lab will reuse that data without a new getAll call.";
 			return message;
 		}
 		async function loadAccountSnapshotForRun() {
