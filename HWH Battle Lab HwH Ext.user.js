@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           HWH Battle Lab HwH Ext
 // @namespace      HeroWarsHelper.BattleLab
-// @version        0.2.371
+// @version        0.2.373
 // @description    Battle lab for opponents, simulations, best teams, and local battle history.
 // @author         Askja
 // @match          https://www.hero-wars.com/*
@@ -9731,7 +9731,7 @@
 	}
 	function buildBattleLabTerritoryCapture(calls, response, owner, createdAt = (/* @__PURE__ */ new Date()).toISOString()) {
 		return {
-			version: "0.2.371",
+			version: "0.2.373",
 			createdAt,
 			calls: calls.map((call) => ({
 				name: call.name,
@@ -14606,7 +14606,7 @@
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(phase, {
-			version: "0.2.371",
+			version: "0.2.373",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			phase,
 			error: getErrorMessage(error),
@@ -17046,7 +17046,7 @@ self.onmessage = (event) => {
 	function noSimulationError(errors, teamIndex) {
 		const reason = errors.find(Boolean);
 		const prefix = teamIndex ? `Pack` : "";
-		return /* @__PURE__ */ new Error(`${prefix}none of the regular simulations have been completed. There are no more recommendations for naked power.${reason ?` Причина: ${reason}` : ""}`);
+		return /* @__PURE__ */ new Error(`${prefix}none of the regular simulations have been completed. There are no more recommendations for naked power.${reason ? ` Reason: ${reason}` : ""}`);
 	}
 	function noLibraryCoverageError(gaps, teamIndex) {
 		const prefix = teamIndex ? `Pack` : "";
@@ -19393,7 +19393,7 @@ self.onmessage = (event) => {
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(`campaign:${options.mode}`, {
-			version: "0.2.371",
+			version: "0.2.373",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			mode: options.mode,
 			phase: options.phase,
@@ -21426,7 +21426,7 @@ self.onmessage = (event) => {
 			const mode = model.activeModeId;
 			const view = model.campaign;
 			if (mode !== "guild-war" && mode !== "clash-of-worlds" || !view?.defense?.length) return;
-			if (model.settings.confirmAttack && typeof globalThis.confirm === "function" && !globalThis.confirm("Apply calculated defense teams to the server?")) return;
+			if (!confirmBattleLabAction(model.settings.confirmAttack, "Apply calculated defense teams to the server?")) return;
 			await run(async (signal) => {
 				if (signal.aborted) return;
 				await applyBattleLabCampaignDefense({
@@ -21449,7 +21449,7 @@ self.onmessage = (event) => {
 			const view = model.campaign;
 			const selected = view?.plan.find((item) => item.target.opponent.id === opponentId);
 			if (!view || !selected) return;
-			if (model.settings.confirmAttack && typeof globalThis.confirm === "function" && !globalThis.confirm(`Attack "${selected.target.opponent.name}" with the calculated lineup?`)) return;
+			if (!confirmBattleLabAction(model.settings.confirmAttack, `Attack "${selected.target.opponent.name}" with the calculated lineup?`)) return;
 			await run(async (signal) => {
 				if (signal.aborted) return;
 				model.attackState = "attacking";
@@ -21476,7 +21476,7 @@ self.onmessage = (event) => {
 			});
 		};
 		const autoMinions = async () => {
-			if (model.settings.confirmAttack && typeof globalThis.confirm === "function" && !globalThis.confirm("Find teams and clear available Asgard minion points? Remaining attempts will be spent.")) return;
+			if (!confirmBattleLabAction(model.settings.confirmAttack, "Find teams and clear available Asgard minion points? Remaining attempts will be spent.")) return;
 			await run(async (signal) => {
 				for (;;) {
 					const snapshot = await refresh("asgard-minions");
@@ -31925,7 +31925,12 @@ self.onmessage = (event) => {
 	//#region src/scripts/hwhbattlelab/runtime/automation-status.ts
 	/** Подтверждение отправки на сервер; без `confirm` в окружении — отказа нет. */
 	function confirmBattleLabAction(enabled, message) {
-		return !enabled || typeof globalThis.confirm !== "function" || globalThis.confirm(message);
+		if (!enabled || typeof globalThis.confirm !== "function") return true;
+		// Blur the focused Attack button so Enter/OK on the dialog does not re-click it
+		// and open the same confirmation a second time.
+		const active = globalThis.document?.activeElement;
+		if (active && typeof active.blur === "function") active.blur();
+		return globalThis.confirm(message);
 	}
 	/** Статус автопрохода Турнира; null — фаза не меняет текст. */
 	function formatTournamentAutomationStatus(progress, translate) {
@@ -31952,7 +31957,7 @@ self.onmessage = (event) => {
 	function readBattleLabUserscriptInfo() {
 		return {
 			name: "HWH Battle Lab",
-			version: "0.2.371",
+			version: "0.2.373",
 			author: "Askja"
 		};
 	}
@@ -37206,6 +37211,13 @@ self.onmessage = (event) => {
 				return;
 			}
 			const opponent = hydrateBattleLabOpponent(selected, model.history);
+			const engineOpponent = enrichOpponentForEngine(opponent, getGameLibrary());
+			if (bestResult?.strategy === "estimate" || !hasAuthoritativeBattleLabDefenders(resolveOpponentDefenderTeams(engineOpponent))) {
+				model.errorText = "Cannot train: this opponent's defense snapshot is incomplete (missing combat HP/attack). Calculate only ranked teams by power. Open this mode in-game so defenses load, click Refresh, Calculate again, then Train. Fighting them once also fills the snapshot from battle history.";
+				model.runState = "error";
+				model.statusText = model.errorText;
+				return;
+			}
 			const runsPerTeam = Math.max(model.settings.trainingRuns, minimumCalculations);
 			const trainingCalculations = runsPerTeam * (opponent.modeId === "asgard" ? selectedRows.length : 1);
 			if (!Number.isSafeInteger(trainingCalculations)) {
@@ -37424,6 +37436,7 @@ self.onmessage = (event) => {
 			return null;
 		}
 		async function attackSelectedOpponent() {
+			if (model.attackState === "attacking" || model.attackState === "checking" || model.runState === "running") return;
 			if (isBattleLabCampaignMode(model.activeModeId)) {
 				await campaignController.attack(model.selectedOpponentId);
 				return;
@@ -37438,6 +37451,8 @@ self.onmessage = (event) => {
 			if (!confirmBattleLabAction(model.settings.confirmAttack, translate("HWHBL_ATTACK_CONFIRM"))) return;
 			const targetedResult = selectAttackTargetTeams(selected, bestResult);
 			if (!targetedResult) return;
+			// Lock immediately after confirm so a leftover Enter/click cannot open it again.
+			model.attackState = "checking";
 			model.asgardAttackProgress = model.activeModeId === "asgard" ? {
 				opponentId: selected.id,
 				teams: targetedResult.teams.map((team) => ({
@@ -37445,7 +37460,6 @@ self.onmessage = (event) => {
 					phase: "waiting"
 				}))
 			} : null;
-			model.attackState = "checking";
 			model.attackStatusText = translate("HWHBL_ATTACK_CHECKING");
 			model.attackCountdownMs = null;
 			try {
