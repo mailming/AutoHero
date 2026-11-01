@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           HWH Battle Lab HwH Ext
 // @namespace      HeroWarsHelper.BattleLab
-// @version        0.2.367
+// @version        0.2.368
 // @description    Battle lab for opponents, simulations, best teams, and local battle history.
 // @author         Askja
 // @match          https://www.hero-wars.com/*
@@ -2417,7 +2417,7 @@
 			confirmAttack: true,
 			showAdvancedStats: true,
 			plannerWorkers: 1,
-			calcInWorkers: true,
+			calcInWorkers: false,
 			trainingRuns: 25,
 			asgardTeamCount: 5,
 			autoTrainAfterSearch: false,
@@ -9736,7 +9736,7 @@
 	}
 	function buildBattleLabTerritoryCapture(calls, response, owner, createdAt = (/* @__PURE__ */ new Date()).toISOString()) {
 		return {
-			version: "0.2.367",
+			version: "0.2.368",
 			createdAt,
 			calls: calls.map((call) => ({
 				name: call.name,
@@ -14611,7 +14611,7 @@
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(phase, {
-			version: "0.2.367",
+			version: "0.2.368",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			phase,
 			error: getErrorMessage(error),
@@ -17724,6 +17724,8 @@ self.onmessage = (event) => {
 		combineAbortSignals: () => combineAbortSignals,
 		enrichOpponentForEngine: () => enrichOpponentForEngine,
 		fetchAccountSnapshot: () => fetchAccountSnapshot,
+		fetchAccountSnapshotCached: () => fetchAccountSnapshotCached,
+		clearAccountSnapshotCache: () => clearAccountSnapshotCache,
 		hasAuthoritativeBattleLabDefenders: () => hasAuthoritativeBattleLabDefenders,
 		normalizeAccountSnapshot: () => normalizeAccountSnapshot,
 		optimizeBattleLabOpponent: () => optimizeBattleLabOpponent,
@@ -18368,6 +18370,40 @@ self.onmessage = (event) => {
 			console.warn("[Battle Lab]", "Primary account Caller.send failed, retrying via caller.send", error);
 		}
 		return normalizeAccountSnapshot(await caller.send(ACCOUNT_CALLS));
+	}
+	function clearAccountSnapshotCache() {
+		accountSnapshotCache = null;
+	}
+	/**
+	* Reuse a recent roster so Calculate does not hit reCAPTCHA on every run.
+	* On captcha/network failure, falls back to a stale cache when available.
+	*/
+	async function fetchAccountSnapshotCached(caller, { force = false, allowStaleOnError = true } = {}) {
+		const now = Date.now();
+		if (!force && accountSnapshotCache && now - accountSnapshotCache.fetchedAt < ACCOUNT_SNAPSHOT_CACHE_TTL_MS) {
+			console.info("[Battle Lab]", "Using cached account snapshot", {
+				ageSec: Math.round((now - accountSnapshotCache.fetchedAt) / 1e3),
+				heroes: Object.keys(accountSnapshotCache.snapshot.heroes ?? {}).length
+			});
+			return accountSnapshotCache.snapshot;
+		}
+		try {
+			const snapshot = await fetchAccountSnapshot(caller);
+			accountSnapshotCache = {
+				snapshot,
+				fetchedAt: Date.now()
+			};
+			return snapshot;
+		} catch (error) {
+			if (allowStaleOnError && accountSnapshotCache?.snapshot) {
+				console.warn("[Battle Lab]", "Account fetch failed; reusing stale cached roster", {
+					ageSec: Math.round((Date.now() - accountSnapshotCache.fetchedAt) / 1e3),
+					error: error instanceof Error ? error.message : String(error)
+				});
+				return accountSnapshotCache.snapshot;
+			}
+			throw error;
+		}
 	}
 	function canUseCallerInstance(caller) {
 		return typeof caller === "function" && typeof caller.prototype?.send === "function" && typeof caller.prototype?.result === "function";
@@ -19343,7 +19379,7 @@ self.onmessage = (event) => {
 	function resolveOwnedTeamPower(unitIds, teamPetId, account) {
 		return unitIds.reduce((total, unitId) => total + finiteNumber$1(account.heroes[String(unitId)]?.power ?? account.titans[String(unitId)]?.power), 0) + finiteNumber$1(account.pets[String(teamPetId ?? 0)]?.power);
 	}
-	var ASGARD_POTENTIAL_BUDGET_SHARE, EARLY_POTENTIAL_SHARE, ACCOUNT_CALLS, preparedDefendersCache, ENGINE_PROGRESS_INTERVAL_MS;
+	var ASGARD_POTENTIAL_BUDGET_SHARE, EARLY_POTENTIAL_SHARE, ACCOUNT_CALLS, ACCOUNT_SNAPSHOT_CACHE_TTL_MS, accountSnapshotCache, preparedDefendersCache, ENGINE_PROGRESS_INTERVAL_MS;
 	var init_optimizer_adapter = __esmMin((() => {
 		init_titan_arena_mode();
 		init_titan_arena_unit_state();
@@ -19383,6 +19419,8 @@ self.onmessage = (event) => {
 			"offerGetAll",
 			"roleAscension_getAll"
 		];
+		ACCOUNT_SNAPSHOT_CACHE_TTL_MS = 15 * 6e4;
+		accountSnapshotCache = null;
 		preparedDefendersCache = /* @__PURE__ */ new WeakMap();
 		ENGINE_PROGRESS_INTERVAL_MS = 100;
 	}));
@@ -19401,7 +19439,7 @@ self.onmessage = (event) => {
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(`campaign:${options.mode}`, {
-			version: "0.2.367",
+			version: "0.2.368",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			mode: options.mode,
 			phase: options.phase,
@@ -31961,7 +31999,7 @@ self.onmessage = (event) => {
 	function readBattleLabUserscriptInfo() {
 		return {
 			name: "HWH Battle Lab",
-			version: "0.2.367",
+			version: "0.2.368",
 			author: "Askja"
 		};
 	}
@@ -36914,8 +36952,8 @@ self.onmessage = (event) => {
 					if (content) importHistorySnapshots(content);
 				},
 				loadRoster: async () => {
-					const { fetchAccountSnapshot } = await Promise.resolve().then(() => (init_optimizer_adapter(), optimizer_adapter_exports));
-					model.planningRoster = toBattleLabPlanningRoster(await fetchAccountSnapshot(caller));
+					const accountSnapshot = await loadAccountSnapshotForRun();
+					model.planningRoster = toBattleLabPlanningRoster(accountSnapshot);
 					model.statusText = "Roster loaded";
 				},
 				getEntityLabel,
@@ -36938,12 +36976,17 @@ self.onmessage = (event) => {
 				model.opponentsByMode = restoreOpponentsFromHistory(workspace.history);
 				timingExperiences = workspace.timingExperiences;
 				model.maxCalculations = workspace.maxCalculations;
-				model.settings = workspace.settings;
-				configureBattleLabProfiling(workspace.settings.engineProfiling);
-				configureCalcWorkers(workspace.settings);
+				// Migrate heavy saved pools off workers — they were pegging CPU/RAM and breaking reCAPTCHA.
+				model.settings = normalizeBattleLabSettings({
+					...workspace.settings,
+					calcInWorkers: false,
+					plannerWorkers: 1
+				});
+				configureBattleLabProfiling(model.settings.engineProfiling);
+				configureCalcWorkers(model.settings);
 				model.planningSetups = workspace.planningSetups ?? {};
 				model.storageBytes = estimateBattleLabWorkspaceBytes(workspace);
-				syncMenuButton(workspace.settings.menuPlacement);
+				syncMenuButton(model.settings.menuPlacement);
 			});
 			return workspacePromise;
 		}
@@ -37052,12 +37095,21 @@ self.onmessage = (event) => {
 					await persistWorkspace();
 				} else {
 					model.runState = "error";
-					model.errorText = getErrorMessage$1(error);
+					model.errorText = formatBattleLabRunError(error);
 					model.statusText = model.errorText;
 				}
 			} finally {
 				if (activeRunController === runController) activeRunController = null;
 			}
+		}
+		function formatBattleLabRunError(error) {
+			const message = getErrorMessage$1(error);
+			if (/recaptcha/i.test(message)) return "reCAPTCHA timed out while loading your roster. Refresh the game tab, click something in-game once, then Calculate again. Tip: turn off Calc-in-workers if CPU/RAM are high.";
+			return message;
+		}
+		async function loadAccountSnapshotForRun() {
+			const { fetchAccountSnapshotCached } = await Promise.resolve().then(() => (init_optimizer_adapter(), optimizer_adapter_exports));
+			return fetchAccountSnapshotCached(caller);
 		}
 		async function calculateOpponentPlan(opponent, direction, runController, setupOverride, archdemonTalismans) {
 			model.bestResults = replaceBattleLabRunResult(model.bestResults, opponent, direction);
@@ -37078,55 +37130,62 @@ self.onmessage = (event) => {
 				variations: []
 			};
 			model.errorText = "";
-			model.statusText = "Preparing Calc workers…";
-			console.info("[Battle Lab]", model.statusText, {
-				modeId: opponent.modeId,
-				opponentId: opponent.id,
-				maxCalculations: model.maxCalculations,
-				calcWorkers: model.settings.plannerWorkers,
-				calcInWorkers: model.settings.calcInWorkers,
-				hasDispatcher: Boolean(calcWorkers.dispatcher)
-			});
 			const setup = setupOverride ?? normalizePlanningSetup(model.planningSetups?.[planningSetupKey(opponent, direction)]);
 			const territoryLockedCandidate = readBattleLabTerritoryLockedCandidate(opponent);
 			await persistWorkspace();
-			try {
-				const warmStartedAt = Date.now();
-				const warmPromise = calcWorkers.dispatcher?.warmUp() ?? Promise.resolve(false);
-				warmPromise.catch(() => void 0);
-				const warmSlowTimer = setInterval(() => {
-					console.warn("[Battle Lab]", `Calc workers warm-up still running (${Math.round((Date.now() - warmStartedAt) / 1e3)}s)…`, {
-						hint: "Watch for [Battle Lab:calc-workers] serialize / ready / start-failed messages"
-					});
-				}, 15e3);
-				let warmed;
-				try {
-					warmed = await Promise.race([
-						warmPromise,
-						new Promise((_, reject) => setTimeout(() => reject(new Error("Calc workers warm-up timed out after 90s. Check console for [Battle Lab:calc-workers] errors, or disable Calc-in-workers in settings and retry.")), 9e4))
-					]);
-				} finally {
-					clearInterval(warmSlowTimer);
-				}
-				console.info("[Battle Lab]", "Calc workers warm-up finished", {
-					warmed: warmed ?? false,
-					ms: Date.now() - warmStartedAt
-				});
-				if (model.settings.calcInWorkers && warmed === false) {
-					throw new Error("Calc workers failed to start. Open the browser console for [Battle Lab:calc-workers] details, or turn off Calc-in-workers in Battle Lab settings.");
-				}
-			} catch (error) {
-				console.error("[Battle Lab]", "Calc workers warm-up failed", error);
-				throw error;
-			}
-			model.statusText = "Loading roster from server…";
+			// Roster before workers: warm-up saturates CPU/RAM and makes reCAPTCHA time out.
+			model.statusText = "Loading roster…";
 			model.runProgress = {
 				...model.runProgress,
 				phase: "preparing"
 			};
-			console.info("[Battle Lab]", model.statusText);
+			console.info("[Battle Lab]", model.statusText, {
+				modeId: opponent.modeId,
+				opponentId: opponent.id
+			});
+			const accountSnapshot = await loadAccountSnapshotForRun();
+			model.planningRoster = toBattleLabPlanningRoster(accountSnapshot);
+			if (model.settings.calcInWorkers) {
+				model.statusText = "Preparing Calc workers…";
+				console.info("[Battle Lab]", model.statusText, {
+					maxCalculations: model.maxCalculations,
+					calcWorkers: model.settings.plannerWorkers,
+					hasDispatcher: Boolean(calcWorkers.dispatcher)
+				});
+				try {
+					const warmStartedAt = Date.now();
+					const warmPromise = calcWorkers.dispatcher?.warmUp() ?? Promise.resolve(false);
+					warmPromise.catch(() => void 0);
+					const warmSlowTimer = setInterval(() => {
+						console.warn("[Battle Lab]", `Calc workers warm-up still running (${Math.round((Date.now() - warmStartedAt) / 1e3)}s)…`, {
+							hint: "Watch for [Battle Lab:calc-workers] serialize / ready / start-failed messages"
+						});
+					}, 15e3);
+					let warmed;
+					try {
+						warmed = await Promise.race([
+							warmPromise,
+							new Promise((_, reject) => setTimeout(() => reject(new Error("Calc workers warm-up timed out after 90s. Check console for [Battle Lab:calc-workers] errors, or disable Calc-in-workers in settings and retry.")), 9e4))
+						]);
+					} finally {
+						clearInterval(warmSlowTimer);
+					}
+					console.info("[Battle Lab]", "Calc workers warm-up finished", {
+						warmed: warmed ?? false,
+						ms: Date.now() - warmStartedAt
+					});
+					if (warmed === false) {
+						throw new Error("Calc workers failed to start. Open the browser console for [Battle Lab:calc-workers] details, or turn off Calc-in-workers in Battle Lab settings.");
+					}
+				} catch (error) {
+					console.error("[Battle Lab]", "Calc workers warm-up failed", error);
+					throw error;
+				}
+			}
+			model.statusText = "Building candidate list…";
 			let bestResult = await optimizeBattleLabPlan({
 				caller,
+				accountSnapshot,
 				gameLibrary: getGameLibrary(),
 				opponent,
 				fixedCandidates: territoryLockedCandidate ? [territoryLockedCandidate] : void 0,
@@ -37257,9 +37316,12 @@ self.onmessage = (event) => {
 					}
 				};
 				const scenarios = planBattleLabScenarios(opponent, direction, model.settings, model.history, (key) => cheats.translate(key));
-				await calcWorkers.dispatcher?.warmUp();
+				const accountSnapshot = await loadAccountSnapshotForRun();
+				model.planningRoster = toBattleLabPlanningRoster(accountSnapshot);
+				if (model.settings.calcInWorkers) await calcWorkers.dispatcher?.warmUp();
 				const trained = opponent.modeId === "asgard" ? await trainAsgardTeams({
 					caller,
+					accountSnapshot,
 					gameLibrary: getGameLibrary(),
 					opponent,
 					setup,
@@ -37276,6 +37338,7 @@ self.onmessage = (event) => {
 					...progressCallbacks
 				}) : manualSetupReady ? await optimizeBattleLabPlan({
 					caller,
+					accountSnapshot,
 					gameLibrary: getGameLibrary(),
 					opponent,
 					maxCalculations: trainingCalculations,
@@ -37292,6 +37355,7 @@ self.onmessage = (event) => {
 					...progressCallbacks
 				}, setup) : await trainBattleLabResult({
 					caller,
+					accountSnapshot,
 					gameLibrary: getGameLibrary(),
 					opponent,
 					bestResult,
