@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           HWH Battle Lab HwH Ext
 // @namespace      HeroWarsHelper.BattleLab
-// @version        0.2.373
+// @version        0.2.374
 // @description    Battle lab for opponents, simulations, best teams, and local battle history.
 // @author         Askja
 // @match          https://www.hero-wars.com/*
@@ -9731,7 +9731,7 @@
 	}
 	function buildBattleLabTerritoryCapture(calls, response, owner, createdAt = (/* @__PURE__ */ new Date()).toISOString()) {
 		return {
-			version: "0.2.373",
+			version: "0.2.374",
 			createdAt,
 			calls: calls.map((call) => ({
 				name: call.name,
@@ -14606,7 +14606,7 @@
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(phase, {
-			version: "0.2.373",
+			version: "0.2.374",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			phase,
 			error: getErrorMessage(error),
@@ -19393,7 +19393,7 @@ self.onmessage = (event) => {
 			keyPrefix: "hwh-battle-lab:diagnostic:",
 			schemaVersion: 1
 		}).write(`campaign:${options.mode}`, {
-			version: "0.2.373",
+			version: "0.2.374",
 			createdAt: (/* @__PURE__ */ new Date()).toISOString(),
 			mode: options.mode,
 			phase: options.phase,
@@ -27881,19 +27881,31 @@ self.onmessage = (event) => {
 			stopBtn.lastChild.textContent = state.asgardPurchasePrompt ? "Stop series" : asgardImproving ? "Stop improving" : "Stop";
 			if (asgardImproving) stopBtn.setAttribute("data-hwhx-native-title", "Stop timing search for the current team and submit the best fight found");
 			else stopBtn.removeAttribute("data-hwhx-native-title");
-			if (state.errorText) {
+			if (state.attackState === "attacking" || state.attackState === "checking") {
+				progressWrap.removeAttribute("role");
+				progressWrap.style.display = "flex";
+				progressBar.style.width = "100%";
+				progressText.textContent = state.attackStatusText || (state.attackState === "checking" ? "Checking attack…" : "Attacking...");
+				if (state.attackCountdownMs !== null && state.attackCountdownMs !== void 0) progressCount.textContent = `${Math.ceil(state.attackCountdownMs / 1e3)}s`;
+				else progressCount.textContent = "";
+			} else if (state.attackState === "blocked" || state.attackState === "error") {
+				progressWrap.style.display = "flex";
+				progressWrap.setAttribute("role", "alert");
+				progressBar.style.width = "0%";
+				progressText.textContent = state.attackStatusText || state.errorText || "Attack failed";
+				progressCount.textContent = "Error";
+			} else if (state.attackState === "done" && state.attackStatusText) {
+				progressWrap.removeAttribute("role");
+				progressWrap.style.display = "flex";
+				progressBar.style.width = "100%";
+				progressText.textContent = state.attackStatusText;
+				progressCount.textContent = "Done";
+			} else if (state.errorText) {
 				progressWrap.style.display = "flex";
 				progressWrap.setAttribute("role", "alert");
 				progressBar.style.width = "0%";
 				progressText.textContent = `Calculation incomplete: ${state.errorText}`;
 				progressCount.textContent = "Error";
-			} else if (state.attackState === "attacking") {
-				progressWrap.removeAttribute("role");
-				progressWrap.style.display = "flex";
-				progressBar.style.width = "100%";
-				progressText.textContent = state.attackStatusText || "Attacking...";
-				if (state.attackCountdownMs !== null && state.attackCountdownMs !== void 0) progressCount.textContent = `${Math.ceil(state.attackCountdownMs / 1e3)}s`;
-				else progressCount.textContent = "";
 			} else if (isRunning || state.runProgress) {
 				progressWrap.removeAttribute("role");
 				progressWrap.style.display = "flex";
@@ -31957,7 +31969,7 @@ self.onmessage = (event) => {
 	function readBattleLabUserscriptInfo() {
 		return {
 			name: "HWH Battle Lab",
-			version: "0.2.373",
+			version: "0.2.374",
 			author: "Askja"
 		};
 	}
@@ -37436,22 +37448,42 @@ self.onmessage = (event) => {
 			return null;
 		}
 		async function attackSelectedOpponent() {
-			if (model.attackState === "attacking" || model.attackState === "checking" || model.runState === "running") return;
+			// Only block a live in-flight attack. Stale checking/done/error must remain retryable.
+			if (model.attackState === "attacking" || model.runState === "running") return;
 			if (isBattleLabCampaignMode(model.activeModeId)) {
+				model.errorText = "";
 				await campaignController.attack(model.selectedOpponentId);
 				return;
 			}
 			const selected = model.opponentsByMode[model.activeModeId].find((opponent) => opponent.id === model.selectedOpponentId);
 			const bestResult = resolveSelectedVariation(model.bestResults.find((result) => result.opponentId === selected?.id && (result.direction ?? "attack") === (isTitanArenaMode(model.activeModeId) ? model.settings.tournamentDirection : "attack")));
 			if (!selected || !bestResult) {
+				model.errorText = "";
 				model.attackState = "blocked";
 				model.attackStatusText = translate("HWHBL_ATTACK_NO_RESULT");
 				return;
+			}
+			if (bestResult.strategy === "estimate") {
+				model.errorText = "";
+				model.attackState = "blocked";
+				model.attackStatusText = "Attack blocked: this team is only a power estimate (incomplete enemy defense). Refresh opponents after opening the mode in-game, Calculate again, Train until reliability is confirmed, then Attack.";
+				return;
+			}
+			if ((bestResult.direction ?? "attack") !== "defense" && !["asgard", "archdemon"].includes(model.activeModeId)) {
+				const statistics = bestResult.statistics;
+				const scenariosConfirmed = (bestResult.scenarioResults ?? []).every((scenario) => scenario.attempted > 0 && scenario.wins === scenario.attempted);
+				if (!isBattleLabAttackStatisticallyReliable(statistics) || !scenariosConfirmed) {
+					model.errorText = "";
+					model.attackState = "blocked";
+					model.attackStatusText = `Attack blocked: team not confirmed yet (lower win bound ${Math.round((statistics?.confidenceLow ?? 0) * 100)}%, need ≥95% with no losses). Click Train first (~73 runs for a clean series), then Attack.`;
+					return;
+				}
 			}
 			if (!confirmBattleLabAction(model.settings.confirmAttack, translate("HWHBL_ATTACK_CONFIRM"))) return;
 			const targetedResult = selectAttackTargetTeams(selected, bestResult);
 			if (!targetedResult) return;
 			// Lock immediately after confirm so a leftover Enter/click cannot open it again.
+			model.errorText = "";
 			model.attackState = "checking";
 			model.asgardAttackProgress = model.activeModeId === "asgard" ? {
 				opponentId: selected.id,
@@ -37476,7 +37508,7 @@ self.onmessage = (event) => {
 				const executionRecord = asRecord$1(attackExecutionResult);
 				const stoppedReason = executionRecord.stoppedReason;
 				const responseCount = Array.isArray(executionRecord.responses) ? executionRecord.responses.length : null;
-				if (stoppedReason && typeof stoppedReason === "string") model.attackStatusText = `Attack: ${responseCount ? `выполнено ${responseCount} из ${targetedResult.teams.length}, ` : ""}${stoppedReason}`;
+				if (stoppedReason && typeof stoppedReason === "string") model.attackStatusText = `Attack: ${responseCount ? `completed ${responseCount} of ${targetedResult.teams.length}, ` : ""}${stoppedReason}`;
 				else model.attackStatusText = advancedTier ? translate("HWHBL_TOURNAMENT_TIER_UPDATED") : responseCount && responseCount > 1 ? `Attack finished (${responseCount} teams).` : translate("HWHBL_ATTACK_DONE");
 			} catch (error) {
 				model.attackState = error instanceof BattleLabAttackBlockedError ? "blocked" : "error";
