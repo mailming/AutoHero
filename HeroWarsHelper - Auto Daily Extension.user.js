@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.58
+// @version      3.5.59
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.58";
+    const EXTENSION_VERSION = "3.5.59";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -7114,6 +7114,10 @@
         let finishListBattle = [];
         let allTitans = [];
         let triedTeamsByRival = {};
+        /** Best predicted enemy-damage loss per rival (team key → score) for AutoFix target selection. */
+        let bestLossByRival = {};
+        /** After re-starting the max-damage counter team, skip further switches and AutoFix that battle. */
+        let autoFixBestTeamPending = false;
         let currentRival = 0;
         let attempts = 0;
         let isCheckCurrentTier = false;
@@ -7266,6 +7270,63 @@
             return candidates;
         }
 
+        /** Higher = more damage to enemy (same idea as HWHAutoFixBattleExt BestOrWin). Wins score highest. */
+        function toeEnemyDamageScore(calcResult) {
+            if (calcResult?.result?.win) return 1e6;
+            const battle = calcResult?.battleData || calcResult;
+            const beforeRaw = battle?.defenders?.[0] ?? battle?.defenders ?? {};
+            const afterRaw = calcResult?.progress?.[0]?.defenders?.heroes
+                ?? calcResult?.progress?.[0]?.defenders
+                ?? {};
+            const beforeTeam = beforeRaw && typeof beforeRaw === 'object' && !Array.isArray(beforeRaw)
+                ? beforeRaw
+                : {};
+            const afterTeam = afterRaw && typeof afterRaw === 'object' && !Array.isArray(afterRaw)
+                ? afterRaw
+                : {};
+            const beforeKeys = Object.keys(beforeTeam);
+            if (!beforeKeys.length) return 0;
+
+            let beforeSum = 0;
+            let afterSum = 0;
+            for (const id of beforeKeys) {
+                const before = beforeTeam[id];
+                let beforeFactor = 1;
+                const state = before?.state;
+                if (state && state.hp > 0) {
+                    beforeFactor = (state.hp / before.hp) + (state.energy / 1e3) * 0.05;
+                }
+                beforeSum += beforeFactor;
+
+                const after = afterTeam[id];
+                let afterFactor = 0;
+                if (after && after.hp > 0) {
+                    const baseHp = before?.hp || after.hp;
+                    afterFactor = (after.hp / baseHp) + ((after.energy || 0) / 1e3) * 0.05;
+                }
+                afterSum += afterFactor;
+            }
+            if (!(beforeSum > 0)) return 0;
+            return 100 - Math.floor((afterSum / beforeSum) * 1e4) / 100;
+        }
+
+        function toeRecordLossCandidate(calcResult) {
+            if (!isHwhAutoFixEnabled() || !calcResult) return;
+            const rivalId = String(currentRival);
+            const score = toeEnemyDamageScore(calcResult);
+            const prev = bestLossByRival[rivalId];
+            if (prev && !(score > prev.score)) {
+                console.log('[ToE] Loss candidate score', score, '<= best', prev.score, titan_arena);
+                return;
+            }
+            bestLossByRival[rivalId] = {
+                score,
+                team: (titan_arena || []).map(Number),
+                element: prev?.element || 'tracked',
+            };
+            console.log('[ToE] Best enemy-damage candidate', score, '% team', titan_arena);
+        }
+
         function trySwitchTitanTeam(battleResult) {
             if (!allTitans.length) return false;
             const rivalId = String(currentRival);
@@ -7294,6 +7355,23 @@
             }
             console.log('[ToE] No more counter teams to try for rival', rivalId);
             return false;
+        }
+
+        /** Re-start the max-damage counter (if not current) so AutoFix salvages that snapshot, not the last try. */
+        function toeRestartBestDamageTeamForAutoFix() {
+            if (!isHwhAutoFixEnabled()) return false;
+            const rivalId = String(currentRival);
+            const best = bestLossByRival[rivalId];
+            if (!best?.team?.length) return false;
+            if (toeTeamKey(best.team) === toeTeamKey(titan_arena)) return false;
+
+            titan_arena = best.team.map(Number);
+            autoFixBestTeamPending = true;
+            setProgress(`${I18N('TITAN_ARENA')}: Level ${currTier} </br>⇄ best dmg ${best.score}%`);
+            console.log('[ToE] Re-starting max-damage team for AutoFix', best.score, titan_arena);
+            attempts = +currentRival;
+            titanArenaStartBattle(currentRival);
+            return true;
         }
 
         function startTitanArena(data) {
@@ -7389,6 +7467,8 @@
             }
             currentRival = finishListBattle.pop();
             attempts = +currentRival;
+            autoFixBestTeamPending = false;
+            delete bestLossByRival[String(currentRival)];
             titanArenaStartBattle(currentRival);
         }
 
@@ -7474,14 +7554,34 @@
             const countTestBattle = getInput('countTestBattle');
             console.log('[ToE] resultPreCalcBattle', `${countWin}/${countTestBattle}`);
             if (countWin > 0) {
+                autoFixBestTeamPending = false;
                 attempts = getInput('countAutoBattle');
                 resultCalcBattle(firstBattle);
                 return;
             }
+
+            // Already re-started the max-damage counter — AutoFix this snapshot (do not switch again).
+            if (autoFixBestTeamPending) {
+                autoFixBestTeamPending = false;
+                toeRecordLossCandidate(firstBattle);
+                attempts = 0;
+                resultCalcBattle(firstBattle);
+                return;
+            }
+
+            // Track enemy-damage across counter tries so AutoFix targets the best combo, not the last.
+            toeRecordLossCandidate(firstBattle);
+
             // 0 predicted wins → switch elemental attack team and retry same rival
             if (trySwitchTitanTeam(firstBattle)) {
                 return;
             }
+
+            // Counters exhausted: if a earlier combo did more damage, re-start that team before AutoFix.
+            if (toeRestartBestDamageTeamForAutoFix()) {
+                return;
+            }
+
             attempts = 0;
             resultCalcBattle(firstBattle);
         }
