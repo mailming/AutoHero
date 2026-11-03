@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Counter Suggest HwH Ext
 // @namespace    HeroWarsHelper.ArenaCounterSuggest
-// @version      1.0
+// @version      1.1
 // @description  Show DB-backed counter lineups beside Arena attack team gather; click to arenaAttack at account power
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,11 +16,12 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Counter Suggest';
-    const EXTENSION_VERSION = '1.0';
+    const EXTENSION_VERSION = '1.1';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const HOST_ID = 'ah-arena-counter-suggest-host';
     const POLL_MS = 600;
     const POPUP_CLASS = 'game.view.popup.team.ArenaAttackTeamGatherPopupWithEnemyTeam';
+    const MEDIATOR_CLASS = 'game.mediator.gui.popup.arena.ArenaAttackTeamGatherPopupMediator';
     const POPUP_MANAGER_CLASS = 'game.mediator.gui.popup.GamePopupManager';
     const MIN_WIN_RATE = 50;
     const MAX_AGE_DAYS = 30;
@@ -143,181 +144,199 @@
         }
 
         function getMediatorFromPopup(popup) {
+            const exact = uniqueRefs(
+                Object.values(popup ?? {}).filter((value) => value?.__class__?.j === MEDIATOR_CLASS)
+            );
+            if (exact[0]) return exact[0];
+
             const matches = uniqueRefs(
                 Object.values(popup ?? {}).filter((value) => {
                     const className = value?.__class__?.j || '';
-                    return /TeamGather.*Mediator|Mediator.*TeamGather|ArenaAttack/i.test(className)
-                        && /Mediator/i.test(className);
+                    return /ArenaAttackTeamGatherPopupMediator/i.test(className);
                 })
             );
-            if (matches.length === 1) return matches[0];
-            if (matches.length > 1) {
-                const preferred = matches.find((m) => /Arena/i.test(m.__class__?.j || ''));
-                return preferred || matches[0];
-            }
-            const anyMediator = uniqueRefs(
-                Object.values(popup ?? {}).filter((value) => /Mediator/i.test(value?.__class__?.j || ''))
-            );
-            return anyMediator[0] || null;
+            return matches[0] || null;
         }
 
-        function asHeroIds(value) {
-            if (!value) return [];
-            if (Array.isArray(value)) {
-                return value.map(Number).filter((id) => id > 0 && id < 6000);
+        function callUnitId(unit) {
+            if (unit == null) return null;
+            if (typeof unit === 'number' || typeof unit === 'string') {
+                const id = Number(unit);
+                return Number.isFinite(id) && id > 0 ? id : null;
             }
-            if (typeof value === 'object') {
-                if (Array.isArray(value.heroes)) return asHeroIds(value.heroes);
-                if (Array.isArray(value.heroIds)) return asHeroIds(value.heroIds);
-                if (Array.isArray(value.units)) {
-                    return value.units
-                        .map((unit) => Number(unit?.id ?? unit?.heroId ?? unit))
-                        .filter((id) => id > 0 && id < 6000);
+            try {
+                if (typeof unit.G === 'function') {
+                    const id = Number(unit.G());
+                    if (Number.isFinite(id) && id > 0) return id;
                 }
-                const numericKeys = Object.keys(value)
-                    .map(Number)
-                    .filter((id) => id > 0 && id < 6000);
-                if (numericKeys.length >= 5) return numericKeys.slice(0, 5);
-                return Object.values(value)
-                    .map((entry) => Number(entry?.id ?? entry?.heroId ?? entry))
-                    .filter((id) => id > 0 && id < 6000);
+            } catch {
+                // continue
+            }
+            try {
+                const desc = typeof unit.Ge === 'function' ? unit.Ge() : null;
+                if (desc && typeof desc.G === 'function') {
+                    const id = Number(desc.G());
+                    if (Number.isFinite(id) && id > 0) return id;
+                }
+            } catch {
+                // continue
+            }
+            const id = Number(unit.id ?? unit.heroId);
+            return Number.isFinite(id) && id > 0 ? id : null;
+        }
+
+        function extractPetId(pet) {
+            if (pet == null) return 0;
+            if (typeof pet === 'number' || typeof pet === 'string') {
+                const id = Number(pet);
+                return id >= 6000 && id < 7000 ? id : 0;
+            }
+            try {
+                if (typeof pet.G === 'function') {
+                    const id = Number(pet.G());
+                    if (id >= 6000 && id < 7000) return id;
+                }
+            } catch {
+                // continue
+            }
+            try {
+                const desc = typeof pet.Jb === 'function' ? pet.Jb()
+                    : (typeof pet.Ge === 'function' ? pet.Ge() : null);
+                if (desc && typeof desc.G === 'function') {
+                    const id = Number(desc.G());
+                    if (id >= 6000 && id < 7000) return id;
+                }
+                if (desc && desc.id != null) {
+                    const id = Number(desc.id);
+                    if (id >= 6000 && id < 7000) return id;
+                }
+            } catch {
+                // continue
+            }
+            const id = Number(pet.id ?? pet.petId ?? pet.pet);
+            return id >= 6000 && id < 7000 ? id : 0;
+        }
+
+        function extractBannerId(team) {
+            if (!team) return 0;
+            try {
+                const banner = typeof team.Wy === 'function' ? team.Wy()
+                    : callSemantic(team, 'get_banner');
+                if (banner != null && (typeof banner === 'number' || typeof banner === 'string')) {
+                    return Number(banner) || 0;
+                }
+                if (banner && typeof banner === 'object') {
+                    const id = Number(banner.id ?? banner.bannerId);
+                    if (Number.isFinite(id) && id > 0) return id;
+                }
+            } catch {
+                // continue
+            }
+            const raw = Number(team.pE);
+            return Number.isFinite(raw) && raw > 0 ? raw : 0;
+        }
+
+        function extractHeroesFromBattleTeam(team) {
+            if (!team) return [];
+            try {
+                if (typeof team.O2b === 'function') {
+                    return (team.O2b() || []).map(Number).filter((id) => id > 0 && id < 6000);
+                }
+            } catch {
+                // continue
+            }
+            try {
+                const units = typeof team.Wi === 'function' ? team.Wi()
+                    : (callSemantic(team, 'get_units') || team.nC || []);
+                if (Array.isArray(units)) {
+                    return units.map(callUnitId).filter((id) => id > 0 && id < 6000);
+                }
+            } catch {
+                // continue
             }
             return [];
         }
 
-        function extractPet(value) {
-            if (value == null) return null;
-            if (typeof value === 'number' || typeof value === 'string') {
-                const id = Number(value);
-                return id >= 6000 && id < 7000 ? id : null;
+        function extractFromPlayerArenaEnemy(enemy) {
+            if (!enemy || typeof enemy !== 'object') return null;
+
+            let userId = Number(enemy._id);
+            if (!Number.isFinite(userId) || userId <= 0) {
+                const named = callSemantic(enemy, 'get_name');
+                if (typeof named === 'string') {
+                    userId = Number(String(named).split(/\s+/)[0]);
+                }
             }
-            if (typeof value === 'object') {
-                const id = Number(value.id ?? value.petId ?? value.pet);
-                return id >= 6000 && id < 7000 ? id : null;
+            if (!Number.isFinite(userId) || userId <= 0) {
+                userId = Number(enemy.userId ?? enemy.id);
+            }
+            if (!Number.isFinite(userId) || userId <= 0) return null;
+
+            const teams = Array.isArray(enemy.ex) ? enemy.ex : [];
+            const team = teams[0] || null;
+            const heroes = extractHeroesFromBattleTeam(team);
+            if (heroes.length !== 5) return null;
+
+            let pet = 0;
+            try {
+                const petObj = team && typeof team.Jb === 'function'
+                    ? team.Jb()
+                    : (callSemantic(team, 'get_pet') || team?.fl);
+                pet = extractPetId(petObj);
+            } catch {
+                pet = 0;
+            }
+
+            const banner = extractBannerId(team);
+            return {
+                userId,
+                heroes,
+                pet: pet || 0,
+                banner: banner || 0,
+            };
+        }
+
+        function extractEnemyFromMediator(mediator) {
+            if (!mediator) return null;
+            let enemy = null;
+            try {
+                enemy = callSemantic(mediator, 'get_enemy');
+            } catch {
+                enemy = null;
+            }
+            if (!enemy) enemy = mediator.fj || null;
+            const fromEnemy = extractFromPlayerArenaEnemy(enemy);
+            if (fromEnemy) return fromEnemy;
+
+            // Fallback: some builds keep enemy user separately
+            try {
+                const enemyUser = callSemantic(mediator, 'get_enemyUser');
+                const userId = Number(enemyUser?._id ?? enemyUser?.id ?? enemyUser?.userId);
+                if (Number.isFinite(userId) && userId > 0 && enemy) {
+                    const partial = extractFromPlayerArenaEnemy({ ...enemy, _id: userId });
+                    if (partial) return partial;
+                }
+            } catch {
+                // ignore
             }
             return null;
         }
 
-        function extractBanner(value) {
-            if (value == null) return 0;
-            if (typeof value === 'number' || typeof value === 'string') {
-                return Number(value) || 0;
-            }
-            if (Array.isArray(value)) return Number(value[0]) || 0;
-            if (typeof value === 'object') {
-                return Number(value.id ?? value.bannerId ?? value.banner) || 0;
-            }
-            return 0;
-        }
-
-        function extractUserId(value) {
-            if (value == null) return null;
-            if (typeof value === 'number' || typeof value === 'string') {
-                const id = Number(value);
-                return Number.isFinite(id) && id > 0 ? id : null;
-            }
-            if (typeof value === 'object') {
-                const id = Number(
-                    value.userId ?? value.id ?? value.uid ?? value.playerId ?? value.rivalId
-                );
-                return Number.isFinite(id) && id > 0 ? id : null;
-            }
-            return null;
-        }
-
-        function walkExtract(root, depth = 0, seen = new Set()) {
-            if (!root || typeof root !== 'object' || depth > 5 || seen.has(root)) {
-                return null;
-            }
-            seen.add(root);
-
-            const directHeroes = asHeroIds(
-                root.heroes
-                ?? root.heroIds
-                ?? root.enemyHeroes
-                ?? root.defenceTeam
-                ?? root.defenseTeam
-                ?? root.enemyTeam
-                ?? root.team
-                ?? root.units
-            );
-            const semanticTeam = asHeroIds(
-                callSemantic(root, 'get_team')
-                ?? callSemantic(root, 'get_enemyTeam')
-                ?? callSemantic(root, 'get_defenceTeam')
-                ?? callSemantic(root, 'get_defenseTeam')
-            );
-            const heroes = directHeroes.length === 5 ? directHeroes
-                : semanticTeam.length === 5 ? semanticTeam
-                    : [];
-
-            const userId = extractUserId(
-                root.userId
-                ?? root.enemyUserId
-                ?? root.rivalId
-                ?? root.playerId
-                ?? callSemantic(root, 'get_userId')
-                ?? callSemantic(root, 'get_enemyUserId')
-                ?? callSemantic(root, 'get_user')
-                ?? callSemantic(root, 'get_enemy')
-                ?? callSemantic(root, 'get_rival')
-                ?? root.user
-                ?? root.enemy
-                ?? root.rival
-            );
-
-            const pet = extractPet(
-                root.pet
-                ?? root.enemyPet
-                ?? callSemantic(root, 'get_pet')
-                ?? callSemantic(root, 'get_enemyPet')
-            );
-            const banner = extractBanner(
-                root.banner
-                ?? root.banners
-                ?? root.enemyBanner
-                ?? callSemantic(root, 'get_banner')
-                ?? callSemantic(root, 'get_enemyBanner')
-            );
-
-            if (heroes.length === 5 && userId) {
-                return {
-                    userId,
-                    heroes,
-                    pet: pet || 0,
-                    banner: banner || 0,
-                };
-            }
-
-            for (const value of Object.values(root)) {
-                if (!value || typeof value !== 'object') continue;
-                if (typeof value === 'function') continue;
-                const nested = walkExtract(value, depth + 1, seen);
-                if (nested) return nested;
-            }
-            return null;
-        }
-
-        function dumpMediatorOnce(popup, mediator) {
+        function dumpMediatorOnce(popup, mediator, extracted) {
             if (dumpedMediatorOnce) return;
             dumpedMediatorOnce = true;
             try {
-                const popupKeys = Object.keys(popup || {}).slice(0, 40);
-                const mediatorKeys = Object.keys(mediator || {}).slice(0, 60);
-                const sample = {};
-                for (const key of mediatorKeys.slice(0, 30)) {
-                    const value = mediator[key];
-                    const className = value?.__class__?.j;
-                    sample[key] = className
-                        ? { className, keys: Object.keys(value).slice(0, 12) }
-                        : typeof value;
-                }
+                const enemy = callSemantic(mediator, 'get_enemy') || mediator?.fj || null;
                 console.log(`[${EXTENSION_NAME}] Arena gather dump`, {
                     popupClass: popup?.__class__?.j,
                     mediatorClass: mediator?.__class__?.j,
-                    popupKeys,
-                    mediatorKeys,
-                    sample,
+                    extracted,
+                    enemyClass: enemy?.__class__?.j || null,
+                    enemyId: enemy?._id ?? null,
+                    teamCount: Array.isArray(enemy?.ex) ? enemy.ex.length : null,
+                    firstTeamHeroes: enemy?.ex?.[0] && typeof enemy.ex[0].O2b === 'function'
+                        ? enemy.ex[0].O2b()
+                        : null,
                 });
             } catch (error) {
                 console.warn(`[${EXTENSION_NAME}] dump failed:`, error);
@@ -329,9 +348,9 @@
             if (!popups.length) return null;
             const popup = popups[0];
             const mediator = getMediatorFromPopup(popup);
-            dumpMediatorOnce(popup, mediator || popup);
+            const extracted = extractEnemyFromMediator(mediator);
+            dumpMediatorOnce(popup, mediator || popup, extracted);
 
-            const extracted = walkExtract(mediator) || walkExtract(popup);
             if (!extracted) return { popup, mediator, enemy: null };
 
             return {
@@ -786,7 +805,7 @@
         function tick() {
             if (panelState.attacking) return;
             const gather = readEnemyFromGather();
-            if (!gather?.enemy) {
+            if (!gather) {
                 if (panelState.visible) {
                     panelState.visible = false;
                     panelState.enemy = null;
@@ -800,6 +819,15 @@
             }
 
             panelState.visible = true;
+            if (!gather.enemy) {
+                panelState.enemy = null;
+                panelState.counters = null;
+                panelState.status = 'error';
+                panelState.message = 'Could not read enemy lineup from gather popup';
+                panelController?.render();
+                return;
+            }
+
             panelState.enemy = gather.enemy;
             const needsFetch = gather.enemy.comboKey !== lastComboKey
                 || (!panelState.counters && panelState.status !== 'loading');
