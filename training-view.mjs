@@ -256,9 +256,11 @@ function renderPageIntro(minWinRate = 90) {
     <p class="intro-lead">
       Hero Wars Helper’s <strong>Arena Training</strong> runs practice battles (no arena attempts spent).
       It tries to find a team that beats each opponent at least <strong>${minWinRate}%</strong> of the time, then saves the results here.
+      <strong>SimLab</strong> (from Counter Suggest) re-tests a single counter at your account power and lists those runs below.
     </p>
     <ol class="intro-steps">
       <li><strong>Run training in HWH</strong> — start Arena Training or the loop; it checks arena opponents, then popular meta teams.</li>
+      <li><strong>SimLab</strong> — on Arena gather, open Counter Suggest and click <strong>SimLab</strong> on a counter row (needs Arena Training loaded).</li>
       <li><strong>Filter (optional)</strong> — focus on specific heroes on either side; all sections below follow your filters.</li>
       <li><strong>Pick teams</strong> — use the best-team tables and Grand Arena section; scroll to the bottom for every individual test.</li>
     </ol>
@@ -269,11 +271,59 @@ function renderPageNav() {
     return `
   <nav class="page-nav" aria-label="Page sections">
     <span class="page-nav-label">Jump to:</span>
+    <a href="#simlab">SimLab</a>
     <a href="#filters">Filters</a>
     <a href="#insights">Best teams</a>
     <a href="#recommendations">Grand Arena</a>
     <a href="#results">Full log</a>
   </nav>`;
+}
+
+function renderSimLabSection(rounds = [], minWinRate = 90) {
+    const rows = (Array.isArray(rounds) ? rounds : []).map((row) => {
+        const opponentLabel = row.opponentName || row.opponentUserId || 'Enemy';
+        const bannerBit = row.myBanner != null ? ` · banner ${escapeHtml(String(row.myBanner))}` : '';
+        const defBanner = row.opponentBanner != null ? ` · banner ${escapeHtml(String(row.opponentBanner))}` : '';
+        return `
+        <tr>
+            <td class="muted">${escapeHtml(formatWhen(row.testedAt))}</td>
+            <td>
+              ${renderComboLabelHtml(row.opponentHeroIds, row.opponentPet)}
+              <div class="muted" style="font-size:0.8rem;margin-top:2px;">${escapeHtml(opponentLabel)}${defBanner}</div>
+            </td>
+            <td>
+              ${renderComboLabelHtml(row.myHeroIds, row.myPet, row.myHeroNames)}${bannerBit}
+            </td>
+            <td>${renderWinRateCell(row.winRate, minWinRate)}</td>
+            <td class="muted">${escapeHtml(formatRecord(row.wins, row.losses))}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+  <section class="section" id="simlab">
+    <div class="section-head">
+      <h2>SimLab</h2>
+      <p class="section-lead">Recent Counter Suggest SimLab runs (demo battles at account power). Saved with label <code>simlab-counter</code>.</p>
+    </div>
+    <div class="card table-card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Enemy</th>
+              <th>Your lineup</th>
+              <th>Win rate</th>
+              <th>Record</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || `<tr><td colspan="5" class="muted">No SimLab runs yet — use the SimLab button on Counter Suggest.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>`;
 }
 
 function renderSummaryFooter(summary = {}, paging = {}) {
@@ -804,6 +854,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     ${renderPageIntro(minWinRate)}
     ${renderPageNav()}
 
+    ${renderSimLabSection(paging.simLabRounds || [], minWinRate)}
     ${renderHeroFilters(paging)}
     ${renderTrainingStats(paging.stats)}
     ${renderGrandArenaSelections(paging.stats)}

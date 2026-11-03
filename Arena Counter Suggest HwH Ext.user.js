@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Arena Counter Suggest HwH Ext
 // @namespace    HeroWarsHelper.ArenaCounterSuggest
-// @version      1.1
-// @description  Show DB-backed counter lineups beside Arena attack team gather; click to arenaAttack at account power
+// @version      1.3.1
+// @description  DB counter panel for Arena gather and Clan Domination attack target; arenaAttack / setDefence+startBattle / SimLab
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
@@ -16,15 +16,19 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Counter Suggest';
-    const EXTENSION_VERSION = '1.1';
+    const EXTENSION_VERSION = '1.3.1';
+    const SIMLAB_SIMULATIONS = 10;
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const HOST_ID = 'ah-arena-counter-suggest-host';
     const POLL_MS = 600;
     const POPUP_CLASS = 'game.view.popup.team.ArenaAttackTeamGatherPopupWithEnemyTeam';
     const MEDIATOR_CLASS = 'game.mediator.gui.popup.arena.ArenaAttackTeamGatherPopupMediator';
+    const CD_ATTACK_POPUP_CLASS = 'game.mechanics.clanDomination.popup.ClanDominationSelectAttackTargetPopup';
+    const CD_ATTACK_MEDIATOR_CLASS = 'game.mechanics.clanDomination.mediator.ClanDominationSelectAttackTargetPopupMediator';
     const POPUP_MANAGER_CLASS = 'game.mediator.gui.popup.GamePopupManager';
     const MIN_WIN_RATE = 50;
     const MAX_AGE_DAYS = 30;
+    const CD_CACHE_TTL_MS = 60_000;
     const PET_NAMES = {
         6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
         6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
@@ -56,10 +60,18 @@
             visible: false,
             status: 'idle',
             message: '',
+            mode: 'arena',
             enemy: null,
             counters: null,
             attacking: false,
+            simming: false,
         };
+        const clanDominationEnemyCache = new Map();
+        let clanDominationFetchInFlight = new Map();
+
+        function isBusy() {
+            return panelState.attacking || panelState.simming;
+        }
         let panelController = null;
         let pollTimer = null;
 
@@ -380,6 +392,126 @@
             }
         }
 
+        function parseClanDominationEnemyEntry(entry, levelId) {
+            if (!entry || typeof entry !== 'object') return null;
+            const defense = entry.defense || entry.defence || {};
+            const unitsMap = defense.units && typeof defense.units === 'object' ? defense.units : {};
+            const heroes = [];
+            let pet = 0;
+            const favor = {};
+            for (const unit of Object.values(unitsMap)) {
+                const id = Number(unit?.id ?? unit);
+                if (!Number.isFinite(id)) continue;
+                if (id >= 6000 && id < 7000) {
+                    pet = id;
+                    continue;
+                }
+                if (id > 0 && id < 6000) {
+                    heroes.push(id);
+                    const favorPetId = Number(unit?.favorPetId);
+                    if (Number.isFinite(favorPetId) && favorPetId > 0) {
+                        favor[String(id)] = favorPetId;
+                    }
+                }
+            }
+            if (heroes.length !== 5) return null;
+
+            const bannerObj = defense.banner || {};
+            const banner = Number(bannerObj.id ?? defense.bannerId ?? entry.banner) || 0;
+            const bannerStones = normalizeBannerStones(bannerObj.slots || defense.bannerStones);
+            const userId = entry.userId ?? entry.user?.id ?? null;
+            if (userId == null) return null;
+
+            return {
+                mode: 'clanDomination',
+                userId,
+                levelId: levelId != null ? Number(levelId) : null,
+                heroes,
+                pet: pet || 0,
+                banner: banner || 0,
+                favor,
+                bannerStones,
+                power: defense.powerSum != null ? Number(defense.powerSum) : null,
+                defenseState: entry.defenseState || entry.defenceState || null,
+                comboKey: buildComboKey(heroes, pet, banner),
+            };
+        }
+
+        function readClanDominationTarget() {
+            const popups = getOpenPopupsByClass(CD_ATTACK_POPUP_CLASS);
+            if (!popups.length) return null;
+            const popup = popups[0];
+            const mediator = getMediatorFromPopup(popup);
+            if (!mediator) return { popup, mediator: null, levelId: null };
+
+            let levelId = Number(mediator.mlj);
+            if (!Number.isFinite(levelId) || levelId <= 0) {
+                levelId = Number(callSemantic(mediator, 'get_levelId'));
+            }
+            if (!Number.isFinite(levelId) || levelId <= 0) {
+                for (const value of Object.values(mediator)) {
+                    if (typeof value === 'number' && value > 0 && value < 100000 && Number.isInteger(value)) {
+                        // Prefer map-cell-looking ids; first integer fallback only if mlj missing
+                        levelId = value;
+                        break;
+                    }
+                }
+            }
+            if (!Number.isFinite(levelId) || levelId <= 0) {
+                return { popup, mediator, levelId: null };
+            }
+            return { popup, mediator, levelId };
+        }
+
+        function getCachedClanDominationEnemy(levelId) {
+            const key = String(levelId);
+            const cached = clanDominationEnemyCache.get(key);
+            if (!cached) return null;
+            if (Date.now() - cached.at > CD_CACHE_TTL_MS) {
+                clanDominationEnemyCache.delete(key);
+                return null;
+            }
+            return cached.enemy;
+        }
+
+        async function fetchClanDominationEnemy(levelId) {
+            const key = String(levelId);
+            if (clanDominationFetchInFlight.has(key)) {
+                return clanDominationFetchInFlight.get(key);
+            }
+
+            const pending = (async () => {
+                const response = await Send({
+                    calls: [{
+                        name: 'clanDomination_getEnemyTeams',
+                        args: { levelId: Number(levelId) },
+                        context: { actionTs: Date.now() },
+                        ident: 'clanDomination_getEnemyTeams',
+                    }],
+                });
+                if (response?.error) {
+                    throw new Error(`${response.error.name || 'Error'}: ${response.error.description || ''}`);
+                }
+                const list = response.results?.find((r) => r.ident === 'clanDomination_getEnemyTeams')?.result?.response
+                    || response.results?.[0]?.result?.response
+                    || [];
+                const entry = Array.isArray(list) ? list[0] : null;
+                const enemy = parseClanDominationEnemyEntry(entry, levelId);
+                if (!enemy) {
+                    throw new Error('Clan Domination enemy team incomplete');
+                }
+                clanDominationEnemyCache.set(key, { at: Date.now(), enemy, raw: entry });
+                return enemy;
+            })();
+
+            clanDominationFetchInFlight.set(key, pending);
+            try {
+                return await pending;
+            } finally {
+                clanDominationFetchInFlight.delete(key);
+            }
+        }
+
         function heroName(heroId) {
             const id = Number(heroId);
             if (!Number.isFinite(id)) return String(heroId);
@@ -514,6 +646,31 @@
                         font-size: 11px;
                         opacity: .85;
                     }
+                    .row-actions {
+                        display: flex;
+                        justify-content: flex-end;
+                        margin-top: 6px;
+                    }
+                    .simlab-btn {
+                        padding: 3px 8px;
+                        border: 1px solid rgba(120,180,255,.55);
+                        border-radius: 4px;
+                        background: rgba(60,100,160,.35);
+                        color: #d6e8ff;
+                        font: inherit;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: .04em;
+                        cursor: pointer;
+                    }
+                    .simlab-btn:hover:not(:disabled) {
+                        background: rgba(90,140,210,.5);
+                        border-color: rgba(180,210,255,.9);
+                    }
+                    .simlab-btn:disabled {
+                        opacity: .55;
+                        cursor: default;
+                    }
                     .empty {
                         font-size: 12px;
                         opacity: .7;
@@ -527,22 +684,24 @@
                     }
                 </style>
                 <div class="panel">
-                    <div class="title">Counter Suggest</div>
-                    <div class="subtitle" id="enemyLabel">Waiting for Arena attack…</div>
+                    <div class="title" id="panelTitle">Counter Suggest</div>
+                    <div class="subtitle" id="enemyLabel">Waiting for Arena / Clan Domination attack…</div>
                     <div class="status" id="status"></div>
                     <div class="section-title">Win at my power</div>
                     <div id="atPower"></div>
                     <div class="section-title">Max beat</div>
                     <div id="maxBeat"></div>
-                    <div class="note">Click a lineup to arenaAttack at your account power.</div>
+                    <div class="note" id="panelNote">Click a lineup to attack · SimLab runs demo at your power (saves to /training).</div>
                 </div>
             `;
             document.documentElement.appendChild(host);
 
+            const panelTitle = shadow.getElementById('panelTitle');
             const enemyLabel = shadow.getElementById('enemyLabel');
             const statusEl = shadow.getElementById('status');
             const atPowerEl = shadow.getElementById('atPower');
             const maxBeatEl = shadow.getElementById('maxBeat');
+            const panelNote = shadow.getElementById('panelNote');
 
             function place() {
                 const rect = getLargestCanvasRect();
@@ -559,10 +718,15 @@
             }
 
             function renderRow(match, source) {
+                const wrap = document.createElement('div');
+                wrap.className = 'row';
+                wrap.style.cursor = 'default';
+
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'row';
-                button.disabled = panelState.attacking;
+                button.style.marginBottom = '0';
+                button.disabled = isBusy();
                 const label = formatLineupLabel(match);
                 button.innerHTML = `
                     <div class="row-main">${label.names}</div>
@@ -580,7 +744,33 @@
                         render();
                     });
                 });
-                return button;
+
+                const actions = document.createElement('div');
+                actions.className = 'row-actions';
+                const simBtn = document.createElement('button');
+                simBtn.type = 'button';
+                simBtn.className = 'simlab-btn';
+                simBtn.textContent = 'SimLab';
+                simBtn.title = 'Simulate this lineup at your current power (demo battles)';
+                simBtn.disabled = isBusy();
+                simBtn.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    onSimLabClick(match, source).catch((error) => {
+                        console.error(`[${EXTENSION_NAME}] SimLab failed:`, error);
+                        panelState.status = 'error';
+                        panelState.message = error?.message || String(error);
+                        panelState.simming = false;
+                        render();
+                    });
+                });
+                actions.appendChild(simBtn);
+
+                wrap.appendChild(button);
+                wrap.appendChild(actions);
+                // Outer .row was for layout; avoid double border — use plain container
+                wrap.className = '';
+                wrap.style.cssText = 'margin:0 0 8px;';
+                return wrap;
             }
 
             function render() {
@@ -589,14 +779,20 @@
                 if (!panelState.visible) return;
 
                 const enemy = panelState.enemy;
+                const isCd = panelState.mode === 'clanDomination' || enemy?.mode === 'clanDomination';
+                panelTitle.textContent = isCd ? 'Counter Suggest · Domination' : 'Counter Suggest';
+                panelNote.textContent = isCd
+                    ? 'Click sets Clan Domination team then startBattle · SimLab uses demo battles.'
+                    : 'Click a lineup to arenaAttack · SimLab runs demo at your power (saves to /training).';
                 enemyLabel.textContent = enemy
-                    ? `vs ${enemy.userId} · ${enemy.heroes.map(heroName).join(', ')}`
-                    : 'Enemy lineup not readable yet';
+                    ? `vs ${enemy.userId}${enemy.levelId != null ? ` @${enemy.levelId}` : ''} · ${enemy.heroes.map(heroName).join(', ')}`
+                    : (isCd ? 'Loading Clan Domination enemy…' : 'Enemy lineup not readable yet');
 
                 statusEl.textContent = panelState.message || (
                     panelState.status === 'loading' ? 'Checking database…'
                         : panelState.status === 'attacking' ? 'Attacking…'
-                            : ''
+                            : panelState.status === 'simming' ? 'SimLab running…'
+                                : ''
                 );
 
                 atPowerEl.innerHTML = '';
@@ -682,6 +878,80 @@
             return 1;
         }
 
+        function normalizeBannerStones(slots) {
+            if (!slots) return {};
+            if (Array.isArray(slots)) {
+                const out = {};
+                slots.forEach((value, index) => {
+                    const id = Number(value);
+                    if (Number.isFinite(id) && id > 0) out[String(index)] = id;
+                });
+                return out;
+            }
+            if (typeof slots === 'object') {
+                const out = {};
+                for (const [key, value] of Object.entries(slots)) {
+                    const id = Number(value);
+                    if (Number.isFinite(id) && id > 0) out[String(key)] = id;
+                }
+                return out;
+            }
+            return {};
+        }
+
+        function resolveAttackBannerStones(userInfo) {
+            if (!userInfo || typeof userInfo !== 'object') return {};
+            if (userInfo.bannerStones && typeof userInfo.bannerStones === 'object') {
+                return normalizeBannerStones(userInfo.bannerStones);
+            }
+            const banners = Array.isArray(userInfo.banners) ? userInfo.banners : null;
+            if (banners?.[0]?.slots) return normalizeBannerStones(banners[0].slots);
+            if (userInfo.banner && typeof userInfo.banner === 'object' && userInfo.banner.slots) {
+                return normalizeBannerStones(userInfo.banner.slots);
+            }
+            return {};
+        }
+
+        async function fetchEnemyDefenceExtras(enemyUserId) {
+            const empty = { favor: {}, bannerStones: {}, banner: null, name: null, place: null, power: null };
+            if (enemyUserId == null) return empty;
+            try {
+                const response = await Send({
+                    calls: [{
+                        name: 'arenaFindEnemies',
+                        args: {},
+                        context: { actionTs: Date.now() },
+                        ident: 'arenaFindEnemies',
+                    }],
+                });
+                const list = response.results?.find((r) => r.ident === 'arenaFindEnemies')?.result?.response
+                    || response.results?.[0]?.result?.response
+                    || [];
+                const target = String(enemyUserId);
+                const entry = (Array.isArray(list) ? list : []).find((row) => {
+                    const id = row?.userId ?? row?.user?.id ?? row?.id;
+                    return id != null && String(id) === target;
+                });
+                if (!entry) return empty;
+
+                const bannerEntry = Array.isArray(entry.banners) ? entry.banners[0] : null;
+                const banner = bannerEntry?.id != null
+                    ? Number(bannerEntry.id)
+                    : (entry.banner != null ? Number(entry.banner) : null);
+                return {
+                    favor: entry.favor && typeof entry.favor === 'object' ? entry.favor : {},
+                    bannerStones: normalizeBannerStones(bannerEntry?.slots || entry.bannerStones),
+                    banner: Number.isFinite(banner) && banner > 0 ? banner : null,
+                    name: entry.user?.name || entry.name || null,
+                    place: entry.place ?? null,
+                    power: entry.power ?? null,
+                };
+            } catch (error) {
+                console.warn(`[${EXTENSION_NAME}] arenaFindEnemies for SimLab failed:`, error);
+                return empty;
+            }
+        }
+
         async function fetchCounters(comboKey, testerUserId) {
             const params = new URLSearchParams({
                 comboKey,
@@ -737,8 +1007,96 @@
             return fetchInFlight;
         }
 
+        async function onSimLabClick(match, source) {
+            if (isBusy()) return;
+            const enemy = panelState.enemy;
+            if (!enemy?.userId) throw new Error('Enemy userId missing');
+
+            const training = window.ArenaTraining;
+            if (typeof training?.simulateMatchup !== 'function') {
+                throw new Error('Arena Training not loaded — enable Arena Training HwH Ext for SimLab');
+            }
+
+            const heroes = (match?.myHeroIds || []).map(Number).filter((id) => id > 0 && id < 6000);
+            const pet = Number(match?.myPet);
+            if (heroes.length !== 5) throw new Error('Suggested lineup needs 5 heroes');
+            if (!Number.isFinite(pet) || pet < 6000) throw new Error('Suggested lineup needs a pet');
+
+            panelState.simming = true;
+            panelState.status = 'simming';
+            panelState.message = source === 'max'
+                ? 'SimLab: max-beat lineup at your power…'
+                : 'SimLab: at-power lineup…';
+            panelController?.render();
+            HWHFuncs.setProgress?.(`${EXTENSION_NAME}: SimLab…`, true);
+
+            try {
+                const support = await fetchTeamSupport();
+                const arenaFavor = support.favor?.arena || {};
+                const favor = pickFavor(heroes, arenaFavor);
+                const banner = resolveBanner(support.userInfo);
+                const bannerStones = resolveAttackBannerStones(support.userInfo);
+
+                let defenceFavor = enemy.favor && typeof enemy.favor === 'object' ? enemy.favor : {};
+                let defenceBanner = enemy.banner || 1;
+                let defenceBannerStones = enemy.bannerStones && typeof enemy.bannerStones === 'object'
+                    ? enemy.bannerStones
+                    : {};
+                let defenceName = null;
+                let defencePlace = null;
+                let defencePower = enemy.power ?? null;
+                const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
+                if (!isCd) {
+                    const defenceExtras = await fetchEnemyDefenceExtras(enemy.userId);
+                    defenceFavor = defenceExtras.favor || defenceFavor;
+                    defenceBanner = defenceExtras.banner || defenceBanner;
+                    defenceBannerStones = defenceExtras.bannerStones || defenceBannerStones;
+                    defenceName = defenceExtras.name;
+                    defencePlace = defenceExtras.place;
+                    defencePower = defenceExtras.power ?? defencePower;
+                }
+
+                const summary = await training.simulateMatchup({
+                    label: isCd ? 'simlab-counter-cd' : 'simlab-counter',
+                    maxUpgrade: false,
+                    simulationsPerCombo: SIMLAB_SIMULATIONS,
+                    saveToBridge: true,
+                    myTeam: {
+                        heroes,
+                        pet,
+                        banner,
+                        favor,
+                        bannerStones,
+                        heroNames: match?.myHeroNames,
+                    },
+                    opponentTeam: {
+                        userId: enemy.userId,
+                        name: defenceName,
+                        heroes: enemy.heroes,
+                        pet: enemy.pet,
+                        banner: defenceBanner,
+                        favor: defenceFavor,
+                        bannerStones: defenceBannerStones,
+                        place: defencePlace,
+                        power: defencePower,
+                        source: isCd ? 'simlab-clanDomination' : 'simlab-gather',
+                    },
+                });
+
+                const wr = Number(summary?.winRate) || 0;
+                const msg = `SimLab ${summary.wins}W/${summary.losses}L (${wr.toFixed(0)}%)`;
+                panelState.message = msg;
+                panelState.status = 'ready';
+                HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
+                console.log(`[${EXTENSION_NAME}] SimLab result:`, summary);
+            } finally {
+                panelState.simming = false;
+                panelController?.render();
+            }
+        }
+
         async function onSuggestClick(match, source) {
-            if (panelState.attacking) return;
+            if (isBusy()) return;
             const enemy = panelState.enemy;
             if (!enemy?.userId) throw new Error('Enemy userId missing');
 
@@ -747,94 +1105,199 @@
             if (heroes.length !== 5) throw new Error('Suggested lineup needs 5 heroes');
             if (!Number.isFinite(pet) || pet < 6000) throw new Error('Suggested lineup needs a pet');
 
+            const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
             panelState.attacking = true;
             panelState.status = 'attacking';
-            panelState.message = source === 'max'
-                ? 'Attacking with max-beat lineup at your power…'
-                : 'Attacking with at-power lineup…';
+            panelState.message = isCd
+                ? (source === 'max' ? 'Clan Domination: setting max-beat team…' : 'Clan Domination: setting at-power team…')
+                : (source === 'max' ? 'Attacking with max-beat lineup at your power…' : 'Attacking with at-power lineup…');
             panelController?.render();
             HWHFuncs.setProgress?.(`${EXTENSION_NAME}: attacking…`, true);
 
-            const gather = readEnemyFromGather();
-            closeGather(gather?.mediator);
+            try {
+                const support = await fetchTeamSupport();
+                const arenaFavor = support.favor?.arena || {};
+                const favor = pickFavor(heroes, arenaFavor);
+                const banner = resolveBanner(support.userInfo);
 
-            const support = await fetchTeamSupport();
-            const arenaFavor = support.favor?.arena || {};
-            const favor = pickFavor(heroes, arenaFavor);
-            const banners = [resolveBanner(support.userInfo)];
+                if (isCd) {
+                    const setArgs = {
+                        units: heroes,
+                        pet,
+                        favor,
+                        banner,
+                    };
+                    console.log(`[${EXTENSION_NAME}] clanDomination_setDefence`, setArgs, { source });
+                    const setResponse = await Send({
+                        calls: [{
+                            name: 'clanDomination_setDefence',
+                            args: setArgs,
+                            context: { actionTs: Date.now() },
+                            ident: 'clanDomination_setDefence',
+                        }],
+                    });
+                    if (setResponse?.error) {
+                        throw new Error(
+                            `setDefence failed: ${setResponse.error.name || 'Unknown'}`
+                            + (setResponse.error.description ? ` - ${setResponse.error.description}` : '')
+                        );
+                    }
 
-            const args = {
-                userId: Number(enemy.userId),
-                heroes,
-                pet,
-                favor,
-                banners,
-            };
+                    const startArgs = { targetId: String(enemy.userId) };
+                    console.log(`[${EXTENSION_NAME}] clanDomination_startBattle`, startArgs, {
+                        levelId: enemy.levelId,
+                        source,
+                    });
+                    const startResponse = await Send({
+                        calls: [{
+                            name: 'clanDomination_startBattle',
+                            args: startArgs,
+                            context: { actionTs: Date.now() },
+                            ident: 'clanDomination_startBattle',
+                        }],
+                    });
+                    if (startResponse?.error) {
+                        throw new Error(
+                            `startBattle failed: ${startResponse.error.name || 'Unknown'}`
+                            + (startResponse.error.description ? ` - ${startResponse.error.description}` : '')
+                        );
+                    }
 
-            console.log(`[${EXTENSION_NAME}] arenaAttack`, args, { source });
-            const response = await Send({
-                calls: [{
-                    name: 'arenaAttack',
-                    args,
-                    context: { actionTs: Date.now() },
-                    ident: 'body',
-                }],
-            });
+                    const cdTarget = readClanDominationTarget();
+                    closeGather(cdTarget?.mediator);
 
-            if (response?.error) {
-                const name = response.error.name || 'Unknown';
-                const desc = response.error.description || '';
-                throw new Error(`arenaAttack failed: ${name}${desc ? ` - ${desc}` : ''}`);
+                    panelState.message = 'Clan Domination battle started';
+                    panelState.status = 'done';
+                    panelState.attacking = false;
+                    panelState.visible = false;
+                    panelController?.render();
+                    HWHFuncs.setProgress?.(`${EXTENSION_NAME}: Clan Domination battle started`, false);
+                    console.log(`[${EXTENSION_NAME}] clanDomination_startBattle response:`, startResponse);
+                    return;
+                }
+
+                const gather = readEnemyFromGather();
+                closeGather(gather?.mediator);
+
+                const args = {
+                    userId: Number(enemy.userId),
+                    heroes,
+                    pet,
+                    favor,
+                    banners: [banner],
+                };
+
+                console.log(`[${EXTENSION_NAME}] arenaAttack`, args, { source });
+                const response = await Send({
+                    calls: [{
+                        name: 'arenaAttack',
+                        args,
+                        context: { actionTs: Date.now() },
+                        ident: 'body',
+                    }],
+                });
+
+                if (response?.error) {
+                    const name = response.error.name || 'Unknown';
+                    const desc = response.error.description || '';
+                    throw new Error(`arenaAttack failed: ${name}${desc ? ` - ${desc}` : ''}`);
+                }
+
+                const responseBody = response.results?.[0]?.result?.response
+                    || response.results?.[0]?.response
+                    || response.results?.[0]?.result
+                    || null;
+                const win = responseBody?.win;
+                const msg = win === true ? 'Victory' : win === false ? 'Defeat' : 'Attack sent';
+                panelState.message = msg;
+                panelState.status = 'done';
+                panelState.attacking = false;
+                panelState.visible = false;
+                panelController?.render();
+                HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
+                console.log(`[${EXTENSION_NAME}] arenaAttack response:`, responseBody || response);
+            } catch (error) {
+                panelState.attacking = false;
+                throw error;
             }
-
-            const responseBody = response.results?.[0]?.result?.response
-                || response.results?.[0]?.response
-                || response.results?.[0]?.result
-                || null;
-            const win = responseBody?.win;
-            const msg = win === true ? 'Victory' : win === false ? 'Defeat' : 'Attack sent';
-            panelState.message = msg;
-            panelState.status = 'done';
-            panelState.attacking = false;
-            panelState.visible = false;
-            panelController?.render();
-            HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
-            console.log(`[${EXTENSION_NAME}] arenaAttack response:`, responseBody || response);
         }
 
-        function tick() {
-            if (panelState.attacking) return;
-            const gather = readEnemyFromGather();
-            if (!gather) {
-                if (panelState.visible) {
-                    panelState.visible = false;
-                    panelState.enemy = null;
-                    panelState.counters = null;
-                    panelState.message = '';
-                    panelState.status = 'idle';
-                    lastComboKey = null;
-                    panelController?.render();
-                }
-                return;
-            }
+        function hidePanel() {
+            if (!panelState.visible && !panelState.enemy) return;
+            panelState.visible = false;
+            panelState.enemy = null;
+            panelState.counters = null;
+            panelState.message = '';
+            panelState.status = 'idle';
+            panelState.mode = 'arena';
+            lastComboKey = null;
+            panelController?.render();
+        }
 
+        function showEnemyPanel(enemy, mode) {
             panelState.visible = true;
-            if (!gather.enemy) {
-                panelState.enemy = null;
-                panelState.counters = null;
-                panelState.status = 'error';
-                panelState.message = 'Could not read enemy lineup from gather popup';
-                panelController?.render();
-                return;
-            }
-
-            panelState.enemy = gather.enemy;
-            const needsFetch = gather.enemy.comboKey !== lastComboKey
+            panelState.mode = mode;
+            panelState.enemy = enemy;
+            const needsFetch = enemy.comboKey !== lastComboKey
                 || (!panelState.counters && panelState.status !== 'loading');
             panelController?.render();
             if (needsFetch && Date.now() - lastFetchAt > 250) {
-                loadCountersForEnemy(gather.enemy);
+                loadCountersForEnemy(enemy);
             }
+        }
+
+        function tick() {
+            if (isBusy()) return;
+
+            const gather = readEnemyFromGather();
+            if (gather) {
+                panelState.mode = 'arena';
+                panelState.visible = true;
+                if (!gather.enemy) {
+                    panelState.enemy = null;
+                    panelState.counters = null;
+                    panelState.status = 'error';
+                    panelState.message = 'Could not read enemy lineup from gather popup';
+                    panelController?.render();
+                    return;
+                }
+                showEnemyPanel({ ...gather.enemy, mode: 'arena' }, 'arena');
+                return;
+            }
+
+            const cdTarget = readClanDominationTarget();
+            if (cdTarget?.levelId) {
+                panelState.mode = 'clanDomination';
+                panelState.visible = true;
+                const cached = getCachedClanDominationEnemy(cdTarget.levelId);
+                if (cached) {
+                    showEnemyPanel(cached, 'clanDomination');
+                    return;
+                }
+
+                panelState.message = `Loading Domination enemy @${cdTarget.levelId}…`;
+                panelState.status = 'loading';
+                panelController?.render();
+                fetchClanDominationEnemy(cdTarget.levelId)
+                    .then((enemy) => {
+                        if (isBusy()) return;
+                        const still = readClanDominationTarget();
+                        if (!still || Number(still.levelId) !== Number(cdTarget.levelId)) return;
+                        showEnemyPanel(enemy, 'clanDomination');
+                    })
+                    .catch((error) => {
+                        console.warn(`[${EXTENSION_NAME}] Clan Domination enemy fetch failed:`, error);
+                        if (isBusy()) return;
+                        panelState.enemy = null;
+                        panelState.counters = null;
+                        panelState.status = 'error';
+                        panelState.message = error?.message || 'Failed to load Domination enemy';
+                        panelController?.render();
+                    });
+                return;
+            }
+
+            hidePanel();
         }
 
         panelController = createPanel();
@@ -846,22 +1309,38 @@
         scriptMenu.addCombinedButton([
             {
                 name: 'Counters',
-                title: 'Arena Counter Suggest — shows DB counters on Arena attack gather',
+                title: 'Counter Suggest — Arena gather or Clan Domination attack target',
                 onClick: () => {
                     const gather = readEnemyFromGather();
-                    if (!gather?.enemy) {
-                        HWHFuncs.setProgress?.(`${EXTENSION_NAME}: open Arena attack team gather first`, false);
+                    if (gather?.enemy) {
+                        showEnemyPanel({ ...gather.enemy, mode: 'arena' }, 'arena');
                         return;
                     }
-                    panelState.visible = true;
-                    panelState.enemy = gather.enemy;
-                    loadCountersForEnemy(gather.enemy);
-                    panelController?.render();
+                    const cdTarget = readClanDominationTarget();
+                    if (cdTarget?.levelId) {
+                        panelState.mode = 'clanDomination';
+                        panelState.visible = true;
+                        panelState.message = `Loading Domination enemy @${cdTarget.levelId}…`;
+                        panelController?.render();
+                        fetchClanDominationEnemy(cdTarget.levelId)
+                            .then((enemy) => showEnemyPanel(enemy, 'clanDomination'))
+                            .catch((error) => {
+                                HWHFuncs.setProgress?.(
+                                    `${EXTENSION_NAME}: ${error?.message || 'Domination enemy failed'}`,
+                                    false
+                                );
+                            });
+                        return;
+                    }
+                    HWHFuncs.setProgress?.(
+                        `${EXTENSION_NAME}: open Arena gather or Clan Domination attack target first`,
+                        false
+                    );
                 },
                 color: 'purple',
             },
         ]);
 
-        console.log(`${EXTENSION_NAME}: polling for ${POPUP_CLASS}`);
+        console.log(`${EXTENSION_NAME}: polling for ${POPUP_CLASS} and ${CD_ATTACK_POPUP_CLASS}`);
     }
 })();

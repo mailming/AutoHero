@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.27
+// @version      1.28.1
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.27';
+    const EXTENSION_VERSION = '1.28.1';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -461,14 +461,16 @@
                 pet: opponentTeam.pet || defaultPetId,
             },
             defenceBanner: opponentTeam.banner || 1,
-            defenceBannerStones: {},
+            defenceBannerStones: opponentTeam.bannerStones
+                || opponentTeam.defenceBannerStones
+                || {},
             defenceFavor: opponentTeam.favor || {},
             team: {
                 units: myTeam.heroes,
                 pet: myTeam.pet || defaultPetId,
             },
             banner: myTeam.banners?.[0] || 1,
-            bannerStones: {},
+            bannerStones: myTeam.bannerStones || {},
             favor: myTeam.favor || {},
         };
 
@@ -562,6 +564,13 @@
         HWHFuncs.addExtentionName(EXTENSION_NAME, EXTENSION_VERSION, EXTENSION_AUTHOR);
 
         const training = createArenaTraining({ Send, cheats, lib, HWHFuncs });
+        // Keep method `this` intact if callers extract simulateMatchup / runSingle.
+        if (typeof training.simulateMatchup === 'function') {
+            training.simulateMatchup = training.simulateMatchup.bind(training);
+        }
+        if (typeof training.runSingle === 'function') {
+            training.runSingle = training.runSingle.bind(training);
+        }
         window.ArenaTraining = training;
 
         if (window.LLMHWH) {
@@ -574,6 +583,7 @@
             window.LLMHWH.arenaTrainingExportResults = () => training.exportResults();
             window.LLMHWH.arenaTrainingGetStatus = () => training.getStatus();
             window.LLMHWH.arenaTrainingStop = () => training.stop();
+            window.LLMHWH.arenaTrainingSimulateMatchup = (options) => training.simulateMatchup(options);
         }
 
         HWHClasses.ScriptMenu.getInst().addButton({
@@ -1299,12 +1309,20 @@
                 banner = typeof b === 'number' ? b : (b?.id || 1);
             }
 
+            const favor = opponent?.favor && typeof opponent.favor === 'object'
+                ? opponent.favor
+                : {};
+            const bannerStones = opponent?.bannerStones
+                || opponent?.defenceBannerStones
+                || {};
+
             return {
                 hasValidTeam: heroes.length === 5,
                 heroes,
                 pet,
                 banner,
-                favor: {},
+                favor,
+                bannerStones: bannerStones && typeof bannerStones === 'object' ? bannerStones : {},
             };
         }
 
@@ -1346,12 +1364,13 @@
             });
         }
 
-        function buildMyTeamConfig(heroIds, pet, banner, arenaFavor) {
+        function buildMyTeamConfig(heroIds, pet, banner, arenaFavor, bannerStones = {}) {
             return {
                 heroes: heroIds,
                 pet,
                 banners: [banner],
                 favor: pickFavor(heroIds, arenaFavor),
+                bannerStones: bannerStones && typeof bannerStones === 'object' ? bannerStones : {},
             };
         }
 
@@ -2417,7 +2436,8 @@
                                 candidate.heroes,
                                 candidate.pet,
                                 candidate.banner ?? banner,
-                                candidate.favor
+                                candidate.favor,
+                                candidate.bannerStones
                             );
 
                             await yieldForUi();
@@ -2460,6 +2480,7 @@
                             ...options.counterLineup,
                             banner: options.counterLineup.banner ?? banner,
                             favor: options.counterLineup.favor || pickFavor(options.counterLineup.heroes, arenaFavor),
+                            bannerStones: options.counterLineup.bannerStones || {},
                         };
                         if (!candidate.heroNames?.length) {
                             candidate.heroNames = candidate.heroes.map(heroName);
@@ -2612,6 +2633,100 @@
                         message: stopRequested ? 'Stopped by user' : 'Completed',
                     };
                 }
+            },
+
+            /**
+             * SimLab: one current-power (or max) counter lineup vs an explicit enemy team.
+             * Reuses counterLineupOnly + opponentOverride; saves to bridge by default.
+             */
+            async simulateMatchup(options = {}) {
+                const myTeam = options.myTeam || {};
+                const opponentTeam = options.opponentTeam || {};
+                const heroes = (Array.isArray(myTeam.heroes) ? myTeam.heroes : [])
+                    .map(Number)
+                    .filter((id) => id > 0 && id < 6000);
+                const defenceHeroes = (Array.isArray(opponentTeam.heroes) ? opponentTeam.heroes : [])
+                    .map(Number)
+                    .filter((id) => id > 0 && id < 6000);
+
+                if (heroes.length !== 5) {
+                    throw new Error('simulateMatchup requires myTeam.heroes with 5 hero ids');
+                }
+                if (defenceHeroes.length !== 5) {
+                    throw new Error('simulateMatchup requires opponentTeam.heroes with 5 hero ids');
+                }
+
+                const pet = Number(myTeam.pet);
+                if (!Number.isFinite(pet) || pet < 6000) {
+                    throw new Error('simulateMatchup requires myTeam.pet');
+                }
+
+                const label = options.label || 'simlab-counter';
+                const maxUpgrade = options.maxUpgrade === true;
+                const simulationsPerCombo = Number(options.simulationsPerCombo) > 0
+                    ? Number(options.simulationsPerCombo)
+                    : CONSTANTS.DEFAULT_SIMULATIONS;
+
+                const counterLineup = {
+                    heroes,
+                    pet,
+                    banner: myTeam.banner ?? myTeam.banners?.[0],
+                    favor: myTeam.favor && typeof myTeam.favor === 'object' ? myTeam.favor : {},
+                    bannerStones: myTeam.bannerStones && typeof myTeam.bannerStones === 'object'
+                        ? myTeam.bannerStones
+                        : {},
+                    heroNames: myTeam.heroNames,
+                };
+
+                const opponentOverride = {
+                    userId: opponentTeam.userId != null ? String(opponentTeam.userId) : 'simlab-enemy',
+                    user: {
+                        name: opponentTeam.name
+                            || opponentTeam.user?.name
+                            || String(opponentTeam.userId || 'SimLab enemy'),
+                    },
+                    heroes: defenceHeroes,
+                    pet: Number(opponentTeam.pet) || CONSTANTS.DEFAULT_PET_ID,
+                    banner: Number(opponentTeam.banner) || 1,
+                    favor: opponentTeam.favor && typeof opponentTeam.favor === 'object'
+                        ? opponentTeam.favor
+                        : {},
+                    bannerStones: opponentTeam.bannerStones
+                        || opponentTeam.defenceBannerStones
+                        || {},
+                    place: opponentTeam.place,
+                    power: opponentTeam.power,
+                    source: opponentTeam.source || 'simlab',
+                };
+
+                const result = await this.runSingle({
+                    label,
+                    maxUpgrade,
+                    counterLineupOnly: true,
+                    counterLineup,
+                    opponentOverride,
+                    opponentUserId: opponentOverride.userId,
+                    simulationsPerCombo,
+                    skipCachedOpponents: false,
+                    searchUntilTarget: false,
+                    useMetaTeams: false,
+                    includeCurrentTeam: false,
+                    includeGrandArenaTeams: false,
+                });
+
+                if (options.saveToBridge !== false) {
+                    await saveRoundToBridge(result);
+                }
+
+                const best = result?.best || result?.rankings?.[0] || null;
+                return {
+                    wins: Number(best?.wins) || 0,
+                    losses: Number(best?.losses) || 0,
+                    winRate: Number(best?.winRate) || 0,
+                    averageBattleTime: Number(best?.averageBattleTime) || 0,
+                    sessionId: result?.sessionId || null,
+                    result: slimTrainingResult(result),
+                };
             },
         };
     }

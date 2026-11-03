@@ -29,6 +29,7 @@ import {
     getOpponentSkipCheck,
     getUserCounterSkipCheck,
     getTrainingCounters,
+    getSimLabRounds,
     getMetaTeamSnapshots,
     getMetaTeamSnapshotById,
     getMetaTeamCountForSnapshot,
@@ -154,7 +155,11 @@ const server = http.createServer(async (req, res) => {
             return res.end();
         }
 
-        if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/training/view')) {
+        if (req.method === 'GET' && (
+            url.pathname === '/'
+            || url.pathname === '/training'
+            || url.pathname === '/training/view'
+        )) {
             if (!databaseReady) {
                 res.writeHead(503, { 'Content-Type': 'text/plain' });
                 return res.end('Database not ready');
@@ -172,7 +177,7 @@ const server = http.createServer(async (req, res) => {
             const order = url.searchParams.get('order') || 'desc';
             const filterArgs = { comboKey, opponentHeroIds, myHeroIds, testerUserId, sort, order };
             try {
-                const [rows, summary, total, stats, testers] = await Promise.all([
+                const [rows, summary, total, stats, testers, simLabRounds] = await Promise.all([
                     getTrainingResults({
                         ...filterArgs,
                         offset,
@@ -182,6 +187,7 @@ const server = http.createServer(async (req, res) => {
                     getTrainingResultCount(filterArgs),
                     getTrainingResultStats(filterArgs),
                     getTrainingTesters(),
+                    getSimLabRounds({ limit: 20 }),
                 ]);
                 const results = rows.map(formatTrainingResultRow);
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -197,6 +203,7 @@ const server = http.createServer(async (req, res) => {
                     stats,
                     sort,
                     order,
+                    simLabRounds,
                 }));
             } catch (error) {
                 console.error('[training/view] failed:', error);
@@ -205,6 +212,21 @@ const server = http.createServer(async (req, res) => {
                     error: error?.message || String(error),
                 });
             }
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/simlab') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const limit = Number(url.searchParams.get('limit'));
+            const rounds = await getSimLabRounds({
+                limit: Number.isFinite(limit) && limit > 0 ? limit : 20,
+            });
+            return sendJson(res, 200, { ok: true, rounds });
         }
 
         if (req.method === 'GET' && url.pathname === '/training/results') {
@@ -525,7 +547,7 @@ async function startServer() {
 
     server.listen(PORT, HOST, () => {
         console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
-        console.log('Arena training: GET /training/view, /training/meta-view (HTML), /training/results, /training/counters (JSON)');
+        console.log('Arena training: GET /training, /training/view, /training/meta-view (HTML), /training/results, /training/counters, /training/simlab (JSON)');
         console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
     });
 }

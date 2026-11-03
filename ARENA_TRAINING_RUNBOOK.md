@@ -147,7 +147,7 @@ Expected output:
 ```
 PostgreSQL connected: postgresql://postgres:****@localhost:5432/autohero
 LLM bridge listening on http://127.0.0.1:9876
-Arena training: GET /training/view (HTML), /training/results (JSON), /training/matchups, /training/counters
+Arena training: GET /training (HTML), /training/view, /training/results (JSON), /training/matchups, /training/counters, /training/simlab
 Waiting for Hero Wars tab (LLM Controller) to poll /poll ...
 ```
 
@@ -196,21 +196,27 @@ Install **Arena Training HwH Ext.user.js**
 - Raw URL: `https://github.com/mailming/AutoHero/raw/refs/heads/develop/Arena%20Training%20HwH%20Ext.user.js`
 - Runs demo battles and saves results to PostgreSQL via the bridge
 
-### 6.4 Arena Counter Suggest (optional, live Arena attacks)
+### 6.4 Arena Counter Suggest (optional, live Arena attacks + SimLab)
 
-Install **Arena Counter Suggest HwH Ext.user.js**
+Install **Arena Counter Suggest HwH Ext.user.js** (and keep **Arena Training HwH Ext** enabled for SimLab).
 
 - Raw URL: `https://github.com/mailming/AutoHero/raw/refs/heads/develop/Arena%20Counter%20Suggest%20HwH%20Ext.user.js`
-- When the Arena attack team-gather popup opens, shows a floating panel with:
+- When the **Arena** attack team-gather popup opens, or the **Clan Domination** select-attack-target popup opens, shows a floating panel with:
   - up to **2** winning lineups tested at **your power** (`max_upgrade = false`)
   - **1** best **max-upgrade** counter
-- Click a row to close the gather popup and fire a real `arenaAttack` with that lineup at account power
-- Requires the bridge + PostgreSQL (queries `GET /training/counters?comboKey=&testerUserId=`)
+- Arena: click a row to close gather and fire `arenaAttack` with that lineup at account power
+- Clan Domination: click a row to `clanDomination_setDefence` (suggested heroes/pet/favor/banner) then `clanDomination_startBattle` (`targetId` = enemy userId). Enemy team comes from `clanDomination_getEnemyTeams` (includes favor + banner slots)
+- Click **SimLab** on a row to run `demoBattles_startBattle` + local BattleCalc at **your current power** (no arena attempts):
+  - Attack pet / favor / banner / banner stones applied from your account (+ suggested heroes/pet)
+  - Defense lineup from the gather enemy (Arena) or Domination enemy payload (favor/banner/slots already present)
+  - Saves to the bridge with label `simlab-counter` / `simlab-counter-cd` (shows under **SimLab** on the training page)
+- Requires the bridge + PostgreSQL (counters: `GET /training/counters`; SimLab history: `GET /training/simlab`)
 
 Example:
 
 ```powershell
 Invoke-RestMethod "http://127.0.0.1:9876/training/counters?comboKey=46,71,35,72,70%7C6008%7C1&testerUserId=60679992&minWinRate=50"
+Invoke-RestMethod "http://127.0.0.1:9876/training/simlab?limit=10"
 ```
 
 ### 6.5 Load the game
@@ -275,7 +281,9 @@ Single round only:
 | URL | Description |
 |-----|-------------|
 | [http://127.0.0.1:9876/](http://127.0.0.1:9876/) | HTML table — opponent combo, your combo, win %, last tested |
+| [http://127.0.0.1:9876/training](http://127.0.0.1:9876/training) | Same HTML page (alias) — includes **SimLab** section |
 | [http://127.0.0.1:9876/training/results?limit=100](http://127.0.0.1:9876/training/results?limit=100) | JSON API |
+| [http://127.0.0.1:9876/training/simlab](http://127.0.0.1:9876/training/simlab) | Recent SimLab rounds (JSON) |
 | [http://127.0.0.1:9876/training/summary](http://127.0.0.1:9876/training/summary) | Counts and latest matchup |
 
 PowerShell:
@@ -370,12 +378,15 @@ await pool.end();
 | Skip-check not working | Restart bridge after updates; reload Arena Training userscript |
 | Counter Suggest empty / bridge error | Restart bridge after `/training/counters` update; ensure Combo was trained into DB; reload Counter Suggest userscript |
 | Counter Suggest panel never appears | Open regular Arena attack gather (`ArenaAttackTeamGatherPopupWithEnemyTeam`); check console for mediator dump |
+| SimLab says Arena Training not loaded | Enable **Arena Training HwH Ext** (exposes `window.ArenaTraining.simulateMatchup`) |
+| SimLab missing on `/training` | Restart bridge after update; confirm round `label` starts with `simlab`; open [http://127.0.0.1:9876/training](http://127.0.0.1:9876/training)#simlab |
 | CORS / fetch errors to localhost | Use same machine for browser and bridge; URL must be `127.0.0.1:9876` |
 
 ### Useful console checks (in-game)
 
 ```javascript
 window.ArenaTraining?.getStatus()
+window.ArenaTraining?.simulateMatchup  // function — required for Counter Suggest SimLab
 window.LLMHWH?.arenaTrainingGetStatus()
 window.cheats?.translate('LIB_HERO_NAME_55')  // should return 'Iris'
 ```
@@ -399,8 +410,9 @@ window.cheats?.translate('LIB_HERO_NAME_55')  // should return 'Iris'
 |------|---------|
 | `llm-bridge-server.mjs` | HTTP bridge + training routes |
 | `training-db.mjs` | PostgreSQL schema and queries |
-| `Arena Counter Suggest HwH Ext.user.js` | Floating counter panel on Arena attack gather |
-| `training-view.mjs` | HTML results page |
+| `Arena Counter Suggest HwH Ext.user.js` | Floating counter panel on Arena attack gather (+ SimLab) |
+| `Arena Training HwH Ext.user.js` | Demo training loop + `simulateMatchup` for SimLab |
+| `training-view.mjs` | HTML results page (incl. SimLab section) |
 | `hero-names.mjs` | Hero/pet ID → name mapping (includes Robin `6011`) |
 | `PET_DATA_DOCUMENTATION.md` | Pet favor lib (`lib.data.pet`) and Robin details |
 | `loop-arena-training.ps1` | Start loop via PowerShell |

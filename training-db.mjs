@@ -1554,6 +1554,79 @@ export async function getMetaTeamCandidates({ snapshotId, limit } = {}) {
     };
 }
 
+/**
+ * Recent SimLab rounds (Counter Suggest / simulateMatchup), keyed by label prefix.
+ */
+export async function getSimLabRounds({ limit = 20 } = {}) {
+    if (!pool) {
+        pool = createPool();
+    }
+
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+    const result = await pool.query(
+        `SELECT
+            session_id,
+            label,
+            started_at,
+            completed_at,
+            opponent_combo_key,
+            opponent_user_id,
+            opponent_name,
+            opponent_place,
+            opponent_power,
+            best_win_rate,
+            best_hero_ids,
+            best_hero_names,
+            best_pet,
+            tester_user_id,
+            tester_name,
+            max_upgrade,
+            payload
+         FROM training_rounds
+         WHERE label ILIKE 'simlab%'
+         ORDER BY COALESCE(completed_at, created_at) DESC NULLS LAST
+         LIMIT $1`,
+        [safeLimit]
+    );
+
+    return result.rows.map((row) => {
+        let payload = row.payload;
+        if (typeof payload === 'string') {
+            try {
+                payload = JSON.parse(payload);
+            } catch {
+                payload = null;
+            }
+        }
+        const best = payload?.best || payload?.rankings?.[0] || null;
+        const opponentTeam = payload?.opponent?.team || {};
+        return {
+            sessionId: row.session_id,
+            label: row.label,
+            testedAt: row.completed_at || row.started_at,
+            opponentComboKey: row.opponent_combo_key,
+            opponentUserId: row.opponent_user_id,
+            opponentName: row.opponent_name,
+            opponentPlace: row.opponent_place,
+            opponentHeroIds: Array.isArray(opponentTeam.heroes) ? opponentTeam.heroes.map(Number) : null,
+            opponentPet: opponentTeam.pet != null ? Number(opponentTeam.pet) : null,
+            opponentBanner: opponentTeam.banner != null
+                ? Number(opponentTeam.banner)
+                : (payload?.opponent?.banner != null ? Number(payload.opponent.banner) : null),
+            myHeroIds: row.best_hero_ids,
+            myHeroNames: row.best_hero_names,
+            myPet: row.best_pet != null ? Number(row.best_pet) : null,
+            myBanner: best?.banner != null ? Number(best.banner) : null,
+            winRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
+            wins: best?.wins != null ? Number(best.wins) : null,
+            losses: best?.losses != null ? Number(best.losses) : null,
+            testerUserId: row.tester_user_id != null ? String(row.tester_user_id) : null,
+            testerName: row.tester_name || null,
+            maxUpgrade: row.max_upgrade !== false,
+        };
+    });
+}
+
 export async function backfillMatchupsFromRounds() {
     if (!pool) {
         pool = createPool();
