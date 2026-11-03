@@ -24,6 +24,7 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+_tmp_*
 
 # Generated files (optional - uncomment if you don't want to track these)
 # schedule_extracted.csv
