@@ -147,7 +147,7 @@ Expected output:
 ```
 PostgreSQL connected: postgresql://postgres:****@localhost:5432/autohero
 LLM bridge listening on http://127.0.0.1:9876
-Arena training: GET /training/view (HTML), /training/results (JSON), /training/matchups
+Arena training: GET /training/view (HTML), /training/results (JSON), /training/matchups, /training/counters
 Waiting for Hero Wars tab (LLM Controller) to poll /poll ...
 ```
 
@@ -196,7 +196,24 @@ Install **Arena Training HwH Ext.user.js**
 - Raw URL: `https://github.com/mailming/AutoHero/raw/refs/heads/develop/Arena%20Training%20HwH%20Ext.user.js`
 - Runs demo battles and saves results to PostgreSQL via the bridge
 
-### 6.4 Load the game
+### 6.4 Arena Counter Suggest (optional, live Arena attacks)
+
+Install **Arena Counter Suggest HwH Ext.user.js**
+
+- Raw URL: `https://github.com/mailming/AutoHero/raw/refs/heads/develop/Arena%20Counter%20Suggest%20HwH%20Ext.user.js`
+- When the Arena attack team-gather popup opens, shows a floating panel with:
+  - up to **2** winning lineups tested at **your power** (`max_upgrade = false`)
+  - **1** best **max-upgrade** counter
+- Click a row to close the gather popup and fire a real `arenaAttack` with that lineup at account power
+- Requires the bridge + PostgreSQL (queries `GET /training/counters?comboKey=&testerUserId=`)
+
+Example:
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:9876/training/counters?comboKey=46,71,35,72,70%7C6008%7C1&testerUserId=60679992&minWinRate=50"
+```
+
+### 6.5 Load the game
 
 1. Open [https://www.hero-wars.com](https://www.hero-wars.com) and log in
 2. Wait for the HWH menu to appear
@@ -351,6 +368,8 @@ await pool.end();
 | Port 9876 in use | Kill old `node llm-bridge-server.mjs` process (see §5) |
 | Training never starts | Check console for errors; ensure `cheats.BattleCalc` is available (base HWH loaded) |
 | Skip-check not working | Restart bridge after updates; reload Arena Training userscript |
+| Counter Suggest empty / bridge error | Restart bridge after `/training/counters` update; ensure Combo was trained into DB; reload Counter Suggest userscript |
+| Counter Suggest panel never appears | Open regular Arena attack gather (`ArenaAttackTeamGatherPopupWithEnemyTeam`); check console for mediator dump |
 | CORS / fetch errors to localhost | Use same machine for browser and bridge; URL must be `127.0.0.1:9876` |
 
 ### Useful console checks (in-game)
@@ -380,6 +399,7 @@ window.cheats?.translate('LIB_HERO_NAME_55')  // should return 'Iris'
 |------|---------|
 | `llm-bridge-server.mjs` | HTTP bridge + training routes |
 | `training-db.mjs` | PostgreSQL schema and queries |
+| `Arena Counter Suggest HwH Ext.user.js` | Floating counter panel on Arena attack gather |
 | `training-view.mjs` | HTML results page |
 | `hero-names.mjs` | Hero/pet ID → name mapping (includes Robin `6011`) |
 | `PET_DATA_DOCUMENTATION.md` | Pet favor lib (`lib.data.pet`) and Robin details |

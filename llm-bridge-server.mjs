@@ -28,6 +28,7 @@ import {
     getTrainingTesters,
     getOpponentSkipCheck,
     getUserCounterSkipCheck,
+    getTrainingCounters,
     getMetaTeamSnapshots,
     getMetaTeamSnapshotById,
     getMetaTeamCountForSnapshot,
@@ -288,6 +289,32 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 200, { ok: true, ...skip });
         }
 
+        if (req.method === 'GET' && url.pathname === '/training/counters') {
+            if (!databaseReady) {
+                return sendJson(res, 503, {
+                    ok: false,
+                    error: 'Database not ready. Check DATABASE_URL and PostgreSQL.',
+                    database: getDatabaseStatus(),
+                });
+            }
+            const comboKey = url.searchParams.get('comboKey');
+            if (!comboKey) {
+                return sendJson(res, 400, { ok: false, error: 'comboKey query param is required' });
+            }
+            const testerUserId = url.searchParams.get('testerUserId')
+                || url.searchParams.get('tester')
+                || undefined;
+            const minWinRate = Number(url.searchParams.get('minWinRate'));
+            const maxAgeDays = Number(url.searchParams.get('maxAgeDays'));
+            const counters = await getTrainingCounters({
+                comboKey,
+                testerUserId,
+                minWinRate: Number.isFinite(minWinRate) && minWinRate > 0 ? minWinRate : 50,
+                maxAgeDays: Number.isFinite(maxAgeDays) && maxAgeDays > 0 ? maxAgeDays : 30,
+            });
+            return sendJson(res, 200, counters);
+        }
+
         if (req.method === 'GET' && url.pathname === '/training/meta-view') {
             if (!databaseReady) {
                 res.writeHead(503, { 'Content-Type': 'text/plain' });
@@ -498,7 +525,7 @@ async function startServer() {
 
     server.listen(PORT, HOST, () => {
         console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
-        console.log('Arena training: GET /training/view, /training/meta-view (HTML), /training/results (JSON)');
+        console.log('Arena training: GET /training/view, /training/meta-view (HTML), /training/results, /training/counters (JSON)');
         console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
     });
 }

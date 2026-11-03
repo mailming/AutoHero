@@ -1104,6 +1104,176 @@ export async function getUserCounterSkipCheck({
     };
 }
 
+function formatCounterMatch(match) {
+    if (!match || !Array.isArray(match.myHeroIds) || match.myHeroIds.length !== 5) {
+        return null;
+    }
+    return {
+        myHeroIds: match.myHeroIds.map(Number),
+        myHeroNames: Array.isArray(match.myHeroNames) ? match.myHeroNames : [],
+        myPet: match.myPet != null ? Number(match.myPet) : null,
+        winRate: match.winRate != null ? Number(match.winRate) : null,
+        wins: match.wins != null ? Number(match.wins) : null,
+        losses: match.losses != null ? Number(match.losses) : null,
+        testedAt: match.testedAt || null,
+        maxUpgrade: match.maxUpgrade === true,
+    };
+}
+
+async function queryDistinctCounterMatches({
+    opponentComboId,
+    minWinRate,
+    maxAgeDays,
+    maxUpgrade,
+    testerUserId = null,
+    limit = 2,
+}) {
+    if (!opponentComboId) {
+        return [];
+    }
+
+    const queryParams = [opponentComboId, minWinRate, String(maxAgeDays), Boolean(maxUpgrade)];
+    const opponentIdParam = '$1';
+    const minWinRateParam = '$2';
+    const maxAgeParam = '$3';
+    const maxUpgradeParam = '$4';
+
+    let testerClause = '';
+    if (testerUserId != null && testerUserId !== '') {
+        queryParams.push(String(testerUserId));
+        testerClause = `AND best.tester_user_id = $${queryParams.length}`;
+    }
+
+    queryParams.push(Math.max(1, Number(limit) || 1));
+    const limitParam = `$${queryParams.length}`;
+
+    const result = await pool.query(
+        `SELECT distinct_matches.match
+         FROM (
+            SELECT DISTINCT ON (best.my_hero_ids, COALESCE(best.my_pet, 0))
+                json_build_object(
+                    'myHeroIds', best.my_hero_ids,
+                    'myHeroNames', best.my_hero_names,
+                    'myPet', best.my_pet,
+                    'winRate', best.win_rate,
+                    'wins', best.wins,
+                    'losses', best.losses,
+                    'testedAt', best.tested_at,
+                    'maxUpgrade', COALESCE(best.max_upgrade, TRUE)
+                ) AS match,
+                best.win_rate,
+                best.tested_at
+            FROM matchup_tests best
+            WHERE best.opponent_combo_id = ${opponentIdParam}
+              AND best.win_rate >= ${minWinRateParam}
+              AND best.tested_at >= NOW() - (${maxAgeParam}::text || ' days')::interval
+              AND COALESCE(best.max_upgrade, TRUE) = ${maxUpgradeParam}
+              AND cardinality(best.my_hero_ids) = 5
+              ${testerClause}
+            ORDER BY best.my_hero_ids, COALESCE(best.my_pet, 0), best.win_rate DESC, best.tested_at DESC
+         ) distinct_matches
+         ORDER BY distinct_matches.win_rate DESC, distinct_matches.tested_at DESC
+         LIMIT ${limitParam}`,
+        queryParams
+    );
+
+    return result.rows
+        .map((row) => formatCounterMatch(row.match))
+        .filter(Boolean);
+}
+
+/**
+ * Recommend attack lineups for an opponent defense combo.
+ * - atPower: up to 2 winning lineups tested at the player's real power
+ * - maxBeat: best max-upgrade counter (attack still uses account power in-game)
+ */
+export async function getTrainingCounters({
+    comboKey,
+    testerUserId,
+    minWinRate = 50,
+    maxAgeDays = 30,
+} = {}) {
+    if (!comboKey) {
+        return { ok: false, reason: 'missing_combo_key', atPower: [], maxBeat: null };
+    }
+
+    if (!pool) {
+        pool = createPool();
+    }
+
+    const parsed = parseComboKey(comboKey);
+    const params = [];
+    const { clauses, valid } = buildOpponentSetMatchClauses({
+        heroIds: parsed.heroIds,
+        pet: parsed.pet,
+        banner: parsed.banner,
+        params,
+    });
+    const opponentWhere = valid
+        ? clauses.join(' AND ')
+        : (() => {
+            params.push(comboKey);
+            return `oc.combo_key = $${params.length}`;
+        })();
+
+    const opponentMeta = await pool.query(
+        `SELECT oc.id, oc.combo_key, oc.opponent_name, oc.opponent_user_id
+         FROM opponent_combos oc
+         WHERE ${opponentWhere}
+         ORDER BY oc.last_seen_at DESC NULLS LAST
+         LIMIT 1`,
+        params
+    );
+    const meta = opponentMeta.rows[0] || null;
+    if (!meta) {
+        return {
+            ok: true,
+            comboKey,
+            opponentName: null,
+            opponentUserId: null,
+            testerUserId: testerUserId != null ? String(testerUserId) : null,
+            minWinRate,
+            maxAgeDays,
+            atPower: [],
+            maxBeat: null,
+            reason: 'opponent_not_found',
+        };
+    }
+
+    const [atPower, maxBeatList] = await Promise.all([
+        testerUserId
+            ? queryDistinctCounterMatches({
+                opponentComboId: meta.id,
+                minWinRate,
+                maxAgeDays,
+                maxUpgrade: false,
+                testerUserId,
+                limit: 2,
+            })
+            : Promise.resolve([]),
+        queryDistinctCounterMatches({
+            opponentComboId: meta.id,
+            minWinRate,
+            maxAgeDays,
+            maxUpgrade: true,
+            testerUserId: null,
+            limit: 1,
+        }),
+    ]);
+
+    return {
+        ok: true,
+        comboKey: meta.combo_key || comboKey,
+        opponentName: meta.opponent_name || null,
+        opponentUserId: meta.opponent_user_id || null,
+        testerUserId: testerUserId != null ? String(testerUserId) : null,
+        minWinRate,
+        maxAgeDays,
+        atPower,
+        maxBeat: maxBeatList[0] || null,
+    };
+}
+
 export async function getMatchups({ comboKey, limit = 50 } = {}) {
     if (!pool) {
         pool = createPool();
