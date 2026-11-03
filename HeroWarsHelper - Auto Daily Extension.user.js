@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.59
+// @version      3.5.60
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.59";
+    const EXTENSION_VERSION = "3.5.60";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -3758,6 +3758,7 @@
                 favor: attack.favor || {},
                 defenceTeam: { units: defence.units, pet: defence.pet },
                 defenceBanner: defence.banner || 1,
+                defenceBannerStones: defence.bannerStones || {},
                 defenceFavor: defence.favor || {}
             };
             Utils.log('log', `[DEMO] Grand slot pre-fight: 1 server demo + ${getTestFightCount()} local test fights`);
@@ -3821,6 +3822,9 @@
                     units: oppTeam.heroes[slot],
                     pet: oppTeam.pets[slot],
                     banner: oppTeam.banners?.[slot] || 1,
+                    bannerStones: Array.isArray(oppTeam.bannerStones)
+                        ? (oppTeam.bannerStones[slot] || {})
+                        : (oppTeam.bannerStones || {}),
                     favor: oppTeam.favor || {}
                 });
                 cache[key] = sim.winRate;
@@ -3888,6 +3892,45 @@
             };
         }
 
+        this.normalizeBannerStones = function(slots) {
+            if (!slots) return {};
+            if (Array.isArray(slots)) {
+                const out = {};
+                slots.forEach((value, index) => {
+                    const id = Number(value);
+                    if (Number.isFinite(id) && id > 0) out[String(index)] = id;
+                });
+                return out;
+            }
+            if (typeof slots === 'object') {
+                const out = {};
+                for (const [key, value] of Object.entries(slots)) {
+                    const id = Number(value);
+                    if (Number.isFinite(id) && id > 0) out[String(key)] = id;
+                }
+                return out;
+            }
+            return {};
+        };
+
+        this.extractBannerStones = function(bannerOrSlots, fallbackSlots = null) {
+            if (bannerOrSlots && typeof bannerOrSlots === 'object' && !Array.isArray(bannerOrSlots)) {
+                if (bannerOrSlots.slots != null) {
+                    return this.normalizeBannerStones(bannerOrSlots.slots);
+                }
+                // Plain slot map: { "0": 12, "1": 45 } without nested .slots
+                const keys = Object.keys(bannerOrSlots);
+                if (keys.length && keys.every((k) => /^\d+$/.test(k))) {
+                    const asSlots = this.normalizeBannerStones(bannerOrSlots);
+                    if (Object.keys(asSlots).length) return asSlots;
+                }
+            }
+            if (fallbackSlots != null) {
+                return this.normalizeBannerStones(fallbackSlots);
+            }
+            return {};
+        };
+
         this.getOpponentTeamConfig = function(opponent) {
             console.log('[DEMO] Extracting opponent team configuration...');
             
@@ -3921,6 +3964,7 @@
                 const teams = [];
                 const pets = [];
                 const banners = [];
+                const bannerStones = [];
                 const visibleSlots = [];
 
                 if (!looksNested) {
@@ -3929,23 +3973,34 @@
                         teams[0] = parsed.heroes;
                         pets[0] = parsed.pet;
                         banners[0] = extractBannerId(opp.banners?.[0] ?? opp.banner);
+                        bannerStones[0] = this.extractBannerStones(
+                            opp.banners?.[0] ?? opp.banner,
+                            opp.bannerStones
+                        );
                         visibleSlots.push(0);
                         hasValidTeam = true;
                     }
                 } else {
                     for (let i = 0; i < 3; i++) {
                         const parsed = this.parseLineup(rawHeroes[i]);
-                        const banner = extractBannerId(opp.banners?.[i]);
+                        const bannerEntry = opp.banners?.[i];
+                        const banner = extractBannerId(bannerEntry);
+                        const stones = this.extractBannerStones(
+                            bannerEntry,
+                            Array.isArray(opp.bannerStones) ? opp.bannerStones[i] : opp.bannerStones
+                        );
                         if (parsed) {
                             teams[i] = parsed.heroes;
                             pets[i] = parsed.pet;
                             banners[i] = banner;
+                            bannerStones[i] = stones;
                             visibleSlots.push(i);
                             hasValidTeam = true;
                         } else {
                             teams[i] = null;
                             pets[i] = null;
                             banners[i] = banner || 1;
+                            bannerStones[i] = stones;
                         }
                     }
                 }
@@ -3956,22 +4011,28 @@
                         heroes: teams,
                         pets: pets,
                         banners: banners,
-                        favor: {},
+                        bannerStones: bannerStones,
+                        favor: opp.favor && typeof opp.favor === 'object' ? opp.favor : {},
                         visibleSlots
                     };
                     console.log('[DEMO] Grand Arena visible defenses:', visibleSlots.length, 'slots', visibleSlots);
+                    console.log('[DEMO] Grand defence banner stones:', bannerStones.map((s) => Object.keys(s || {}).length));
                 } else if (hasValidTeam) {
+                    const slot0 = visibleSlots[0];
                     config = {
                         hasValidTeam: true,
-                        heroes: teams[visibleSlots[0]],
-                        pet: pets[visibleSlots[0]],
-                        banner: banners[visibleSlots[0]] || 1,
-                        favor: {}
+                        heroes: teams[slot0],
+                        pet: pets[slot0],
+                        banner: banners[slot0] || 1,
+                        bannerStones: bannerStones[slot0] || {},
+                        favor: opp.favor && typeof opp.favor === 'object' ? opp.favor : {}
                     };
                 }
             } else {
                 const parsed = this.readOpponentLineup(opp);
-                const bannerId = extractBannerId(opp.banners?.[0] ?? opp.banner);
+                const bannerSource = opp.banners?.[0] ?? opp.banner;
+                const bannerId = extractBannerId(bannerSource);
+                const stones = this.extractBannerStones(bannerSource, opp.bannerStones);
                 if (parsed) {
                     hasValidTeam = true;
                     config = {
@@ -3979,12 +4040,14 @@
                         heroes: parsed.heroes,
                         pet: parsed.pet,
                         banner: bannerId,
-                        favor: {}
+                        bannerStones: stones,
+                        favor: opp.favor && typeof opp.favor === 'object' ? opp.favor : {}
                     };
                     console.log('[DEMO] Regular Arena config extracted:', {
                         heroes: parsed.heroes,
                         pet: parsed.pet,
-                        banner: bannerId
+                        banner: bannerId,
+                        bannerStones: stones
                     });
                 } else {
                     console.warn('[DEMO] Regular Arena lineup incomplete:', {
@@ -4115,7 +4178,7 @@
             if (matchup) {
                 args.defenceTeam = matchup.defenceTeam;
                 args.defenceBanner = matchup.defenceBanner || 1;
-                args.defenceBannerStones = {};
+                args.defenceBannerStones = this.normalizeBannerStones(matchup.defenceBannerStones || {});
                 args.defenceFavor = matchup.defenceFavor || {};
                 args.team = matchup.team;
                 // Pre-fight only: never apply attack banner (|| 1 used to force a false buff).
@@ -4134,7 +4197,11 @@
                     pet: opponentTeam.pets[teamIndex] || CONSTANTS.DEFAULT_PET_ID
                 };
                 args.defenceBanner = opponentTeam.banners[teamIndex] || 1;
-                args.defenceBannerStones = {};
+                args.defenceBannerStones = this.normalizeBannerStones(
+                    Array.isArray(opponentTeam.bannerStones)
+                        ? (opponentTeam.bannerStones[teamIndex] || {})
+                        : (opponentTeam.bannerStones || {})
+                );
                 args.defenceFavor = opponentTeam.favor || {};
                 args.team = {
                     units: myTeam.heroes[teamIndex] || myTeam.heroes[0] || [],
@@ -4149,7 +4216,7 @@
                     pet: opponentTeam.pet || CONSTANTS.DEFAULT_PET_ID
                 };
                 args.defenceBanner = opponentTeam.banner || 1;
-                args.defenceBannerStones = {};
+                args.defenceBannerStones = this.normalizeBannerStones(opponentTeam.bannerStones || {});
                 args.defenceFavor = opponentTeam.favor || {};
                 args.team = {
                     units: myTeam.heroes || [],
@@ -4158,6 +4225,13 @@
                 args.banner = 0;
                 args.bannerStones = {};
                 args.favor = myTeam.favor || {};
+            }
+
+            const defenceStoneCount = Object.keys(args.defenceBannerStones || {}).length;
+            if (defenceStoneCount) {
+                console.log('[DEMO] defenceBannerStones for sim:', args.defenceBannerStones);
+            } else {
+                console.log('[DEMO] defenceBannerStones empty for this matchup');
             }
 
             if (!args.team || !args.team.units || args.team.units.length === 0) {

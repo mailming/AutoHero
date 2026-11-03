@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Arena Counter Suggest HwH Ext
 // @namespace    HeroWarsHelper.ArenaCounterSuggest
-// @version      1.3.1
-// @description  DB counter panel for Arena gather and Clan Domination attack target; arenaAttack / setDefence+startBattle / SimLab
+// @version      1.3.6
+// @description  DB counter panel for Arena gather and Clan Domination attack target; arenaAttack / setDefence+startBattle / SimLab / Train
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
@@ -16,7 +16,12 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Counter Suggest';
-    const EXTENSION_VERSION = '1.3.1';
+    const EXTENSION_VERSION = '1.3.6';
+    const PLAYER_CLASS = 'game.model.user.Player';
+    const PLAYER_BANNER_DATA_CLASS = 'game.model.user.banner.PlayerBannerData';
+    const PLAYER_BANNER_ENTRY_CLASS = 'game.model.user.banner.PlayerBannerEntry';
+    const INT_MAP_CLASS = 'haxe.ds.IntMap';
+    const BANNER_STONE_DESC_CLASS = 'game.data.storage.resource.BannerStoneDescription';
     const SIMLAB_SIMULATIONS = 10;
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const HOST_ID = 'ah-arena-counter-suggest-host';
@@ -25,10 +30,13 @@
     const MEDIATOR_CLASS = 'game.mediator.gui.popup.arena.ArenaAttackTeamGatherPopupMediator';
     const CD_ATTACK_POPUP_CLASS = 'game.mechanics.clanDomination.popup.ClanDominationSelectAttackTargetPopup';
     const CD_ATTACK_MEDIATOR_CLASS = 'game.mechanics.clanDomination.mediator.ClanDominationSelectAttackTargetPopupMediator';
+    const CD_MAP_POPUP_CLASS = 'game.mechanics.clanDomination.popup.ClanDominationMapPopup';
+    const CD_CASTLE_POPUP_CLASS = 'game.mechanics.clanDomination.popup.ClanDominationCastlePopup';
     const POPUP_MANAGER_CLASS = 'game.mediator.gui.popup.GamePopupManager';
     const MIN_WIN_RATE = 50;
     const MAX_AGE_DAYS = 30;
     const CD_CACHE_TTL_MS = 60_000;
+    const CD_OBSERVE_TTL_MS = 120_000;
     const PET_NAMES = {
         6000: 'Fenris', 6001: 'Oliver', 6002: 'Merlin', 6003: 'Mara', 6004: 'Cain',
         6005: 'Albus', 6006: 'Axel', 6007: 'Biscuit', 6008: 'Khorus', 6009: 'Vex',
@@ -65,12 +73,26 @@
             counters: null,
             attacking: false,
             simming: false,
+            training: false,
         };
         const clanDominationEnemyCache = new Map();
         let clanDominationFetchInFlight = new Map();
+        let lastObservedCdEnemy = null; // { levelId, enemy, at }
+        let trainStatusTimer = null;
 
         function isBusy() {
-            return panelState.attacking || panelState.simming;
+            return panelState.attacking || panelState.simming || panelState.training;
+        }
+
+        function needsTrainingData() {
+            if (panelState.training) return true;
+            if (panelState.status === 'bridge_error' || panelState.status === 'loading') return false;
+            if (panelState.status === 'attacking' || panelState.status === 'simming') return false;
+            const counters = panelState.counters;
+            if (!counters) return false;
+            if (counters.reason === 'opponent_not_found') return true;
+            const atPower = Array.isArray(counters.atPower) ? counters.atPower : [];
+            return panelState.status === 'ready' && atPower.length === 0 && !counters.maxBeat;
         }
         let panelController = null;
         let pollTimer = null;
@@ -119,6 +141,151 @@
             }
         }
 
+        function classNameOf(value) {
+            return value?.__class__?.j || null;
+        }
+
+        function hasBannerStones(slots) {
+            return !!(slots && typeof slots === 'object' && Object.keys(slots).length > 0);
+        }
+
+        function getIntMapBacking(map) {
+            if (!map || classNameOf(map) !== INT_MAP_CLASS) return null;
+            if (map.D && typeof map.D === 'object' && !Array.isArray(map.D) && !map.D.__class__) {
+                return map.D;
+            }
+            const candidates = Object.values(map).filter((value) => {
+                if (!value || typeof value !== 'object' || Array.isArray(value) || value.__class__) return false;
+                const proto = Object.getPrototypeOf(value);
+                return proto === Object.prototype || proto === null;
+            });
+            if (candidates.length === 1) return candidates[0];
+            const likely = candidates.filter((value) => {
+                const values = Object.values(value);
+                return values.length === 0
+                    || values.every((item) => (
+                        classNameOf(item) === BANNER_STONE_DESC_CLASS
+                        || classNameOf(item) === PLAYER_BANNER_ENTRY_CLASS
+                        || typeof item === 'number'
+                    ));
+            });
+            return likely[0] || candidates[0] || null;
+        }
+
+        function stoneIdFromValue(value) {
+            if (value == null) return null;
+            if (typeof value === 'number' || typeof value === 'string') {
+                const id = Number(value);
+                return Number.isFinite(id) && id > 0 ? id : null;
+            }
+            if (typeof value === 'object') {
+                const semanticId = Number(callSemantic(value, 'get_id'));
+                if (Number.isFinite(semanticId) && semanticId > 0) return semanticId;
+                const rawId = Number(value._id ?? value.id);
+                if (Number.isFinite(rawId) && rawId > 0) return rawId;
+            }
+            return null;
+        }
+
+        function normalizeBannerStones(slots) {
+            if (!slots) return {};
+            if (classNameOf(slots) === INT_MAP_CLASS) {
+                return normalizeBannerStones(getIntMapBacking(slots) || {});
+            }
+            if (Array.isArray(slots)) {
+                const out = {};
+                slots.forEach((value, index) => {
+                    const id = stoneIdFromValue(value);
+                    if (id != null) out[String(index)] = id;
+                });
+                return out;
+            }
+            if (typeof slots === 'object') {
+                const out = {};
+                for (const [key, value] of Object.entries(slots)) {
+                    const id = stoneIdFromValue(value);
+                    if (id != null) out[String(key)] = id;
+                }
+                return out;
+            }
+            return {};
+        }
+
+        function slotsFromPlayerBannerEntry(entry) {
+            if (!entry || classNameOf(entry) !== PLAYER_BANNER_ENTRY_CLASS) return {};
+            const map = Object.values(entry).find((value) => classNameOf(value) === INT_MAP_CLASS);
+            return normalizeBannerStones(map);
+        }
+
+        function findPlayerInstance() {
+            const manager = getPopupManager();
+            if (!manager) return null;
+            const roots = uniqueRefs(
+                Object.values(manager)
+                    .filter(Array.isArray)
+                    .flat()
+                    .filter((value) => value?.__class__)
+            );
+            const seen = new Set();
+            let player = null;
+            const walk = (value, depth) => {
+                if (!value || typeof value !== 'object' || depth > 6 || seen.has(value) || player) return;
+                seen.add(value);
+                if (classNameOf(value) === PLAYER_CLASS) {
+                    player = value;
+                    return;
+                }
+                try {
+                    Object.values(value).forEach((child) => walk(child, depth + 1));
+                } catch {
+                    // ignore
+                }
+            };
+            roots.forEach((root) => walk(root, 0));
+            return player;
+        }
+
+        function findPlayerBannerData(player = findPlayerInstance()) {
+            if (!player) return null;
+            return Object.values(player).find((value) => classNameOf(value) === PLAYER_BANNER_DATA_CLASS) || null;
+        }
+
+        function resolveAttackBannerStonesFromClient(bannerId) {
+            const targetId = Number(bannerId);
+            if (!Number.isFinite(targetId) || targetId <= 0) return {};
+            const data = findPlayerBannerData();
+            if (!data) return {};
+            const map = Object.values(data).find((value) => classNameOf(value) === INT_MAP_CLASS);
+            const backing = getIntMapBacking(map);
+            if (!backing) return {};
+            const entry = backing[String(targetId)] || backing[targetId];
+            return slotsFromPlayerBannerEntry(entry);
+        }
+
+        function extractBannerStonesFromBattleTeam(team) {
+            if (!team) return {};
+            try {
+                const stones = callSemantic(team, 'get_bannerStones');
+                const normalized = normalizeBannerStones(stones);
+                if (hasBannerStones(normalized)) return normalized;
+            } catch {
+                // continue
+            }
+            try {
+                const bannerVo = callSemantic(team, 'get_bannerVO');
+                if (bannerVo && typeof bannerVo === 'object') {
+                    const entry = classNameOf(bannerVo) === PLAYER_BANNER_ENTRY_CLASS
+                        ? bannerVo
+                        : Object.values(bannerVo).find((value) => classNameOf(value) === PLAYER_BANNER_ENTRY_CLASS);
+                    const fromEntry = slotsFromPlayerBannerEntry(entry);
+                    if (hasBannerStones(fromEntry)) return fromEntry;
+                }
+            } catch {
+                // continue
+            }
+            return {};
+        }
+
         function getPopupManager() {
             const Manager = findClass(POPUP_MANAGER_CLASS);
             if (!Manager) return popupManagerCache;
@@ -155,19 +322,178 @@
             );
         }
 
-        function getMediatorFromPopup(popup) {
-            const exact = uniqueRefs(
-                Object.values(popup ?? {}).filter((value) => value?.__class__?.j === MEDIATOR_CLASS)
-            );
-            if (exact[0]) return exact[0];
+        function getMediatorFromPopup(popup, preferredClass = MEDIATOR_CLASS, classPattern = /ArenaAttackTeamGatherPopupMediator/i) {
+            if (preferredClass) {
+                const exact = uniqueRefs(
+                    Object.values(popup ?? {}).filter((value) => value?.__class__?.j === preferredClass)
+                );
+                if (exact[0]) return exact[0];
+            }
 
             const matches = uniqueRefs(
                 Object.values(popup ?? {}).filter((value) => {
                     const className = value?.__class__?.j || '';
-                    return /ArenaAttackTeamGatherPopupMediator/i.test(className);
+                    return classPattern.test(className);
                 })
             );
             return matches[0] || null;
+        }
+
+        function getClanDominationMediatorFromPopup(popup) {
+            return getMediatorFromPopup(
+                popup,
+                CD_ATTACK_MEDIATOR_CLASS,
+                /ClanDominationSelectAttackTargetPopupMediator/i
+            );
+        }
+
+        function isClanDominationMapOpen() {
+            return getOpenPopupsByClass(CD_MAP_POPUP_CLASS).length > 0
+                || getOpenPopupsByClass(CD_CASTLE_POPUP_CLASS).length > 0
+                || getOpenPopupsByClass(CD_ATTACK_POPUP_CLASS).length > 0;
+        }
+
+        function rememberClanDominationEnemy(levelId, enemy, raw = null) {
+            if (!enemy || levelId == null) return;
+            const key = String(levelId);
+            clanDominationEnemyCache.set(key, { at: Date.now(), enemy, raw });
+            lastObservedCdEnemy = { levelId: Number(levelId), enemy, at: Date.now() };
+        }
+
+        function getObservedClanDominationEnemy() {
+            if (!lastObservedCdEnemy) return null;
+            if (Date.now() - lastObservedCdEnemy.at > CD_OBSERVE_TTL_MS) {
+                lastObservedCdEnemy = null;
+                return null;
+            }
+            return lastObservedCdEnemy;
+        }
+
+        function decodeRpcBody(body) {
+            if (typeof body === 'string') return body;
+            try {
+                if (body instanceof ArrayBuffer) return new TextDecoder().decode(body);
+                if (ArrayBuffer.isView(body)) {
+                    return new TextDecoder().decode(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+                }
+            } catch {
+                // ignore
+            }
+            return '';
+        }
+
+        function parseRpcCalls(body) {
+            const text = decodeRpcBody(body);
+            if (!text) return [];
+            try {
+                const envelope = JSON.parse(text);
+                const calls = Array.isArray(envelope?.calls) ? envelope.calls : [];
+                return calls.map((call, index) => ({
+                    name: String(call?.name || ''),
+                    args: call?.args && typeof call.args === 'object' ? call.args : {},
+                    ident: String(call?.ident ?? index),
+                })).filter((call) => call.name.length > 0);
+            } catch {
+                return [];
+            }
+        }
+
+        function readXhrJson(request) {
+            try {
+                if (request.responseType === 'json') return request.response;
+                if (request.responseType === '' || request.responseType === 'text') {
+                    return JSON.parse(request.responseText);
+                }
+            } catch {
+                // ignore
+            }
+            return request.response;
+        }
+
+        function ingestClanDominationEnemyTeams(levelId, responsePayload, ident = null) {
+            const numericLevelId = Number(levelId);
+            if (!Number.isFinite(numericLevelId) || numericLevelId <= 0) return null;
+            let list = null;
+            if (responsePayload && typeof responsePayload === 'object' && Array.isArray(responsePayload.results)) {
+                const row = (ident != null
+                    ? responsePayload.results.find((r) => r?.ident === ident)
+                    : null)
+                    || responsePayload.results[0]
+                    || null;
+                list = row?.result?.response ?? row?.result ?? null;
+            } else {
+                list = responsePayload;
+            }
+            const entries = Array.isArray(list) ? list : (list ? [list] : []);
+            const entry = entries[0] || null;
+            const enemy = parseClanDominationEnemyEntry(entry, numericLevelId);
+            if (!enemy) {
+                console.warn(`[${EXTENSION_NAME}] observed getEnemyTeams but could not parse team`, {
+                    levelId: numericLevelId,
+                    entryKeys: entry && typeof entry === 'object' ? Object.keys(entry) : null,
+                });
+                return null;
+            }
+            rememberClanDominationEnemy(numericLevelId, enemy, entry);
+            console.log(`[${EXTENSION_NAME}] observed Clan Domination enemy`, {
+                levelId: numericLevelId,
+                userId: enemy.userId,
+                power: enemy.power,
+                comboKey: enemy.comboKey,
+            });
+            if (!isBusy() && isClanDominationMapOpen()) {
+                showEnemyPanel(enemy, 'clanDomination');
+            }
+            return enemy;
+        }
+
+        function installClanDominationEnemyObserver() {
+            if (window.__ahCounterSuggestCdObserver === EXTENSION_VERSION) return;
+
+            // Catch game-initiated RPCs (map player click), not only extension Send().
+            const originalXhrSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function ahCounterSuggestCdXhrSend(body) {
+                let tracked = [];
+                try {
+                    tracked = parseRpcCalls(body).filter((call) => call.name === 'clanDomination_getEnemyTeams');
+                } catch {
+                    tracked = [];
+                }
+                if (tracked.length) {
+                    this.addEventListener('loadend', () => {
+                        try {
+                            if (this.status !== 200) return;
+                            const response = readXhrJson(this);
+                            tracked.forEach((call) => {
+                                ingestClanDominationEnemyTeams(call.args?.levelId, response, call.ident);
+                            });
+                        } catch (error) {
+                            console.warn(`[${EXTENSION_NAME}] CD XHR observer failed:`, error);
+                        }
+                    }, { once: true });
+                }
+                return originalXhrSend.apply(this, arguments);
+            };
+
+            const currentSend = typeof window.Send === 'function' ? window.Send : Send;
+            if (typeof currentSend === 'function') {
+                window.Send = async function ahCounterSuggestCdSend(payload) {
+                    const result = await currentSend.apply(this, arguments);
+                    try {
+                        const calls = Array.isArray(payload?.calls) ? payload.calls : [];
+                        calls.forEach((call) => {
+                            if (!call || call.name !== 'clanDomination_getEnemyTeams') return;
+                            ingestClanDominationEnemyTeams(call.args?.levelId, result, call.ident);
+                        });
+                    } catch (error) {
+                        console.warn(`[${EXTENSION_NAME}] CD Send observer failed:`, error);
+                    }
+                    return result;
+                };
+            }
+
+            window.__ahCounterSuggestCdObserver = EXTENSION_VERSION;
+            console.log(`[${EXTENSION_NAME}] Clan Domination getEnemyTeams observer installed`);
         }
 
         function callUnitId(unit) {
@@ -300,11 +626,14 @@
             }
 
             const banner = extractBannerId(team);
+            const bannerStones = extractBannerStonesFromBattleTeam(team);
             return {
                 userId,
                 heroes,
                 pet: pet || 0,
                 banner: banner || 0,
+                bannerStones,
+                favor: {},
             };
         }
 
@@ -439,10 +768,34 @@
 
         function readClanDominationTarget() {
             const popups = getOpenPopupsByClass(CD_ATTACK_POPUP_CLASS);
-            if (!popups.length) return null;
+            if (!popups.length) {
+                const observed = getObservedClanDominationEnemy();
+                if (observed && isClanDominationMapOpen()) {
+                    return {
+                        popup: null,
+                        mediator: null,
+                        levelId: observed.levelId,
+                        enemy: observed.enemy,
+                        source: 'observed',
+                    };
+                }
+                return null;
+            }
             const popup = popups[0];
-            const mediator = getMediatorFromPopup(popup);
-            if (!mediator) return { popup, mediator: null, levelId: null };
+            const mediator = getClanDominationMediatorFromPopup(popup);
+            if (!mediator) {
+                const observed = getObservedClanDominationEnemy();
+                if (observed) {
+                    return {
+                        popup,
+                        mediator: null,
+                        levelId: observed.levelId,
+                        enemy: observed.enemy,
+                        source: 'observed',
+                    };
+                }
+                return { popup, mediator: null, levelId: null };
+            }
 
             let levelId = Number(mediator.mlj);
             if (!Number.isFinite(levelId) || levelId <= 0) {
@@ -458,9 +811,26 @@
                 }
             }
             if (!Number.isFinite(levelId) || levelId <= 0) {
+                const observed = getObservedClanDominationEnemy();
+                if (observed) {
+                    return {
+                        popup,
+                        mediator,
+                        levelId: observed.levelId,
+                        enemy: observed.enemy,
+                        source: 'observed',
+                    };
+                }
                 return { popup, mediator, levelId: null };
             }
-            return { popup, mediator, levelId };
+            const cached = getCachedClanDominationEnemy(levelId);
+            return {
+                popup,
+                mediator,
+                levelId,
+                enemy: cached || null,
+                source: 'popup',
+            };
         }
 
         function getCachedClanDominationEnemy(levelId) {
@@ -500,7 +870,7 @@
                 if (!enemy) {
                     throw new Error('Clan Domination enemy team incomplete');
                 }
-                clanDominationEnemyCache.set(key, { at: Date.now(), enemy, raw: entry });
+                rememberClanDominationEnemy(levelId, enemy, entry);
                 return enemy;
             })();
 
@@ -671,6 +1041,48 @@
                         opacity: .55;
                         cursor: default;
                     }
+                    .train-box {
+                        display: flex;
+                        align-items: center;
+                        justify-content: flex-end;
+                        gap: 8px;
+                        margin: 4px 0 2px;
+                        padding: 0;
+                        border: none;
+                        background: transparent;
+                        text-align: right;
+                    }
+                    .train-box[hidden] { display: none; }
+                    .train-hint {
+                        flex: 1;
+                        margin: 0;
+                        font-size: 10px;
+                        opacity: .7;
+                        line-height: 1.3;
+                        text-align: left;
+                    }
+                    .train-btn {
+                        flex: 0 0 auto;
+                        width: auto;
+                        padding: 3px 8px;
+                        border: 1px solid rgba(223,190,104,.55);
+                        border-radius: 4px;
+                        background: rgba(120,80,25,.4);
+                        color: #ffe7a8;
+                        font: inherit;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: .03em;
+                        cursor: pointer;
+                    }
+                    .train-btn:hover:not(:disabled) {
+                        border-color: rgba(255,230,150,.9);
+                        background: rgba(150,100,35,.55);
+                    }
+                    .train-btn:disabled {
+                        opacity: .55;
+                        cursor: default;
+                    }
                     .empty {
                         font-size: 12px;
                         opacity: .7;
@@ -691,6 +1103,10 @@
                     <div id="atPower"></div>
                     <div class="section-title">Max beat</div>
                     <div id="maxBeat"></div>
+                    <div class="train-box" id="trainBox">
+                        <p class="train-hint" id="trainHint"></p>
+                        <button type="button" class="train-btn" id="trainBtn" title="Run Arena Training on this defense (demo battles)">Train</button>
+                    </div>
                     <div class="note" id="panelNote">Click a lineup to attack · SimLab runs demo at your power (saves to /training).</div>
                 </div>
             `;
@@ -701,7 +1117,21 @@
             const statusEl = shadow.getElementById('status');
             const atPowerEl = shadow.getElementById('atPower');
             const maxBeatEl = shadow.getElementById('maxBeat');
+            const trainBox = shadow.getElementById('trainBox');
+            const trainHint = shadow.getElementById('trainHint');
+            const trainBtn = shadow.getElementById('trainBtn');
             const panelNote = shadow.getElementById('panelNote');
+
+            trainBtn.addEventListener('click', () => {
+                onTrainClick().catch((error) => {
+                    console.error(`[${EXTENSION_NAME}] Train failed:`, error);
+                    panelState.status = 'error';
+                    panelState.message = error?.message || String(error);
+                    panelState.training = false;
+                    stopTrainStatusPolling();
+                    render();
+                });
+            });
 
             function place() {
                 const rect = getLargestCanvasRect();
@@ -782,8 +1212,8 @@
                 const isCd = panelState.mode === 'clanDomination' || enemy?.mode === 'clanDomination';
                 panelTitle.textContent = isCd ? 'Counter Suggest · Domination' : 'Counter Suggest';
                 panelNote.textContent = isCd
-                    ? 'Click sets Clan Domination team then startBattle · SimLab uses demo battles.'
-                    : 'Click a lineup to arenaAttack · SimLab runs demo at your power (saves to /training).';
+                    ? 'Click sets Clan Domination team then startBattle · SimLab uses demo battles · Train runs Arena Training.'
+                    : 'Click a lineup to arenaAttack · SimLab / Train use demo battles (save to /training).';
                 enemyLabel.textContent = enemy
                     ? `vs ${enemy.userId}${enemy.levelId != null ? ` @${enemy.levelId}` : ''} · ${enemy.heroes.map(heroName).join(', ')}`
                     : (isCd ? 'Loading Clan Domination enemy…' : 'Enemy lineup not readable yet');
@@ -792,7 +1222,8 @@
                     panelState.status === 'loading' ? 'Checking database…'
                         : panelState.status === 'attacking' ? 'Attacking…'
                             : panelState.status === 'simming' ? 'SimLab running…'
-                                : ''
+                                : panelState.status === 'training' ? 'Training this defense…'
+                                    : ''
                 );
 
                 atPowerEl.innerHTML = '';
@@ -823,6 +1254,23 @@
                 } else {
                     maxBeatEl.appendChild(renderRow(maxBeat, 'max'));
                 }
+
+                // Always show compact Train — uses Arena Training HwH Ext.
+                const canTrain = !!(enemy?.userId && Array.isArray(enemy.heroes) && enemy.heroes.length === 5);
+                trainBox.hidden = false;
+                if (panelState.training) {
+                    trainHint.textContent = 'Training…';
+                } else if (!canTrain) {
+                    trainHint.textContent = '';
+                } else if (needsTrainingData()) {
+                    trainHint.textContent = panelState.counters?.reason === 'opponent_not_found'
+                        ? 'No DB data'
+                        : 'No stored beat';
+                } else {
+                    trainHint.textContent = '';
+                }
+                trainBtn.textContent = panelState.training ? '…' : 'Train';
+                trainBtn.disabled = !canTrain || panelState.training || (isBusy() && !panelState.training);
             }
 
             return { render, place, destroy() { host.remove(); } };
@@ -850,6 +1298,7 @@
                 calls: [
                     { name: 'teamGetAll', args: {}, ident: 'teamGetAll' },
                     { name: 'teamGetFavor', args: {}, ident: 'teamGetFavor' },
+                    { name: 'team_getBanners', args: {}, ident: 'team_getBanners' },
                     { name: 'userGetInfo', args: {}, ident: 'userGetInfo' },
                 ],
             });
@@ -857,6 +1306,7 @@
             return {
                 teams: get('teamGetAll'),
                 favor: get('teamGetFavor'),
+                teamBanners: get('team_getBanners'),
                 userInfo: get('userGetInfo'),
             };
         }
@@ -871,45 +1321,51 @@
             return favor;
         }
 
-        function resolveBanner(userInfo) {
+        function resolveBannerIdFromTeamBanners(teamBanners, mode = 'arena') {
+            if (!teamBanners || typeof teamBanners !== 'object') return null;
+            const keys = mode === 'clanDomination'
+                ? ['clan_pvp_hero', 'arena', 'clan_domination_def', 'clan_global_pvp']
+                : ['arena', 'clan_pvp_hero'];
+            for (const key of keys) {
+                const value = teamBanners[key];
+                if (value == null) continue;
+                if (typeof value === 'number' || typeof value === 'string') {
+                    const id = Number(value);
+                    if (Number.isFinite(id) && id > 0) return id;
+                }
+                if (Array.isArray(value)) {
+                    const id = Number(value[0]);
+                    if (Number.isFinite(id) && id > 0) return id;
+                }
+            }
+            return null;
+        }
+
+        function resolveBanner(userInfo, teamBanners = null, mode = 'arena') {
+            const fromTeams = resolveBannerIdFromTeamBanners(teamBanners, mode);
+            if (fromTeams != null) return fromTeams;
             if (userInfo?.banner != null) {
                 return Array.isArray(userInfo.banner) ? Number(userInfo.banner[0]) || 1 : Number(userInfo.banner) || 1;
             }
             return 1;
         }
 
-        function normalizeBannerStones(slots) {
-            if (!slots) return {};
-            if (Array.isArray(slots)) {
-                const out = {};
-                slots.forEach((value, index) => {
-                    const id = Number(value);
-                    if (Number.isFinite(id) && id > 0) out[String(index)] = id;
-                });
-                return out;
-            }
-            if (typeof slots === 'object') {
-                const out = {};
-                for (const [key, value] of Object.entries(slots)) {
-                    const id = Number(value);
-                    if (Number.isFinite(id) && id > 0) out[String(key)] = id;
+        function resolveAttackBannerStones(userInfo, bannerId) {
+            if (userInfo && typeof userInfo === 'object') {
+                if (hasBannerStones(userInfo.bannerStones)) {
+                    return normalizeBannerStones(userInfo.bannerStones);
                 }
-                return out;
+                const banners = Array.isArray(userInfo.banners) ? userInfo.banners : null;
+                if (banners?.[0]?.slots) {
+                    const fromList = normalizeBannerStones(banners[0].slots);
+                    if (hasBannerStones(fromList)) return fromList;
+                }
+                if (userInfo.banner && typeof userInfo.banner === 'object' && userInfo.banner.slots) {
+                    const fromBanner = normalizeBannerStones(userInfo.banner.slots);
+                    if (hasBannerStones(fromBanner)) return fromBanner;
+                }
             }
-            return {};
-        }
-
-        function resolveAttackBannerStones(userInfo) {
-            if (!userInfo || typeof userInfo !== 'object') return {};
-            if (userInfo.bannerStones && typeof userInfo.bannerStones === 'object') {
-                return normalizeBannerStones(userInfo.bannerStones);
-            }
-            const banners = Array.isArray(userInfo.banners) ? userInfo.banners : null;
-            if (banners?.[0]?.slots) return normalizeBannerStones(banners[0].slots);
-            if (userInfo.banner && typeof userInfo.banner === 'object' && userInfo.banner.slots) {
-                return normalizeBannerStones(userInfo.banner.slots);
-            }
-            return {};
+            return resolveAttackBannerStonesFromClient(bannerId);
         }
 
         async function fetchEnemyDefenceExtras(enemyUserId) {
@@ -1007,6 +1463,135 @@
             return fetchInFlight;
         }
 
+        function stopTrainStatusPolling() {
+            if (trainStatusTimer) {
+                clearInterval(trainStatusTimer);
+                trainStatusTimer = null;
+            }
+        }
+
+        function startTrainStatusPolling() {
+            stopTrainStatusPolling();
+            trainStatusTimer = setInterval(() => {
+                if (!panelState.training) {
+                    stopTrainStatusPolling();
+                    return;
+                }
+                try {
+                    const status = window.ArenaTraining?.getStatus?.();
+                    if (status?.message) {
+                        panelState.message = `Train: ${status.message}`;
+                        panelController?.render();
+                    }
+                } catch {
+                    // ignore status poll errors
+                }
+            }, 800);
+        }
+
+        async function buildOpponentOverrideForTraining(enemy) {
+            let favor = enemy.favor && typeof enemy.favor === 'object' ? { ...enemy.favor } : {};
+            let banner = Number(enemy.banner) || 1;
+            let bannerStones = hasBannerStones(enemy.bannerStones)
+                ? normalizeBannerStones(enemy.bannerStones)
+                : {};
+            let name = enemy.name || null;
+            let place = enemy.place ?? null;
+            let power = enemy.power ?? null;
+            const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
+
+            if (!isCd) {
+                const extras = await fetchEnemyDefenceExtras(enemy.userId);
+                if (extras.favor && Object.keys(extras.favor).length) favor = extras.favor;
+                if (extras.banner) banner = extras.banner;
+                if (hasBannerStones(extras.bannerStones)) {
+                    bannerStones = normalizeBannerStones(extras.bannerStones);
+                }
+                name = extras.name || name;
+                place = extras.place ?? place;
+                power = extras.power ?? power;
+            }
+
+            return {
+                userId: enemy.userId,
+                user: { name: name || String(enemy.userId) },
+                heroes: (enemy.heroes || []).map(Number).filter((id) => id > 0 && id < 6000),
+                pet: Number(enemy.pet) || 0,
+                banner,
+                favor,
+                bannerStones,
+                place,
+                power,
+                source: isCd ? 'counter-suggest-clanDomination' : 'counter-suggest-gather',
+            };
+        }
+
+        async function onTrainClick() {
+            if (panelState.training) return;
+            if (isBusy()) return;
+            const enemy = panelState.enemy;
+            if (!enemy?.userId) throw new Error('Enemy userId missing');
+            if (!Array.isArray(enemy.heroes) || enemy.heroes.length !== 5) {
+                throw new Error('Enemy lineup incomplete');
+            }
+
+            const training = window.ArenaTraining;
+            if (typeof training?.run !== 'function') {
+                throw new Error('Arena Training not loaded — enable Arena Training HwH Ext to train');
+            }
+
+            panelState.training = true;
+            panelState.status = 'training';
+            panelState.message = 'Train: starting Arena Training…';
+            panelController?.render();
+            HWHFuncs.setProgress?.(`${EXTENSION_NAME}: training defense…`, true);
+            startTrainStatusPolling();
+
+            try {
+                const opponentOverride = await buildOpponentOverrideForTraining(enemy);
+                if (opponentOverride.heroes.length !== 5) {
+                    throw new Error('Enemy needs 5 heroes to train');
+                }
+
+                console.log(`[${EXTENSION_NAME}] Train start`, {
+                    userId: opponentOverride.userId,
+                    heroes: opponentOverride.heroes,
+                    pet: opponentOverride.pet,
+                    banner: opponentOverride.banner,
+                    source: opponentOverride.source,
+                });
+
+                const summary = await training.run({
+                    label: opponentOverride.source,
+                    opponentOverride,
+                    opponentUserId: opponentOverride.userId,
+                    saveToBridge: true,
+                    skipCachedOpponents: false,
+                    searchUntilTarget: true,
+                    includeUserTeamTest: true,
+                });
+
+                console.log(`[${EXTENSION_NAME}] Train finished:`, summary);
+                panelState.message = 'Train finished — refreshing counters…';
+                panelController?.render();
+                await loadCountersForEnemy(enemy);
+                if (needsTrainingData()) {
+                    panelState.message = 'Train finished — still no beatable counter stored';
+                } else if (!panelState.message) {
+                    panelState.message = 'Train finished';
+                }
+                panelState.status = 'ready';
+                HWHFuncs.setProgress?.(
+                    `${EXTENSION_NAME}: training finished`,
+                    false
+                );
+            } finally {
+                panelState.training = false;
+                stopTrainStatusPolling();
+                panelController?.render();
+            }
+        }
+
         async function onSimLabClick(match, source) {
             if (isBusy()) return;
             const enemy = panelState.enemy;
@@ -1032,28 +1617,44 @@
 
             try {
                 const support = await fetchTeamSupport();
+                const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
                 const arenaFavor = support.favor?.arena || {};
                 const favor = pickFavor(heroes, arenaFavor);
-                const banner = resolveBanner(support.userInfo);
-                const bannerStones = resolveAttackBannerStones(support.userInfo);
+                const banner = resolveBanner(
+                    support.userInfo,
+                    support.teamBanners,
+                    isCd ? 'clanDomination' : 'arena'
+                );
+                const bannerStones = resolveAttackBannerStones(support.userInfo, banner);
 
                 let defenceFavor = enemy.favor && typeof enemy.favor === 'object' ? enemy.favor : {};
                 let defenceBanner = enemy.banner || 1;
-                let defenceBannerStones = enemy.bannerStones && typeof enemy.bannerStones === 'object'
-                    ? enemy.bannerStones
+                let defenceBannerStones = hasBannerStones(enemy.bannerStones)
+                    ? normalizeBannerStones(enemy.bannerStones)
                     : {};
                 let defenceName = null;
                 let defencePlace = null;
                 let defencePower = enemy.power ?? null;
-                const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
                 if (!isCd) {
                     const defenceExtras = await fetchEnemyDefenceExtras(enemy.userId);
-                    defenceFavor = defenceExtras.favor || defenceFavor;
-                    defenceBanner = defenceExtras.banner || defenceBanner;
-                    defenceBannerStones = defenceExtras.bannerStones || defenceBannerStones;
+                    if (defenceExtras.favor && typeof defenceExtras.favor === 'object'
+                        && Object.keys(defenceExtras.favor).length > 0) {
+                        defenceFavor = defenceExtras.favor;
+                    }
+                    if (defenceExtras.banner) defenceBanner = defenceExtras.banner;
+                    if (hasBannerStones(defenceExtras.bannerStones)) {
+                        defenceBannerStones = normalizeBannerStones(defenceExtras.bannerStones);
+                    }
                     defenceName = defenceExtras.name;
                     defencePlace = defenceExtras.place;
                     defencePower = defenceExtras.power ?? defencePower;
+                }
+
+                if (!hasBannerStones(bannerStones)) {
+                    console.warn(`[${EXTENSION_NAME}] SimLab attack bannerStones empty for banner ${banner}`);
+                }
+                if (!hasBannerStones(defenceBannerStones)) {
+                    console.warn(`[${EXTENSION_NAME}] SimLab defence bannerStones empty for enemy ${enemy.userId}`);
                 }
 
                 const summary = await training.simulateMatchup({
@@ -1118,7 +1719,11 @@
                 const support = await fetchTeamSupport();
                 const arenaFavor = support.favor?.arena || {};
                 const favor = pickFavor(heroes, arenaFavor);
-                const banner = resolveBanner(support.userInfo);
+                const banner = resolveBanner(
+                    support.userInfo,
+                    support.teamBanners,
+                    isCd ? 'clanDomination' : 'arena'
+                );
 
                 if (isCd) {
                     const setArgs = {
@@ -1265,7 +1870,16 @@
                 return;
             }
 
+            if (!isClanDominationMapOpen()) {
+                hidePanel();
+                return;
+            }
+
             const cdTarget = readClanDominationTarget();
+            if (cdTarget?.enemy) {
+                showEnemyPanel(cdTarget.enemy, 'clanDomination');
+                return;
+            }
             if (cdTarget?.levelId) {
                 panelState.mode = 'clanDomination';
                 panelState.visible = true;
@@ -1281,8 +1895,9 @@
                 fetchClanDominationEnemy(cdTarget.levelId)
                     .then((enemy) => {
                         if (isBusy()) return;
+                        if (!isClanDominationMapOpen()) return;
                         const still = readClanDominationTarget();
-                        if (!still || Number(still.levelId) !== Number(cdTarget.levelId)) return;
+                        if (still?.levelId != null && Number(still.levelId) !== Number(cdTarget.levelId)) return;
                         showEnemyPanel(enemy, 'clanDomination');
                     })
                     .catch((error) => {
@@ -1297,9 +1912,15 @@
                 return;
             }
 
-            hidePanel();
+            // Map is open but no attack target selected yet — keep panel hidden.
+            if (panelState.mode === 'clanDomination') {
+                hidePanel();
+            } else {
+                hidePanel();
+            }
         }
 
+        installClanDominationEnemyObserver();
         panelController = createPanel();
         pollTimer = setInterval(tick, POLL_MS);
         window.addEventListener('resize', () => panelController?.place());
@@ -1341,6 +1962,6 @@
             },
         ]);
 
-        console.log(`${EXTENSION_NAME}: polling for ${POPUP_CLASS} and ${CD_ATTACK_POPUP_CLASS}`);
+        console.log(`${EXTENSION_NAME}: polling for ${POPUP_CLASS}, ${CD_ATTACK_POPUP_CLASS}, and ${CD_MAP_POPUP_CLASS} (observe getEnemyTeams)`);
     }
 })();
