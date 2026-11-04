@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Counter Suggest HwH Ext
 // @namespace    HeroWarsHelper.ArenaCounterSuggest
-// @version      1.3.13
+// @version      1.3.14
 // @description  DB counter panel for Arena gather and Clan Domination attack target; arenaAttack / setDefence+startBattle / SimLab / Train
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Counter Suggest';
-    const EXTENSION_VERSION = '1.3.13';
+    const EXTENSION_VERSION = '1.3.14';
     const COUNTER_LIST_LIMIT = 3;
     const PLAYER_CLASS = 'game.model.user.Player';
     const PLAYER_BANNER_DATA_CLASS = 'game.model.user.banner.PlayerBannerData';
@@ -405,11 +405,22 @@
                 || getOpenPopupsByClass(CD_ATTACK_POPUP_CLASS).length > 0;
         }
 
-        function rememberClanDominationEnemy(levelId, enemy, raw = null) {
+        function rememberClanDominationEnemy(levelId, enemy, raw = null, opts = {}) {
             if (!enemy || levelId == null) return;
             const key = String(levelId);
             clanDominationEnemyCache.set(key, { at: Date.now(), enemy, raw });
-            lastObservedCdEnemy = { levelId: Number(levelId), enemy, at: Date.now() };
+            // Bulk AOC scans must not become the "selected" attack target.
+            if (!opts?.skipObserved) {
+                lastObservedCdEnemy = { levelId: Number(levelId), enemy, at: Date.now() };
+            }
+        }
+
+        function isBulkClanDominationScanIdent(ident) {
+            if (ident == null) return false;
+            const id = String(ident);
+            return id === 'aocEnemyTownScan'
+                || id.startsWith('aocEnemyTown')
+                || id.startsWith('aoc_');
         }
 
         function getObservedClanDominationEnemy() {
@@ -486,20 +497,27 @@
                 });
                 return null;
             }
-            rememberClanDominationEnemy(numericLevelId, enemy, entry);
+            const bulkScan = !!window.__ahSuppressCounterSuggestCdIngest
+                || isBulkClanDominationScanIdent(ident);
+            rememberClanDominationEnemy(numericLevelId, enemy, entry, { skipObserved: bulkScan });
             console.log(`[${EXTENSION_NAME}] observed Clan Domination enemy`, {
                 levelId: numericLevelId,
                 userId: enemy.userId,
                 power: enemy.power,
                 comboKey: enemy.comboKey,
+                bulkScan,
             });
 
-            // Always cache. Only open/update the panel when this level is the user's
-            // selected attack target — ignore bulk fetches (e.g. AOC Visible Enemy Towns refresh).
-            if (window.__ahSuppressCounterSuggestCdIngest) {
+            // Always cache. Only open/update the panel for a real attack-target popup.
+            // Ignore bulk fetches (AOC Visible Enemy Towns refresh / background scan).
+            if (bulkScan) {
                 return enemy;
             }
             if (isBusy() || !isClanDominationMapOpen()) {
+                return enemy;
+            }
+            // Require the attack-target popup — map-open alone must not open Counters.
+            if (getOpenPopupsByClass(CD_ATTACK_POPUP_CLASS).length === 0) {
                 return enemy;
             }
             const selected = readClanDominationTarget();
@@ -845,17 +863,9 @@
 
         function readClanDominationTarget() {
             const popups = getOpenPopupsByClass(CD_ATTACK_POPUP_CLASS);
+            // Map/castle alone is not a selected attack target. Without the attack popup,
+            // do not promote the last observed getEnemyTeams (e.g. AOC scan) into a target.
             if (!popups.length) {
-                const observed = getObservedClanDominationEnemy();
-                if (observed && isClanDominationMapOpen()) {
-                    return {
-                        popup: null,
-                        mediator: null,
-                        levelId: observed.levelId,
-                        enemy: observed.enemy,
-                        source: 'observed',
-                    };
-                }
                 return null;
             }
             const popup = popups[0];
@@ -2289,6 +2299,7 @@
                 return;
             }
 
+            // Only show Counters when the attack-target popup is open.
             const cdTarget = readClanDominationTarget();
             if (cdTarget?.enemy) {
                 showEnemyPanel(cdTarget.enemy, 'clanDomination');
@@ -2326,12 +2337,8 @@
                 return;
             }
 
-            // Map is open but no attack target selected yet — keep panel hidden.
-            if (panelState.mode === 'clanDomination') {
-                hidePanel();
-            } else {
-                hidePanel();
-            }
+            // Map/castle open but no attack target selected — keep panel hidden.
+            hidePanel();
         }
 
         installClanDominationEnemyObserver();
