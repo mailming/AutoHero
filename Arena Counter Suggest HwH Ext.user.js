@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Counter Suggest HwH Ext
 // @namespace    HeroWarsHelper.ArenaCounterSuggest
-// @version      1.3.6
+// @version      1.3.9
 // @description  DB counter panel for Arena gather and Clan Domination attack target; arenaAttack / setDefence+startBattle / SimLab / Train
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,8 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Counter Suggest';
-    const EXTENSION_VERSION = '1.3.6';
+    const EXTENSION_VERSION = '1.3.9';
+    const COUNTER_LIST_LIMIT = 3;
     const PLAYER_CLASS = 'game.model.user.Player';
     const PLAYER_BANNER_DATA_CLASS = 'game.model.user.banner.PlayerBannerData';
     const PLAYER_BANNER_ENTRY_CLASS = 'game.model.user.banner.PlayerBannerEntry';
@@ -54,6 +55,16 @@
     }, 200);
 
     function initializeExtension() {
+        // Re-inject / Tampermonkey upgrade: tear down previous instance.
+        try {
+            if (typeof window.__ahCounterSuggestTeardown === 'function') {
+                window.__ahCounterSuggestTeardown();
+            }
+        } catch (error) {
+            console.warn(`[${EXTENSION_NAME}] teardown failed:`, error);
+        }
+        document.getElementById('ah-arena-counter-suggest-host')?.remove();
+
         console.log(`${EXTENSION_NAME}: HWH UI is ready, initializing v${EXTENSION_VERSION}...`);
 
         const { HWHClasses, HWHFuncs, Send, cheats, lib } = window;
@@ -71,6 +82,7 @@
             mode: 'arena',
             enemy: null,
             counters: null,
+            selected: null, // { match, source, key }
             attacking: false,
             simming: false,
             training: false,
@@ -92,7 +104,34 @@
             if (!counters) return false;
             if (counters.reason === 'opponent_not_found') return true;
             const atPower = Array.isArray(counters.atPower) ? counters.atPower : [];
-            return panelState.status === 'ready' && atPower.length === 0 && !counters.maxBeat;
+            const maxBeat = normalizeCounterList(counters.maxBeat);
+            return panelState.status === 'ready' && atPower.length === 0 && maxBeat.length === 0;
+        }
+
+        function normalizeCounterList(value) {
+            if (Array.isArray(value)) return value.filter(Boolean);
+            if (value && typeof value === 'object') return [value];
+            return [];
+        }
+
+        function selectionKey(match, source) {
+            const heroes = (match?.myHeroIds || []).map(Number).join(',');
+            const pet = Number(match?.myPet) || 0;
+            return `${source || 'power'}:${heroes}|${pet}`;
+        }
+
+        function selectMatch(match, source) {
+            if (!match) return;
+            panelState.selected = {
+                match,
+                source: source || 'power',
+                key: selectionKey(match, source),
+            };
+            panelController?.render();
+        }
+
+        function clearSelection() {
+            panelState.selected = null;
         }
         let panelController = null;
         let pollTimer = null;
@@ -476,8 +515,8 @@
             };
 
             const currentSend = typeof window.Send === 'function' ? window.Send : Send;
-            if (typeof currentSend === 'function') {
-                window.Send = async function ahCounterSuggestCdSend(payload) {
+            const wrappedSend = typeof currentSend === 'function'
+                ? async function ahCounterSuggestCdSend(payload) {
                     const result = await currentSend.apply(this, arguments);
                     try {
                         const calls = Array.isArray(payload?.calls) ? payload.calls : [];
@@ -489,10 +528,24 @@
                         console.warn(`[${EXTENSION_NAME}] CD Send observer failed:`, error);
                     }
                     return result;
-                };
+                }
+                : null;
+            if (wrappedSend) {
+                window.Send = wrappedSend;
             }
 
             window.__ahCounterSuggestCdObserver = EXTENSION_VERSION;
+            window.__ahCounterSuggestCdRestore = () => {
+                if (XMLHttpRequest.prototype.send === ahCounterSuggestCdXhrSend
+                    || XMLHttpRequest.prototype.send?.name === 'ahCounterSuggestCdXhrSend') {
+                    XMLHttpRequest.prototype.send = originalXhrSend;
+                }
+                if (wrappedSend && window.Send === wrappedSend) {
+                    window.Send = currentSend;
+                }
+                delete window.__ahCounterSuggestCdObserver;
+                delete window.__ahCounterSuggestCdRestore;
+            };
             console.log(`[${EXTENSION_NAME}] Clan Domination getEnemyTeams observer installed`);
         }
 
@@ -941,64 +994,119 @@
                 <style>
                     :host { all: initial; }
                     * { box-sizing: border-box; }
+                    button {
+                        font: inherit;
+                        color: inherit;
+                        appearance: none;
+                        -webkit-appearance: none;
+                    }
                     .panel {
-                        width: min(340px, 34vw);
-                        max-height: min(420px, 70vh);
+                        --gold: #dfbe68;
+                        --gold-soft: rgba(223,190,104,.45);
+                        --ink: #f6efd8;
+                        --muted: rgba(246,239,216,.68);
+                        --panel-pad: 12px;
+                        --gap: 8px;
+                        width: min(360px, 36vw);
+                        max-height: min(460px, 72vh);
                         overflow: auto;
-                        padding: 12px 12px 10px;
-                        border: 2px solid rgba(223,190,104,.82);
-                        border-radius: 8px;
-                        color: #f6efd8;
-                        font-family: Georgia, "Times New Roman", serif;
+                        padding: var(--panel-pad);
+                        border: 1px solid rgba(223,190,104,.78);
+                        border-radius: 10px;
+                        color: var(--ink);
+                        font-family: "Segoe UI", Tahoma, sans-serif;
                         background:
-                            radial-gradient(ellipse at 50% 0%, rgba(90,70,30,.35), transparent 55%),
-                            linear-gradient(180deg, rgba(36,28,18,.98), rgba(16,12,8,.99));
-                        box-shadow: 0 8px 24px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,235,174,.16);
+                            linear-gradient(180deg, rgba(42,32,20,.98), rgba(18,14,10,.99));
+                        box-shadow: 0 10px 28px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,235,174,.12);
+                        display: flex;
+                        flex-direction: column;
+                        gap: 0;
+                    }
+                    .header {
+                        text-align: center;
+                        padding-bottom: 10px;
+                        margin-bottom: 2px;
+                        border-bottom: 1px solid rgba(223,190,104,.28);
                     }
                     .title {
-                        margin: 0 0 8px;
-                        font-size: 15px;
-                        font-weight: 900;
-                        letter-spacing: .04em;
-                        text-align: center;
+                        margin: 0;
+                        font-size: 14px;
+                        font-weight: 700;
+                        letter-spacing: .06em;
+                        text-transform: uppercase;
                         color: #ffe7a8;
                     }
                     .subtitle {
-                        margin: 0 0 10px;
+                        margin: 6px 0 0;
                         font-size: 11px;
-                        opacity: .78;
-                        text-align: center;
-                    }
-                    .section-title {
-                        margin: 10px 0 6px;
-                        font-size: 12px;
-                        font-weight: 800;
-                        color: #dfbe68;
-                        text-transform: uppercase;
-                        letter-spacing: .06em;
+                        line-height: 1.35;
+                        color: var(--muted);
+                        word-break: break-word;
                     }
                     .status {
-                        margin: 4px 0 8px;
-                        font-size: 12px;
-                        opacity: .9;
+                        margin: 8px 0 0;
+                        padding: 6px 8px;
+                        border-radius: 6px;
+                        background: rgba(255,255,255,.05);
+                        font-size: 11px;
+                        line-height: 1.35;
+                        color: #ffe7a8;
                         text-align: center;
                     }
+                    .status:empty { display: none; }
+                    .section {
+                        margin-top: 10px;
+                    }
+                    .section-title {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        gap: 8px;
+                        margin: 0 0 6px;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: var(--gold);
+                        text-transform: uppercase;
+                        letter-spacing: .08em;
+                    }
+                    .list {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                    }
+                    .row-wrap {
+                        display: grid;
+                        grid-template-columns: 1fr 52px;
+                        align-items: stretch;
+                        min-height: 56px;
+                        border: 1px solid var(--gold-soft);
+                        border-radius: 8px;
+                        background: rgba(255,255,255,.035);
+                        overflow: hidden;
+                    }
+                    .row-wrap:hover {
+                        border-color: rgba(255,230,150,.7);
+                        background: rgba(223,190,104,.1);
+                    }
+                    .row-wrap.selected {
+                        border-color: rgba(255,230,150,.95);
+                        background: rgba(223,190,104,.22);
+                        box-shadow: inset 3px 0 0 #ffe7a8;
+                    }
                     .row {
-                        display: block;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: center;
+                        gap: 4px;
                         width: 100%;
-                        margin: 0 0 8px;
+                        margin: 0;
                         padding: 8px 10px;
-                        border: 1px solid rgba(223,190,104,.45);
-                        border-radius: 6px;
-                        background: rgba(255,255,255,.04);
+                        border: 0;
+                        background: transparent;
                         color: inherit;
                         text-align: left;
                         cursor: pointer;
-                        font: inherit;
-                    }
-                    .row:hover:not(:disabled) {
-                        background: rgba(223,190,104,.16);
-                        border-color: rgba(255,230,150,.85);
+                        min-width: 0;
                     }
                     .row:disabled {
                         opacity: .55;
@@ -1006,108 +1114,166 @@
                     }
                     .row-main {
                         font-size: 12px;
-                        line-height: 1.35;
-                        margin-bottom: 4px;
+                        font-weight: 600;
+                        line-height: 1.3;
+                        color: var(--ink);
+                        overflow: hidden;
+                        display: -webkit-box;
+                        -webkit-line-clamp: 2;
+                        -webkit-box-orient: vertical;
                     }
                     .row-meta {
                         display: flex;
+                        align-items: center;
                         justify-content: space-between;
                         gap: 8px;
                         font-size: 11px;
-                        opacity: .85;
+                        color: var(--muted);
                     }
-                    .row-actions {
-                        display: flex;
-                        justify-content: flex-end;
-                        margin-top: 6px;
+                    .row-rate {
+                        flex: 0 0 auto;
+                        font-weight: 700;
+                        color: #c8f0c0;
+                        letter-spacing: .02em;
                     }
+                    .row-wrap.selected .row-rate { color: #e8ffd8; }
                     .simlab-btn {
-                        padding: 3px 8px;
-                        border: 1px solid rgba(120,180,255,.55);
-                        border-radius: 4px;
-                        background: rgba(60,100,160,.35);
+                        margin: 0;
+                        padding: 0 6px;
+                        border: 0;
+                        border-left: 1px solid rgba(223,190,104,.28);
+                        border-radius: 0;
+                        background: rgba(55,90,140,.28);
                         color: #d6e8ff;
-                        font: inherit;
                         font-size: 10px;
                         font-weight: 700;
                         letter-spacing: .04em;
                         cursor: pointer;
+                        writing-mode: horizontal-tb;
                     }
                     .simlab-btn:hover:not(:disabled) {
-                        background: rgba(90,140,210,.5);
-                        border-color: rgba(180,210,255,.9);
+                        background: rgba(80,130,200,.48);
+                        color: #fff;
                     }
                     .simlab-btn:disabled {
-                        opacity: .55;
+                        opacity: .5;
                         cursor: default;
                     }
-                    .train-box {
-                        display: flex;
-                        align-items: center;
-                        justify-content: flex-end;
-                        gap: 8px;
-                        margin: 4px 0 2px;
-                        padding: 0;
-                        border: none;
-                        background: transparent;
-                        text-align: right;
-                    }
-                    .train-box[hidden] { display: none; }
-                    .train-hint {
-                        flex: 1;
+                    .empty {
                         margin: 0;
+                        padding: 10px;
+                        border: 1px dashed rgba(223,190,104,.28);
+                        border-radius: 8px;
+                        font-size: 11px;
+                        color: var(--muted);
+                        text-align: center;
+                    }
+                    .footer {
+                        margin-top: 12px;
+                        padding-top: 10px;
+                        border-top: 1px solid rgba(223,190,104,.28);
+                        display: flex;
+                        flex-direction: column;
+                        gap: 8px;
+                    }
+                    .attack-hint {
+                        margin: 0;
+                        min-height: 14px;
                         font-size: 10px;
-                        opacity: .7;
-                        line-height: 1.3;
-                        text-align: left;
+                        line-height: 1.35;
+                        color: var(--muted);
+                        text-align: center;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                    .attack-hint:empty { display: none; }
+                    .footer-actions {
+                        display: grid;
+                        grid-template-columns: 1fr 72px;
+                        gap: 8px;
+                        align-items: stretch;
+                    }
+                    .attack-btn {
+                        margin: 0;
+                        padding: 10px 12px;
+                        border: 1px solid rgba(210,80,80,.8);
+                        border-radius: 8px;
+                        background: linear-gradient(180deg, #b84848, #7a2424);
+                        color: #ffe8e8;
+                        font-size: 12px;
+                        font-weight: 800;
+                        letter-spacing: .08em;
+                        text-transform: uppercase;
+                        cursor: pointer;
+                    }
+                    .attack-btn:hover:not(:disabled) {
+                        border-color: rgba(255,150,150,.95);
+                        background: linear-gradient(180deg, #d05555, #8f2e2e);
+                    }
+                    .attack-btn:disabled {
+                        opacity: .45;
+                        cursor: default;
                     }
                     .train-btn {
-                        flex: 0 0 auto;
-                        width: auto;
-                        padding: 3px 8px;
+                        margin: 0;
+                        padding: 10px 8px;
                         border: 1px solid rgba(223,190,104,.55);
-                        border-radius: 4px;
-                        background: rgba(120,80,25,.4);
+                        border-radius: 8px;
+                        background: rgba(120,80,25,.42);
                         color: #ffe7a8;
-                        font: inherit;
-                        font-size: 10px;
+                        font-size: 11px;
                         font-weight: 700;
-                        letter-spacing: .03em;
+                        letter-spacing: .04em;
                         cursor: pointer;
                     }
                     .train-btn:hover:not(:disabled) {
                         border-color: rgba(255,230,150,.9);
-                        background: rgba(150,100,35,.55);
+                        background: rgba(150,100,35,.58);
                     }
                     .train-btn:disabled {
-                        opacity: .55;
+                        opacity: .5;
                         cursor: default;
                     }
-                    .empty {
-                        font-size: 12px;
-                        opacity: .7;
-                        margin: 0 0 8px;
-                    }
-                    .note {
-                        margin-top: 8px;
+                    .train-hint {
+                        margin: 0;
                         font-size: 10px;
-                        opacity: .65;
+                        line-height: 1.3;
+                        color: var(--muted);
+                        text-align: center;
+                    }
+                    .train-hint:empty { display: none; }
+                    .note {
+                        margin: 0;
+                        font-size: 9px;
+                        letter-spacing: .02em;
+                        color: rgba(246,239,216,.5);
                         text-align: center;
                     }
                 </style>
                 <div class="panel">
-                    <div class="title" id="panelTitle">Counter Suggest</div>
-                    <div class="subtitle" id="enemyLabel">Waiting for Arena / Clan Domination attack…</div>
-                    <div class="status" id="status"></div>
-                    <div class="section-title">Win at my power</div>
-                    <div id="atPower"></div>
-                    <div class="section-title">Max beat</div>
-                    <div id="maxBeat"></div>
-                    <div class="train-box" id="trainBox">
-                        <p class="train-hint" id="trainHint"></p>
-                        <button type="button" class="train-btn" id="trainBtn" title="Run Arena Training on this defense (demo battles)">Train</button>
+                    <div class="header">
+                        <div class="title" id="panelTitle">Counter Suggest</div>
+                        <div class="subtitle" id="enemyLabel">Waiting for Arena / Clan Domination attack…</div>
+                        <div class="status" id="status"></div>
                     </div>
-                    <div class="note" id="panelNote">Click a lineup to attack · SimLab runs demo at your power (saves to /training).</div>
+                    <div class="section">
+                        <div class="section-title">Win at my power</div>
+                        <div class="list" id="atPower"></div>
+                    </div>
+                    <div class="section">
+                        <div class="section-title">Max beat</div>
+                        <div class="list" id="maxBeat"></div>
+                    </div>
+                    <div class="footer" id="attackBar">
+                        <p class="attack-hint" id="attackHint">Select a lineup, then Attack</p>
+                        <div class="footer-actions" id="trainBox">
+                            <button type="button" class="attack-btn" id="attackBtn" disabled>Attack</button>
+                            <button type="button" class="train-btn" id="trainBtn" title="Run Arena Training on this defense (demo battles)">Train</button>
+                        </div>
+                        <p class="train-hint" id="trainHint"></p>
+                        <div class="note" id="panelNote">Select · Attack · SimLab / Train</div>
+                    </div>
                 </div>
             `;
             document.documentElement.appendChild(host);
@@ -1117,10 +1283,25 @@
             const statusEl = shadow.getElementById('status');
             const atPowerEl = shadow.getElementById('atPower');
             const maxBeatEl = shadow.getElementById('maxBeat');
+            const attackBar = shadow.getElementById('attackBar');
+            const attackHint = shadow.getElementById('attackHint');
+            const attackBtn = shadow.getElementById('attackBtn');
             const trainBox = shadow.getElementById('trainBox');
             const trainHint = shadow.getElementById('trainHint');
             const trainBtn = shadow.getElementById('trainBtn');
             const panelNote = shadow.getElementById('panelNote');
+
+            attackBtn.addEventListener('click', () => {
+                const selected = panelState.selected;
+                if (!selected?.match) return;
+                onSuggestClick(selected.match, selected.source).catch((error) => {
+                    console.error(`[${EXTENSION_NAME}] attack failed:`, error);
+                    panelState.status = 'error';
+                    panelState.message = error?.message || String(error);
+                    panelState.attacking = false;
+                    render();
+                });
+            });
 
             trainBtn.addEventListener('click', () => {
                 onTrainClick().catch((error) => {
@@ -1149,42 +1330,38 @@
 
             function renderRow(match, source) {
                 const wrap = document.createElement('div');
-                wrap.className = 'row';
-                wrap.style.cursor = 'default';
+                const key = selectionKey(match, source);
+                const isSelected = panelState.selected?.key === key;
+                wrap.className = isSelected ? 'row-wrap selected' : 'row-wrap';
 
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'row';
-                button.style.marginBottom = '0';
                 button.disabled = isBusy();
+                button.title = 'Click to select this lineup';
                 const label = formatLineupLabel(match);
+                const rateSuffix = source === 'max' ? ' max' : '';
                 button.innerHTML = `
                     <div class="row-main">${label.names}</div>
                     <div class="row-meta">
                         <span>${label.petLabel}</span>
-                        <span>${label.winRate}${source === 'max' ? ' (max)' : ''}</span>
+                        <span class="row-rate">${label.winRate}${rateSuffix}</span>
                     </div>
                 `;
                 button.addEventListener('click', () => {
-                    onSuggestClick(match, source).catch((error) => {
-                        console.error(`[${EXTENSION_NAME}] attack failed:`, error);
-                        panelState.status = 'error';
-                        panelState.message = error?.message || String(error);
-                        panelState.attacking = false;
-                        render();
-                    });
+                    if (isBusy()) return;
+                    selectMatch(match, source);
                 });
 
-                const actions = document.createElement('div');
-                actions.className = 'row-actions';
                 const simBtn = document.createElement('button');
                 simBtn.type = 'button';
                 simBtn.className = 'simlab-btn';
-                simBtn.textContent = 'SimLab';
+                simBtn.textContent = 'Sim';
                 simBtn.title = 'Simulate this lineup at your current power (demo battles)';
                 simBtn.disabled = isBusy();
                 simBtn.addEventListener('click', (event) => {
                     event.stopPropagation();
+                    selectMatch(match, source);
                     onSimLabClick(match, source).catch((error) => {
                         console.error(`[${EXTENSION_NAME}] SimLab failed:`, error);
                         panelState.status = 'error';
@@ -1193,13 +1370,9 @@
                         render();
                     });
                 });
-                actions.appendChild(simBtn);
 
                 wrap.appendChild(button);
-                wrap.appendChild(actions);
-                // Outer .row was for layout; avoid double border — use plain container
-                wrap.className = '';
-                wrap.style.cssText = 'margin:0 0 8px;';
+                wrap.appendChild(simBtn);
                 return wrap;
             }
 
@@ -1210,10 +1383,10 @@
 
                 const enemy = panelState.enemy;
                 const isCd = panelState.mode === 'clanDomination' || enemy?.mode === 'clanDomination';
-                panelTitle.textContent = isCd ? 'Counter Suggest · Domination' : 'Counter Suggest';
+                panelTitle.textContent = isCd ? 'Counter · Domination' : 'Counter Suggest';
                 panelNote.textContent = isCd
-                    ? 'Click sets Clan Domination team then startBattle · SimLab uses demo battles · Train runs Arena Training.'
-                    : 'Click a lineup to arenaAttack · SimLab / Train use demo battles (save to /training).';
+                    ? 'Select · Attack · Sim / Train'
+                    : 'Select · Attack · Sim / Train';
                 enemyLabel.textContent = enemy
                     ? `vs ${enemy.userId}${enemy.levelId != null ? ` @${enemy.levelId}` : ''} · ${enemy.heroes.map(heroName).join(', ')}`
                     : (isCd ? 'Loading Clan Domination enemy…' : 'Enemy lineup not readable yet');
@@ -1223,13 +1396,35 @@
                         : panelState.status === 'attacking' ? 'Attacking…'
                             : panelState.status === 'simming' ? 'SimLab running…'
                                 : panelState.status === 'training' ? 'Training this defense…'
-                                    : ''
+                                    : panelState.status === 'bridge_error' ? 'Bridge/DB unavailable'
+                                        : ''
                 );
+
+                const atPower = normalizeCounterList(panelState.counters?.atPower);
+                const maxBeat = normalizeCounterList(panelState.counters?.maxBeat);
+
+                // Resolve selection before painting rows so highlight is correct.
+                const listed = [
+                    ...atPower.slice(0, COUNTER_LIST_LIMIT).map((m) => selectionKey(m, 'power')),
+                    ...maxBeat.slice(0, COUNTER_LIST_LIMIT).map((m) => selectionKey(m, 'max')),
+                ];
+                if (panelState.selected && !listed.includes(panelState.selected.key)) {
+                    clearSelection();
+                }
+                if (!panelState.selected) {
+                    const autoMatch = atPower[0] || maxBeat[0] || null;
+                    const autoSource = atPower[0] ? 'power' : (maxBeat[0] ? 'max' : null);
+                    if (autoMatch && autoSource) {
+                        panelState.selected = {
+                            match: autoMatch,
+                            source: autoSource,
+                            key: selectionKey(autoMatch, autoSource),
+                        };
+                    }
+                }
 
                 atPowerEl.innerHTML = '';
                 maxBeatEl.innerHTML = '';
-
-                const atPower = panelState.counters?.atPower || [];
                 if (!atPower.length) {
                     const empty = document.createElement('div');
                     empty.className = 'empty';
@@ -1238,13 +1433,11 @@
                         : 'No at-power wins found';
                     atPowerEl.appendChild(empty);
                 } else {
-                    for (const match of atPower.slice(0, 2)) {
+                    for (const match of atPower.slice(0, COUNTER_LIST_LIMIT)) {
                         atPowerEl.appendChild(renderRow(match, 'power'));
                     }
                 }
-
-                const maxBeat = panelState.counters?.maxBeat || null;
-                if (!maxBeat) {
+                if (!maxBeat.length) {
                     const empty = document.createElement('div');
                     empty.className = 'empty';
                     empty.textContent = panelState.status === 'bridge_error'
@@ -1252,20 +1445,34 @@
                         : 'No max-upgrade counter found';
                     maxBeatEl.appendChild(empty);
                 } else {
-                    maxBeatEl.appendChild(renderRow(maxBeat, 'max'));
+                    for (const match of maxBeat.slice(0, COUNTER_LIST_LIMIT)) {
+                        maxBeatEl.appendChild(renderRow(match, 'max'));
+                    }
                 }
 
-                // Always show compact Train — uses Arena Training HwH Ext.
+                const selected = panelState.selected;
+                const canAttack = !!(selected?.match && enemy?.userId && !isBusy());
+                if (selected?.match) {
+                    const label = formatLineupLabel(selected.match);
+                    const shortNames = String(label.names || '').split(' · ').slice(0, 3).join(' · ');
+                    const more = String(label.names || '').split(' · ').length > 3 ? '…' : '';
+                    attackHint.textContent = `${selected.source === 'max' ? 'Max' : 'Power'} · ${shortNames}${more} · ${label.petLabel}`;
+                    attackBtn.textContent = panelState.attacking ? 'Attacking…' : 'Attack';
+                } else {
+                    attackHint.textContent = 'Select a lineup, then Attack';
+                    attackBtn.textContent = 'Attack';
+                }
+                attackBtn.disabled = !canAttack;
+
                 const canTrain = !!(enemy?.userId && Array.isArray(enemy.heroes) && enemy.heroes.length === 5);
-                trainBox.hidden = false;
                 if (panelState.training) {
                     trainHint.textContent = 'Training…';
                 } else if (!canTrain) {
                     trainHint.textContent = '';
                 } else if (needsTrainingData()) {
                     trainHint.textContent = panelState.counters?.reason === 'opponent_not_found'
-                        ? 'No DB data'
-                        : 'No stored beat';
+                        ? 'No DB data — Train to gather'
+                        : 'No stored beat — Train recommended';
                 } else {
                     trainHint.textContent = '';
                 }
@@ -1451,7 +1658,7 @@
                 } catch (error) {
                     if (lastComboKey !== requestKey) return;
                     console.warn(`[${EXTENSION_NAME}] counters fetch failed:`, error);
-                    panelState.counters = { atPower: [], maxBeat: null };
+                    panelState.counters = { atPower: [], maxBeat: [] };
                     panelState.status = 'bridge_error';
                     panelState.message = 'Bridge/DB unavailable';
                 } finally {
@@ -1832,6 +2039,7 @@
             panelState.visible = false;
             panelState.enemy = null;
             panelState.counters = null;
+            clearSelection();
             panelState.message = '';
             panelState.status = 'idle';
             panelState.mode = 'arena';
@@ -1842,6 +2050,9 @@
         function showEnemyPanel(enemy, mode) {
             panelState.visible = true;
             panelState.mode = mode;
+            if (enemy?.comboKey !== panelState.enemy?.comboKey) {
+                clearSelection();
+            }
             panelState.enemy = enemy;
             const needsFetch = enemy.comboKey !== lastComboKey
                 || (!panelState.counters && panelState.status !== 'loading');
@@ -1923,7 +2134,24 @@
         installClanDominationEnemyObserver();
         panelController = createPanel();
         pollTimer = setInterval(tick, POLL_MS);
-        window.addEventListener('resize', () => panelController?.place());
+        const onResize = () => panelController?.place();
+        window.addEventListener('resize', onResize);
+
+        window.__ahCounterSuggestTeardown = () => {
+            try {
+                if (pollTimer) clearInterval(pollTimer);
+                pollTimer = null;
+                stopTrainStatusPolling();
+                window.removeEventListener('resize', onResize);
+                document.getElementById('ah-arena-counter-suggest-host')?.remove();
+                if (typeof window.__ahCounterSuggestCdRestore === 'function') {
+                    window.__ahCounterSuggestCdRestore();
+                }
+            } catch (error) {
+                console.warn(`[${EXTENSION_NAME}] instance teardown error:`, error);
+            }
+            delete window.__ahCounterSuggestTeardown;
+        };
 
         const { ScriptMenu } = HWHClasses;
         const scriptMenu = ScriptMenu.getInst();

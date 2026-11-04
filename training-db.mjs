@@ -1122,18 +1122,22 @@ function formatCounterMatch(match) {
 
 async function queryDistinctCounterMatches({
     opponentComboId,
+    opponentComboIds = null,
     minWinRate,
     maxAgeDays,
     maxUpgrade,
     testerUserId = null,
     limit = 2,
 }) {
-    if (!opponentComboId) {
+    const ids = Array.isArray(opponentComboIds) && opponentComboIds.length
+        ? opponentComboIds.map(Number).filter((id) => Number.isFinite(id) && id > 0)
+        : (opponentComboId != null ? [Number(opponentComboId)].filter((id) => Number.isFinite(id) && id > 0) : []);
+    if (!ids.length) {
         return [];
     }
 
-    const queryParams = [opponentComboId, minWinRate, String(maxAgeDays), Boolean(maxUpgrade)];
-    const opponentIdParam = '$1';
+    const queryParams = [ids, minWinRate, String(maxAgeDays), Boolean(maxUpgrade)];
+    const opponentIdsParam = '$1';
     const minWinRateParam = '$2';
     const maxAgeParam = '$3';
     const maxUpgradeParam = '$4';
@@ -1164,7 +1168,7 @@ async function queryDistinctCounterMatches({
                 best.win_rate,
                 best.tested_at
             FROM matchup_tests best
-            WHERE best.opponent_combo_id = ${opponentIdParam}
+            WHERE best.opponent_combo_id = ANY(${opponentIdsParam}::int[])
               AND best.win_rate >= ${minWinRateParam}
               AND best.tested_at >= NOW() - (${maxAgeParam}::text || ' days')::interval
               AND COALESCE(best.max_upgrade, TRUE) = ${maxUpgradeParam}
@@ -1184,17 +1188,20 @@ async function queryDistinctCounterMatches({
 
 /**
  * Recommend attack lineups for an opponent defense combo.
- * - atPower: up to 2 winning lineups tested at the player's real power
- * - maxBeat: best max-upgrade counter (attack still uses account power in-game)
+ * - atPower: up to 3 winning lineups tested at the player's real power
+ * - maxBeat: up to 3 best max-upgrade counters (attack still uses account power in-game)
+ * Banner is ignored for matching — same heroes+pet share training across banners.
  */
 export async function getTrainingCounters({
     comboKey,
     testerUserId,
     minWinRate = 50,
     maxAgeDays = 30,
+    atPowerLimit = 3,
+    maxBeatLimit = 3,
 } = {}) {
     if (!comboKey) {
-        return { ok: false, reason: 'missing_combo_key', atPower: [], maxBeat: null };
+        return { ok: false, reason: 'missing_combo_key', atPower: [], maxBeat: [] };
     }
 
     if (!pool) {
@@ -1203,10 +1210,11 @@ export async function getTrainingCounters({
 
     const parsed = parseComboKey(comboKey);
     const params = [];
+    // Intentionally ignore banner: CD/arena banners vary while hero+pet training still applies.
     const { clauses, valid } = buildOpponentSetMatchClauses({
         heroIds: parsed.heroIds,
         pet: parsed.pet,
-        banner: parsed.banner,
+        banner: 0,
         params,
     });
     const opponentWhere = valid
@@ -1217,14 +1225,16 @@ export async function getTrainingCounters({
         })();
 
     const opponentMeta = await pool.query(
-        `SELECT oc.id, oc.combo_key, oc.opponent_name, oc.opponent_user_id
+        `SELECT oc.id, oc.combo_key, oc.opponent_name, oc.opponent_user_id, oc.last_seen_at
          FROM opponent_combos oc
          WHERE ${opponentWhere}
-         ORDER BY oc.last_seen_at DESC NULLS LAST
-         LIMIT 1`,
+         ORDER BY
+            CASE WHEN oc.opponent_name ILIKE 'Meta:%' THEN 0 ELSE 1 END,
+            oc.last_seen_at DESC NULLS LAST`,
         params
     );
-    const meta = opponentMeta.rows[0] || null;
+    const rows = opponentMeta.rows || [];
+    const meta = rows[0] || null;
     if (!meta) {
         return {
             ok: true,
@@ -1235,29 +1245,33 @@ export async function getTrainingCounters({
             minWinRate,
             maxAgeDays,
             atPower: [],
-            maxBeat: null,
+            maxBeat: [],
             reason: 'opponent_not_found',
         };
     }
 
-    const [atPower, maxBeatList] = await Promise.all([
+    const opponentComboIds = rows.map((row) => row.id).filter((id) => id != null);
+    const atLimit = Math.max(1, Math.min(5, Number(atPowerLimit) || 3));
+    const maxLimit = Math.max(1, Math.min(5, Number(maxBeatLimit) || 3));
+
+    const [atPower, maxBeat] = await Promise.all([
         testerUserId
             ? queryDistinctCounterMatches({
-                opponentComboId: meta.id,
+                opponentComboIds,
                 minWinRate,
                 maxAgeDays,
                 maxUpgrade: false,
                 testerUserId,
-                limit: 2,
+                limit: atLimit,
             })
             : Promise.resolve([]),
         queryDistinctCounterMatches({
-            opponentComboId: meta.id,
+            opponentComboIds,
             minWinRate,
             maxAgeDays,
             maxUpgrade: true,
             testerUserId: null,
-            limit: 1,
+            limit: maxLimit,
         }),
     ]);
 
@@ -1269,8 +1283,9 @@ export async function getTrainingCounters({
         testerUserId: testerUserId != null ? String(testerUserId) : null,
         minWinRate,
         maxAgeDays,
+        matchedOpponentCombos: opponentComboIds.length,
         atPower,
-        maxBeat: maxBeatList[0] || null,
+        maxBeat,
     };
 }
 
