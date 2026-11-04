@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Counter Suggest HwH Ext
 // @namespace    HeroWarsHelper.ArenaCounterSuggest
-// @version      1.3.9
+// @version      1.3.12
 // @description  DB counter panel for Arena gather and Clan Domination attack target; arenaAttack / setDefence+startBattle / SimLab / Train
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Counter Suggest';
-    const EXTENSION_VERSION = '1.3.9';
+    const EXTENSION_VERSION = '1.3.12';
     const COUNTER_LIST_LIMIT = 3;
     const PLAYER_CLASS = 'game.model.user.Player';
     const PLAYER_BANNER_DATA_CLASS = 'game.model.user.banner.PlayerBannerData';
@@ -24,6 +24,7 @@
     const INT_MAP_CLASS = 'haxe.ds.IntMap';
     const BANNER_STONE_DESC_CLASS = 'game.data.storage.resource.BannerStoneDescription';
     const SIMLAB_SIMULATIONS = 10;
+    const SIMLAB_TARGET_WIN_RATE = 90;
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const HOST_ID = 'ah-arena-counter-suggest-host';
     const POLL_MS = 600;
@@ -83,6 +84,7 @@
             enemy: null,
             counters: null,
             selected: null, // { match, source, key }
+            simBest: null, // best SimLab config for selected lineup
             attacking: false,
             simming: false,
             training: false,
@@ -122,16 +124,27 @@
 
         function selectMatch(match, source) {
             if (!match) return;
+            const key = selectionKey(match, source);
+            if (panelState.selected?.key !== key) {
+                panelState.simBest = null;
+            }
             panelState.selected = {
                 match,
                 source: source || 'power',
-                key: selectionKey(match, source),
+                key,
             };
             panelController?.render();
         }
 
         function clearSelection() {
             panelState.selected = null;
+            panelState.simBest = null;
+        }
+
+        function petLabel(petId) {
+            const id = Number(petId) || 0;
+            if (!id) return 'No pet';
+            return PET_NAMES[id] || heroName(id) || `Pet ${id}`;
         }
         let panelController = null;
         let pollTimer = null;
@@ -1258,11 +1271,11 @@
                         <div class="status" id="status"></div>
                     </div>
                     <div class="section">
-                        <div class="section-title">Win at my power</div>
+                        <div class="section-title">My power</div>
                         <div class="list" id="atPower"></div>
                     </div>
                     <div class="section">
-                        <div class="section-title">Max beat</div>
+                        <div class="section-title">Max power</div>
                         <div class="list" id="maxBeat"></div>
                     </div>
                     <div class="footer" id="attackBar">
@@ -1456,7 +1469,12 @@
                     const label = formatLineupLabel(selected.match);
                     const shortNames = String(label.names || '').split(' · ').slice(0, 3).join(' · ');
                     const more = String(label.names || '').split(' · ').length > 3 ? '…' : '';
-                    attackHint.textContent = `${selected.source === 'max' ? 'Max' : 'Power'} · ${shortNames}${more} · ${label.petLabel}`;
+                    const simBest = panelState.simBest?.key === selected.key ? panelState.simBest : null;
+                    const petText = simBest ? petLabel(simBest.pet) : label.petLabel;
+                    const simText = simBest
+                        ? ` · Sim ${Math.round(Number(simBest.winRate) || 0)}% B${simBest.banner}`
+                        : '';
+                    attackHint.textContent = `${selected.source === 'max' ? 'Max power' : 'My power'} · ${shortNames}${more} · ${petText}${simText}`;
                     attackBtn.textContent = panelState.attacking ? 'Attacking…' : 'Attack';
                 } else {
                     attackHint.textContent = 'Select a lineup, then Attack';
@@ -1506,16 +1524,101 @@
                     { name: 'teamGetAll', args: {}, ident: 'teamGetAll' },
                     { name: 'teamGetFavor', args: {}, ident: 'teamGetFavor' },
                     { name: 'team_getBanners', args: {}, ident: 'team_getBanners' },
+                    { name: 'heroGetAll', args: {}, ident: 'heroGetAll' },
                     { name: 'userGetInfo', args: {}, ident: 'userGetInfo' },
                 ],
             });
             const get = (ident) => response.results?.find((r) => r.ident === ident)?.result?.response || {};
+            const rawHeroes = get('heroGetAll');
+            const heroes = Array.isArray(rawHeroes) ? rawHeroes : Object.values(rawHeroes || {});
             return {
                 teams: get('teamGetAll'),
                 favor: get('teamGetFavor'),
                 teamBanners: get('team_getBanners'),
+                heroes,
                 userInfo: get('userGetInfo'),
             };
+        }
+
+        function listOwnedPets(heroes = [], preferredPet = null) {
+            const owned = (Array.isArray(heroes) ? heroes : [])
+                .filter((hero) => {
+                    const id = Number(hero?.id);
+                    return Number.isFinite(id) && id >= 6000 && id < 7000;
+                })
+                .sort((a, b) => Number(b?.power || b?.sumPower || 0) - Number(a?.power || a?.sumPower || 0))
+                .map((hero) => Number(hero.id));
+            const preferred = Number(preferredPet);
+            const ordered = [];
+            const seen = new Set();
+            const push = (id) => {
+                const pet = Number(id);
+                if (!Number.isFinite(pet) || pet < 6000 || seen.has(pet)) return;
+                seen.add(pet);
+                ordered.push(pet);
+            };
+            push(preferred);
+            for (const id of owned) push(id);
+            return ordered;
+        }
+
+        function listOwnedBannerLoadouts(userInfo, preferredBanner = null) {
+            const loadouts = [];
+            const seen = new Set();
+            const push = (bannerId, stones) => {
+                const banner = Number(bannerId);
+                if (!Number.isFinite(banner) || banner <= 0 || seen.has(banner)) return;
+                seen.add(banner);
+                let bannerStones = normalizeBannerStones(stones);
+                if (!hasBannerStones(bannerStones)) {
+                    bannerStones = resolveAttackBannerStonesFromClient(banner);
+                }
+                if (!hasBannerStones(bannerStones) && userInfo) {
+                    bannerStones = resolveAttackBannerStones(userInfo, banner);
+                }
+                loadouts.push({ banner, bannerStones });
+            };
+
+            push(preferredBanner, null);
+
+            const banners = Array.isArray(userInfo?.banners) ? userInfo.banners : [];
+            for (const entry of banners) {
+                if (entry == null) continue;
+                if (typeof entry === 'number' || typeof entry === 'string') {
+                    push(entry, null);
+                    continue;
+                }
+                if (typeof entry === 'object') {
+                    push(entry.id ?? entry.bannerId ?? entry.banner, entry.slots || entry.bannerStones);
+                }
+            }
+
+            if (userInfo?.banner != null) {
+                if (typeof userInfo.banner === 'object') {
+                    push(userInfo.banner.id ?? userInfo.banner.bannerId, userInfo.banner.slots);
+                } else if (Array.isArray(userInfo.banner)) {
+                    userInfo.banner.forEach((id) => push(id, null));
+                } else {
+                    push(userInfo.banner, null);
+                }
+            }
+
+            try {
+                const data = findPlayerBannerData();
+                const map = data
+                    ? Object.values(data).find((value) => classNameOf(value) === INT_MAP_CLASS)
+                    : null;
+                const backing = getIntMapBacking(map);
+                if (backing) {
+                    for (const [key, entry] of Object.entries(backing)) {
+                        push(key, slotsFromPlayerBannerEntry(entry));
+                    }
+                }
+            } catch (error) {
+                console.warn(`[${EXTENSION_NAME}] listOwnedBannerLoadouts client scan failed:`, error);
+            }
+
+            return loadouts;
         }
 
         function pickFavor(heroIds, arenaFavor = {}) {
@@ -1810,15 +1913,16 @@
             }
 
             const heroes = (match?.myHeroIds || []).map(Number).filter((id) => id > 0 && id < 6000);
-            const pet = Number(match?.myPet);
+            const basePet = Number(match?.myPet);
             if (heroes.length !== 5) throw new Error('Suggested lineup needs 5 heroes');
-            if (!Number.isFinite(pet) || pet < 6000) throw new Error('Suggested lineup needs a pet');
+            if (!Number.isFinite(basePet) || basePet < 6000) throw new Error('Suggested lineup needs a pet');
 
+            const sweepBanners = source !== 'max';
             panelState.simming = true;
             panelState.status = 'simming';
             panelState.message = source === 'max'
-                ? 'SimLab: max-beat lineup at your power…'
-                : 'SimLab: at-power lineup…';
+                ? `SimLab: max power (pet sweep → ${SIMLAB_TARGET_WIN_RATE}%)…`
+                : `SimLab: my power (target ${SIMLAB_TARGET_WIN_RATE}%)…`;
             panelController?.render();
             HWHFuncs.setProgress?.(`${EXTENSION_NAME}: SimLab…`, true);
 
@@ -1827,12 +1931,12 @@
                 const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
                 const arenaFavor = support.favor?.arena || {};
                 const favor = pickFavor(heroes, arenaFavor);
-                const banner = resolveBanner(
+                const baseBanner = resolveBanner(
                     support.userInfo,
                     support.teamBanners,
                     isCd ? 'clanDomination' : 'arena'
                 );
-                const bannerStones = resolveAttackBannerStones(support.userInfo, banner);
+                const baseBannerStones = resolveAttackBannerStones(support.userInfo, baseBanner);
 
                 let defenceFavor = enemy.favor && typeof enemy.favor === 'object' ? enemy.favor : {};
                 let defenceBanner = enemy.banner || 1;
@@ -1857,46 +1961,128 @@
                     defencePower = defenceExtras.power ?? defencePower;
                 }
 
-                if (!hasBannerStones(bannerStones)) {
-                    console.warn(`[${EXTENSION_NAME}] SimLab attack bannerStones empty for banner ${banner}`);
+                if (!hasBannerStones(baseBannerStones)) {
+                    console.warn(`[${EXTENSION_NAME}] SimLab attack bannerStones empty for banner ${baseBanner}`);
                 }
                 if (!hasBannerStones(defenceBannerStones)) {
                     console.warn(`[${EXTENSION_NAME}] SimLab defence bannerStones empty for enemy ${enemy.userId}`);
                 }
 
-                const summary = await training.simulateMatchup({
-                    label: isCd ? 'simlab-counter-cd' : 'simlab-counter',
-                    maxUpgrade: false,
-                    simulationsPerCombo: SIMLAB_SIMULATIONS,
-                    saveToBridge: true,
-                    myTeam: {
-                        heroes,
+                const opponentTeam = {
+                    userId: enemy.userId,
+                    name: defenceName,
+                    heroes: enemy.heroes,
+                    pet: enemy.pet,
+                    banner: defenceBanner,
+                    favor: defenceFavor,
+                    bannerStones: defenceBannerStones,
+                    place: defencePlace,
+                    power: defencePower,
+                    source: isCd ? 'simlab-clanDomination' : 'simlab-gather',
+                };
+
+                const runOne = async (pet, banner, bannerStones, phaseLabel) => {
+                    const petName = petLabel(pet);
+                    panelState.message = `SimLab ${phaseLabel}: ${petName} · banner ${banner}…`;
+                    panelController?.render();
+                    HWHFuncs.setProgress?.(
+                        `${EXTENSION_NAME}: SimLab ${phaseLabel} · ${petName}`,
+                        true
+                    );
+                    const summary = await training.simulateMatchup({
+                        label: isCd ? 'simlab-counter-cd' : 'simlab-counter',
+                        maxUpgrade: false,
+                        simulationsPerCombo: SIMLAB_SIMULATIONS,
+                        saveToBridge: true,
+                        myTeam: {
+                            heroes,
+                            pet,
+                            banner,
+                            favor,
+                            bannerStones: bannerStones || {},
+                            heroNames: match?.myHeroNames,
+                        },
+                        opponentTeam,
+                    });
+                    const winRate = Number(summary?.winRate) || 0;
+                    return {
                         pet,
                         banner,
+                        bannerStones: bannerStones || {},
                         favor,
-                        bannerStones,
-                        heroNames: match?.myHeroNames,
-                    },
-                    opponentTeam: {
-                        userId: enemy.userId,
-                        name: defenceName,
-                        heroes: enemy.heroes,
-                        pet: enemy.pet,
-                        banner: defenceBanner,
-                        favor: defenceFavor,
-                        bannerStones: defenceBannerStones,
-                        place: defencePlace,
-                        power: defencePower,
-                        source: isCd ? 'simlab-clanDomination' : 'simlab-gather',
-                    },
-                });
+                        wins: Number(summary?.wins) || 0,
+                        losses: Number(summary?.losses) || 0,
+                        winRate,
+                        summary,
+                        phaseLabel,
+                    };
+                };
 
-                const wr = Number(summary?.winRate) || 0;
-                const msg = `SimLab ${summary.wins}W/${summary.losses}L (${wr.toFixed(0)}%)`;
+                let best = null;
+                const consider = (result) => {
+                    if (!result) return;
+                    if (!best || result.winRate > best.winRate) best = result;
+                };
+
+                // 1) Base suggested pet + current banner
+                const baseResult = await runOne(basePet, baseBanner, baseBannerStones, 'base');
+                consider(baseResult);
+
+                // 2) Pet sweep with current banner (my power + max power)
+                if (best.winRate < SIMLAB_TARGET_WIN_RATE) {
+                    const pets = listOwnedPets(support.heroes, basePet);
+                    for (const pet of pets) {
+                        if (pet === basePet) continue;
+                        const result = await runOne(pet, baseBanner, baseBannerStones, 'pet');
+                        consider(result);
+                        if (best.winRate >= SIMLAB_TARGET_WIN_RATE) break;
+                    }
+                }
+
+                // 3) Banner + slots sweep — my power only
+                if (sweepBanners && best.winRate < SIMLAB_TARGET_WIN_RATE) {
+                    const petForBanners = best?.pet || basePet;
+                    const banners = listOwnedBannerLoadouts(support.userInfo, baseBanner);
+                    for (const loadout of banners) {
+                        if (Number(loadout.banner) === Number(baseBanner)) continue;
+                        const result = await runOne(
+                            petForBanners,
+                            loadout.banner,
+                            loadout.bannerStones,
+                            'banner'
+                        );
+                        consider(result);
+                        if (best.winRate >= SIMLAB_TARGET_WIN_RATE) break;
+                    }
+                }
+
+                if (!best) throw new Error('SimLab produced no results');
+
+                panelState.simBest = {
+                    key: selectionKey(match, source),
+                    heroes,
+                    pet: best.pet,
+                    banner: best.banner,
+                    bannerStones: best.bannerStones,
+                    favor: best.favor,
+                    winRate: best.winRate,
+                    wins: best.wins,
+                    losses: best.losses,
+                };
+
+                const hitTarget = best.winRate >= SIMLAB_TARGET_WIN_RATE;
+                const msg = hitTarget
+                    ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner}`
+                    : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} (<${SIMLAB_TARGET_WIN_RATE}%)`;
                 panelState.message = msg;
                 panelState.status = 'ready';
                 HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
-                console.log(`[${EXTENSION_NAME}] SimLab result:`, summary);
+                console.log(`[${EXTENSION_NAME}] SimLab finished:`, {
+                    source,
+                    sweepBanners,
+                    target: SIMLAB_TARGET_WIN_RATE,
+                    best,
+                });
             } finally {
                 panelState.simming = false;
                 panelController?.render();
@@ -1909,7 +2095,9 @@
             if (!enemy?.userId) throw new Error('Enemy userId missing');
 
             const heroes = (match?.myHeroIds || []).map(Number).filter((id) => id > 0 && id < 6000);
-            const pet = Number(match?.myPet);
+            const selKey = selectionKey(match, source);
+            const simBest = panelState.simBest?.key === selKey ? panelState.simBest : null;
+            const pet = Number(simBest?.pet ?? match?.myPet);
             if (heroes.length !== 5) throw new Error('Suggested lineup needs 5 heroes');
             if (!Number.isFinite(pet) || pet < 6000) throw new Error('Suggested lineup needs a pet');
 
@@ -1917,20 +2105,24 @@
             panelState.attacking = true;
             panelState.status = 'attacking';
             panelState.message = isCd
-                ? (source === 'max' ? 'Clan Domination: setting max-beat team…' : 'Clan Domination: setting at-power team…')
-                : (source === 'max' ? 'Attacking with max-beat lineup at your power…' : 'Attacking with at-power lineup…');
+                ? (source === 'max' ? 'Clan Domination: setting max-power team…' : 'Clan Domination: setting my-power team…')
+                : (source === 'max' ? 'Attacking with max-power lineup…' : 'Attacking with my-power lineup…');
             panelController?.render();
             HWHFuncs.setProgress?.(`${EXTENSION_NAME}: attacking…`, true);
 
             try {
                 const support = await fetchTeamSupport();
                 const arenaFavor = support.favor?.arena || {};
-                const favor = pickFavor(heroes, arenaFavor);
-                const banner = resolveBanner(
-                    support.userInfo,
-                    support.teamBanners,
-                    isCd ? 'clanDomination' : 'arena'
-                );
+                const favor = (simBest?.favor && typeof simBest.favor === 'object' && Object.keys(simBest.favor).length)
+                    ? simBest.favor
+                    : pickFavor(heroes, arenaFavor);
+                const banner = Number(simBest?.banner) > 0
+                    ? Number(simBest.banner)
+                    : resolveBanner(
+                        support.userInfo,
+                        support.teamBanners,
+                        isCd ? 'clanDomination' : 'arena'
+                    );
 
                 if (isCd) {
                     const setArgs = {
