@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Counter Suggest HwH Ext
 // @namespace    HeroWarsHelper.ArenaCounterSuggest
-// @version      1.3.12
+// @version      1.3.13
 // @description  DB counter panel for Arena gather and Clan Domination attack target; arenaAttack / setDefence+startBattle / SimLab / Train
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Counter Suggest';
-    const EXTENSION_VERSION = '1.3.12';
+    const EXTENSION_VERSION = '1.3.13';
     const COUNTER_LIST_LIMIT = 3;
     const PLAYER_CLASS = 'game.model.user.Player';
     const PLAYER_BANNER_DATA_CLASS = 'game.model.user.banner.PlayerBannerData';
@@ -493,7 +493,18 @@
                 power: enemy.power,
                 comboKey: enemy.comboKey,
             });
-            if (!isBusy() && isClanDominationMapOpen()) {
+
+            // Always cache. Only open/update the panel when this level is the user's
+            // selected attack target — ignore bulk fetches (e.g. AOC Visible Enemy Towns refresh).
+            if (window.__ahSuppressCounterSuggestCdIngest) {
+                return enemy;
+            }
+            if (isBusy() || !isClanDominationMapOpen()) {
+                return enemy;
+            }
+            const selected = readClanDominationTarget();
+            const selectedLevel = selected?.levelId != null ? Number(selected.levelId) : null;
+            if (selectedLevel != null && selectedLevel === numericLevelId) {
                 showEnemyPanel(enemy, 'clanDomination');
             }
             return enemy;
