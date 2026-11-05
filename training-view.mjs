@@ -1,4 +1,14 @@
 import { formatCombo, HERO_NAMES, PET_NAMES, resolveHeroName } from './hero-names.mjs';
+import {
+    BANNER_EFFECTS,
+    BANNER_NAMES,
+    PATTERN_COLORS,
+    PATTERN_TYPES,
+    decodePatternId,
+    resolveBannerEffect,
+    resolveBannerLabel,
+    resolvePatternShortLabel,
+} from './banner-names.mjs';
 import { HERO_ICON_TOOLTIP_CSS, iconUrlForUnit, renderComboLabelHtml, renderHeroListHtml, renderUnitNameHtml } from './hero-icons.mjs';
 
 export function parseHeroFilterParams(searchParams, key) {
@@ -68,24 +78,25 @@ function buildSortLink(columnKey, paging) {
     return `/?${queryBase}`;
 }
 
-function renderSortableTh(label, columnKey, paging) {
+function renderSortableTh(label, columnKey, paging, className = '') {
     const currentSort = paging.sort || 'when';
     const currentOrder = paging.order || 'desc';
     const isActive = currentSort === columnKey;
     const indicator = isActive ? (currentOrder === 'asc' ? ' ▲' : ' ▼') : '';
     const ariaSort = isActive ? (currentOrder === 'asc' ? 'ascending' : 'descending') : 'none';
-    return `<th aria-sort="${ariaSort}"><a class="sort-link" href="${buildSortLink(columnKey, paging)}">${escapeHtml(label)}${indicator}</a></th>`;
+    const cls = className ? ` class="${escapeHtml(className)}"` : '';
+    return `<th${cls} aria-sort="${ariaSort}"><a class="sort-link" href="${buildSortLink(columnKey, paging)}">${escapeHtml(label)}${indicator}</a></th>`;
 }
 
 function renderTestLogLead(paging = {}) {
     const sort = paging.sort || 'when';
     const order = paging.order || 'desc';
     if (sort === 'when' && order === 'desc') {
-        return 'Every saved simulation — one row per opponent and the team you tested against them. Newest first. Click a column header to sort.';
+        return 'One row per matchup. Click a team to filter; click headers to sort.';
     }
     const label = TRAINING_SORT_LABELS[sort] || sort;
-    const direction = order === 'asc' ? 'low to high' : 'high to low';
-    return `Every saved simulation — one row per opponent and the team you tested against them. Sorted by ${label} (${direction}). Click a column header to change sort.`;
+    const direction = order === 'asc' ? 'asc' : 'desc';
+    return `Sorted by ${label} (${direction}). Click a team to filter.`;
 }
 
 function formatTesterLabel(tester) {
@@ -111,8 +122,8 @@ function renderTesterFilter(paging = {}, testers = []) {
 
     return `
       <div class="filter-group filter-group-tester">
-        <div class="filter-title">Tester account</div>
-        <p class="filter-help muted">Show only tests from a specific account — <strong>maxHeros</strong> for max-upgrade sims, or a player name for real-team tests.</p>
+        <div class="filter-title">Tester</div>
+        <p class="filter-help muted"><strong>maxHeros</strong> = max sims · name = real team</p>
         <div class="filter-row">
           <select id="tester-select" class="tester-select" aria-label="Filter by tester account">
             <option value=""${!selected ? ' selected' : ''}>All testers</option>
@@ -128,6 +139,28 @@ function renderHeroFilterChips(side, heroIds) {
         const label = resolveHeroName(id);
         return `<button type="button" class="chip" onclick="removeHeroFilter('${side}', ${Number(id)})" title="Remove ${escapeHtml(label)}">${renderUnitNameHtml(id, label)} <span class="chip-x">×</span></button>`;
     }).join('');
+}
+
+/** Collect hero + pet ids for team filter chips. */
+function collectTeamFilterIds(heroIds, pet) {
+    const ids = (Array.isArray(heroIds) ? heroIds : [])
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && id > 0);
+    const petId = Number(pet);
+    if (Number.isFinite(petId) && petId > 0) {
+        ids.push(petId);
+    }
+    return [...new Set(ids)];
+}
+
+function renderClickableTeamFilter(side, heroIds, pet, heroNamesOverride = null) {
+    const filterIds = collectTeamFilterIds(heroIds, pet);
+    const comboHtml = renderComboLabelHtml(heroIds, pet, heroNamesOverride);
+    if (!filterIds.length) {
+        return comboHtml;
+    }
+    const label = side === 'my' ? 'your counter team' : 'opponent team';
+    return `<button type="button" class="team-filter-btn" data-side="${side}" data-ids="${filterIds.join(',')}" title="Filter to this ${label}" onclick="applyTeamFilter(this)">${comboHtml}</button>`;
 }
 
 function renderFilterPickerOption(option) {
@@ -148,7 +181,7 @@ function renderHeroFilterSelect(side, heroIds) {
         <div class="filter-picker" id="${side}-hero-picker" data-side="${side}">
           <input type="hidden" id="${side}-hero-select" value="">
           <button type="button" class="filter-picker-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Choose ${sideLabel} hero or pet">
-            <span class="filter-picker-placeholder">Choose a hero or pet…</span>
+            <span class="filter-picker-placeholder">Add hero or pet…</span>
             <span class="filter-picker-caret" aria-hidden="true">▾</span>
           </button>
           <div class="filter-picker-menu" role="listbox" hidden>
@@ -173,36 +206,34 @@ function renderHeroFilters(paging = {}) {
     return `
   <section class="section" id="filters">
     <div class="section-head">
-      <h2>Filter results</h2>
-      <p class="section-lead">Pick a tester account and/or heroes to narrow what you see. Everything below updates to match.</p>
+      <h2>Filters</h2>
+      <p class="section-lead">Must include <em>all</em> selected units. Click any team below to set a filter.</p>
     </div>
     <div class="filters card">
       ${renderTesterFilter(paging, testers)}
       <div class="filter-group">
-        <div class="filter-title">Opponent team includes</div>
-        <p class="filter-help muted">Show opponents whose lineup has <em>all</em> of these heroes or pets.</p>
+        <div class="filter-title">Opponent includes</div>
         <div class="chips" id="opponent-chips">
-          ${renderHeroFilterChips('opponent', opponentHeroIds) || '<span class="muted">No filter — any opponent</span>'}
+          ${renderHeroFilterChips('opponent', opponentHeroIds) || '<span class="muted">Any</span>'}
         </div>
         <div class="filter-row">
           ${renderHeroFilterSelect('opponent', opponentHeroIds)}
           <button type="button" onclick="addHeroFilter('opponent')">Add</button>
-          ${opponentHeroIds.length ? `<button type="button" class="ghost" onclick="clearHeroFilter('opponent')">Clear all</button>` : ''}
+          ${opponentHeroIds.length ? `<button type="button" class="ghost" onclick="clearHeroFilter('opponent')">Clear</button>` : ''}
         </div>
       </div>
       <div class="filter-group">
-        <div class="filter-title">Your counter team includes</div>
-        <p class="filter-help muted">Show only your teams that have <em>all</em> of these heroes or pets. For Grand Arena below, each selected hero must appear on one of the 3 teams (15 unique heroes total).</p>
+        <div class="filter-title">Your counter includes</div>
         <div class="chips" id="my-chips">
-          ${renderHeroFilterChips('my', myHeroIds) || '<span class="muted">No filter — any of your teams</span>'}
+          ${renderHeroFilterChips('my', myHeroIds) || '<span class="muted">Any</span>'}
         </div>
         <div class="filter-row">
           ${renderHeroFilterSelect('my', myHeroIds)}
           <button type="button" onclick="addHeroFilter('my')">Add</button>
-          ${myHeroIds.length ? `<button type="button" class="ghost" onclick="clearHeroFilter('my')">Clear all</button>` : ''}
+          ${myHeroIds.length ? `<button type="button" class="ghost" onclick="clearHeroFilter('my')">Clear</button>` : ''}
         </div>
       </div>
-      ${hasFilters ? '<div class="filter-active">Filters on — you are viewing a subset of saved tests.</div>' : ''}
+      ${hasFilters ? '<div class="filter-active">Filters active</div>' : ''}
     </div>
   </section>`;
 }
@@ -244,7 +275,7 @@ function winRateClass(winRate, minWinRate = 90) {
 function renderWinRateCell(winRate, minWinRate = 90) {
     const cls = winRateClass(winRate, minWinRate);
     const solved = winRate != null && winRate >= minWinRate
-        ? `<span class="badge solved">Strong counter</span>`
+        ? `<span class="badge solved">${escapeHtml(String(minWinRate))}%+</span>`
         : '';
     return `<span class="win ${cls}">${escapeHtml(formatPct(winRate))}</span>${solved}`;
 }
@@ -252,36 +283,32 @@ function renderWinRateCell(winRate, minWinRate = 90) {
 function renderPageIntro(minWinRate = 90) {
     return `
   <section class="intro card">
-    <h2>How to use this page</h2>
     <p class="intro-lead">
-      Hero Wars Helper’s <strong>Arena Training</strong> runs practice battles (no arena attempts spent).
-      It tries to find a team that beats each opponent at least <strong>${minWinRate}%</strong> of the time, then saves the results here.
-      Live pet/flag counters from Counter Suggest live on the separate <a href="/training/simlab-view">SimLab</a> page.
+      Practice battles from HWH Arena Training (no attempts spent). Goal: <strong>${minWinRate}%+</strong> win rate.
+      Live pet/flag sims → <a href="/training/simlab-view">SimLab</a>.
     </p>
-    <ol class="intro-steps">
-      <li><strong>Run training in HWH</strong> — start Arena Training or the loop; it checks arena opponents, then popular meta teams.</li>
-      <li><strong>SimLab</strong> — on Arena gather, open Counter Suggest and click <strong>Sim</strong> on a counter row; review runs on <a href="/training/simlab-view">SimLab</a>.</li>
-      <li><strong>Filter (optional)</strong> — focus on specific heroes on either side; all sections below follow your filters.</li>
-      <li><strong>Pick teams</strong> — use the best-team tables and Grand Arena section; scroll to the bottom for every individual test.</li>
-    </ol>
   </section>`;
 }
 
 function renderPageNav() {
     return `
   <nav class="page-nav" aria-label="Page sections">
-    <span class="page-nav-label">Jump to:</span>
     <a href="/training/simlab-view">SimLab</a>
     <a href="#filters">Filters</a>
-    <a href="#insights">Best teams</a>
+    <a href="#insights">Counters</a>
     <a href="#recommendations">Grand Arena</a>
-    <a href="#results">Full log</a>
+    <a href="#results">Log</a>
   </nav>`;
 }
 
 function formatFlagLabel(bannerId) {
-    if (bannerId == null || bannerId === '') return '—';
-    return `Flag #${Number(bannerId) || bannerId}`;
+    return resolveBannerLabel(bannerId);
+}
+
+function formatFlagTitle(bannerId) {
+    const effect = resolveBannerEffect(bannerId);
+    const label = resolveBannerLabel(bannerId);
+    return effect ? `${label} — ${effect}` : label;
 }
 
 function formatPetLabel(petId) {
@@ -295,15 +322,140 @@ function formatBannerStonesLabel(stones) {
         .filter(([, value]) => value != null && value !== '')
         .sort((a, b) => Number(a[0]) - Number(b[0]));
     if (!entries.length) return '';
-    return entries.map(([slot, id]) => `S${slot}:${id}`).join(' · ');
+    return entries
+        .map(([slot, id]) => `S${slot}: ${resolvePatternShortLabel(id)}`)
+        .join(' · ');
+}
+
+function formatPatternCompactLabel(patternId) {
+    const decoded = decodePatternId(patternId);
+    if (!decoded) {
+        return patternId == null || patternId === '' ? '—' : `#${patternId}`;
+    }
+    return `${decoded.type} ${decoded.color}`;
+}
+
+function formatBannerStonesHtml(stones) {
+    if (!stones || typeof stones !== 'object') return '';
+    const entries = Object.entries(stones)
+        .filter(([, value]) => value != null && value !== '')
+        .sort((a, b) => Number(a[0]) - Number(b[0]));
+    if (!entries.length) return '';
+    return entries.map(([slot, id]) => {
+        const label = formatPatternCompactLabel(id);
+        const title = resolvePatternShortLabel(id);
+        return `<div class="sim-slot-line" title="${escapeHtml(title)}"><span class="sim-chip-k">S${escapeHtml(String(slot))}</span> ${escapeHtml(label)}</div>`;
+    }).join('');
+}
+
+function formatFavorEntries(favor) {
+    if (!favor || typeof favor !== 'object') return [];
+    return Object.entries(favor)
+        .filter(([, value]) => value != null && Number(value) > 0)
+        .map(([heroId, petId]) => {
+            const hero = Number(heroId);
+            const pet = Number(petId);
+            return {
+                heroId: hero,
+                petId: pet,
+                heroName: resolveHeroName(hero),
+                petName: resolveHeroName(pet),
+            };
+        })
+        .sort((a, b) => a.heroName.localeCompare(b.heroName));
 }
 
 function formatFavorLabel(favor) {
-    if (!favor || typeof favor !== 'object') return '';
-    const entries = Object.entries(favor)
-        .filter(([, value]) => value != null && Number(value) > 0)
-        .map(([heroId, value]) => `${resolveHeroName(heroId)} ${value}`);
-    return entries.length ? entries.join(', ') : '';
+    const entries = formatFavorEntries(favor);
+    return entries.map((entry) => `${entry.heroName} → ${entry.petName}`).join(', ');
+}
+
+function formatFavorHtml(favor) {
+    const entries = formatFavorEntries(favor);
+    if (!entries.length) {
+        return '<span class="muted">—</span>';
+    }
+    return entries.map((entry) => (
+        `<span class="favor-pair" title="${escapeHtml(`${entry.heroName} → ${entry.petName}`)}">`
+        + `${renderUnitNameHtml(entry.heroId, entry.heroName)}`
+        + `<span class="favor-arrow">→</span>`
+        + `${renderUnitNameHtml(entry.petId, entry.petName)}`
+        + `</span>`
+    )).join('');
+}
+
+function renderSimLabLegend() {
+    const flagRows = Object.keys(BANNER_NAMES)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .map((id) => `
+          <tr>
+            <td class="num mono">${escapeHtml(String(id))}</td>
+            <td>${escapeHtml(BANNER_NAMES[id])}</td>
+            <td class="muted">${escapeHtml(BANNER_EFFECTS[id] || '')}</td>
+          </tr>`)
+        .join('');
+    const typeRows = PATTERN_TYPES.map((name, index) => {
+        const from = index * 12 + 1;
+        const to = from + 11;
+        return `
+          <tr>
+            <td class="num mono">${from}–${to}</td>
+            <td>${escapeHtml(name)}</td>
+          </tr>`;
+    }).join('');
+    const petRows = Object.keys(PET_NAMES)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .map((id) => `
+          <tr>
+            <td class="num mono">${escapeHtml(String(id))}</td>
+            <td>${renderUnitNameHtml(id, PET_NAMES[id])}</td>
+          </tr>`)
+        .join('');
+
+    return `
+  <section class="section" id="legend">
+    <div class="section-head">
+      <h2>Legends</h2>
+      <p class="section-lead">Pet favor, war flags, and flag slots.</p>
+    </div>
+    <div class="sim-legend card">
+      <div class="sim-legend-grid">
+        <div class="sim-legend-panel">
+          <h3>Pet favor</h3>
+          <p class="muted stats-note">Hero → Pet = patronage on that hero. Team pet is separate (shown after +).</p>
+          <div class="table-wrap legend-table-wrap">
+            <table class="data-table">
+              <thead><tr><th class="num">ID</th><th>Pet</th></tr></thead>
+              <tbody>${petRows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="sim-legend-panel">
+          <h3>War flags</h3>
+          <p class="muted stats-note">Flag # on each run. Effects listed here.</p>
+          <div class="table-wrap legend-table-wrap">
+            <table class="data-table">
+              <thead><tr><th class="num">#</th><th>Name</th><th>Effect</th></tr></thead>
+              <tbody>${flagRows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="sim-legend-panel">
+          <h3>Flag slots</h3>
+          <p class="muted stats-note">S1–S3 patterns. ID = type×12 + rank (White→Red+6).</p>
+          <p class="muted stats-note ranks">${escapeHtml(PATTERN_COLORS.join(' · '))}</p>
+          <div class="table-wrap legend-table-wrap">
+            <table class="data-table">
+              <thead><tr><th class="num">IDs</th><th>Type</th></tr></thead>
+              <tbody>${typeRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>`;
 }
 
 function formatSourceLabel(source, label) {
@@ -326,13 +478,12 @@ function renderSummaryFooter(summary = {}, paging = {}) {
     return `
   <footer class="page-footer">
     <div class="footer-stats">
-      <span class="footer-stat"><strong>${summary.opponentComboCount ?? 0}</strong> unique opponents</span>
-      <span class="footer-stat"><strong>${summary.matchupTestCount ?? 0}</strong> tests saved</span>
-      <span class="footer-stat"><strong>${summary.roundCount ?? 0}</strong> training runs</span>
-      <span class="footer-stat${filteredHighlight}"><strong>${filteredTotal}</strong> shown after filters</span>
+      <span class="footer-stat"><strong>${summary.opponentComboCount ?? 0}</strong> opponents</span>
+      <span class="footer-stat"><strong>${summary.matchupTestCount ?? 0}</strong> tests</span>
+      <span class="footer-stat"><strong>${summary.roundCount ?? 0}</strong> runs</span>
+      <span class="footer-stat${filteredHighlight}"><strong>${filteredTotal}</strong> shown</span>
     </div>
-    <p class="footer-meta"><span class="meta-label">Most recent test:</span> ${latestLine}</p>
-    <p class="footer-meta">Green = ${minWinRate}%+ win rate (training goal for a reliable counter).</p>
+    <p class="footer-meta"><span class="meta-label">Latest:</span> ${latestLine} · Green = ${minWinRate}%+</p>
   </footer>`;
 }
 
@@ -357,12 +508,12 @@ function renderTrainingStats(stats = {}) {
     const comboRows = topCombos.map((row, index) => {
         return `
         <tr>
-            <td>${index + 1}</td>
-            <td>${renderComboLabelHtml(row.myHeroIds, row.myPet, row.myHeroNames)}</td>
-            <td class="win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
-            <td class="win">${escapeHtml(formatPct(row.bestWinRate))}</td>
-            <td>${row.highWinCount ?? 0}</td>
-            <td class="muted">${row.testCount ?? 0}</td>
+            <td class="num">${index + 1}</td>
+            <td>${renderClickableTeamFilter('my', row.myHeroIds, row.myPet, row.myHeroNames)}</td>
+            <td class="num win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
+            <td class="num win">${escapeHtml(formatPct(row.bestWinRate))}</td>
+            <td class="num">${row.highWinCount ?? 0}</td>
+            <td class="num muted">${row.testCount ?? 0}</td>
         </tr>`;
     }).join('');
 
@@ -371,58 +522,62 @@ function renderTrainingStats(stats = {}) {
         const isPet = Number(row.heroId) >= 6000;
         return `
         <tr>
-            <td>${index + 1}</td>
-            <td>${renderUnitNameHtml(row.heroId, label)}${isPet ? ' <span class="muted">(pet)</span>' : ''}</td>
-            <td>${row.wins90 ?? 0}</td>
-            <td class="win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
-            <td class="muted">${row.appearances ?? 0}</td>
+            <td class="num">${index + 1}</td>
+            <td>${renderUnitNameHtml(row.heroId, label)}${isPet ? ' <span class="muted">pet</span>' : ''}</td>
+            <td class="num">${row.wins90 ?? 0}</td>
+            <td class="num win good">${escapeHtml(formatPct(row.avgWinRate))}</td>
+            <td class="num muted">${row.appearances ?? 0}</td>
         </tr>`;
     }).join('');
 
     return `
   <section class="section" id="insights">
     <div class="section-head">
-      <h2>Your best counters</h2>
-      <p class="section-lead">Teams and heroes that win most often against the opponents you filtered. A strong counter means ${minWinRate}%+ win rate in simulations.</p>
+      <h2>Best counters</h2>
+      <p class="section-lead">Top lineups &amp; units at ${minWinRate}%+ vs current filters.</p>
     </div>
     <div class="stats-grid">
       <div class="stats-panel card">
-        <h3>Top 10 full teams</h3>
-        <p class="muted stats-note">Best 5-hero + pet lineups, ranked by how often they reach ${minWinRate}%+.</p>
+        <div class="panel-head">
+          <h3>Top 10 teams</h3>
+          <p class="muted stats-note">${minWinRate}%+ frequency</p>
+        </div>
         <div class="table-wrap stats-table-wrap">
-          <table>
+          <table class="data-table">
             <thead>
               <tr>
-                <th>#</th>
+                <th class="num">#</th>
                 <th>Your team</th>
-                <th>Avg win %</th>
-                <th>Best win %</th>
-                <th>Times ${minWinRate}%+</th>
-                <th>Tests</th>
+                <th class="num">Avg</th>
+                <th class="num">Best</th>
+                <th class="num">${minWinRate}%+</th>
+                <th class="num">Tests</th>
               </tr>
             </thead>
             <tbody>
-              ${comboRows || `<tr><td colspan="6" class="muted">No data yet — run Arena Training in HWH first.</td></tr>`}
+              ${comboRows || `<tr><td colspan="6" class="muted">No data yet</td></tr>`}
             </tbody>
           </table>
         </div>
       </div>
       <div class="stats-panel card">
-        <h3>Top 10 heroes &amp; pets</h3>
-        <p class="muted stats-note">Who shows up most in your ${minWinRate}%+ winning lineups.</p>
+        <div class="panel-head">
+          <h3>Top 10 heroes &amp; pets</h3>
+          <p class="muted stats-note">In ${minWinRate}%+ lineups</p>
+        </div>
         <div class="table-wrap stats-table-wrap">
-          <table>
+          <table class="data-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>Hero / pet</th>
-                <th>${minWinRate}%+ wins</th>
-                <th>Avg win %</th>
-                <th>Lineups</th>
+                <th class="num">#</th>
+                <th>Unit</th>
+                <th class="num">${minWinRate}%+</th>
+                <th class="num">Avg</th>
+                <th class="num">Lineups</th>
               </tr>
             </thead>
             <tbody>
-              ${heroRows || `<tr><td colspan="5" class="muted">No data yet.</td></tr>`}
+              ${heroRows || `<tr><td colspan="5" class="muted">No data yet</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -434,8 +589,8 @@ function renderTrainingStats(stats = {}) {
 function renderGrandArenaTeamCell(team, minWinRate) {
     return `
       <div class="ga-team">
-        <div>${renderComboLabelHtml(team.myHeroIds, team.myPet, team.myHeroNames)}</div>
-        <div class="muted ga-team-meta">${minWinRate}%+ wins: ${team.highWinCount ?? 0} · avg ${escapeHtml(formatPct(team.avgWinRate))}</div>
+        <div>${renderClickableTeamFilter('my', team.myHeroIds, team.myPet, team.myHeroNames)}</div>
+        <div class="muted ga-team-meta"><span class="num">${team.highWinCount ?? 0}</span> @${minWinRate}%+ · avg ${escapeHtml(formatPct(team.avgWinRate))}</div>
       </div>`;
 }
 
@@ -446,47 +601,50 @@ function renderGrandArenaSelections(stats = {}) {
     const shownCount = stats.grandArenaShownCount ?? selections.length;
     const poolSize = stats.comboPoolSize ?? 0;
     const myHeroFilterNote = (stats.grandArenaRequiredHeroes || []).length
-        ? 'With your hero filter on, each selected hero must appear on exactly one of the 3 teams below.'
+        ? ' Filter heroes must land on different teams.'
         : '';
 
     const rows = selections.map((selection, index) => {
         const [team1, team2, team3] = selection.teams;
         return `
         <tr>
-            <td>${index + 1}</td>
+            <td class="num">${index + 1}</td>
             <td>${renderGrandArenaTeamCell(team1, minWinRate)}</td>
             <td>${renderGrandArenaTeamCell(team2, minWinRate)}</td>
             <td>${renderGrandArenaTeamCell(team3, minWinRate)}</td>
-            <td class="win good">${selection.totalHighWinCount}</td>
-            <td>${selection.minHighWinCount}</td>
+            <td class="num win good">${selection.totalHighWinCount}</td>
+            <td class="num">${selection.minHighWinCount}</td>
         </tr>`;
     }).join('');
+
+    const status = totalFound
+        ? `${totalFound} lineup${totalFound === 1 ? '' : 's'} from top ${poolSize}${shownCount < totalFound ? ` · showing ${shownCount}` : ''}.`
+        : '';
 
     return `
   <section class="section" id="recommendations">
     <div class="section-head">
-      <h2>Grand Arena — suggested defense</h2>
+      <h2>Grand Arena defense</h2>
       <p class="section-lead">
-        Three teams built from your best counters. Each hero is used once across all teams (15 heroes total); pets can repeat.
-        ${totalFound ? `Found ${totalFound} valid lineup${totalFound === 1 ? '' : 's'} from the top ${poolSize} counters${shownCount < totalFound ? ` — top ${shownCount} shown` : ''}.` : ''}
-        ${myHeroFilterNote ? `${myHeroFilterNote}` : ''}
+        3 teams · 15 unique heroes · pets may repeat.
+        ${status}${myHeroFilterNote}
       </p>
     </div>
     <div class="stats-panel card ga-panel">
       <div class="table-wrap ga-table-wrap">
-        <table>
+        <table class="data-table ga-table">
           <thead>
             <tr>
-              <th>#</th>
-              <th>Defense team 1</th>
-              <th>Defense team 2</th>
-              <th>Defense team 3</th>
-              <th>Combined ${minWinRate}%+ wins</th>
-              <th>Lowest team score</th>
+              <th class="num">#</th>
+              <th>Team 1</th>
+              <th>Team 2</th>
+              <th>Team 3</th>
+              <th class="num">Σ ${minWinRate}%+</th>
+              <th class="num">Min</th>
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="6" class="muted">Not enough ${minWinRate}%+ teams yet — need 15 different heroes across 3 five-hero lineups.</td></tr>`}
+            ${rows || `<tr><td colspan="6" class="muted">Need 15 heroes across 3 ${minWinRate}%+ teams</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -514,14 +672,14 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
         const testerLabel = formatTesterLabel(row);
         return `
         <tr>
-            <td class="muted">${escapeHtml(source)}</td>
-            <td>${renderComboLabelHtml(row.opponentCombo.heroIds, row.opponentCombo.pet, row.opponentCombo.heroNames)}</td>
+            <td class="num muted">${escapeHtml(source)}</td>
+            <td>${renderClickableTeamFilter('opponent', row.opponentCombo.heroIds, row.opponentCombo.pet, row.opponentCombo.heroNames)}</td>
             <td class="muted">${escapeHtml(opponentLabel)}</td>
             <td class="muted">${escapeHtml(testerLabel)}</td>
-            <td>${renderComboLabelHtml(row.myCombo.heroIds, row.myCombo.pet, row.myCombo.heroNames)}</td>
-            <td>${renderWinRateCell(row.winRate, minWinRate)}</td>
-            <td class="muted">${escapeHtml(formatRecord(row.wins, row.losses))}</td>
-            <td class="muted">${escapeHtml(formatWhen(row.testedAt))}</td>
+            <td>${renderClickableTeamFilter('my', row.myCombo.heroIds, row.myCombo.pet, row.myCombo.heroNames)}</td>
+            <td class="num">${renderWinRateCell(row.winRate, minWinRate)}</td>
+            <td class="num muted">${escapeHtml(formatRecord(row.wins, row.losses))}</td>
+            <td class="muted nowrap">${escapeHtml(formatWhen(row.testedAt))}</td>
         </tr>`;
     }).join('');
 
@@ -538,55 +696,59 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       margin: 0;
       background: #0f1419;
       color: #e7ecf3;
-      line-height: 1.5;
+      line-height: 1.45;
     }
     .page {
-      max-width: 1200px;
+      max-width: 1440px;
       margin: 0 auto;
-      padding: 24px 20px 48px;
+      padding: 20px 24px 40px;
     }
-    .page-header { margin-bottom: 20px; }
-    h1 { margin: 0 0 6px; font-size: 1.6rem; }
-    .subtitle { margin: 0; color: #9fb3d1; font-size: 0.95rem; max-width: 52rem; }
+    .page-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px 24px;
+      margin-bottom: 12px;
+    }
+    .page-header-main { min-width: 0; flex: 1; }
+    h1 { margin: 0 0 4px; font-size: 1.45rem; letter-spacing: -0.02em; }
+    .subtitle { margin: 0; color: #9fb3d1; font-size: 0.88rem; }
     .meta { color: #8b9bb4; margin: 8px 0 0; font-size: 0.85rem; }
     .meta-label { color: #9fb3d1; }
-    .threshold-note { margin-top: 4px; }
     .card {
       border: 1px solid #243044;
-      border-radius: 10px;
+      border-radius: 8px;
       background: #151d28;
     }
-    .intro { padding: 18px 20px; margin-bottom: 16px; }
-    .intro h2 { margin: 0 0 8px; font-size: 1.05rem; }
-    .intro-lead { margin: 0 0 12px; color: #c8d4e8; }
-    .intro-steps { margin: 0; padding-left: 1.25rem; color: #b8c5da; }
-    .intro-steps li + li { margin-top: 6px; }
+    .intro { padding: 10px 14px; margin-bottom: 12px; }
+    .intro-lead { margin: 0; color: #c8d4e8; font-size: 0.88rem; }
     .page-footer {
-      margin-top: 32px;
-      padding-top: 16px;
+      margin-top: 28px;
+      padding-top: 14px;
       border-top: 1px solid #243044;
       font-size: 0.75rem;
       color: #8b9bb4;
-      line-height: 1.6;
+      line-height: 1.5;
     }
     .footer-stats {
       display: flex;
       flex-wrap: wrap;
-      gap: 6px 16px;
-      margin-bottom: 6px;
+      gap: 4px 18px;
+      margin-bottom: 4px;
     }
     .footer-stat strong { color: #9fb3d1; font-weight: 600; }
     .footer-stat-highlight strong { color: #9fc5ff; }
-    .footer-meta { margin: 4px 0 0; font-size: 0.72rem; }
+    .footer-meta { margin: 2px 0 0; font-size: 0.72rem; }
     .footer-meta .meta-label { color: #7a8fa8; }
     .page-nav {
-      display: flex;
+      display: inline-flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin: 16px 0 20px;
-      padding: 10px 12px;
+      align-items: center;
+      gap: 4px;
+      padding: 4px;
       border: 1px solid #243044;
-      border-radius: 999px;
+      border-radius: 8px;
       background: #121820;
       position: sticky;
       top: 8px;
@@ -595,43 +757,70 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     .page-nav a {
       color: #c8d4e8;
       text-decoration: none;
-      padding: 6px 12px;
-      border-radius: 999px;
-      font-size: 0.85rem;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      white-space: nowrap;
     }
     .page-nav a:hover { background: #243044; color: #fff; }
-    .page-nav-label { color: #7a8fa8; font-size: 0.8rem; padding: 6px 4px 6px 8px; }
-    .section { margin-bottom: 28px; scroll-margin-top: 72px; }
-    .section-head { margin-bottom: 12px; }
-    .section-head h2 { margin: 0 0 4px; font-size: 1.15rem; }
-    .section-lead { margin: 0; color: #9fb3d1; font-size: 0.9rem; max-width: 52rem; }
-    .dev-links { margin-top: 12px; font-size: 0.85rem; color: #8b9bb4; }
+    .section { margin-bottom: 22px; scroll-margin-top: 56px; }
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 6px 14px;
+      margin-bottom: 10px;
+    }
+    .section-head h2 { margin: 0; font-size: 1.05rem; }
+    .section-lead { margin: 0; color: #9fb3d1; font-size: 0.84rem; }
+    .section-lead em { color: #c8d4e8; font-style: normal; font-weight: 600; }
+    .dev-links { font-size: 0.8rem; color: #8b9bb4; }
     .dev-links summary { cursor: pointer; color: #9fb3d1; }
-    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+      margin-bottom: 8px;
+      min-height: 36px;
+    }
     .toolbar a, .toolbar button {
       color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57; border-radius: 6px;
-      padding: 8px 12px; font-size: 0.9rem; text-decoration: none; cursor: pointer;
+      padding: 6px 10px; font-size: 0.84rem; text-decoration: none; cursor: pointer;
     }
     .toolbar a:hover, .toolbar button:hover { background: #243044; }
     .filters {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;
-      padding: 16px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 20px;
+      padding: 14px 16px;
+      align-items: start;
+    }
+    @media (max-width: 820px) {
+      .filters { grid-template-columns: 1fr; }
     }
     .filter-help em { color: #9fb3d1; font-style: normal; font-weight: 600; }
-    .filter-group { display: flex; flex-direction: column; gap: 8px; }
-    .filter-title { font-size: 0.95rem; font-weight: 600; color: #e7ecf3; }
-    .filter-help { margin: 0; font-size: 0.82rem; }
-    .filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      height: 100%;
+    }
+    .filter-title { font-size: 0.88rem; font-weight: 600; color: #e7ecf3; line-height: 1.2; }
+    .filter-help { margin: 0; font-size: 0.78rem; line-height: 1.35; }
+    .filter-group .chips { flex: 1; }
+    .filter-row { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
     .tester-select {
-      min-width: 280px;
+      min-width: 0;
       flex: 1;
-      min-height: 40px;
+      min-height: 38px;
       color: #e7ecf3;
       background: #1a2433;
       border: 1px solid #2f3f57;
       border-radius: 6px;
-      padding: 8px 10px;
-      font-size: 0.9rem;
+      padding: 7px 10px;
+      font-size: 0.88rem;
     }
     .tester-select:hover, .tester-select:focus {
       background: #243044;
@@ -640,13 +829,14 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     }
     .filter-group-tester {
       grid-column: 1 / -1;
+      height: auto;
       padding-bottom: 12px;
       border-bottom: 1px solid #243044;
-      margin-bottom: 4px;
+      margin-bottom: 2px;
     }
     .filter-picker {
       position: relative;
-      min-width: 240px;
+      min-width: 0;
       flex: 1;
     }
     .filter-picker-trigger {
@@ -654,13 +844,13 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       align-items: center;
       gap: 8px;
       width: 100%;
-      min-height: 40px;
+      min-height: 38px;
       color: #e7ecf3;
       background: #1a2433;
       border: 1px solid #2f3f57;
       border-radius: 6px;
-      padding: 6px 10px;
-      font-size: 0.9rem;
+      padding: 5px 10px;
+      font-size: 0.88rem;
       cursor: pointer;
       text-align: left;
     }
@@ -670,7 +860,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       border-color: #3a5a8a;
     }
     .filter-picker-placeholder,
-    .filter-picker-value { color: #e7ecf3; flex: 1; }
+    .filter-picker-value { color: #e7ecf3; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .filter-picker-placeholder { color: #8b9bb4; }
     .filter-picker-caret { color: #9fb3d1; font-size: 0.75rem; margin-left: auto; }
     .filter-picker-menu {
@@ -703,7 +893,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       border: 1px solid #2f3f57;
       border-radius: 6px;
       padding: 8px 10px;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
     }
     .filter-picker-search:focus {
       outline: none;
@@ -742,7 +932,7 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       border-radius: 6px;
       background: transparent;
       color: #e7ecf3;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       text-align: left;
       cursor: pointer;
     }
@@ -765,54 +955,105 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       border-radius: 4px;
     }
     .filter-picker-trigger .filter-picker-icon {
-      width: 28px;
-      height: 28px;
+      width: 26px;
+      height: 26px;
     }
     .filter-row button {
       color: #e7ecf3; background: #243044; border: 1px solid #3a4f6d; border-radius: 6px;
-      padding: 8px 12px; font-size: 0.9rem; cursor: pointer;
+      padding: 7px 12px; font-size: 0.84rem; cursor: pointer; flex-shrink: 0; min-height: 38px;
     }
     .filter-row button.ghost { background: transparent; border-color: #2f3f57; }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px; align-items: center; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; align-content: flex-start; }
     .chip {
       display: inline-flex; align-items: center; gap: 6px; color: #e7ecf3; background: #243044;
-      border: 1px solid #3a4f6d; border-radius: 999px; padding: 4px 10px; font-size: 0.85rem; cursor: pointer;
+      border: 1px solid #3a4f6d; border-radius: 999px; padding: 3px 9px; font-size: 0.82rem; cursor: pointer;
     }
     .chip:hover { background: #2f3f57; }
     .chip-x { color: #9fb3d1; font-weight: 700; }
     .filter-active {
       grid-column: 1 / -1;
-      padding: 10px 12px;
-      border-radius: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
       background: #1a2a40;
       border: 1px solid #3a5a8a;
       color: #9fc5ff;
-      font-size: 0.85rem;
+      font-size: 0.82rem;
     }
     .stats-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      align-items: stretch;
     }
-    .stats-panel { padding: 16px; }
-    .stats-panel h3 { margin: 0 0 4px; font-size: 1rem; color: #e7ecf3; }
-    .stats-note { margin: 0 0 12px; font-size: 0.85rem; }
-    .stats-table-wrap { max-height: 360px; }
+    @media (max-width: 980px) {
+      .stats-grid { grid-template-columns: 1fr; }
+    }
+    .stats-panel {
+      padding: 12px 12px 10px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .panel-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 4px 12px;
+      margin-bottom: 8px;
+    }
+    .stats-panel h3 { margin: 0; font-size: 0.95rem; color: #e7ecf3; }
+    .stats-note { margin: 0; font-size: 0.78rem; }
+    .stats-table-wrap { max-height: 360px; flex: 1; }
     .ga-table-wrap { max-height: 480px; }
-    .ga-team { display: flex; flex-direction: column; gap: 4px; }
-    .ga-team-meta { font-size: 0.8rem; }
+    .ga-panel { padding: 12px; }
+    .ga-team { display: flex; flex-direction: column; gap: 3px; }
+    .ga-team-meta { font-size: 0.76rem; }
     .table-wrap {
       overflow: auto;
       border: 1px solid #243044;
       border-radius: 8px;
     }
     #results .table-wrap { max-height: calc(100vh - 120px); }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #243044; vertical-align: top; }
-    th { color: #9fb3d1; font-weight: 600; position: sticky; top: 0; background: #151d28; z-index: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #243044; vertical-align: middle; }
+    th { color: #9fb3d1; font-weight: 600; position: sticky; top: 0; background: #151d28; z-index: 1; white-space: nowrap; }
     th .sort-link { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 2px; }
     th .sort-link:hover { color: #fff; }
     th[aria-sort]:not([aria-sort="none"]) .sort-link { color: #9fc5ff; }
     tr:hover td { background: #1a2433; }
-    .muted { color: #8b9bb4; font-size: 0.85rem; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    th.num { text-align: right; }
+    .nowrap { white-space: nowrap; }
+    .ga-table th:nth-child(2),
+    .ga-table th:nth-child(3),
+    .ga-table th:nth-child(4),
+    .ga-table td:nth-child(2),
+    .ga-table td:nth-child(3),
+    .ga-table td:nth-child(4) { min-width: 180px; }
+    .team-filter-btn {
+      display: inline;
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .team-filter-btn:hover .combo-label,
+    .team-filter-btn:focus-visible .combo-label {
+      color: #9fc5ff;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .team-filter-btn:focus-visible {
+      outline: 2px solid #3a5a8a;
+      outline-offset: 2px;
+    }
+    .muted { color: #8b9bb4; font-size: 0.82rem; }
     .win { font-weight: 600; }
     .good { color: #6ee7a0; }
     .mid { color: #f6d365; }
@@ -820,28 +1061,30 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     .badge {
       display: inline-block;
       margin-left: 6px;
-      padding: 1px 7px;
+      padding: 1px 6px;
       border-radius: 999px;
-      font-size: 0.72rem;
+      font-size: 0.7rem;
       font-weight: 600;
       vertical-align: middle;
     }
     .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
     a { color: #7cb8ff; }
-    .status { color: #9fb3d1; font-size: 0.9rem; }
+    .status { color: #9fb3d1; font-size: 0.84rem; margin-right: auto; }
     ${HERO_ICON_TOOLTIP_CSS}
   </style>
 </head>
 <body>
   <div class="page">
     <header class="page-header">
-      <h1>Arena Training Results</h1>
-      <p class="subtitle">Saved practice-battle results from Hero Wars Helper. Find strong counters, plan Grand Arena defense, or look up any matchup.</p>
-      ${renderDevLinks()}
+      <div class="page-header-main">
+        <h1>Arena Training Results</h1>
+        <p class="subtitle">Counters, Grand Arena defense, and matchup log from HWH.</p>
+      </div>
+      ${renderPageNav()}
     </header>
 
     ${renderPageIntro(minWinRate)}
-    ${renderPageNav()}
+    ${renderDevLinks()}
 
     ${renderHeroFilters(paging)}
     ${renderTrainingStats(paging.stats)}
@@ -849,35 +1092,35 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
 
     <section class="section" id="results">
       <div class="section-head">
-        <h2>Full test log</h2>
+        <h2>Test log</h2>
         <p class="section-lead">${renderTestLogLead(paging)}</p>
       </div>
       <div class="toolbar">
-        <span class="status">Rows ${shownFrom}–${shownTo} of ${total}</span>
-        ${pageSize > 0 && offset + pageSize < total ? `<a href="${allLink}">Show all</a>` : ''}
-        ${hasMore ? `<a href="${nextLink}">Load ${Math.min(pageSize, total - nextOffset)} more</a>` : ''}
-        ${offset > 0 ? `<a href="/?${queryBase}limit=${pageSize}">Back to start</a>` : ''}
+        <span class="status">${shownFrom}–${shownTo} / ${total}</span>
+        ${pageSize > 0 && offset + pageSize < total ? `<a href="${allLink}">All</a>` : ''}
+        ${hasMore ? `<a href="${nextLink}">+${Math.min(pageSize, total - nextOffset)}</a>` : ''}
+        ${offset > 0 ? `<a href="/?${queryBase}limit=${pageSize}">Start</a>` : ''}
       </div>
       <div class="table-wrap card">
-        <table>
+        <table class="data-table">
           <thead>
             <tr>
-              ${renderSortableTh('List #', 'list', paging)}
-              ${renderSortableTh('Opponent team', 'opponent', paging)}
+              ${renderSortableTh('#', 'list', paging, 'num')}
+              ${renderSortableTh('Opponent', 'opponent', paging)}
               ${renderSortableTh('Label', 'label', paging)}
               ${renderSortableTh('Tester', 'tester', paging)}
               ${renderSortableTh('Your team', 'team', paging)}
-              ${renderSortableTh('Win rate', 'winRate', paging)}
-              ${renderSortableTh('Sim record', 'record', paging)}
+              ${renderSortableTh('Win %', 'winRate', paging, 'num')}
+              ${renderSortableTh('W/L', 'record', paging, 'num')}
               ${renderSortableTh('When', 'when', paging)}
             </tr>
           </thead>
           <tbody>
-            ${rows || '<tr><td colspan="8" class="muted">Nothing here yet — run Arena Training in HWH to start collecting results.</td></tr>'}
+            ${rows || '<tr><td colspan="8" class="muted">No results yet — run Arena Training in HWH</td></tr>'}
           </tbody>
         </table>
       </div>
-      ${hasMore ? `<p class="meta" style="margin-top:12px"><a href="${nextLink}">Load more results</a> · <a href="${allLink}">Show all ${total}</a></p>` : ''}
+      ${hasMore ? `<p class="meta"><a href="${nextLink}">More</a> · <a href="${allLink}">All ${total}</a></p>` : ''}
     </section>
 
     ${renderSummaryFooter(summary, paging)}
@@ -914,6 +1157,22 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
       const url = currentParams();
       url.searchParams.delete(heroFilterKey(side));
       url.searchParams.delete('offset');
+      window.location.href = url.toString();
+    }
+    function applyTeamFilter(button) {
+      const side = button && button.dataset ? button.dataset.side : '';
+      const key = heroFilterKey(side);
+      if (!key || (side !== 'opponent' && side !== 'my')) return;
+      const ids = String(button.dataset.ids || '')
+        .split(',')
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (!ids.length) return;
+      const url = currentParams();
+      url.searchParams.delete(key);
+      ids.forEach((id) => url.searchParams.append(key, String(id)));
+      url.searchParams.delete('offset');
+      url.hash = 'filters';
       window.location.href = url.toString();
     }
     function applyTesterFilter(value) {
@@ -1274,30 +1533,29 @@ function sanitizeHeroNames(names) {
     return cleaned.some(Boolean) ? cleaned : null;
 }
 
-function renderSimLabSupportBits({ pet, banner, bannerStones, favor, maxUpgrade }) {
-    const petText = formatPetLabel(pet);
+function renderSimLabSupportBits({ banner, bannerStones, favor, maxUpgrade }) {
     const flagText = formatFlagLabel(banner);
-    const stones = formatBannerStonesLabel(bannerStones);
-    const favorText = formatFavorLabel(favor);
+    const flagTitle = formatFlagTitle(banner);
+    const stonesHtml = formatBannerStonesHtml(bannerStones);
     const flagMissing = banner == null || banner === '';
+    const favorEntries = formatFavorEntries(favor);
     const bits = [
-        `<span class="sim-chip"><span class="sim-chip-k">Pet</span> ${escapeHtml(petText)}</span>`,
-        `<span class="sim-chip${flagMissing ? ' warn' : ''}"><span class="sim-chip-k">Flag</span> ${escapeHtml(flagText)}</span>`,
+        `<span class="sim-chip${flagMissing ? ' warn' : ''}" title="${escapeHtml(flagTitle)}"><span class="sim-chip-k">Flag</span> ${escapeHtml(flagText)}</span>`,
     ];
-    if (stones) {
-        bits.push(`<span class="sim-chip"><span class="sim-chip-k">Slots</span> ${escapeHtml(stones)}</span>`);
+    if (stonesHtml) {
+        bits.push(`<span class="sim-chip sim-chip-slots"><span class="sim-chip-k">Slots</span> <span class="sim-slots">${stonesHtml}</span></span>`);
     } else {
-        bits.push(`<span class="sim-chip warn"><span class="sim-chip-k">Slots</span> missing</span>`);
+        bits.push('<span class="sim-chip warn"><span class="sim-chip-k">Slots</span> —</span>');
     }
-    if (favorText) {
-        bits.push(`<span class="sim-chip"><span class="sim-chip-k">Favor</span> ${escapeHtml(favorText)}</span>`);
+    if (favorEntries.length) {
+        bits.push(`<span class="sim-chip sim-chip-favor"><span class="sim-chip-k">Favor</span> <span class="favor-list">${formatFavorHtml(favor)}</span></span>`);
     } else {
-        bits.push(`<span class="sim-chip warn"><span class="sim-chip-k">Favor</span> —</span>`);
+        bits.push('<span class="sim-chip warn"><span class="sim-chip-k">Favor</span> —</span>');
     }
     if (maxUpgrade === true) {
-        bits.push(`<span class="sim-chip warn"><span class="sim-chip-k">Power</span> max</span>`);
+        bits.push('<span class="sim-chip warn"><span class="sim-chip-k">Power</span> max</span>');
     } else if (maxUpgrade === false) {
-        bits.push(`<span class="sim-chip"><span class="sim-chip-k">Power</span> account</span>`);
+        bits.push('<span class="sim-chip"><span class="sim-chip-k">Power</span> acct</span>');
     }
     return bits.join('');
 }
@@ -1311,97 +1569,97 @@ function renderSimLabFilters(paging = {}) {
     return `
   <section class="section" id="filters">
     <div class="section-head">
-      <h2>Filter SimLab</h2>
-      <p class="section-lead">Narrow by who started the Sim, and which heroes appear on the target or your attack.</p>
+      <h2>Filters</h2>
+      <p class="section-lead">Must include <em>all</em> selected units.</p>
     </div>
     <div class="filters card">
       <div class="filter-group filter-group-tester">
-        <div class="filter-title">Started by (tester account)</div>
-        <p class="filter-help muted">Show only SimLab runs initiated from this account.</p>
+        <div class="filter-title">Tester</div>
+        <p class="filter-help muted">Who started the Sim</p>
         <div class="filter-row">
           <select id="tester-select" class="tester-select" aria-label="Filter by SimLab initiator">
-            <option value=""${!paging.testerUserId ? ' selected' : ''}>All accounts</option>
+            <option value=""${!paging.testerUserId ? ' selected' : ''}>All</option>
             ${testers.map((tester) => {
                 const value = String(tester.testerUserId ?? '');
                 const label = formatTesterLabel(tester);
                 const selectedAttr = String(paging.testerUserId || '') === value ? ' selected' : '';
-                return `<option value="${escapeHtml(value)}"${selectedAttr}>${escapeHtml(label)} · ${tester.testCount ?? 0} runs</option>`;
+                return `<option value="${escapeHtml(value)}"${selectedAttr}>${escapeHtml(label)} · ${tester.testCount ?? 0}</option>`;
             }).join('')}
           </select>
           ${paging.testerUserId ? '<button type="button" class="ghost" onclick="applyTesterFilter(\'\')">Clear</button>' : ''}
         </div>
       </div>
       <div class="filter-group">
-        <div class="filter-title">Target defense includes</div>
-        <p class="filter-help muted">Show targets whose lineup has <em>all</em> of these heroes or pets.</p>
+        <div class="filter-title">Target includes</div>
         <div class="chips" id="opponent-chips">
-          ${renderHeroFilterChips('opponent', opponentHeroIds) || '<span class="muted">No filter — any target</span>'}
+          ${renderHeroFilterChips('opponent', opponentHeroIds) || '<span class="muted">Any</span>'}
         </div>
         <div class="filter-row">
           ${renderHeroFilterSelect('opponent', opponentHeroIds)}
           <button type="button" onclick="addHeroFilter('opponent')">Add</button>
-          ${opponentHeroIds.length ? '<button type="button" class="ghost" onclick="clearHeroFilter(\'opponent\')">Clear all</button>' : ''}
+          ${opponentHeroIds.length ? '<button type="button" class="ghost" onclick="clearHeroFilter(\'opponent\')">Clear</button>' : ''}
         </div>
       </div>
       <div class="filter-group">
-        <div class="filter-title">Your attack includes</div>
-        <p class="filter-help muted">Show only attack teams that have <em>all</em> of these heroes or pets.</p>
+        <div class="filter-title">Attack includes</div>
         <div class="chips" id="my-chips">
-          ${renderHeroFilterChips('my', myHeroIds) || '<span class="muted">No filter — any attack</span>'}
+          ${renderHeroFilterChips('my', myHeroIds) || '<span class="muted">Any</span>'}
         </div>
         <div class="filter-row">
           ${renderHeroFilterSelect('my', myHeroIds)}
           <button type="button" onclick="addHeroFilter('my')">Add</button>
-          ${myHeroIds.length ? '<button type="button" class="ghost" onclick="clearHeroFilter(\'my\')">Clear all</button>' : ''}
+          ${myHeroIds.length ? '<button type="button" class="ghost" onclick="clearHeroFilter(\'my\')">Clear</button>' : ''}
         </div>
       </div>
-      ${hasFilters ? '<div class="filter-active">Filters on — viewing a subset of SimLab runs.</div>' : ''}
+      ${hasFilters ? '<div class="filter-active">Filters active</div>' : ''}
     </div>
   </section>`;
 }
 
 function renderSimLabAttemptRow(round, minWinRate) {
-    const stones = formatBannerStonesLabel(round.myBannerStones);
-    const favor = formatFavorLabel(round.myFavor);
+    const stonesHtml = formatBannerStonesHtml(round.myBannerStones);
     const flagMissing = round.myBanner == null || round.myBanner === '';
-    const slotsMissing = !stones;
+    const slotsMissing = !stonesHtml;
+    const powerChip = round.maxUpgrade === false
+        ? '<span class="sim-chip"><span class="sim-chip-k">Power</span> acct</span>'
+        : (round.maxUpgrade === true
+            ? '<span class="sim-chip warn"><span class="sim-chip-k">Power</span> max</span>'
+            : '');
     return `
       <tr>
-        <td class="muted">${escapeHtml(formatWhen(round.testedAt))}</td>
+        <td class="muted nowrap">${escapeHtml(formatWhen(round.testedAt))}</td>
         <td>
           ${renderComboLabelHtml(round.myHeroIds, round.myPet, round.myHeroNames)}
           <div class="sim-meta-row">
-            <span class="sim-chip"><span class="sim-chip-k">Pet</span> ${escapeHtml(formatPetLabel(round.myPet))}</span>
-            ${round.maxUpgrade === false
-                ? '<span class="sim-chip"><span class="sim-chip-k">Power</span> account</span>'
-                : (round.maxUpgrade === true
-                    ? '<span class="sim-chip warn"><span class="sim-chip-k">Power</span> max</span>'
-                    : '')}
-          </div>
-          <div class="muted sim-sub">
-            ${escapeHtml(formatSourceLabel(round.source, round.label))}
-            ${round.testerName ? ` · ${escapeHtml(round.testerName)}` : ''}
-            ${favor ? ` · favor ${escapeHtml(favor)}` : ''}
+            ${powerChip}
+            <span class="muted sim-sub-inline">${escapeHtml(formatSourceLabel(round.source, round.label))}${round.testerName ? ` · ${escapeHtml(round.testerName)}` : ''}</span>
           </div>
         </td>
+        <td class="favor-cell">${formatFavorHtml(round.myFavor)}</td>
         <td>
-          <div class="sim-chip${flagMissing ? ' warn' : ''}"><span class="sim-chip-k">Flag</span> ${escapeHtml(formatFlagLabel(round.myBanner))}</div>
+          <span class="sim-chip${flagMissing ? ' warn' : ''}" title="${escapeHtml(formatFlagTitle(round.myBanner))}">
+            ${escapeHtml(formatFlagLabel(round.myBanner))}
+          </span>
         </td>
         <td>
-          <div class="sim-chip${slotsMissing ? ' warn' : ''}"><span class="sim-chip-k">Slots</span> ${escapeHtml(stones || 'missing')}</div>
+          ${slotsMissing
+              ? '<span class="sim-chip warn">—</span>'
+              : `<div class="sim-slots">${stonesHtml}</div>`}
         </td>
-        <td>${renderWinRateCell(round.winRate, minWinRate)}</td>
-        <td class="muted">${escapeHtml(formatRecord(round.wins, round.losses))}</td>
+        <td class="num">${renderWinRateCell(round.winRate, minWinRate)}</td>
+        <td class="num muted">${escapeHtml(formatRecord(round.wins, round.losses))}</td>
       </tr>`;
 }
 
 function renderSimLabTargetGroup(group, minWinRate) {
-    const name = group.opponentName || (group.opponentUserId ? `User ${group.opponentUserId}` : 'Unknown target');
-    const place = group.opponentPlace != null ? ` · place ${escapeHtml(String(group.opponentPlace))}` : '';
-    const power = group.opponentPower != null
-        ? ` · power ${escapeHtml(String(Math.round(Number(group.opponentPower))))}`
-        : '';
-    const source = formatSourceLabel(group.source);
+    const name = group.opponentName || (group.opponentUserId ? `User ${group.opponentUserId}` : 'Unknown');
+    const metaParts = [
+        group.opponentUserId ? `id ${group.opponentUserId}` : null,
+        group.opponentPlace != null ? `#${group.opponentPlace}` : null,
+        group.opponentPower != null ? `${Math.round(Number(group.opponentPower))} pwr` : null,
+        formatSourceLabel(group.source),
+        `${group.runCount || group.rounds?.length || 0} runs`,
+    ].filter(Boolean);
     const rows = (group.rounds || []).map((round) => renderSimLabAttemptRow(round, minWinRate)).join('');
 
     return `
@@ -1409,46 +1667,38 @@ function renderSimLabTargetGroup(group, minWinRate) {
       <header class="sim-target-head">
         <div class="sim-target-title">
           <h2>${escapeHtml(name)}</h2>
-          <p class="muted">
-            id ${escapeHtml(group.opponentUserId || '—')}${place}${power}
-            · ${escapeHtml(source)}
-            · ${escapeHtml(String(group.runCount || 0))} run${(group.runCount || 0) === 1 ? '' : 's'}
-            · best ${escapeHtml(formatPct(group.bestWinRate))}
-          </p>
+          <p class="muted">${escapeHtml(metaParts.join(' · '))}</p>
         </div>
         <div class="sim-target-best">${renderWinRateCell(group.bestWinRate, minWinRate)}</div>
       </header>
 
       <div class="sim-target-defense">
-        <div class="sim-side-label">Defending target</div>
-        ${renderComboLabelHtml(group.opponentHeroIds, group.opponentPet)}
+        <div class="sim-side-label">Defense</div>
+        <div class="sim-defense-main">${renderComboLabelHtml(group.opponentHeroIds, group.opponentPet)}</div>
         <div class="sim-meta-row">
           ${renderSimLabSupportBits({
-              pet: group.opponentPet,
               banner: group.opponentBanner,
               bannerStones: group.opponentBannerStones,
               favor: group.opponentFavor,
           })}
         </div>
-        ${group.opponentComboKey
-            ? `<div class="muted mono sim-sub">${escapeHtml(group.opponentComboKey)}</div>`
-            : ''}
       </div>
 
       <div class="table-wrap sim-attempts">
-        <table>
+        <table class="data-table">
           <thead>
             <tr>
               <th>When</th>
-              <th>Your attack</th>
+              <th>Attack</th>
+              <th>Favor</th>
               <th>Flag</th>
-              <th>Flag slots</th>
-              <th>Win rate</th>
-              <th>Record</th>
+              <th>Slots</th>
+              <th class="num">Win %</th>
+              <th class="num">W/L</th>
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="6" class="muted">No runs for this target.</td></tr>`}
+            ${rows || '<tr><td colspan="7" class="muted">No runs</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -1483,72 +1733,85 @@ export function renderSimLabPage(groups = [], options = {}) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SimLab — Arena Counter Results</title>
+  <title>SimLab</title>
   <style>
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Segoe UI", system-ui, sans-serif;
+      font-family: system-ui, sans-serif;
       background: #0f1419;
       color: #e7ecf3;
       line-height: 1.45;
     }
-    .page { max-width: 1100px; margin: 0 auto; padding: 24px 20px 48px; }
-    .page-header h1 { margin: 0 0 6px; font-size: 1.55rem; }
-    .subtitle { margin: 0 0 16px; color: #8b9bb4; }
+    .page { max-width: 1440px; margin: 0 auto; padding: 20px 24px 40px; }
+    .page-header {
+      display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+      gap: 12px 24px; margin-bottom: 12px;
+    }
+    .page-header-main { min-width: 0; flex: 1; }
+    h1 { margin: 0 0 4px; font-size: 1.45rem; letter-spacing: -0.02em; }
+    .subtitle { margin: 0; color: #9fb3d1; font-size: 0.88rem; }
     .page-nav {
-      display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
-      margin: 0 0 20px; padding: 10px 14px; background: #151d28; border: 1px solid #243044; border-radius: 10px;
+      display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px;
+      padding: 4px; border: 1px solid #243044; border-radius: 8px; background: #121820;
+      position: sticky; top: 8px; z-index: 2;
     }
-    .page-nav a { color: #7cb8ff; text-decoration: none; font-size: 0.9rem; }
-    .page-nav a:hover { color: #fff; }
-    .page-nav-label { color: #9fb3d1; font-size: 0.85rem; margin-right: 4px; }
-    .section { margin-bottom: 22px; scroll-margin-top: 24px; }
-    .section-head { margin-bottom: 12px; }
-    .section-head h2 { margin: 0 0 4px; font-size: 1.15rem; }
-    .section-lead { margin: 0; color: #9fb3d1; font-size: 0.9rem; max-width: 52rem; }
-    .card {
-      background: #151d28; border: 1px solid #243044; border-radius: 12px; padding: 16px;
+    .page-nav a {
+      color: #c8d4e8; text-decoration: none; padding: 6px 10px; border-radius: 6px;
+      font-size: 0.82rem; white-space: nowrap;
     }
-    .intro { margin-bottom: 18px; }
-    .intro-lead { margin: 0 0 8px; color: #c5d0e0; }
+    .page-nav a:hover { background: #243044; color: #fff; }
+    .section { margin-bottom: 22px; scroll-margin-top: 56px; }
+    .section-head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 10px;
+    }
+    .section-head h2 { margin: 0; font-size: 1.05rem; }
+    .section-lead { margin: 0; color: #9fb3d1; font-size: 0.84rem; }
+    .section-lead em { color: #c8d4e8; font-style: normal; font-weight: 600; }
+    .card { background: #151d28; border: 1px solid #243044; border-radius: 8px; }
+    .intro { padding: 10px 14px; margin-bottom: 12px; }
+    .intro-lead { margin: 0; color: #c8d4e8; font-size: 0.88rem; }
     .stats-bar {
-      display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0 0 18px; color: #9fb3d1; font-size: 0.9rem;
+      display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 14px; color: #9fb3d1; font-size: 0.84rem;
     }
     .stats-bar strong { color: #e7ecf3; }
     .filters {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;
-      padding: 16px;
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 20px; padding: 14px 16px; align-items: start;
     }
-    .filter-help em { color: #9fb3d1; font-style: normal; font-weight: 600; }
-    .filter-group { display: flex; flex-direction: column; gap: 8px; }
-    .filter-title { font-size: 0.95rem; font-weight: 600; color: #e7ecf3; }
-    .filter-help { margin: 0; font-size: 0.82rem; }
-    .filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    @media (max-width: 820px) { .filters { grid-template-columns: 1fr; } }
+    .filter-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; height: 100%; }
+    .filter-title { font-size: 0.88rem; font-weight: 600; color: #e7ecf3; line-height: 1.2; }
+    .filter-help { margin: 0; font-size: 0.78rem; }
+    .filter-group .chips { flex: 1; }
+    .filter-row { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
     .filter-row button {
       color: #e7ecf3; background: #243044; border: 1px solid #3a4f6d; border-radius: 6px;
-      padding: 8px 12px; font-size: 0.9rem; cursor: pointer;
+      padding: 7px 12px; font-size: 0.84rem; cursor: pointer; flex-shrink: 0; min-height: 38px;
     }
     .filter-row button.ghost { background: transparent; border-color: #2f3f57; }
     .tester-select {
-      min-width: 280px; flex: 1; min-height: 40px; color: #e7ecf3; background: #1a2433;
-      border: 1px solid #2f3f57; border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+      min-width: 0; flex: 1; min-height: 38px; color: #e7ecf3; background: #1a2433;
+      border: 1px solid #2f3f57; border-radius: 6px; padding: 7px 10px; font-size: 0.88rem;
     }
     .tester-select:hover, .tester-select:focus {
       background: #243044; border-color: #3a5a8a; outline: none;
     }
     .filter-group-tester {
-      grid-column: 1 / -1; padding-bottom: 12px; border-bottom: 1px solid #243044; margin-bottom: 4px;
+      grid-column: 1 / -1; height: auto; padding-bottom: 12px;
+      border-bottom: 1px solid #243044; margin-bottom: 2px;
     }
-    .filter-picker { position: relative; min-width: 240px; flex: 1; }
+    .filter-picker { position: relative; min-width: 0; flex: 1; }
     .filter-picker-trigger {
-      display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px;
+      display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px;
       color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57; border-radius: 6px;
-      padding: 6px 10px; font-size: 0.9rem; cursor: pointer; text-align: left;
+      padding: 5px 10px; font-size: 0.88rem; cursor: pointer; text-align: left;
     }
     .filter-picker-trigger:hover,
     .filter-picker.open .filter-picker-trigger { background: #243044; border-color: #3a5a8a; }
-    .filter-picker-placeholder, .filter-picker-value { color: #e7ecf3; flex: 1; }
+    .filter-picker-placeholder, .filter-picker-value {
+      color: #e7ecf3; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .filter-picker-placeholder { color: #8b9bb4; }
     .filter-picker-caret { color: #9fb3d1; font-size: 0.75rem; margin-left: auto; }
     .filter-picker-menu {
@@ -1563,7 +1826,7 @@ export function renderSimLabPage(groups = [], options = {}) {
     }
     .filter-picker-search {
       width: 100%; box-sizing: border-box; color: #e7ecf3; background: #1a2433;
-      border: 1px solid #2f3f57; border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+      border: 1px solid #2f3f57; border-radius: 6px; padding: 8px 10px; font-size: 0.88rem;
     }
     .filter-picker-search:focus {
       outline: none; border-color: #3a5a8a; box-shadow: 0 0 0 2px rgba(58, 90, 138, 0.35);
@@ -1578,43 +1841,53 @@ export function renderSimLabPage(groups = [], options = {}) {
     .filter-picker-option {
       display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px;
       border: none; border-radius: 6px; background: transparent; color: #e7ecf3;
-      font-size: 0.9rem; text-align: left; cursor: pointer;
+      font-size: 0.88rem; text-align: left; cursor: pointer;
     }
     .filter-picker-option:hover, .filter-picker-option:focus { background: #243044; outline: none; }
     .filter-picker-icon { width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0; }
     .filter-picker-icon-fallback {
       display: inline-block; width: 24px; height: 24px; background: #243044; border-radius: 4px;
     }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px; align-items: center; }
+    .filter-picker-trigger .filter-picker-icon { width: 26px; height: 26px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; align-content: flex-start; }
     .chip {
       display: inline-flex; align-items: center; gap: 6px; color: #e7ecf3; background: #243044;
-      border: 1px solid #3a4f6d; border-radius: 999px; padding: 4px 10px; font-size: 0.85rem; cursor: pointer;
+      border: 1px solid #3a4f6d; border-radius: 999px; padding: 3px 9px; font-size: 0.82rem; cursor: pointer;
     }
     .chip:hover { background: #2f3f57; }
     .chip-x { color: #9fb3d1; font-weight: 700; }
     .filter-active {
-      grid-column: 1 / -1; padding: 10px 12px; border-radius: 8px;
-      background: #1a2a40; border: 1px solid #3a5a8a; color: #9fc5ff; font-size: 0.85rem;
+      grid-column: 1 / -1; padding: 8px 12px; border-radius: 6px;
+      background: #1a2a40; border: 1px solid #3a5a8a; color: #9fc5ff; font-size: 0.82rem;
     }
-    .sim-target { margin-bottom: 16px; padding: 0; overflow: hidden; }
+    .sim-legend { padding: 14px 16px; }
+    .sim-legend-grid {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start;
+    }
+    @media (max-width: 1100px) { .sim-legend-grid { grid-template-columns: 1fr; } }
+    .sim-legend-panel { min-width: 0; }
+    .sim-legend h3 { margin: 0 0 4px; font-size: 0.92rem; color: #e7ecf3; }
+    .stats-note { margin: 0 0 8px; font-size: 0.78rem; }
+    .stats-note.ranks { margin-top: -4px; }
+    .legend-table-wrap { max-height: 280px; border: 1px solid #243044; border-radius: 8px; }
+    .sim-target { margin-bottom: 14px; padding: 0; overflow: hidden; }
     .sim-target-head {
       display: flex; justify-content: space-between; gap: 16px; align-items: flex-start;
-      padding: 16px 16px 12px; border-bottom: 1px solid #243044;
+      padding: 12px 14px; border-bottom: 1px solid #243044;
     }
-    .sim-target-title h2 { margin: 0 0 4px; font-size: 1.15rem; }
-    .sim-target-title p { margin: 0; font-size: 0.85rem; }
+    .sim-target-title h2 { margin: 0 0 2px; font-size: 1.05rem; }
+    .sim-target-title p { margin: 0; font-size: 0.8rem; }
     .sim-target-best { flex: 0 0 auto; padding-top: 2px; }
     .sim-target-defense {
-      padding: 14px 16px;
-      background: #121925;
-      border-bottom: 1px solid #243044;
+      padding: 12px 14px; background: #121925; border-bottom: 1px solid #243044;
     }
     .sim-side-label {
-      font-size: 0.72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-      color: #9fb3d1; margin-bottom: 8px;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      color: #9fb3d1; margin-bottom: 6px;
     }
+    .sim-defense-main { margin-bottom: 2px; }
     .sim-meta-row {
-      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: flex-start;
     }
     .sim-chip {
       display: inline-flex; align-items: center; gap: 6px;
@@ -1623,67 +1896,81 @@ export function renderSimLabPage(groups = [], options = {}) {
     }
     .sim-chip.warn { border-color: #6a4a20; background: #2a2012; color: #f6d365; }
     .sim-chip-k { color: #8b9bb4; font-weight: 600; text-transform: uppercase; font-size: 0.68rem; letter-spacing: .04em; }
-    .sim-sub { margin-top: 6px; font-size: 0.8rem; }
+    .sim-chip-slots, .sim-chip-favor { align-items: flex-start; max-width: 100%; border-radius: 8px; }
+    .sim-slots { display: flex; flex-direction: column; gap: 2px; }
+    .sim-slot-line { font-size: 0.78rem; line-height: 1.3; color: #d7e3f4; }
+    .sim-slot-line .sim-chip-k { margin-right: 4px; }
+    .sim-sub-inline { font-size: 0.76rem; }
+    .favor-list, .favor-cell {
+      display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center;
+    }
+    .favor-pair {
+      display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+    }
+    .favor-arrow { color: #8b9bb4; font-size: 0.75rem; }
     .sim-attempts { border: 0; border-radius: 0; }
     .table-wrap { overflow: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #243044; vertical-align: top; }
-    th { color: #9fb3d1; font-weight: 600; background: #151d28; position: sticky; top: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #243044; vertical-align: middle; }
+    th {
+      color: #9fb3d1; font-weight: 600; background: #151d28; position: sticky; top: 0; z-index: 1;
+      white-space: nowrap;
+    }
     tr:hover td { background: #1a2433; }
-    .muted { color: #8b9bb4; font-size: 0.85rem; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    th.num { text-align: right; }
+    .nowrap { white-space: nowrap; }
+    .muted { color: #8b9bb4; font-size: 0.82rem; }
     .mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
     .win { font-weight: 600; }
     .good { color: #6ee7a0; }
     .mid { color: #f6d365; }
     .bad { color: #f87171; }
     .badge {
-      display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
-      font-size: 0.72rem; font-weight: 600; vertical-align: middle;
+      display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+      font-size: 0.7rem; font-weight: 600; vertical-align: middle;
     }
     .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
     a { color: #7cb8ff; }
     .empty {
-      padding: 28px 16px; text-align: center; color: #8b9bb4;
-      border: 1px dashed #2f3f57; border-radius: 12px;
+      padding: 24px 16px; text-align: center; color: #8b9bb4;
+      border: 1px dashed #2f3f57; border-radius: 8px;
     }
-    code { font-size: 0.78rem; color: #9fc5ff; }
     ${HERO_ICON_TOOLTIP_CSS}
   </style>
 </head>
 <body>
   <div class="page">
     <header class="page-header">
-      <h1>SimLab</h1>
-      <p class="subtitle">Counter Suggest practice runs at account power — grouped by the target you attacked. Includes pet, flag, and flag slots on each side.</p>
+      <div class="page-header-main">
+        <h1>SimLab</h1>
+        <p class="subtitle">Counter Suggest sims · pet favor, flag &amp; slots per target.</p>
+      </div>
+      <nav class="page-nav" aria-label="Related pages">
+        <a href="/training/view">Training</a>
+        <a href="#filters">Filters</a>
+        <a href="#legend">Legends</a>
+        <a href="/training/meta-view">Meta</a>
+        <a href="/training/simlab?${escapeHtml(jsonQuery.toString())}">JSON</a>
+      </nav>
     </header>
-
-    <nav class="page-nav" aria-label="Related pages">
-      <span class="page-nav-label">Pages:</span>
-      <a href="/training/view">Training results</a>
-      <a href="/training/simlab-view">SimLab</a>
-      <a href="/training/meta-view">Meta teams</a>
-      <a href="/training/simlab?${escapeHtml(jsonQuery.toString())}">SimLab JSON</a>
-    </nav>
 
     <section class="intro card">
       <p class="intro-lead">
-        Open Arena / Clan Domination attack, pick a counter in <strong>Counter Suggest</strong>, click <strong>Sim</strong>.
-        Each pet/flag try is saved here under that defending target.
-      </p>
-      <p class="muted" style="margin:0">
-        Green = ${escapeHtml(String(minWinRate))}%+ win rate. Yellow chips mark missing flag / slots (older runs before detail was saved).
+        Counter Suggest → <strong>Sim</strong>. Green = ${escapeHtml(String(minWinRate))}%+. Yellow = missing flag/slots/favor.
       </p>
     </section>
 
     ${renderSimLabFilters(paging)}
+    ${renderSimLabLegend()}
 
     <div class="stats-bar">
       <span><strong>${escapeHtml(String(groups.length))}</strong> targets</span>
-      <span><strong>${escapeHtml(String(totalRuns))}</strong> SimLab runs</span>
-      <span>showing latest <strong>${escapeHtml(String(limit))}</strong></span>
+      <span><strong>${escapeHtml(String(totalRuns))}</strong> runs</span>
+      <span>latest <strong>${escapeHtml(String(limit))}</strong></span>
     </div>
 
-    ${groupBlocks || `<div class="empty">No SimLab runs match these filters — clear filters or run Sim from Counter Suggest.</div>`}
+    ${groupBlocks || '<div class="empty">No runs — clear filters or Sim from Counter Suggest</div>'}
   </div>
   <script>
     function currentParams() {
