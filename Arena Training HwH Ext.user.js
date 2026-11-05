@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.28.3
+// @version      1.28.5
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,14 +16,18 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.28.1';
+    const EXTENSION_VERSION = '1.28.5';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
-    const AUTO_START_DELAY_MS = 60_000;
+    /** Minimum settle time after load before auto-start may begin waiting on Auto Daily. */
+    const AUTO_START_DELAY_MS = 5 * 60_000;
+    /** How often to re-check Auto Daily / dungeon / AutoBattle busy flags. */
+    const AUTO_START_POLL_MS = 60_000;
     const LEGACY_SETTINGS_STORAGE_KEY = 'arenaTrainingSettings';
 
     let autoStartTimer = null;
+    let autoStartWaitToken = 0;
 
     function registerI18n() {
         if (!window.HWHData?.i18nLangData) {
@@ -31,11 +35,11 @@
         }
         Object.assign(window.HWHData.i18nLangData.en, {
             AUTO_ARENA_TRAINING: 'Auto Arena Training',
-            AUTO_ARENA_TRAINING_TITLE: 'Auto-start arena training loop 1 minute after game load (demo battles, no attempts)',
+            AUTO_ARENA_TRAINING_TITLE: 'Auto-start arena training after Auto Daily finishes (including dungeon); lowest priority',
         });
         Object.assign(window.HWHData.i18nLangData.ru, {
             AUTO_ARENA_TRAINING: 'Авто-тренировка арены',
-            AUTO_ARENA_TRAINING_TITLE: 'Автозапуск цикла тренировки арены через 1 минуту после загрузки (демо-бои, без попыток)',
+            AUTO_ARENA_TRAINING_TITLE: 'Автозапуск тренировки арены после Auto Daily (включая данж); самый низкий приоритет',
         });
         return true;
     }
@@ -48,10 +52,28 @@
             cbox: null,
             get title() {
                 return window.HWHFuncs?.I18N?.('AUTO_ARENA_TRAINING_TITLE')
-                    || 'Auto-start arena training loop 1 minute after game load (demo battles, no attempts)';
+                    || 'Auto-start arena training after Auto Daily finishes (including dungeon); lowest priority';
             },
             default: false,
         };
+    }
+
+    /** True while Auto Daily / AutoBattle / dungeon should outrank arena training. */
+    function isHigherPriorityBusy() {
+        return !!(
+            window.HWH_AUTO_DAILY_RUNNING
+            || window.HWH_AUTOBATTLE_RUNNING
+            || window.HWH_DUNGEON_RUNNING
+            || window.HWH_DUNGEON_BATTLE_OPEN
+        );
+    }
+
+    function describeHigherPriorityBusy() {
+        const parts = [];
+        if (window.HWH_AUTO_DAILY_RUNNING) parts.push('Auto Daily');
+        if (window.HWH_AUTOBATTLE_RUNNING) parts.push('AutoBattle');
+        if (window.HWH_DUNGEON_RUNNING || window.HWH_DUNGEON_BATTLE_OPEN) parts.push('Dungeon');
+        return parts.join(' + ') || 'higher-priority work';
     }
 
     function registerSettingsCheckbox() {
@@ -126,6 +148,7 @@
     }
 
     function clearAutoStartTimer() {
+        autoStartWaitToken += 1;
         if (autoStartTimer != null) {
             clearTimeout(autoStartTimer);
             autoStartTimer = null;
@@ -140,27 +163,67 @@
         return !!HWHFuncs?.getSaveVal?.(AUTO_START_CHECKBOX, false);
     }
 
+    async function waitForHigherPriorityIdle(HWHFuncs, waitToken) {
+        let loggedBusy = false;
+        while (isHigherPriorityBusy()) {
+            if (waitToken !== autoStartWaitToken || !isAutoStartEnabled(HWHFuncs)) {
+                return false;
+            }
+            const busyLabel = describeHigherPriorityBusy();
+            if (!loggedBusy) {
+                console.log(`[Arena Training] Waiting for ${busyLabel} to finish before auto-start`);
+                loggedBusy = true;
+            }
+            HWHFuncs.setProgress?.(`Arena Training: waiting for ${busyLabel}...`, true);
+            await new Promise((resolve) => {
+                autoStartTimer = setTimeout(resolve, AUTO_START_POLL_MS);
+            });
+            autoStartTimer = null;
+        }
+        return waitToken === autoStartWaitToken && isAutoStartEnabled(HWHFuncs);
+    }
+
     function scheduleAutoStart(training, HWHFuncs) {
         clearAutoStartTimer();
         if (!isAutoStartEnabled(HWHFuncs)) {
             return;
         }
 
-        console.log(`[Arena Training] Auto-start scheduled in ${Math.round(AUTO_START_DELAY_MS / 1000)}s`);
-        autoStartTimer = setTimeout(() => {
+        const waitToken = autoStartWaitToken;
+        console.log(
+            `[Arena Training] Auto-start scheduled in ${Math.round(AUTO_START_DELAY_MS / 1000)}s `
+            + '(then waits for Auto Daily / dungeon to finish)'
+        );
+        autoStartTimer = setTimeout(async () => {
             autoStartTimer = null;
-            if (!isAutoStartEnabled(HWHFuncs)) {
+            if (waitToken !== autoStartWaitToken || !isAutoStartEnabled(HWHFuncs)) {
                 return;
             }
-            const status = training.getStatus?.() || {};
-            const loopStatus = training.getLoopStatus?.() || {};
-            if (status.running || loopStatus.loopRunning) {
-                console.log('[Arena Training] Auto-start skipped — training already running');
+
+            // Keep yielding to Auto Daily / dungeon / AutoBattle until they stay idle.
+            while (true) {
+                const canStart = await waitForHigherPriorityIdle(HWHFuncs, waitToken);
+                if (!canStart) {
+                    console.log('[Arena Training] Auto-start cancelled while waiting for higher-priority work');
+                    return;
+                }
+
+                const status = training.getStatus?.() || {};
+                const loopStatus = training.getLoopStatus?.() || {};
+                if (status.running || loopStatus.loopRunning) {
+                    console.log('[Arena Training] Auto-start skipped — training already running');
+                    return;
+                }
+                if (isHigherPriorityBusy()) {
+                    console.log('[Arena Training] Higher-priority work restarted; waiting again');
+                    continue;
+                }
+
+                console.log('[Arena Training] Auto-starting training loop (Auto Daily idle)');
+                HWHFuncs.setProgress('Arena Training: auto-starting loop...', true);
+                training.startLoop({ label: 'auto-loop', opponentSource: 'topGet' });
                 return;
             }
-            console.log('[Arena Training] Auto-starting training loop');
-            HWHFuncs.setProgress('Arena Training: auto-starting loop...', true);
-            training.startLoop({ label: 'auto-loop', opponentSource: 'topGet' });
         }, AUTO_START_DELAY_MS);
     }
 
