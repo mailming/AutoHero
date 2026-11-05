@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS training_rounds (
     best_hero_ids INTEGER[],
     best_hero_names TEXT[],
     best_pet INTEGER,
+    best_banner INTEGER,
+    best_wins INTEGER,
+    best_losses INTEGER,
+    best_detail JSONB,
     payload JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -163,6 +167,10 @@ CREATE INDEX IF NOT EXISTS idx_training_rounds_opponent_combo_key
 ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS tester_user_id TEXT;
 ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS tester_name TEXT;
 ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS max_upgrade BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS best_banner INTEGER;
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS best_wins INTEGER;
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS best_losses INTEGER;
+ALTER TABLE training_rounds ADD COLUMN IF NOT EXISTS best_detail JSONB;
 
 ALTER TABLE matchup_tests ADD COLUMN IF NOT EXISTS tester_user_id TEXT;
 ALTER TABLE matchup_tests ADD COLUMN IF NOT EXISTS tester_name TEXT;
@@ -239,11 +247,114 @@ function extractTesterInfo(body) {
     };
 }
 
+function compactBannerStones(stones) {
+    if (!stones || typeof stones !== 'object') return {};
+    const out = {};
+    for (const [slot, value] of Object.entries(stones)) {
+        if (value == null || value === '') continue;
+        out[String(slot)] = Number.isFinite(Number(value)) ? Number(value) : value;
+    }
+    return out;
+}
+
+/**
+ * Small JSON archive for SimLab / result detail pages (no simulation samples).
+ */
+function buildCompactRoundPayload(body, fields) {
+    const best = body?.best || body?.rankings?.[0] || null;
+    const opponentTeam = body?.opponent?.team || {};
+    const label = fields.label || '';
+    const isSimLab = typeof label === 'string' && label.toLowerCase().startsWith('simlab');
+    // Full training rounds stay payload-free (size). SimLab needs pet/flag detail for the page.
+    if (!isSimLab && !body?.forceStorePayload) return null;
+
+    return {
+        label: fields.label,
+        maxUpgrade: fields.tester.maxUpgrade !== false,
+        source: body?.opponent?.source || null,
+        best: best
+            ? {
+                heroes: Array.isArray(best.heroes) ? best.heroes.map(Number) : fields.bestHeroIds,
+                heroNames: Array.isArray(best.heroNames) ? best.heroNames : fields.bestHeroNames,
+                pet: best.pet != null ? Number(best.pet) : fields.bestPet,
+                banner: best.banner != null
+                    ? Number(best.banner)
+                    : (body?.counterLineup?.banner != null
+                        ? Number(body.counterLineup.banner)
+                        : fields.bestBanner),
+                bannerStones: compactBannerStones(
+                    best.bannerStones
+                    || body?.counterLineup?.bannerStones
+                    || body?.config?.bannerStones
+                ),
+                favor: (best.favor && typeof best.favor === 'object' && Object.keys(best.favor).length)
+                    ? best.favor
+                    : (body?.counterLineup?.favor && typeof body.counterLineup.favor === 'object'
+                        ? body.counterLineup.favor
+                        : {}),
+                wins: best.wins != null ? Number(best.wins) : null,
+                losses: best.losses != null ? Number(best.losses) : null,
+                winRate: best.winRate != null ? Number(best.winRate) : fields.bestWinRate,
+                source: best.source || null,
+            }
+            : null,
+        opponent: {
+            userId: fields.opponent.opponentUserId,
+            name: fields.opponent.opponentName,
+            place: fields.opponent.opponentPlace,
+            power: fields.opponent.opponentPower,
+            banner: fields.opponent.banner,
+            source: body?.opponent?.source || null,
+            team: {
+                heroes: fields.opponent.heroIds,
+                pet: fields.opponent.pet,
+                banner: fields.opponent.banner,
+                bannerStones: compactBannerStones(
+                    opponentTeam.bannerStones || opponentTeam.defenceBannerStones
+                ),
+                favor: opponentTeam.favor && typeof opponentTeam.favor === 'object'
+                    ? opponentTeam.favor
+                    : {},
+            },
+        },
+        tester: {
+            userId: fields.tester.userId,
+            name: fields.tester.name,
+            maxUpgrade: fields.tester.maxUpgrade !== false,
+        },
+    };
+}
+
+function extractBestDetail(best, body = null) {
+    if (!best && !body) return null;
+    const bannerStones = compactBannerStones(
+        best?.bannerStones
+        || body?.config?.bannerStones
+        || body?.counterLineup?.bannerStones
+    );
+    const favor = best?.favor && typeof best.favor === 'object' ? best.favor : {};
+    const detail = {
+        banner: best?.banner != null ? Number(best.banner) : null,
+        bannerStones,
+        favor,
+        source: best?.source || null,
+    };
+    if (detail.banner == null && !Object.keys(bannerStones).length && !Object.keys(favor).length) {
+        return null;
+    }
+    return detail;
+}
+
 function extractRoundFields(body) {
-    const best = body?.best || null;
+    const best = body?.best || body?.rankings?.[0] || null;
     const opponent = extractOpponentTeam(body);
     const tester = extractTesterInfo(body);
-    return {
+    const fallbackBanner = best?.banner != null
+        ? Number(best.banner)
+        : (body?.counterLineup?.banner != null
+            ? Number(body.counterLineup.banner)
+            : (body?.config?.banner != null ? Number(body.config.banner) : null));
+    const fields = {
         sessionId: body?.sessionId || `round_${Date.now()}`,
         label: body?.label || null,
         startedAt: parseTimestamp(body?.startedAt),
@@ -256,8 +367,18 @@ function extractRoundFields(body) {
         bestHeroIds: Array.isArray(best?.heroes) ? best.heroes.map(Number) : null,
         bestHeroNames: Array.isArray(best?.heroNames) ? best.heroNames : null,
         bestPet: best?.pet != null ? Number(best.pet) : null,
+        bestBanner: Number.isFinite(fallbackBanner) && fallbackBanner > 0 ? fallbackBanner : null,
+        bestWins: best?.wins != null ? Number(best.wins) : null,
+        bestLosses: best?.losses != null ? Number(best.losses) : null,
+        bestDetail: extractBestDetail(best, body),
         rankings: Array.isArray(body?.rankings) ? body.rankings : [],
     };
+    // Keep bestDetail.banner aligned with the column we persist.
+    if (fields.bestDetail && fields.bestBanner != null && fields.bestDetail.banner == null) {
+        fields.bestDetail.banner = fields.bestBanner;
+    }
+    fields.payload = buildCompactRoundPayload(body, fields);
+    return fields;
 }
 
 async function upsertOpponentCombo(client, opponent, testedAt) {
@@ -382,13 +503,15 @@ export async function saveTrainingRound(body) {
             `INSERT INTO training_rounds (
                 session_id, label, started_at, completed_at, stopped_early,
                 opponent_combo_key, opponent_user_id, opponent_name, opponent_place, opponent_power,
-                tested_combos, best_win_rate, best_hero_ids, best_hero_names, best_pet, payload,
+                tested_combos, best_win_rate, best_hero_ids, best_hero_names, best_pet,
+                best_banner, best_wins, best_losses, best_detail, payload,
                 tester_user_id, tester_name, max_upgrade
             ) VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15, NULL,
-                $16, $17, $18
+                $11, $12, $13, $14, $15,
+                $16, $17, $18, $19::jsonb, $20::jsonb,
+                $21, $22, $23
             )
             ON CONFLICT (session_id) DO UPDATE SET
                 label = EXCLUDED.label,
@@ -405,6 +528,11 @@ export async function saveTrainingRound(body) {
                 best_hero_ids = EXCLUDED.best_hero_ids,
                 best_hero_names = EXCLUDED.best_hero_names,
                 best_pet = EXCLUDED.best_pet,
+                best_banner = COALESCE(EXCLUDED.best_banner, training_rounds.best_banner),
+                best_wins = COALESCE(EXCLUDED.best_wins, training_rounds.best_wins),
+                best_losses = COALESCE(EXCLUDED.best_losses, training_rounds.best_losses),
+                best_detail = COALESCE(EXCLUDED.best_detail, training_rounds.best_detail),
+                payload = COALESCE(EXCLUDED.payload, training_rounds.payload),
                 tester_user_id = EXCLUDED.tester_user_id,
                 tester_name = EXCLUDED.tester_name,
                 max_upgrade = EXCLUDED.max_upgrade
@@ -425,6 +553,11 @@ export async function saveTrainingRound(body) {
                 fields.bestHeroIds,
                 fields.bestHeroNames,
                 fields.bestPet,
+                fields.bestBanner,
+                fields.bestWins,
+                fields.bestLosses,
+                fields.bestDetail ? JSON.stringify(fields.bestDetail) : null,
+                fields.payload ? JSON.stringify(fields.payload) : null,
                 fields.tester.userId,
                 fields.tester.name,
                 fields.tester.maxUpgrade !== false,
@@ -1570,38 +1703,106 @@ export async function getMetaTeamCandidates({ snapshotId, limit } = {}) {
 }
 
 /**
- * Recent SimLab rounds (Counter Suggest / simulateMatchup), keyed by label prefix.
+ * Accounts that have initiated SimLab runs.
  */
-export async function getSimLabRounds({ limit = 20 } = {}) {
+export async function getSimLabTesters() {
     if (!pool) {
         pool = createPool();
     }
 
-    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
     const result = await pool.query(
         `SELECT
-            session_id,
-            label,
-            started_at,
-            completed_at,
-            opponent_combo_key,
-            opponent_user_id,
-            opponent_name,
-            opponent_place,
-            opponent_power,
-            best_win_rate,
-            best_hero_ids,
-            best_hero_names,
-            best_pet,
-            tester_user_id,
-            tester_name,
-            max_upgrade,
-            payload
+            COALESCE(tester_user_id, '0') AS tester_user_id,
+            COALESCE(
+                NULLIF(tester_name, ''),
+                CASE WHEN COALESCE(max_upgrade, TRUE) THEN 'maxHeros' ELSE 'Unknown user' END
+            ) AS tester_name,
+            COALESCE(max_upgrade, TRUE) AS max_upgrade,
+            COUNT(*)::int AS test_count,
+            MAX(COALESCE(completed_at, created_at)) AS last_tested_at
          FROM training_rounds
          WHERE label ILIKE 'simlab%'
-         ORDER BY COALESCE(completed_at, created_at) DESC NULLS LAST
-         LIMIT $1`,
-        [safeLimit]
+         GROUP BY 1, 2, 3
+         ORDER BY test_count DESC, tester_name ASC`
+    );
+
+    return result.rows.map((row) => ({
+        testerUserId: row.tester_user_id,
+        testerName: row.tester_name,
+        maxUpgrade: row.max_upgrade,
+        testCount: row.test_count,
+        lastTestedAt: row.last_tested_at,
+    }));
+}
+
+/**
+ * Recent SimLab rounds (Counter Suggest / simulateMatchup), keyed by label prefix.
+ */
+export async function getSimLabRounds({
+    limit = 50,
+    testerUserId,
+    opponentHeroIds: opponentHeroFilter,
+    myHeroIds,
+} = {}) {
+    if (!pool) {
+        pool = createPool();
+    }
+
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+    const requiredOpponentIds = normalizeHeroFilterIds(opponentHeroFilter);
+    const params = [];
+    const clauses = [`tr.label ILIKE 'simlab%'`];
+
+    if (testerUserId != null && testerUserId !== '') {
+        if (String(testerUserId) === '0') {
+            clauses.push(`COALESCE(tr.tester_user_id, '0') = '0' AND COALESCE(tr.max_upgrade, TRUE) = TRUE`);
+        } else {
+            params.push(String(testerUserId));
+            clauses.push(`tr.tester_user_id = $${params.length}`);
+        }
+    }
+
+    // myHero / pet filters are on training_rounds columns; opponent filters applied after enrich.
+    clauses.push(...appendComboHeroFilterClauses({
+        heroIds: myHeroIds,
+        heroColumn: 'COALESCE(tr.best_hero_ids, ARRAY[]::int[])',
+        petColumn: 'COALESCE(tr.best_pet, 0)',
+        params,
+    }));
+
+    params.push(safeLimit);
+    const result = await pool.query(
+        `SELECT
+            tr.session_id,
+            tr.label,
+            tr.started_at,
+            tr.completed_at,
+            tr.opponent_combo_key,
+            tr.opponent_user_id,
+            tr.opponent_name,
+            tr.opponent_place,
+            tr.opponent_power,
+            tr.best_win_rate,
+            tr.best_hero_ids,
+            tr.best_hero_names,
+            tr.best_pet,
+            tr.best_banner,
+            tr.best_wins,
+            tr.best_losses,
+            tr.best_detail,
+            tr.tester_user_id,
+            tr.tester_name,
+            tr.max_upgrade,
+            tr.payload,
+            oc.hero_ids AS oc_hero_ids,
+            oc.pet AS oc_pet,
+            oc.banner AS oc_banner
+         FROM training_rounds tr
+         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY COALESCE(tr.completed_at, tr.created_at) DESC NULLS LAST
+         LIMIT $${params.length}`,
+        params
     );
 
     return result.rows.map((row) => {
@@ -1613,33 +1814,156 @@ export async function getSimLabRounds({ limit = 20 } = {}) {
                 payload = null;
             }
         }
+        let bestDetail = row.best_detail;
+        if (typeof bestDetail === 'string') {
+            try {
+                bestDetail = JSON.parse(bestDetail);
+            } catch {
+                bestDetail = null;
+            }
+        }
         const best = payload?.best || payload?.rankings?.[0] || null;
         const opponentTeam = payload?.opponent?.team || {};
+        const parsedCombo = parseComboKey(row.opponent_combo_key);
+
+        const opponentHeroIds = Array.isArray(opponentTeam.heroes) && opponentTeam.heroes.length
+            ? opponentTeam.heroes.map(Number)
+            : (Array.isArray(row.oc_hero_ids) && row.oc_hero_ids.length
+                ? row.oc_hero_ids.map(Number)
+                : parsedCombo.heroIds);
+        const opponentPet = opponentTeam.pet != null
+            ? Number(opponentTeam.pet)
+            : (row.oc_pet != null ? Number(row.oc_pet) : (parsedCombo.pet || null));
+        const opponentBanner = opponentTeam.banner != null
+            ? Number(opponentTeam.banner)
+            : (payload?.opponent?.banner != null
+                ? Number(payload.opponent.banner)
+                : (row.oc_banner != null ? Number(row.oc_banner) : (parsedCombo.banner || null)));
+
+        const myBanner = row.best_banner != null
+            ? Number(row.best_banner)
+            : (bestDetail?.banner != null
+                ? Number(bestDetail.banner)
+                : (best?.banner != null ? Number(best.banner) : null));
+        const myBannerStones = compactBannerStones(
+            bestDetail?.bannerStones || best?.bannerStones
+        );
+        const myFavor = (bestDetail?.favor && typeof bestDetail.favor === 'object' && Object.keys(bestDetail.favor).length)
+            ? bestDetail.favor
+            : (best?.favor && typeof best.favor === 'object' ? best.favor : {});
+        const opponentBannerStones = compactBannerStones(
+            opponentTeam.bannerStones || opponentTeam.defenceBannerStones
+        );
+
         return {
             sessionId: row.session_id,
             label: row.label,
             testedAt: row.completed_at || row.started_at,
+            source: payload?.opponent?.source || payload?.source || null,
             opponentComboKey: row.opponent_combo_key,
-            opponentUserId: row.opponent_user_id,
+            opponentUserId: row.opponent_user_id != null ? String(row.opponent_user_id) : null,
             opponentName: row.opponent_name,
             opponentPlace: row.opponent_place,
-            opponentHeroIds: Array.isArray(opponentTeam.heroes) ? opponentTeam.heroes.map(Number) : null,
-            opponentPet: opponentTeam.pet != null ? Number(opponentTeam.pet) : null,
-            opponentBanner: opponentTeam.banner != null
-                ? Number(opponentTeam.banner)
-                : (payload?.opponent?.banner != null ? Number(payload.opponent.banner) : null),
+            opponentPower: row.opponent_power != null ? Number(row.opponent_power) : null,
+            opponentHeroIds,
+            opponentPet,
+            opponentBanner,
+            opponentBannerStones,
+            opponentFavor: opponentTeam.favor && typeof opponentTeam.favor === 'object'
+                ? opponentTeam.favor
+                : {},
             myHeroIds: row.best_hero_ids,
             myHeroNames: row.best_hero_names,
-            myPet: row.best_pet != null ? Number(row.best_pet) : null,
-            myBanner: best?.banner != null ? Number(best.banner) : null,
+            myPet: row.best_pet != null
+                ? Number(row.best_pet)
+                : (best?.pet != null ? Number(best.pet) : null),
+            myBanner,
+            myBannerStones,
+            myFavor,
             winRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
-            wins: best?.wins != null ? Number(best.wins) : null,
-            losses: best?.losses != null ? Number(best.losses) : null,
+            wins: row.best_wins != null
+                ? Number(row.best_wins)
+                : (best?.wins != null ? Number(best.wins) : null),
+            losses: row.best_losses != null
+                ? Number(row.best_losses)
+                : (best?.losses != null ? Number(best.losses) : null),
             testerUserId: row.tester_user_id != null ? String(row.tester_user_id) : null,
             testerName: row.tester_name || null,
             maxUpgrade: row.max_upgrade !== false,
         };
+    }).filter((round) => {
+        if (!requiredOpponentIds.length) return true;
+        const heroes = new Set((round.opponentHeroIds || []).map(Number));
+        const pet = Number(round.opponentPet) || 0;
+        const requiredHeroes = requiredOpponentIds.filter((id) => id < 6000);
+        const requiredPets = requiredOpponentIds.filter((id) => id >= 6000);
+        if (!requiredHeroes.every((id) => heroes.has(id))) return false;
+        if (!requiredPets.every((id) => pet === id)) return false;
+        return true;
     });
+}
+
+/**
+ * Group SimLab rounds by attacking target (opponent user + defense combo).
+ */
+export function groupSimLabRoundsByTarget(rounds = []) {
+    const groups = new Map();
+    for (const round of Array.isArray(rounds) ? rounds : []) {
+        const targetKey = [
+            round.opponentUserId || 'unknown',
+            round.opponentComboKey || [
+                (round.opponentHeroIds || []).join(','),
+                round.opponentPet || 0,
+                round.opponentBanner || 0,
+            ].join('|'),
+        ].join('::');
+        if (!groups.has(targetKey)) {
+            groups.set(targetKey, {
+                targetKey,
+                opponentUserId: round.opponentUserId,
+                opponentName: round.opponentName,
+                opponentPlace: round.opponentPlace,
+                opponentPower: round.opponentPower,
+                opponentComboKey: round.opponentComboKey,
+                opponentHeroIds: round.opponentHeroIds || [],
+                opponentPet: round.opponentPet,
+                opponentBanner: round.opponentBanner,
+                opponentBannerStones: round.opponentBannerStones || {},
+                opponentFavor: round.opponentFavor || {},
+                source: round.source,
+                rounds: [],
+                bestWinRate: null,
+                latestAt: null,
+            });
+        }
+        const group = groups.get(targetKey);
+        group.rounds.push(round);
+        if (round.opponentName && !group.opponentName) group.opponentName = round.opponentName;
+        if (round.opponentPower != null && group.opponentPower == null) {
+            group.opponentPower = round.opponentPower;
+        }
+        if (round.source && !group.source) group.source = round.source;
+        const wr = round.winRate != null ? Number(round.winRate) : null;
+        if (wr != null && (group.bestWinRate == null || wr > group.bestWinRate)) {
+            group.bestWinRate = wr;
+        }
+        const at = round.testedAt ? new Date(round.testedAt).getTime() : 0;
+        if (at && (group.latestAt == null || at > group.latestAt)) {
+            group.latestAt = at;
+        }
+    }
+
+    const list = [...groups.values()];
+    for (const group of list) {
+        group.rounds.sort((a, b) => {
+            const wrDiff = (Number(b.winRate) || 0) - (Number(a.winRate) || 0);
+            if (wrDiff !== 0) return wrDiff;
+            return new Date(b.testedAt || 0) - new Date(a.testedAt || 0);
+        });
+        group.runCount = group.rounds.length;
+    }
+    list.sort((a, b) => (b.latestAt || 0) - (a.latestAt || 0));
+    return list;
 }
 
 export async function backfillMatchupsFromRounds() {

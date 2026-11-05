@@ -30,6 +30,8 @@ import {
     getUserCounterSkipCheck,
     getTrainingCounters,
     getSimLabRounds,
+    getSimLabTesters,
+    groupSimLabRoundsByTarget,
     getMetaTeamSnapshots,
     getMetaTeamSnapshotById,
     getMetaTeamCountForSnapshot,
@@ -38,7 +40,13 @@ import {
     getDatabaseStatus,
     closeDatabase,
 } from './training-db.mjs';
-import { formatTrainingResultRow, renderTrainingResultsPage, renderMetaTeamsPage, parseHeroFilterParams } from './training-view.mjs';
+import {
+    formatTrainingResultRow,
+    renderTrainingResultsPage,
+    renderSimLabPage,
+    renderMetaTeamsPage,
+    parseHeroFilterParams,
+} from './training-view.mjs';
 import { ICONS_DIR, LOCAL_ICON_WEB_PATH } from './hero-icons.mjs';
 
 const PORT = 9876;
@@ -177,7 +185,7 @@ const server = http.createServer(async (req, res) => {
             const order = url.searchParams.get('order') || 'desc';
             const filterArgs = { comboKey, opponentHeroIds, myHeroIds, testerUserId, sort, order };
             try {
-                const [rows, summary, total, stats, testers, simLabRounds] = await Promise.all([
+                const [rows, summary, total, stats, testers] = await Promise.all([
                     getTrainingResults({
                         ...filterArgs,
                         offset,
@@ -187,7 +195,6 @@ const server = http.createServer(async (req, res) => {
                     getTrainingResultCount(filterArgs),
                     getTrainingResultStats(filterArgs),
                     getTrainingTesters(),
-                    getSimLabRounds({ limit: 20 }),
                 ]);
                 const results = rows.map(formatTrainingResultRow);
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -203,10 +210,50 @@ const server = http.createServer(async (req, res) => {
                     stats,
                     sort,
                     order,
-                    simLabRounds,
                 }));
             } catch (error) {
                 console.error('[training/view] failed:', error);
+                return sendJson(res, 500, {
+                    ok: false,
+                    error: error?.message || String(error),
+                });
+            }
+        }
+
+        if (req.method === 'GET' && url.pathname === '/training/simlab-view') {
+            if (!databaseReady) {
+                res.writeHead(503, { 'Content-Type': 'text/plain' });
+                return res.end('Database not ready');
+            }
+            const limitParam = Number(url.searchParams.get('limit'));
+            const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100;
+            const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
+            const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
+            const testerUserId = url.searchParams.get('tester')
+                || url.searchParams.get('testerUserId')
+                || undefined;
+            try {
+                const [rounds, testers] = await Promise.all([
+                    getSimLabRounds({
+                        limit,
+                        testerUserId,
+                        opponentHeroIds,
+                        myHeroIds,
+                    }),
+                    getSimLabTesters(),
+                ]);
+                const groups = groupSimLabRoundsByTarget(rounds);
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                return res.end(renderSimLabPage(groups, {
+                    limit,
+                    minWinRate: 90,
+                    testerUserId,
+                    opponentHeroIds,
+                    myHeroIds,
+                    testers,
+                }));
+            } catch (error) {
+                console.error('[training/simlab-view] failed:', error);
                 return sendJson(res, 500, {
                     ok: false,
                     error: error?.message || String(error),
@@ -223,10 +270,24 @@ const server = http.createServer(async (req, res) => {
                 });
             }
             const limit = Number(url.searchParams.get('limit'));
+            const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
+            const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
+            const testerUserId = url.searchParams.get('tester')
+                || url.searchParams.get('testerUserId')
+                || undefined;
             const rounds = await getSimLabRounds({
-                limit: Number.isFinite(limit) && limit > 0 ? limit : 20,
+                limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
+                testerUserId,
+                opponentHeroIds,
+                myHeroIds,
             });
-            return sendJson(res, 200, { ok: true, rounds });
+            const groups = groupSimLabRoundsByTarget(rounds);
+            return sendJson(res, 200, {
+                ok: true,
+                rounds,
+                groups,
+                filters: { testerUserId: testerUserId || null, opponentHeroIds, myHeroIds },
+            });
         }
 
         if (req.method === 'GET' && url.pathname === '/training/results') {
@@ -547,7 +608,7 @@ async function startServer() {
 
     server.listen(PORT, HOST, () => {
         console.log(`LLM bridge listening on http://${HOST}:${PORT}`);
-        console.log('Arena training: GET /training, /training/view, /training/meta-view (HTML), /training/results, /training/counters, /training/simlab (JSON)');
+        console.log('Arena training: GET /training, /training/view, /training/simlab-view (HTML), /training/meta-view (HTML), /training/results, /training/counters, /training/simlab (JSON)');
         console.log('Waiting for Hero Wars tab (LLM Controller) to poll /poll ...');
     });
 }

@@ -209,8 +209,8 @@ Install **Arena Counter Suggest HwH Ext.user.js** (and keep **Arena Training HwH
 - Click **SimLab** on a row to run `demoBattles_startBattle` + local BattleCalc at **your current power** (no arena attempts):
   - Attack pet / favor / banner / banner stones applied from your account (+ suggested heroes/pet)
   - Defense lineup from the gather enemy (Arena) or Domination enemy payload (favor/banner/slots already present)
-  - Saves to the bridge with label `simlab-counter` / `simlab-counter-cd` (shows under **SimLab** on the training page)
-- Requires the bridge + PostgreSQL (counters: `GET /training/counters`; SimLab history: `GET /training/simlab`)
+  - Saves to the bridge with label `simlab-counter` / `simlab-counter-cd` (shows on the separate **SimLab** page, grouped by attack target)
+- Requires the bridge + PostgreSQL (counters: `GET /training/counters`; SimLab page: `GET /training/simlab-view`; JSON: `GET /training/simlab`)
 
 Example:
 
@@ -281,9 +281,10 @@ Single round only:
 | URL | Description |
 |-----|-------------|
 | [http://127.0.0.1:9876/](http://127.0.0.1:9876/) | HTML table — opponent combo, your combo, win %, last tested |
-| [http://127.0.0.1:9876/training](http://127.0.0.1:9876/training) | Same HTML page (alias) — includes **SimLab** section |
+| [http://127.0.0.1:9876/training](http://127.0.0.1:9876/training) | Same HTML page (alias) — training results only |
+| [http://127.0.0.1:9876/training/simlab-view](http://127.0.0.1:9876/training/simlab-view) | **SimLab** page — grouped by attack target (pet + flag detail) |
 | [http://127.0.0.1:9876/training/results?limit=100](http://127.0.0.1:9876/training/results?limit=100) | JSON API |
-| [http://127.0.0.1:9876/training/simlab](http://127.0.0.1:9876/training/simlab) | Recent SimLab rounds (JSON) |
+| [http://127.0.0.1:9876/training/simlab](http://127.0.0.1:9876/training/simlab) | Recent SimLab rounds + target groups (JSON) |
 | [http://127.0.0.1:9876/training/summary](http://127.0.0.1:9876/training/summary) | Counts and latest matchup |
 
 PowerShell:
@@ -379,7 +380,7 @@ await pool.end();
 | Counter Suggest empty / bridge error | Restart bridge after `/training/counters` update; ensure Combo was trained into DB; reload Counter Suggest userscript |
 | Counter Suggest panel never appears | Open regular Arena attack gather (`ArenaAttackTeamGatherPopupWithEnemyTeam`); check console for mediator dump |
 | SimLab says Arena Training not loaded | Enable **Arena Training HwH Ext** (exposes `window.ArenaTraining.simulateMatchup`) |
-| SimLab missing on `/training` | Restart bridge after update; confirm round `label` starts with `simlab`; open [http://127.0.0.1:9876/training](http://127.0.0.1:9876/training)#simlab |
+| SimLab missing on `/training/simlab-view` | Restart bridge after update; confirm round `label` starts with `simlab`; open [http://127.0.0.1:9876/training/simlab-view](http://127.0.0.1:9876/training/simlab-view) |
 | CORS / fetch errors to localhost | Use same machine for browser and bridge; URL must be `127.0.0.1:9876` |
 
 ### Useful console checks (in-game)

@@ -256,11 +256,11 @@ function renderPageIntro(minWinRate = 90) {
     <p class="intro-lead">
       Hero Wars Helper’s <strong>Arena Training</strong> runs practice battles (no arena attempts spent).
       It tries to find a team that beats each opponent at least <strong>${minWinRate}%</strong> of the time, then saves the results here.
-      <strong>SimLab</strong> (from Counter Suggest) re-tests a single counter at your account power and lists those runs below.
+      Live pet/flag counters from Counter Suggest live on the separate <a href="/training/simlab-view">SimLab</a> page.
     </p>
     <ol class="intro-steps">
       <li><strong>Run training in HWH</strong> — start Arena Training or the loop; it checks arena opponents, then popular meta teams.</li>
-      <li><strong>SimLab</strong> — on Arena gather, open Counter Suggest and click <strong>SimLab</strong> on a counter row (needs Arena Training loaded).</li>
+      <li><strong>SimLab</strong> — on Arena gather, open Counter Suggest and click <strong>Sim</strong> on a counter row; review runs on <a href="/training/simlab-view">SimLab</a>.</li>
       <li><strong>Filter (optional)</strong> — focus on specific heroes on either side; all sections below follow your filters.</li>
       <li><strong>Pick teams</strong> — use the best-team tables and Grand Arena section; scroll to the bottom for every individual test.</li>
     </ol>
@@ -271,7 +271,7 @@ function renderPageNav() {
     return `
   <nav class="page-nav" aria-label="Page sections">
     <span class="page-nav-label">Jump to:</span>
-    <a href="#simlab">SimLab</a>
+    <a href="/training/simlab-view">SimLab</a>
     <a href="#filters">Filters</a>
     <a href="#insights">Best teams</a>
     <a href="#recommendations">Grand Arena</a>
@@ -279,51 +279,39 @@ function renderPageNav() {
   </nav>`;
 }
 
-function renderSimLabSection(rounds = [], minWinRate = 90) {
-    const rows = (Array.isArray(rounds) ? rounds : []).map((row) => {
-        const opponentLabel = row.opponentName || row.opponentUserId || 'Enemy';
-        const bannerBit = row.myBanner != null ? ` · banner ${escapeHtml(String(row.myBanner))}` : '';
-        const defBanner = row.opponentBanner != null ? ` · banner ${escapeHtml(String(row.opponentBanner))}` : '';
-        return `
-        <tr>
-            <td class="muted">${escapeHtml(formatWhen(row.testedAt))}</td>
-            <td>
-              ${renderComboLabelHtml(row.opponentHeroIds, row.opponentPet)}
-              <div class="muted" style="font-size:0.8rem;margin-top:2px;">${escapeHtml(opponentLabel)}${defBanner}</div>
-            </td>
-            <td>
-              ${renderComboLabelHtml(row.myHeroIds, row.myPet, row.myHeroNames)}${bannerBit}
-            </td>
-            <td>${renderWinRateCell(row.winRate, minWinRate)}</td>
-            <td class="muted">${escapeHtml(formatRecord(row.wins, row.losses))}</td>
-        </tr>`;
-    }).join('');
+function formatFlagLabel(bannerId) {
+    if (bannerId == null || bannerId === '') return '—';
+    return `Flag #${Number(bannerId) || bannerId}`;
+}
 
-    return `
-  <section class="section" id="simlab">
-    <div class="section-head">
-      <h2>SimLab</h2>
-      <p class="section-lead">Recent Counter Suggest SimLab runs (demo battles at account power). Saved with label <code>simlab-counter</code>.</p>
-    </div>
-    <div class="card table-card">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Enemy</th>
-              <th>Your lineup</th>
-              <th>Win rate</th>
-              <th>Record</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows || `<tr><td colspan="5" class="muted">No SimLab runs yet — use the SimLab button on Counter Suggest.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>`;
+function formatPetLabel(petId) {
+    if (petId == null || petId === '') return 'No pet';
+    return resolveHeroName(petId);
+}
+
+function formatBannerStonesLabel(stones) {
+    if (!stones || typeof stones !== 'object') return '';
+    const entries = Object.entries(stones)
+        .filter(([, value]) => value != null && value !== '')
+        .sort((a, b) => Number(a[0]) - Number(b[0]));
+    if (!entries.length) return '';
+    return entries.map(([slot, id]) => `S${slot}:${id}`).join(' · ');
+}
+
+function formatFavorLabel(favor) {
+    if (!favor || typeof favor !== 'object') return '';
+    const entries = Object.entries(favor)
+        .filter(([, value]) => value != null && Number(value) > 0)
+        .map(([heroId, value]) => `${resolveHeroName(heroId)} ${value}`);
+    return entries.length ? entries.join(', ') : '';
+}
+
+function formatSourceLabel(source, label) {
+    const raw = String(source || label || '');
+    if (/clanDomination|simlab-counter-cd/i.test(raw)) return 'Clan Domination';
+    if (/gather|simlab-counter/i.test(raw)) return 'Arena';
+    if (raw) return raw;
+    return 'SimLab';
 }
 
 function renderSummaryFooter(summary = {}, paging = {}) {
@@ -355,6 +343,7 @@ function renderDevLinks() {
     <p class="muted">
       <a href="/training/results?limit=0">All results (JSON)</a> ·
       <a href="/training/summary">Summary (JSON)</a> ·
+      <a href="/training/simlab?limit=50">SimLab (JSON)</a> ·
       <a href="/training/meta-view">Meta teams</a>
     </p>
   </details>`;
@@ -854,7 +843,6 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     ${renderPageIntro(minWinRate)}
     ${renderPageNav()}
 
-    ${renderSimLabSection(paging.simLabRounds || [], minWinRate)}
     ${renderHeroFilters(paging)}
     ${renderTrainingStats(paging.stats)}
     ${renderGrandArenaSelections(paging.stats)}
@@ -1284,4 +1272,618 @@ function sanitizeHeroNames(names) {
         n && !String(n).startsWith('Hero ') ? n : null
     ));
     return cleaned.some(Boolean) ? cleaned : null;
+}
+
+function renderSimLabSupportBits({ pet, banner, bannerStones, favor, maxUpgrade }) {
+    const petText = formatPetLabel(pet);
+    const flagText = formatFlagLabel(banner);
+    const stones = formatBannerStonesLabel(bannerStones);
+    const favorText = formatFavorLabel(favor);
+    const flagMissing = banner == null || banner === '';
+    const bits = [
+        `<span class="sim-chip"><span class="sim-chip-k">Pet</span> ${escapeHtml(petText)}</span>`,
+        `<span class="sim-chip${flagMissing ? ' warn' : ''}"><span class="sim-chip-k">Flag</span> ${escapeHtml(flagText)}</span>`,
+    ];
+    if (stones) {
+        bits.push(`<span class="sim-chip"><span class="sim-chip-k">Slots</span> ${escapeHtml(stones)}</span>`);
+    } else {
+        bits.push(`<span class="sim-chip warn"><span class="sim-chip-k">Slots</span> missing</span>`);
+    }
+    if (favorText) {
+        bits.push(`<span class="sim-chip"><span class="sim-chip-k">Favor</span> ${escapeHtml(favorText)}</span>`);
+    } else {
+        bits.push(`<span class="sim-chip warn"><span class="sim-chip-k">Favor</span> —</span>`);
+    }
+    if (maxUpgrade === true) {
+        bits.push(`<span class="sim-chip warn"><span class="sim-chip-k">Power</span> max</span>`);
+    } else if (maxUpgrade === false) {
+        bits.push(`<span class="sim-chip"><span class="sim-chip-k">Power</span> account</span>`);
+    }
+    return bits.join('');
+}
+
+function renderSimLabFilters(paging = {}) {
+    const opponentHeroIds = paging.opponentHeroIds || [];
+    const myHeroIds = paging.myHeroIds || [];
+    const testers = paging.testers || [];
+    const hasFilters = opponentHeroIds.length > 0 || myHeroIds.length > 0 || !!paging.testerUserId;
+
+    return `
+  <section class="section" id="filters">
+    <div class="section-head">
+      <h2>Filter SimLab</h2>
+      <p class="section-lead">Narrow by who started the Sim, and which heroes appear on the target or your attack.</p>
+    </div>
+    <div class="filters card">
+      <div class="filter-group filter-group-tester">
+        <div class="filter-title">Started by (tester account)</div>
+        <p class="filter-help muted">Show only SimLab runs initiated from this account.</p>
+        <div class="filter-row">
+          <select id="tester-select" class="tester-select" aria-label="Filter by SimLab initiator">
+            <option value=""${!paging.testerUserId ? ' selected' : ''}>All accounts</option>
+            ${testers.map((tester) => {
+                const value = String(tester.testerUserId ?? '');
+                const label = formatTesterLabel(tester);
+                const selectedAttr = String(paging.testerUserId || '') === value ? ' selected' : '';
+                return `<option value="${escapeHtml(value)}"${selectedAttr}>${escapeHtml(label)} · ${tester.testCount ?? 0} runs</option>`;
+            }).join('')}
+          </select>
+          ${paging.testerUserId ? '<button type="button" class="ghost" onclick="applyTesterFilter(\'\')">Clear</button>' : ''}
+        </div>
+      </div>
+      <div class="filter-group">
+        <div class="filter-title">Target defense includes</div>
+        <p class="filter-help muted">Show targets whose lineup has <em>all</em> of these heroes or pets.</p>
+        <div class="chips" id="opponent-chips">
+          ${renderHeroFilterChips('opponent', opponentHeroIds) || '<span class="muted">No filter — any target</span>'}
+        </div>
+        <div class="filter-row">
+          ${renderHeroFilterSelect('opponent', opponentHeroIds)}
+          <button type="button" onclick="addHeroFilter('opponent')">Add</button>
+          ${opponentHeroIds.length ? '<button type="button" class="ghost" onclick="clearHeroFilter(\'opponent\')">Clear all</button>' : ''}
+        </div>
+      </div>
+      <div class="filter-group">
+        <div class="filter-title">Your attack includes</div>
+        <p class="filter-help muted">Show only attack teams that have <em>all</em> of these heroes or pets.</p>
+        <div class="chips" id="my-chips">
+          ${renderHeroFilterChips('my', myHeroIds) || '<span class="muted">No filter — any attack</span>'}
+        </div>
+        <div class="filter-row">
+          ${renderHeroFilterSelect('my', myHeroIds)}
+          <button type="button" onclick="addHeroFilter('my')">Add</button>
+          ${myHeroIds.length ? '<button type="button" class="ghost" onclick="clearHeroFilter(\'my\')">Clear all</button>' : ''}
+        </div>
+      </div>
+      ${hasFilters ? '<div class="filter-active">Filters on — viewing a subset of SimLab runs.</div>' : ''}
+    </div>
+  </section>`;
+}
+
+function renderSimLabAttemptRow(round, minWinRate) {
+    const stones = formatBannerStonesLabel(round.myBannerStones);
+    const favor = formatFavorLabel(round.myFavor);
+    const flagMissing = round.myBanner == null || round.myBanner === '';
+    const slotsMissing = !stones;
+    return `
+      <tr>
+        <td class="muted">${escapeHtml(formatWhen(round.testedAt))}</td>
+        <td>
+          ${renderComboLabelHtml(round.myHeroIds, round.myPet, round.myHeroNames)}
+          <div class="sim-meta-row">
+            <span class="sim-chip"><span class="sim-chip-k">Pet</span> ${escapeHtml(formatPetLabel(round.myPet))}</span>
+            ${round.maxUpgrade === false
+                ? '<span class="sim-chip"><span class="sim-chip-k">Power</span> account</span>'
+                : (round.maxUpgrade === true
+                    ? '<span class="sim-chip warn"><span class="sim-chip-k">Power</span> max</span>'
+                    : '')}
+          </div>
+          <div class="muted sim-sub">
+            ${escapeHtml(formatSourceLabel(round.source, round.label))}
+            ${round.testerName ? ` · ${escapeHtml(round.testerName)}` : ''}
+            ${favor ? ` · favor ${escapeHtml(favor)}` : ''}
+          </div>
+        </td>
+        <td>
+          <div class="sim-chip${flagMissing ? ' warn' : ''}"><span class="sim-chip-k">Flag</span> ${escapeHtml(formatFlagLabel(round.myBanner))}</div>
+        </td>
+        <td>
+          <div class="sim-chip${slotsMissing ? ' warn' : ''}"><span class="sim-chip-k">Slots</span> ${escapeHtml(stones || 'missing')}</div>
+        </td>
+        <td>${renderWinRateCell(round.winRate, minWinRate)}</td>
+        <td class="muted">${escapeHtml(formatRecord(round.wins, round.losses))}</td>
+      </tr>`;
+}
+
+function renderSimLabTargetGroup(group, minWinRate) {
+    const name = group.opponentName || (group.opponentUserId ? `User ${group.opponentUserId}` : 'Unknown target');
+    const place = group.opponentPlace != null ? ` · place ${escapeHtml(String(group.opponentPlace))}` : '';
+    const power = group.opponentPower != null
+        ? ` · power ${escapeHtml(String(Math.round(Number(group.opponentPower))))}`
+        : '';
+    const source = formatSourceLabel(group.source);
+    const rows = (group.rounds || []).map((round) => renderSimLabAttemptRow(round, minWinRate)).join('');
+
+    return `
+    <section class="sim-target card">
+      <header class="sim-target-head">
+        <div class="sim-target-title">
+          <h2>${escapeHtml(name)}</h2>
+          <p class="muted">
+            id ${escapeHtml(group.opponentUserId || '—')}${place}${power}
+            · ${escapeHtml(source)}
+            · ${escapeHtml(String(group.runCount || 0))} run${(group.runCount || 0) === 1 ? '' : 's'}
+            · best ${escapeHtml(formatPct(group.bestWinRate))}
+          </p>
+        </div>
+        <div class="sim-target-best">${renderWinRateCell(group.bestWinRate, minWinRate)}</div>
+      </header>
+
+      <div class="sim-target-defense">
+        <div class="sim-side-label">Defending target</div>
+        ${renderComboLabelHtml(group.opponentHeroIds, group.opponentPet)}
+        <div class="sim-meta-row">
+          ${renderSimLabSupportBits({
+              pet: group.opponentPet,
+              banner: group.opponentBanner,
+              bannerStones: group.opponentBannerStones,
+              favor: group.opponentFavor,
+          })}
+        </div>
+        ${group.opponentComboKey
+            ? `<div class="muted mono sim-sub">${escapeHtml(group.opponentComboKey)}</div>`
+            : ''}
+      </div>
+
+      <div class="table-wrap sim-attempts">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Your attack</th>
+              <th>Flag</th>
+              <th>Flag slots</th>
+              <th>Win rate</th>
+              <th>Record</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || `<tr><td colspan="6" class="muted">No runs for this target.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+/**
+ * Dedicated SimLab results page — grouped by attacking target with pet/flag detail.
+ */
+export function renderSimLabPage(groups = [], options = {}) {
+    const minWinRate = options.minWinRate ?? 90;
+    const limit = options.limit ?? 100;
+    const paging = {
+        testerUserId: options.testerUserId || '',
+        opponentHeroIds: options.opponentHeroIds || [],
+        myHeroIds: options.myHeroIds || [],
+        testers: options.testers || [],
+    };
+    const totalRuns = (Array.isArray(groups) ? groups : [])
+        .reduce((sum, group) => sum + (group.runCount || group.rounds?.length || 0), 0);
+    const groupBlocks = (Array.isArray(groups) ? groups : [])
+        .map((group) => renderSimLabTargetGroup(group, minWinRate))
+        .join('');
+    const jsonQuery = new URLSearchParams();
+    jsonQuery.set('limit', String(limit));
+    if (paging.testerUserId) jsonQuery.set('tester', paging.testerUserId);
+    for (const id of paging.opponentHeroIds) jsonQuery.append('opponentHero', String(id));
+    for (const id of paging.myHeroIds) jsonQuery.append('myHero', String(id));
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SimLab — Arena Counter Results</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: #0f1419;
+      color: #e7ecf3;
+      line-height: 1.45;
+    }
+    .page { max-width: 1100px; margin: 0 auto; padding: 24px 20px 48px; }
+    .page-header h1 { margin: 0 0 6px; font-size: 1.55rem; }
+    .subtitle { margin: 0 0 16px; color: #8b9bb4; }
+    .page-nav {
+      display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
+      margin: 0 0 20px; padding: 10px 14px; background: #151d28; border: 1px solid #243044; border-radius: 10px;
+    }
+    .page-nav a { color: #7cb8ff; text-decoration: none; font-size: 0.9rem; }
+    .page-nav a:hover { color: #fff; }
+    .page-nav-label { color: #9fb3d1; font-size: 0.85rem; margin-right: 4px; }
+    .section { margin-bottom: 22px; scroll-margin-top: 24px; }
+    .section-head { margin-bottom: 12px; }
+    .section-head h2 { margin: 0 0 4px; font-size: 1.15rem; }
+    .section-lead { margin: 0; color: #9fb3d1; font-size: 0.9rem; max-width: 52rem; }
+    .card {
+      background: #151d28; border: 1px solid #243044; border-radius: 12px; padding: 16px;
+    }
+    .intro { margin-bottom: 18px; }
+    .intro-lead { margin: 0 0 8px; color: #c5d0e0; }
+    .stats-bar {
+      display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0 0 18px; color: #9fb3d1; font-size: 0.9rem;
+    }
+    .stats-bar strong { color: #e7ecf3; }
+    .filters {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;
+      padding: 16px;
+    }
+    .filter-help em { color: #9fb3d1; font-style: normal; font-weight: 600; }
+    .filter-group { display: flex; flex-direction: column; gap: 8px; }
+    .filter-title { font-size: 0.95rem; font-weight: 600; color: #e7ecf3; }
+    .filter-help { margin: 0; font-size: 0.82rem; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .filter-row button {
+      color: #e7ecf3; background: #243044; border: 1px solid #3a4f6d; border-radius: 6px;
+      padding: 8px 12px; font-size: 0.9rem; cursor: pointer;
+    }
+    .filter-row button.ghost { background: transparent; border-color: #2f3f57; }
+    .tester-select {
+      min-width: 280px; flex: 1; min-height: 40px; color: #e7ecf3; background: #1a2433;
+      border: 1px solid #2f3f57; border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+    }
+    .tester-select:hover, .tester-select:focus {
+      background: #243044; border-color: #3a5a8a; outline: none;
+    }
+    .filter-group-tester {
+      grid-column: 1 / -1; padding-bottom: 12px; border-bottom: 1px solid #243044; margin-bottom: 4px;
+    }
+    .filter-picker { position: relative; min-width: 240px; flex: 1; }
+    .filter-picker-trigger {
+      display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px;
+      color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57; border-radius: 6px;
+      padding: 6px 10px; font-size: 0.9rem; cursor: pointer; text-align: left;
+    }
+    .filter-picker-trigger:hover,
+    .filter-picker.open .filter-picker-trigger { background: #243044; border-color: #3a5a8a; }
+    .filter-picker-placeholder, .filter-picker-value { color: #e7ecf3; flex: 1; }
+    .filter-picker-placeholder { color: #8b9bb4; }
+    .filter-picker-caret { color: #9fb3d1; font-size: 0.75rem; margin-left: auto; }
+    .filter-picker-menu {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+      max-height: 320px; overflow: hidden; display: flex; flex-direction: column;
+      background: #151d28; border: 1px solid #3a5a8a; border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); padding: 6px;
+    }
+    .filter-picker-menu[hidden] { display: none; }
+    .filter-picker-search-wrap {
+      padding: 4px 4px 8px; border-bottom: 1px solid #243044; margin-bottom: 4px;
+    }
+    .filter-picker-search {
+      width: 100%; box-sizing: border-box; color: #e7ecf3; background: #1a2433;
+      border: 1px solid #2f3f57; border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+    }
+    .filter-picker-search:focus {
+      outline: none; border-color: #3a5a8a; box-shadow: 0 0 0 2px rgba(58, 90, 138, 0.35);
+    }
+    .filter-picker-options { overflow: auto; max-height: 240px; padding-right: 2px; }
+    .filter-picker-empty { padding: 12px 8px; font-size: 0.85rem; text-align: center; }
+    .filter-picker-option[hidden], .filter-picker-group-label[hidden] { display: none; }
+    .filter-picker-group-label {
+      padding: 6px 8px 4px; font-size: 0.72rem; font-weight: 600; color: #9fb3d1;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .filter-picker-option {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px;
+      border: none; border-radius: 6px; background: transparent; color: #e7ecf3;
+      font-size: 0.9rem; text-align: left; cursor: pointer;
+    }
+    .filter-picker-option:hover, .filter-picker-option:focus { background: #243044; outline: none; }
+    .filter-picker-icon { width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0; }
+    .filter-picker-icon-fallback {
+      display: inline-block; width: 24px; height: 24px; background: #243044; border-radius: 4px;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px; align-items: center; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; color: #e7ecf3; background: #243044;
+      border: 1px solid #3a4f6d; border-radius: 999px; padding: 4px 10px; font-size: 0.85rem; cursor: pointer;
+    }
+    .chip:hover { background: #2f3f57; }
+    .chip-x { color: #9fb3d1; font-weight: 700; }
+    .filter-active {
+      grid-column: 1 / -1; padding: 10px 12px; border-radius: 8px;
+      background: #1a2a40; border: 1px solid #3a5a8a; color: #9fc5ff; font-size: 0.85rem;
+    }
+    .sim-target { margin-bottom: 16px; padding: 0; overflow: hidden; }
+    .sim-target-head {
+      display: flex; justify-content: space-between; gap: 16px; align-items: flex-start;
+      padding: 16px 16px 12px; border-bottom: 1px solid #243044;
+    }
+    .sim-target-title h2 { margin: 0 0 4px; font-size: 1.15rem; }
+    .sim-target-title p { margin: 0; font-size: 0.85rem; }
+    .sim-target-best { flex: 0 0 auto; padding-top: 2px; }
+    .sim-target-defense {
+      padding: 14px 16px;
+      background: #121925;
+      border-bottom: 1px solid #243044;
+    }
+    .sim-side-label {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      color: #9fb3d1; margin-bottom: 8px;
+    }
+    .sim-meta-row {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+    }
+    .sim-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 8px; border-radius: 999px; font-size: 0.78rem;
+      background: #1a2433; border: 1px solid #2f3f57; color: #d7e3f4;
+    }
+    .sim-chip.warn { border-color: #6a4a20; background: #2a2012; color: #f6d365; }
+    .sim-chip-k { color: #8b9bb4; font-weight: 600; text-transform: uppercase; font-size: 0.68rem; letter-spacing: .04em; }
+    .sim-sub { margin-top: 6px; font-size: 0.8rem; }
+    .sim-attempts { border: 0; border-radius: 0; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #243044; vertical-align: top; }
+    th { color: #9fb3d1; font-weight: 600; background: #151d28; position: sticky; top: 0; }
+    tr:hover td { background: #1a2433; }
+    .muted { color: #8b9bb4; font-size: 0.85rem; }
+    .mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
+    .win { font-weight: 600; }
+    .good { color: #6ee7a0; }
+    .mid { color: #f6d365; }
+    .bad { color: #f87171; }
+    .badge {
+      display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 600; vertical-align: middle;
+    }
+    .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
+    a { color: #7cb8ff; }
+    .empty {
+      padding: 28px 16px; text-align: center; color: #8b9bb4;
+      border: 1px dashed #2f3f57; border-radius: 12px;
+    }
+    code { font-size: 0.78rem; color: #9fc5ff; }
+    ${HERO_ICON_TOOLTIP_CSS}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <h1>SimLab</h1>
+      <p class="subtitle">Counter Suggest practice runs at account power — grouped by the target you attacked. Includes pet, flag, and flag slots on each side.</p>
+    </header>
+
+    <nav class="page-nav" aria-label="Related pages">
+      <span class="page-nav-label">Pages:</span>
+      <a href="/training/view">Training results</a>
+      <a href="/training/simlab-view">SimLab</a>
+      <a href="/training/meta-view">Meta teams</a>
+      <a href="/training/simlab?${escapeHtml(jsonQuery.toString())}">SimLab JSON</a>
+    </nav>
+
+    <section class="intro card">
+      <p class="intro-lead">
+        Open Arena / Clan Domination attack, pick a counter in <strong>Counter Suggest</strong>, click <strong>Sim</strong>.
+        Each pet/flag try is saved here under that defending target.
+      </p>
+      <p class="muted" style="margin:0">
+        Green = ${escapeHtml(String(minWinRate))}%+ win rate. Yellow chips mark missing flag / slots (older runs before detail was saved).
+      </p>
+    </section>
+
+    ${renderSimLabFilters(paging)}
+
+    <div class="stats-bar">
+      <span><strong>${escapeHtml(String(groups.length))}</strong> targets</span>
+      <span><strong>${escapeHtml(String(totalRuns))}</strong> SimLab runs</span>
+      <span>showing latest <strong>${escapeHtml(String(limit))}</strong></span>
+    </div>
+
+    ${groupBlocks || `<div class="empty">No SimLab runs match these filters — clear filters or run Sim from Counter Suggest.</div>`}
+  </div>
+  <script>
+    function currentParams() {
+      return new URL(window.location.href);
+    }
+    function heroFilterKey(side) {
+      return side === 'opponent' ? 'opponentHero' : 'myHero';
+    }
+    function addHeroFilter(side) {
+      const select = document.getElementById(side + '-hero-select');
+      const id = select && select.value;
+      if (!id) return;
+      const url = currentParams();
+      const key = heroFilterKey(side);
+      if (!url.searchParams.getAll(key).includes(String(id))) {
+        url.searchParams.append(key, id);
+      }
+      window.location.href = url.toString();
+    }
+    function removeHeroFilter(side, id) {
+      const url = currentParams();
+      const key = heroFilterKey(side);
+      const remaining = url.searchParams.getAll(key).filter((value) => value !== String(id));
+      url.searchParams.delete(key);
+      remaining.forEach((value) => url.searchParams.append(key, value));
+      window.location.href = url.toString();
+    }
+    function clearHeroFilter(side) {
+      const url = currentParams();
+      url.searchParams.delete(heroFilterKey(side));
+      window.location.href = url.toString();
+    }
+    function applyTesterFilter(value) {
+      const url = currentParams();
+      if (value) {
+        url.searchParams.set('tester', value);
+      } else {
+        url.searchParams.delete('tester');
+        url.searchParams.delete('testerUserId');
+      }
+      window.location.href = url.toString();
+    }
+    function closeAllFilterPickers() {
+      document.querySelectorAll('.filter-picker.open').forEach((picker) => {
+        picker.classList.remove('open');
+        const menu = picker.querySelector('.filter-picker-menu');
+        const trigger = picker.querySelector('.filter-picker-trigger');
+        const search = picker.querySelector('.filter-picker-search');
+        if (menu) menu.hidden = true;
+        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+        if (search) search.value = '';
+        filterPickerByText(picker, '');
+      });
+    }
+    function filterPickerByText(picker, query) {
+      const normalized = String(query || '').trim().toLowerCase();
+      const options = picker.querySelectorAll('.filter-picker-option');
+      const groups = picker.querySelectorAll('.filter-picker-group-label');
+      let visibleCount = 0;
+      options.forEach((option) => {
+        const searchText = option.dataset.search || option.textContent.toLowerCase();
+        const match = !normalized || searchText.includes(normalized);
+        option.hidden = !match;
+        if (match) visibleCount += 1;
+      });
+      groups.forEach((label) => {
+        let node = label.nextElementSibling;
+        let groupVisible = false;
+        while (node && !node.classList.contains('filter-picker-group-label')) {
+          if (node.classList.contains('filter-picker-option') && !node.hidden) {
+            groupVisible = true;
+            break;
+          }
+          node = node.nextElementSibling;
+        }
+        label.hidden = !groupVisible;
+      });
+      const empty = picker.querySelector('.filter-picker-empty');
+      if (empty) empty.hidden = visibleCount > 0;
+      return visibleCount;
+    }
+    function visibleFilterPickerOptions(picker) {
+      return [...picker.querySelectorAll('.filter-picker-option')].filter((option) => !option.hidden);
+    }
+    function openFilterPicker(picker) {
+      const menu = picker.querySelector('.filter-picker-menu');
+      const trigger = picker.querySelector('.filter-picker-trigger');
+      const search = picker.querySelector('.filter-picker-search');
+      picker.classList.add('open');
+      if (menu) menu.hidden = false;
+      if (trigger) trigger.setAttribute('aria-expanded', 'true');
+      if (search) {
+        search.value = '';
+        filterPickerByText(picker, '');
+        setTimeout(() => search.focus(), 0);
+      }
+    }
+    function setFilterPickerSelection(picker, optionButton) {
+      const hidden = picker.querySelector('input[type="hidden"]');
+      const trigger = picker.querySelector('.filter-picker-trigger');
+      if (!hidden || !trigger || !optionButton) return;
+      hidden.value = optionButton.dataset.id || '';
+      const icon = optionButton.querySelector('.filter-picker-icon');
+      const label = optionButton.querySelector('span:last-child');
+      trigger.innerHTML = '';
+      if (icon) trigger.appendChild(icon.cloneNode(true));
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'filter-picker-value';
+      valueSpan.textContent = label ? label.textContent : '';
+      trigger.appendChild(valueSpan);
+      const caret = document.createElement('span');
+      caret.className = 'filter-picker-caret';
+      caret.setAttribute('aria-hidden', 'true');
+      caret.textContent = '▾';
+      trigger.appendChild(caret);
+    }
+    function pickFilterOptionFromSearch(picker, side) {
+      const search = picker.querySelector('.filter-picker-search');
+      const query = search ? search.value.trim().toLowerCase() : '';
+      const visible = visibleFilterPickerOptions(picker);
+      if (!visible.length) return false;
+      let match = visible.find((option) => option.dataset.search === query);
+      if (!match && visible.length === 1) match = visible[0];
+      if (!match) match = visible.find((option) => option.dataset.search.startsWith(query));
+      if (!match) return false;
+      setFilterPickerSelection(picker, match);
+      closeAllFilterPickers();
+      addHeroFilter(side);
+      return true;
+    }
+    function initFilterPickers() {
+      document.querySelectorAll('.filter-picker').forEach((picker) => {
+        const trigger = picker.querySelector('.filter-picker-trigger');
+        const menu = picker.querySelector('.filter-picker-menu');
+        const side = picker.dataset.side;
+        if (!trigger || !menu) return;
+        trigger.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const isOpen = picker.classList.contains('open');
+          closeAllFilterPickers();
+          if (!isOpen) openFilterPicker(picker);
+        });
+        menu.addEventListener('click', (event) => event.stopPropagation());
+        const search = picker.querySelector('.filter-picker-search');
+        if (search) {
+          search.addEventListener('input', () => filterPickerByText(picker, search.value));
+          search.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              if (!pickFilterOptionFromSearch(picker, side)) {
+                const first = visibleFilterPickerOptions(picker)[0];
+                if (first) {
+                  setFilterPickerSelection(picker, first);
+                  closeAllFilterPickers();
+                  addHeroFilter(side);
+                }
+              }
+            } else if (event.key === 'Escape') {
+              closeAllFilterPickers();
+            } else if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              const first = visibleFilterPickerOptions(picker)[0];
+              if (first) first.focus();
+            }
+          });
+        }
+        menu.querySelectorAll('.filter-picker-option').forEach((option) => {
+          option.addEventListener('click', (event) => {
+            event.stopPropagation();
+            setFilterPickerSelection(picker, option);
+            closeAllFilterPickers();
+          });
+        });
+        trigger.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            addHeroFilter(side);
+          } else if (event.key === 'Escape') {
+            closeAllFilterPickers();
+          } else if (event.key === 'ArrowDown' || event.key === ' ') {
+            event.preventDefault();
+            closeAllFilterPickers();
+            openFilterPicker(picker);
+            const firstOption = visibleFilterPickerOptions(picker)[0];
+            if (firstOption) firstOption.focus();
+          }
+        });
+      });
+      document.addEventListener('click', closeAllFilterPickers);
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeAllFilterPickers();
+      });
+    }
+    initFilterPickers();
+    const testerSelect = document.getElementById('tester-select');
+    if (testerSelect) {
+      testerSelect.addEventListener('change', () => applyTesterFilter(testerSelect.value));
+    }
+  </script>
+</body>
+</html>`;
 }

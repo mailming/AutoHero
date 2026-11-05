@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.28.1
+// @version      1.28.3
 // @description  Simulate arena hero combos with demo battles and record win rates (no attempts used)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -242,12 +242,16 @@
         const sims = Array.isArray(entry.simulations)
             ? entry.simulations.map(slimSimulationSample)
             : undefined;
+        const bannerStones = entry.bannerStones && typeof entry.bannerStones === 'object'
+            ? entry.bannerStones
+            : undefined;
         return {
             rank: entry.rank,
             heroes: entry.heroes,
             heroNames: entry.heroNames,
             pet: entry.pet,
             banner: entry.banner,
+            ...(bannerStones ? { bannerStones } : {}),
             favor: entry.favor,
             source: entry.source,
             wins: entry.wins,
@@ -2453,6 +2457,7 @@
                                 heroNames: heroLabels,
                                 pet: candidate.pet,
                                 banner: myTeam.banners[0],
+                                bannerStones: myTeam.bannerStones || {},
                                 favor: myTeam.favor,
                                 source: candidate.source,
                                 wins: simulation.wins,
@@ -2547,6 +2552,23 @@
                         entry.rank = index + 1;
                     });
 
+                    const bestRanking = rankings[0] || null;
+                    if (bestRanking && counterLineupOnly && options.counterLineup) {
+                        if (bestRanking.banner == null && options.counterLineup.banner != null) {
+                            bestRanking.banner = Number(options.counterLineup.banner);
+                        }
+                        if ((!bestRanking.bannerStones || !Object.keys(bestRanking.bannerStones).length)
+                            && options.counterLineup.bannerStones
+                            && typeof options.counterLineup.bannerStones === 'object') {
+                            bestRanking.bannerStones = options.counterLineup.bannerStones;
+                        }
+                        if ((!bestRanking.favor || !Object.keys(bestRanking.favor).length)
+                            && options.counterLineup.favor
+                            && typeof options.counterLineup.favor === 'object') {
+                            bestRanking.favor = options.counterLineup.favor;
+                        }
+                    }
+
                     lastResults = slimTrainingResult({
                         sessionId,
                         label: options.label || 'arena-training',
@@ -2577,6 +2599,15 @@
                             metaRank: opponentRaw.metaRank ?? null,
                             team: opponentTeam,
                         },
+                        counterLineup: counterLineupOnly && options.counterLineup
+                            ? {
+                                heroes: options.counterLineup.heroes,
+                                pet: options.counterLineup.pet,
+                                banner: options.counterLineup.banner,
+                                bannerStones: options.counterLineup.bannerStones || {},
+                                favor: options.counterLineup.favor || {},
+                            }
+                            : undefined,
                         config: {
                             heroPool,
                             petPool,
@@ -2586,6 +2617,12 @@
                             maxUpgrade: tester.maxUpgrade,
                             userTeamOnly,
                             counterLineupOnly,
+                            banner: counterLineupOnly
+                                ? (options.counterLineup?.banner ?? bestRanking?.banner ?? null)
+                                : undefined,
+                            bannerStones: counterLineupOnly
+                                ? (options.counterLineup?.bannerStones || bestRanking?.bannerStones || {})
+                                : undefined,
                             userTeamTargetWinRate: Number(
                                 options.userTeamTargetWinRate ?? CONSTANTS.DEFAULT_USER_TEAM_TARGET_WIN_RATE
                             ),
@@ -2606,7 +2643,7 @@
                         plannedCombos: arenaCandidates.length + grandArenaCandidates.length + plannedMeta + plannedGenerated,
                         testedCombos: rankings.length,
                         rankings,
-                        best: rankings[0] || null,
+                        best: bestRanking,
                     });
 
                     const best = lastResults.best || rankings[0];
