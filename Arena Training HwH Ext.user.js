@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.30.0
+// @version      1.30.1
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.30.0';
+    const EXTENSION_VERSION = '1.30.1';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -5713,8 +5713,6 @@
 
                 // Keep gather open until arenaAttack succeeds — closing first cancels the
                 // pending challenge and often yields NotAvailable after a long SimLab.
-                const gather = readEnemyFromGather();
-
                 const normalizeFavor = (map) => {
                     const out = {};
                     if (!map || typeof map !== 'object') return out;
@@ -5742,20 +5740,37 @@
                     return text.includes('notavailable') || text.includes('not available');
                 };
 
-                const sendArenaAttack = async (args, label) => {
-                    console.log(`[${EXTENSION_NAME}] arenaAttack`, args, { source, label });
-                    const response = await Send({
-                        calls: [{
-                            name: 'arenaAttack',
-                            args,
-                            context: { actionTs: Date.now() },
-                            ident: 'body',
-                        }],
-                    });
-                    return { response, error: extractSendError(response) };
+                // Open demos from a prior SimLab block real arenaAttack with NotAvailable.
+                const forceCloseOpenDemoBattle = async () => {
+                    try {
+                        const response = await Send({
+                            calls: [{
+                                name: 'demoBattles_endBattle',
+                                args: {
+                                    result: { win: false, stars: 0 },
+                                    progress: null,
+                                },
+                                context: { actionTs: Date.now() },
+                                ident: 'demoBattles_endBattle',
+                            }],
+                        });
+                        const err = extractSendError(response);
+                        if (err) {
+                            console.log(
+                                `[${EXTENSION_NAME}] demoBattles_endBattle before attack:`,
+                                err.name || err
+                            );
+                        } else {
+                            console.log(`[${EXTENSION_NAME}] closed dangling demo before arenaAttack`);
+                        }
+                    } catch (error) {
+                        console.log(`[${EXTENSION_NAME}] demo close before attack skipped:`, error?.message || error);
+                    }
                 };
 
-                // Confirm opponent is still on the current Arena list when possible.
+                await forceCloseOpenDemoBattle();
+
+                // Informative only — gather open is what matters for the pending challenge.
                 let opponentOnList = null;
                 try {
                     const listResponse = await Send({
@@ -5776,12 +5791,52 @@
                     });
                     if (!opponentOnList) {
                         console.warn(
-                            `[${EXTENSION_NAME}] opponent ${enemy.userId} missing from arenaFindEnemies — attacking anyway while gather is open`
+                            `[${EXTENSION_NAME}] opponent ${enemy.userId} missing from arenaFindEnemies`
+                            + ' — still attacking while gather challenge is open'
                         );
                     }
                 } catch (listError) {
                     console.warn(`[${EXTENSION_NAME}] arenaFindEnemies pre-check failed:`, listError);
                 }
+
+                let gather = readEnemyFromGather();
+                if (!gather?.enemy?.userId) {
+                    throw new Error(
+                        'Keep the Arena gather popup open on this enemy, then click Attack.'
+                        + ' After a long SimLab the challenge often expires — reopen gather first.'
+                    );
+                }
+                if (String(gather.enemy.userId) !== String(enemy.userId)) {
+                    throw new Error(
+                        `Gather enemy is ${gather.enemy.userId}, panel has ${enemy.userId}`
+                        + ' — reopen gather on the panel target.'
+                    );
+                }
+
+                const sendArenaAttack = async (args, label) => {
+                    // Re-check gather immediately before each send — async prep can expire it.
+                    gather = readEnemyFromGather();
+                    if (!gather?.enemy?.userId
+                        || String(gather.enemy.userId) !== String(enemy.userId)) {
+                        return {
+                            response: null,
+                            error: {
+                                name: 'NotAvailable',
+                                description: 'Gather challenge closed or changed before arenaAttack',
+                            },
+                        };
+                    }
+                    console.log(`[${EXTENSION_NAME}] arenaAttack`, args, { source, label });
+                    const response = await Send({
+                        calls: [{
+                            name: 'arenaAttack',
+                            args,
+                            context: { actionTs: Date.now() },
+                            ident: 'body',
+                        }],
+                    });
+                    return { response, error: extractSendError(response) };
+                };
 
                 let args = {
                     userId: Number(enemy.userId),
@@ -5793,9 +5848,9 @@
 
                 let { response, error: attackError } = await sendArenaAttack(args, 'primary');
 
-                // SimLab may pick a banner/favor combo demo accepts but arenaAttack rejects.
-                // Retry once with the equipped arena banner + stored arena favors.
-                if (attackError && isNotAvailable(attackError) && simBest) {
+                // NotAvailable: close any leftover demo, then retry with equipped banner/favor.
+                if (attackError && isNotAvailable(attackError)) {
+                    await forceCloseOpenDemoBattle();
                     const safeBanner = resolveBanner(
                         support.userInfo,
                         support.teamBanners,
@@ -5806,28 +5861,31 @@
                         userId: Number(enemy.userId),
                         heroes,
                         pet,
-                        favor: safeFavor,
-                        banners: [safeBanner],
+                        favor: Object.keys(safeFavor).length ? safeFavor : args.favor,
+                        banners: [safeBanner || banner || 1],
                     };
-                    const sameAsPrimary = safeBanner === banner
-                        && JSON.stringify(safeFavor) === JSON.stringify(args.favor);
-                    if (!sameAsPrimary) {
-                        console.warn(
-                            `[${EXTENSION_NAME}] arenaAttack NotAvailable with SimLab loadout — retrying equipped banner/favor`,
-                            { primary: args, retry: retryArgs }
-                        );
-                        args = retryArgs;
-                        ({ response, error: attackError } = await sendArenaAttack(args, 'safe-retry'));
-                    }
+                    console.warn(
+                        `[${EXTENSION_NAME}] arenaAttack NotAvailable — retrying after demo close`,
+                        { primary: args, retry: retryArgs, opponentOnList }
+                    );
+                    args = retryArgs;
+                    ({ response, error: attackError } = await sendArenaAttack(args, 'demo-close-retry'));
                 }
 
                 if (attackError) {
                     const name = attackError.name || 'Unknown';
                     const desc = attackError.description || '';
                     if (isNotAvailable(attackError)) {
-                        const hint = opponentOnList === false
-                            ? 'Opponent left your Arena list — reopen gather on a current enemy.'
-                            : 'May be peace time, no attempts left, arena locked, or an unfinished demo battle.';
+                        const gatherStillOpen = !!readEnemyFromGather()?.enemy?.userId;
+                        let hint;
+                        if (!gatherStillOpen) {
+                            hint = 'Gather closed — reopen Arena gather on this enemy, then Attack.';
+                        } else if (opponentOnList === false) {
+                            hint = 'Opponent not on your current Arena list; gather challenge may have expired'
+                                + ' — close gather, pick them again from the list, then Attack.';
+                        } else {
+                            hint = 'May be peace time, no attempts left, arena locked, or a demo still open.';
+                        }
                         throw new Error(`arenaAttack failed: ${name}${desc ? ` - ${desc}` : ''} (${hint})`);
                     }
                     throw new Error(`arenaAttack failed: ${name}${desc ? ` - ${desc}` : ''}`);
