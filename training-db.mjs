@@ -272,6 +272,8 @@ function buildCompactRoundPayload(body, fields) {
         label: fields.label,
         maxUpgrade: fields.tester.maxUpgrade !== false,
         source: body?.opponent?.source || null,
+        simLabGroupId: body?.simLabGroupId ? String(body.simLabGroupId) : null,
+        simLabPhase: body?.simLabPhase ? String(body.simLabPhase) : null,
         best: best
             ? {
                 heroes: Array.isArray(best.heroes) ? best.heroes.map(Number) : fields.bestHeroIds,
@@ -296,6 +298,7 @@ function buildCompactRoundPayload(body, fields) {
                 losses: best.losses != null ? Number(best.losses) : null,
                 winRate: best.winRate != null ? Number(best.winRate) : fields.bestWinRate,
                 source: best.source || null,
+                phase: body?.simLabPhase ? String(body.simLabPhase) : null,
             }
             : null,
         opponent: {
@@ -338,8 +341,14 @@ function extractBestDetail(best, body = null) {
         bannerStones,
         favor,
         source: best?.source || null,
+        phase: body?.simLabPhase ? String(body.simLabPhase) : (best?.phase ? String(best.phase) : null),
     };
-    if (detail.banner == null && !Object.keys(bannerStones).length && !Object.keys(favor).length) {
+    if (
+        detail.banner == null
+        && !Object.keys(bannerStones).length
+        && !Object.keys(favor).length
+        && !detail.phase
+    ) {
         return null;
     }
     return detail;
@@ -1781,10 +1790,21 @@ function mapSimLabRoundRow(row) {
         opponentTeam.bannerStones || opponentTeam.defenceBannerStones
     );
 
+    const groupId = payload?.simLabGroupId
+        ? String(payload.simLabGroupId)
+        : (row.group_id != null ? String(row.group_id) : String(row.session_id || ''));
+    const phase = payload?.simLabPhase
+        || bestDetail?.phase
+        || best?.phase
+        || null;
+
     return {
         sessionId: row.session_id,
+        groupId,
+        tryCount: row.try_count != null ? Number(row.try_count) : 1,
+        phase: phase ? String(phase) : null,
         label: row.label,
-        testedAt: row.completed_at || row.started_at,
+        testedAt: row.group_tested_at || row.completed_at || row.started_at,
         startedAt: row.started_at,
         completedAt: row.completed_at,
         source: payload?.opponent?.source || payload?.source || null,
@@ -1821,6 +1841,10 @@ function mapSimLabRoundRow(row) {
         payload,
         bestDetail,
     };
+}
+
+function simLabGroupIdSql(alias = 'tr') {
+    return `COALESCE(NULLIF(${alias}.payload->>'simLabGroupId', ''), ${alias}.session_id)`;
 }
 
 const SIMLAB_SELECT_SQL = `
@@ -1883,7 +1907,8 @@ export async function getSimLabTesters() {
 }
 
 /**
- * Recent SimLab rounds (Counter Suggest / simulateMatchup), keyed by label prefix.
+ * Recent SimLab groups (one row per Counter Suggest Sim click).
+ * Each group keeps the highest win-rate try; tryCount is the number of pet/favor/flag attempts.
  */
 export async function getSimLabRounds({
     limit = 50,
@@ -1905,6 +1930,7 @@ export async function getSimLabRounds({
         opponentHeroIds,
         params,
     });
+    const groupExpr = simLabGroupIdSql('tr');
 
     params.push(safeLimit);
     const limitParam = `$${params.length}`;
@@ -1912,11 +1938,29 @@ export async function getSimLabRounds({
     const offsetParam = `$${params.length}`;
 
     const result = await pool.query(
-        `SELECT ${SIMLAB_SELECT_SQL}
-         FROM training_rounds tr
-         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
-         ${where}
-         ORDER BY COALESCE(tr.completed_at, tr.created_at) DESC NULLS LAST
+        `WITH filtered AS (
+            SELECT ${SIMLAB_SELECT_SQL},
+                   ${groupExpr} AS group_id
+            FROM training_rounds tr
+            LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+            ${where}
+         ),
+         ranked AS (
+            SELECT filtered.*,
+                   COUNT(*) OVER (PARTITION BY group_id)::int AS try_count,
+                   MAX(COALESCE(filtered.completed_at, filtered.started_at))
+                       OVER (PARTITION BY group_id) AS group_tested_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY group_id
+                       ORDER BY filtered.best_win_rate DESC NULLS LAST,
+                                COALESCE(filtered.completed_at, filtered.started_at) DESC NULLS LAST
+                   ) AS rn
+            FROM filtered
+         )
+         SELECT *
+         FROM ranked
+         WHERE rn = 1
+         ORDER BY group_tested_at DESC NULLS LAST
          LIMIT ${limitParam} OFFSET ${offsetParam}`,
         params
     );
@@ -1940,12 +1984,17 @@ export async function getSimLabRoundCount({
         opponentHeroIds,
         params,
     });
+    const groupExpr = simLabGroupIdSql('tr');
 
     const result = await pool.query(
         `SELECT COUNT(*)::int AS count
-         FROM training_rounds tr
-         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
-         ${where}`,
+         FROM (
+            SELECT ${groupExpr} AS group_id
+            FROM training_rounds tr
+            LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+            ${where}
+            GROUP BY 1
+         ) groups`,
         params
     );
 
@@ -1970,6 +2019,49 @@ export async function getSimLabRoundBySession(sessionId) {
 
     if (!result.rows[0]) return null;
     return mapSimLabRoundRow(result.rows[0]);
+}
+
+/**
+ * One SimLab click: best try + every pet/favor/flag attempt in the group.
+ */
+export async function getSimLabGroupDetail(groupId) {
+    if (!groupId) return null;
+    if (!pool) {
+        pool = createPool();
+    }
+
+    const groupKey = String(groupId);
+    const groupExpr = simLabGroupIdSql('tr');
+    const result = await pool.query(
+        `SELECT ${SIMLAB_SELECT_SQL},
+                ${groupExpr} AS group_id
+         FROM training_rounds tr
+         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+         WHERE tr.label ILIKE 'simlab%'
+           AND ${groupExpr} = $1
+         ORDER BY COALESCE(tr.completed_at, tr.started_at) ASC NULLS LAST, tr.session_id ASC`,
+        [groupKey]
+    );
+
+    if (!result.rows.length) return null;
+
+    const tries = result.rows.map((row) => mapSimLabRoundRow({
+        ...row,
+        try_count: result.rows.length,
+        group_tested_at: null,
+    }));
+    const best = [...tries].sort((a, b) => {
+        const winDiff = (Number(b.winRate) || 0) - (Number(a.winRate) || 0);
+        if (winDiff) return winDiff;
+        return String(b.testedAt || '').localeCompare(String(a.testedAt || ''));
+    })[0];
+
+    return {
+        groupId: groupKey,
+        tryCount: tries.length,
+        best,
+        tries,
+    };
 }
 
 /**

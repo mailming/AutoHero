@@ -32,6 +32,7 @@ import {
     getSimLabRounds,
     getSimLabRoundCount,
     getSimLabRoundBySession,
+    getSimLabGroupDetail,
     getSimLabTesters,
     groupSimLabRoundsByTarget,
     getMetaTeamSnapshots,
@@ -228,17 +229,19 @@ const server = http.createServer(async (req, res) => {
                 res.writeHead(503, { 'Content-Type': 'text/plain' });
                 return res.end('Database not ready');
             }
-            const sessionId = url.searchParams.get('sessionId') || undefined;
+            const groupId = url.searchParams.get('groupId')
+                || url.searchParams.get('sessionId')
+                || undefined;
             const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
             const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
             const testerUserId = url.searchParams.get('tester')
                 || url.searchParams.get('testerUserId')
                 || undefined;
             try {
-                if (sessionId) {
-                    const round = await getSimLabRoundBySession(sessionId);
+                if (groupId) {
+                    const detail = await getSimLabGroupDetail(groupId);
                     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                    return res.end(renderSimLabDetailPage(round, { minWinRate: 90 }));
+                    return res.end(renderSimLabDetailPage(detail, { minWinRate: 90 }));
                 }
 
                 const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
@@ -282,7 +285,15 @@ const server = http.createServer(async (req, res) => {
                     database: getDatabaseStatus(),
                 });
             }
+            const groupId = url.searchParams.get('groupId') || undefined;
             const sessionId = url.searchParams.get('sessionId') || undefined;
+            if (groupId) {
+                const detail = await getSimLabGroupDetail(groupId);
+                if (!detail) {
+                    return sendJson(res, 404, { ok: false, error: 'SimLab group not found' });
+                }
+                return sendJson(res, 200, { ok: true, ...detail });
+            }
             if (sessionId) {
                 const round = await getSimLabRoundBySession(sessionId);
                 if (!round) {

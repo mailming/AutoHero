@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.29.2
+// @version      1.29.3
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.29.2';
+    const EXTENSION_VERSION = '1.29.3';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -2781,6 +2781,14 @@
                     includeGrandArenaTeams: false,
                 });
 
+                // Keep SimLab support + grouping metadata on the saved round.
+                result.counterLineup = {
+                    ...(result.counterLineup || {}),
+                    ...counterLineup,
+                };
+                if (options.simLabGroupId) result.simLabGroupId = String(options.simLabGroupId);
+                if (options.simLabPhase) result.simLabPhase = String(options.simLabPhase);
+
                 if (options.saveToBridge !== false) {
                     await saveRoundToBridge(result);
                 }
@@ -4762,6 +4770,7 @@
             if (!Number.isFinite(basePet) || basePet < 6000) throw new Error('Suggested lineup needs a pet');
 
             const sweepBanners = source !== 'max';
+            const simLabGroupId = `simlab_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             panelState.simming = true;
             panelState.status = 'simming';
             panelState.message = 'SimLab: pet sweep…';
@@ -4841,6 +4850,8 @@
                         maxUpgrade: false,
                         simulationsPerCombo: SIMLAB_SIMULATIONS,
                         saveToBridge: true,
+                        simLabGroupId,
+                        simLabPhase: phaseLabel,
                         myTeam: {
                             heroes,
                             pet,
@@ -4968,6 +4979,7 @@
                 HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
                 console.log(`[${EXTENSION_NAME}] SimLab finished:`, {
                     source,
+                    simLabGroupId,
                     sweepBanners,
                     petsTried: pets,
                     favorAssigned: favor,

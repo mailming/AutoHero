@@ -2073,9 +2073,10 @@ function renderSimLabSharedStyles() {
 function renderSimLabLogRow(round, minWinRate) {
     const name = round.opponentName || (round.opponentUserId ? `User ${round.opponentUserId}` : 'Unknown');
     const place = round.opponentPlace != null ? `#${round.opponentPlace}` : '—';
-    const sessionId = round.sessionId ? String(round.sessionId) : '';
-    const detailHref = sessionId
-        ? `/training/simlab-view?sessionId=${encodeURIComponent(sessionId)}`
+    const groupId = round.groupId || round.sessionId || '';
+    const tryCount = Number(round.tryCount) || 1;
+    const detailHref = groupId
+        ? `/training/simlab-view?groupId=${encodeURIComponent(groupId)}`
         : '';
     const detailCell = detailHref
         ? `<a class="detail-btn" href="${escapeHtml(detailHref)}">View detail</a>`
@@ -2086,7 +2087,10 @@ function renderSimLabLogRow(round, minWinRate) {
         <td>${renderClickableTeamFilter('opponent', round.opponentHeroIds, round.opponentPet)}</td>
         <td class="muted">${escapeHtml(name)}</td>
         <td class="muted">${escapeHtml(formatTesterLabel(round))}</td>
-        <td>${renderClickableTeamFilter('my', round.myHeroIds, round.myPet, round.myHeroNames)}</td>
+        <td>
+          ${renderClickableTeamFilter('my', round.myHeroIds, round.myPet, round.myHeroNames)}
+          <div class="muted" style="margin-top:4px">${tryCount} tr${tryCount === 1 ? 'y' : 'ies'}</div>
+        </td>
         <td class="num">${renderWinRateCell(round.winRate, minWinRate)}</td>
         <td class="num muted">${escapeHtml(formatRecord(round.wins, round.losses))}</td>
         <td class="muted nowrap">${escapeHtml(formatWhen(round.testedAt))}</td>
@@ -2142,15 +2146,15 @@ export function renderSimLabPage(rounds = [], options = {}) {
     <header class="page-header">
       <div class="page-header-main">
         <h1>SimLab</h1>
-        <p class="subtitle">Counter Suggest sims — same log layout as Training. Open View detail for favor, flag &amp; slots.</p>
+        <p class="subtitle">One row per Sim click (best win %). View detail lists every pet / favor / flag try.</p>
       </div>
       ${renderSimLabNav('list')}
     </header>
 
     <section class="intro card">
       <p class="intro-lead">
-        Filter and scan like the main Training log. Use <strong>View detail</strong> on a row for full pet favor, war flag, and banner slots.
-        Green = ${escapeHtml(String(minWinRate))}%+.
+        Same layout as Training. Each row is one Counter Suggest Sim <em>group</em> showing the best win %.
+        Open <strong>View detail</strong> for every attempt (pet, favor, flag). Green = ${escapeHtml(String(minWinRate))}%+.
       </p>
     </section>
 
@@ -2160,7 +2164,7 @@ export function renderSimLabPage(rounds = [], options = {}) {
     <section class="section" id="results">
       <div class="section-head">
         <h2>Test log</h2>
-        <p class="section-lead">One row per Counter Suggest Sim run.</p>
+        <p class="section-lead">One row per Sim group — best result only.</p>
       </div>
       <div class="toolbar">
         <span class="status">${shownFrom}–${shownTo} / ${total}</span>
@@ -2197,32 +2201,65 @@ export function renderSimLabPage(rounds = [], options = {}) {
 </html>`;
 }
 
+function renderSimLabTryRow(tryRound, minWinRate, isBest) {
+    const flagMissing = tryRound.myBanner == null || tryRound.myBanner === '';
+    const slotsHtml = formatBannerStonesHtml(tryRound.myBannerStones);
+    return `
+      <tr class="${isBest ? 'sim-try-best' : ''}">
+        <td class="muted">${escapeHtml(tryRound.phase || '—')}${isBest ? ' <span class="badge solved">Best</span>' : ''}</td>
+        <td>${renderUnitNameHtml(tryRound.myPet, formatPetLabel(tryRound.myPet))}</td>
+        <td class="favor-cell">${formatFavorHtml(tryRound.myFavor)}</td>
+        <td>
+          <span class="sim-chip${flagMissing ? ' warn' : ''}" title="${escapeHtml(formatFlagTitle(tryRound.myBanner))}">
+            ${escapeHtml(formatFlagLabel(tryRound.myBanner))}
+          </span>
+          ${slotsHtml ? `<div class="sim-slots" style="margin-top:6px">${slotsHtml}</div>` : ''}
+        </td>
+        <td class="num">${renderWinRateCell(tryRound.winRate, minWinRate)}</td>
+        <td class="num muted">${escapeHtml(formatRecord(tryRound.wins, tryRound.losses))}</td>
+        <td class="muted nowrap">${escapeHtml(formatWhen(tryRound.testedAt))}</td>
+      </tr>`;
+}
+
 /**
- * Full SimLab result for one session (favor, flag, slots, payload).
+ * SimLab group detail: best summary + every pet/favor/flag try (no raw payload).
  */
-export function renderSimLabDetailPage(round, options = {}) {
+export function renderSimLabDetailPage(detail, options = {}) {
     const minWinRate = options.minWinRate ?? 90;
-    if (!round) {
+    // Accept legacy single-round objects or { best, tries, groupId }.
+    const best = detail?.best || (detail?.sessionId || detail?.myHeroIds ? detail : null);
+    const tries = Array.isArray(detail?.tries) && detail.tries.length
+        ? detail.tries
+        : (best ? [best] : []);
+    const groupId = detail?.groupId || best?.groupId || best?.sessionId || '';
+
+    if (!best) {
         return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8" /><title>SimLab detail</title>
-<style>${renderSimLabSharedStyles()}</style></head>
+<style>${renderSimLabSharedStyles()}
+tr.sim-try-best td { background: #1a2a40; }
+</style></head>
 <body><div class="page">
   <header class="page-header">
-    <div class="page-header-main"><h1>SimLab detail</h1><p class="subtitle">Session not found.</p></div>
+    <div class="page-header-main"><h1>SimLab detail</h1><p class="subtitle">Group not found.</p></div>
     ${renderSimLabNav()}
   </header>
-  <div class="empty">No SimLab session for that id.</div>
+  <div class="empty">No SimLab group for that id.</div>
   <p class="meta"><a href="/training/simlab-view">Back to SimLab</a></p>
 </div></body></html>`;
     }
 
-    const name = round.opponentName || (round.opponentUserId ? `User ${round.opponentUserId}` : 'Unknown');
-    const payloadJson = round.payload
-        ? escapeHtml(JSON.stringify(round.payload, null, 2))
-        : '<span class="muted">No stored payload</span>';
-    const bestDetailJson = round.bestDetail
-        ? escapeHtml(JSON.stringify(round.bestDetail, null, 2))
-        : '';
+    const name = best.opponentName || (best.opponentUserId ? `User ${best.opponentUserId}` : 'Unknown');
+    const tryRows = tries.map((tryRound) => renderSimLabTryRow(
+        tryRound,
+        minWinRate,
+        tryRound.sessionId === best.sessionId
+            || (
+                Number(tryRound.winRate) === Number(best.winRate)
+                && Number(tryRound.myPet) === Number(best.myPet)
+                && Number(tryRound.myBanner) === Number(best.myBanner)
+            )
+    )).join('');
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -2232,6 +2269,7 @@ export function renderSimLabDetailPage(round, options = {}) {
   <title>SimLab · ${escapeHtml(name)}</title>
   <style>
     ${renderSimLabSharedStyles()}
+    tr.sim-try-best td { background: #1a2a40; }
   </style>
 </head>
 <body>
@@ -2239,7 +2277,7 @@ export function renderSimLabDetailPage(round, options = {}) {
     <header class="page-header">
       <div class="page-header-main">
         <h1>SimLab detail</h1>
-        <p class="subtitle">Full result for one Counter Suggest Sim run.</p>
+        <p class="subtitle">Best result plus every pet / favor / flag try in this Sim group.</p>
       </div>
       ${renderSimLabNav()}
     </header>
@@ -2247,16 +2285,16 @@ export function renderSimLabDetailPage(round, options = {}) {
     <div class="detail-actions">
       <a href="/training/simlab-view">← Back to SimLab log</a>
       <a href="/training/view">Training</a>
-      <a href="/training/simlab?sessionId=${encodeURIComponent(round.sessionId || '')}">JSON</a>
+      <a href="/training/simlab?groupId=${encodeURIComponent(groupId)}">JSON</a>
     </div>
 
     <div class="detail-meta">
-      <span><strong>When</strong> ${escapeHtml(formatWhen(round.testedAt))}</span>
-      <span><strong>Win</strong> ${renderWinRateCell(round.winRate, minWinRate)}</span>
-      <span><strong>W/L</strong> ${escapeHtml(formatRecord(round.wins, round.losses))}</span>
-      <span><strong>Tester</strong> ${escapeHtml(formatTesterLabel(round))}</span>
-      <span><strong>Source</strong> ${escapeHtml(formatSourceLabel(round.source, round.label))}</span>
-      <span class="mono"><strong>Session</strong> ${escapeHtml(round.sessionId || '—')}</span>
+      <span><strong>When</strong> ${escapeHtml(formatWhen(best.testedAt))}</span>
+      <span><strong>Best win</strong> ${renderWinRateCell(best.winRate, minWinRate)}</span>
+      <span><strong>W/L</strong> ${escapeHtml(formatRecord(best.wins, best.losses))}</span>
+      <span><strong>Tries</strong> ${escapeHtml(String(detail?.tryCount || tries.length))}</span>
+      <span><strong>Tester</strong> ${escapeHtml(formatTesterLabel(best))}</span>
+      <span><strong>Source</strong> ${escapeHtml(formatSourceLabel(best.source, best.label))}</span>
     </div>
 
     <div class="detail-grid">
@@ -2264,40 +2302,40 @@ export function renderSimLabDetailPage(round, options = {}) {
         <h2>Target defense</h2>
         <div class="detail-block">
           <div class="detail-block-title">Team</div>
-          ${renderComboLabelHtml(round.opponentHeroIds, round.opponentPet)}
+          ${renderComboLabelHtml(best.opponentHeroIds, best.opponentPet)}
           <div class="muted" style="margin-top:6px">
             ${escapeHtml(name)}
-            ${round.opponentUserId ? ` · id ${escapeHtml(String(round.opponentUserId))}` : ''}
-            ${round.opponentPlace != null ? ` · #${escapeHtml(String(round.opponentPlace))}` : ''}
-            ${round.opponentPower != null ? ` · ${escapeHtml(String(Math.round(Number(round.opponentPower))))} pwr` : ''}
+            ${best.opponentUserId ? ` · id ${escapeHtml(String(best.opponentUserId))}` : ''}
+            ${best.opponentPlace != null ? ` · #${escapeHtml(String(best.opponentPlace))}` : ''}
+            ${best.opponentPower != null ? ` · ${escapeHtml(String(Math.round(Number(best.opponentPower))))} pwr` : ''}
           </div>
         </div>
         <div class="detail-block">
           <div class="detail-block-title">Support</div>
           <div class="sim-meta-row">
             ${renderSimLabSupportBits({
-                banner: round.opponentBanner,
-                bannerStones: round.opponentBannerStones,
-                favor: round.opponentFavor,
+                banner: best.opponentBanner,
+                bannerStones: best.opponentBannerStones,
+                favor: best.opponentFavor,
             })}
           </div>
         </div>
       </section>
 
       <section class="detail-card card">
-        <h2>Your attack</h2>
+        <h2>Best attack</h2>
         <div class="detail-block">
           <div class="detail-block-title">Team</div>
-          ${renderComboLabelHtml(round.myHeroIds, round.myPet, round.myHeroNames)}
+          ${renderComboLabelHtml(best.myHeroIds, best.myPet, best.myHeroNames)}
         </div>
         <div class="detail-block">
           <div class="detail-block-title">Support</div>
           <div class="sim-meta-row">
             ${renderSimLabSupportBits({
-                banner: round.myBanner,
-                bannerStones: round.myBannerStones,
-                favor: round.myFavor,
-                maxUpgrade: round.maxUpgrade,
+                banner: best.myBanner,
+                bannerStones: best.myBannerStones,
+                favor: best.myFavor,
+                maxUpgrade: best.maxUpgrade,
             })}
           </div>
         </div>
@@ -2306,12 +2344,26 @@ export function renderSimLabDetailPage(round, options = {}) {
 
     <section class="section" style="margin-top:18px">
       <div class="section-head">
-        <h2>Stored payload</h2>
-        <p class="section-lead">Compact SimLab archive (no battle samples).</p>
+        <h2>All tries</h2>
+        <p class="section-lead">Pet sweep → favor → flag attempts that led to the best result.</p>
       </div>
-      <div class="card" style="padding:12px">
-        <pre class="payload">${payloadJson}</pre>
-        ${bestDetailJson ? `<p class="muted" style="margin:12px 0 6px">best_detail</p><pre class="payload">${bestDetailJson}</pre>` : ''}
+      <div class="table-wrap card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Phase</th>
+              <th>Pet</th>
+              <th>Favor</th>
+              <th>Flag / slots</th>
+              <th class="num">Win %</th>
+              <th class="num">W/L</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tryRows || '<tr><td colspan="7" class="muted">No tries stored</td></tr>'}
+          </tbody>
+        </table>
       </div>
     </section>
   </div>

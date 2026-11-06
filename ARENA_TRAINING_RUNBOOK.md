@@ -211,7 +211,7 @@ Built into Arena Training. No second userscript needed.
 - Click **SimLab** on a row to run `demoBattles_startBattle` + local BattleCalc at **your current power** (no arena attempts):
   - Attack pet / favor / banner / banner stones applied from your account (+ suggested heroes/pet)
   - Defense lineup from the gather enemy (Arena) or Domination enemy payload (favor/banner/slots already present)
-  - Saves to the bridge with label `simlab-counter` / `simlab-counter-cd` (shows on the **SimLab** log; open **View detail** for favor / flag / slots)
+  - Saves to the bridge with label `simlab-counter` / `simlab-counter-cd` under one `simLabGroupId` (list shows best win %; **View detail** lists every pet / favor / flag try)
 - Requires the bridge + PostgreSQL (counters: `GET /training/counters`; SimLab page: `GET /training/simlab-view`; JSON: `GET /training/simlab`)
 
 Example:
@@ -284,7 +284,7 @@ Single round only:
 |-----|-------------|
 | [http://127.0.0.1:9876/](http://127.0.0.1:9876/) | HTML table — opponent combo, your combo, win %, last tested |
 | [http://127.0.0.1:9876/training](http://127.0.0.1:9876/training) | Same HTML page (alias) — training results only |
-| [http://127.0.0.1:9876/training/simlab-view](http://127.0.0.1:9876/training/simlab-view) | **SimLab** log (Training-style); `?sessionId=` opens full detail |
+| [http://127.0.0.1:9876/training/simlab-view](http://127.0.0.1:9876/training/simlab-view) | **SimLab** log (best per group); `?groupId=` opens all tries |
 | [http://127.0.0.1:9876/training/results?limit=100](http://127.0.0.1:9876/training/results?limit=100) | JSON API |
 | [http://127.0.0.1:9876/training/simlab](http://127.0.0.1:9876/training/simlab) | Recent SimLab rounds + target groups (JSON) |
 | [http://127.0.0.1:9876/training/summary](http://127.0.0.1:9876/training/summary) | Counts and latest matchup |
