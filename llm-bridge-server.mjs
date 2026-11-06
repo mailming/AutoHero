@@ -30,6 +30,8 @@ import {
     getUserCounterSkipCheck,
     getTrainingCounters,
     getSimLabRounds,
+    getSimLabRoundCount,
+    getSimLabRoundBySession,
     getSimLabTesters,
     groupSimLabRoundsByTarget,
     getMetaTeamSnapshots,
@@ -44,6 +46,7 @@ import {
     formatTrainingResultRow,
     renderTrainingResultsPage,
     renderSimLabPage,
+    renderSimLabDetailPage,
     renderMetaTeamsPage,
     parseHeroFilterParams,
 } from './training-view.mjs';
@@ -225,27 +228,37 @@ const server = http.createServer(async (req, res) => {
                 res.writeHead(503, { 'Content-Type': 'text/plain' });
                 return res.end('Database not ready');
             }
-            const limitParam = Number(url.searchParams.get('limit'));
-            const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100;
+            const sessionId = url.searchParams.get('sessionId') || undefined;
             const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
             const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
             const testerUserId = url.searchParams.get('tester')
                 || url.searchParams.get('testerUserId')
                 || undefined;
             try {
-                const [rounds, testers] = await Promise.all([
+                if (sessionId) {
+                    const round = await getSimLabRoundBySession(sessionId);
+                    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                    return res.end(renderSimLabDetailPage(round, { minWinRate: 90 }));
+                }
+
+                const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+                const limitParam = url.searchParams.get('limit');
+                const pageSize = limitParam == null ? 100 : Math.max(0, Number(limitParam) || 0);
+                const filterArgs = { testerUserId, opponentHeroIds, myHeroIds };
+                const [rounds, total, testers] = await Promise.all([
                     getSimLabRounds({
-                        limit,
-                        testerUserId,
-                        opponentHeroIds,
-                        myHeroIds,
+                        ...filterArgs,
+                        offset,
+                        limit: pageSize > 0 ? pageSize : 500,
                     }),
+                    getSimLabRoundCount(filterArgs),
                     getSimLabTesters(),
                 ]);
-                const groups = groupSimLabRoundsByTarget(rounds);
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                return res.end(renderSimLabPage(groups, {
-                    limit,
+                return res.end(renderSimLabPage(rounds, {
+                    total,
+                    offset,
+                    pageSize: pageSize > 0 ? pageSize : total,
                     minWinRate: 90,
                     testerUserId,
                     opponentHeroIds,
@@ -269,21 +282,35 @@ const server = http.createServer(async (req, res) => {
                     database: getDatabaseStatus(),
                 });
             }
+            const sessionId = url.searchParams.get('sessionId') || undefined;
+            if (sessionId) {
+                const round = await getSimLabRoundBySession(sessionId);
+                if (!round) {
+                    return sendJson(res, 404, { ok: false, error: 'SimLab session not found' });
+                }
+                return sendJson(res, 200, { ok: true, round });
+            }
             const limit = Number(url.searchParams.get('limit'));
+            const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
             const opponentHeroIds = parseHeroFilterParams(url.searchParams, 'opponentHero');
             const myHeroIds = parseHeroFilterParams(url.searchParams, 'myHero');
             const testerUserId = url.searchParams.get('tester')
                 || url.searchParams.get('testerUserId')
                 || undefined;
-            const rounds = await getSimLabRounds({
-                limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
-                testerUserId,
-                opponentHeroIds,
-                myHeroIds,
-            });
+            const filterArgs = { testerUserId, opponentHeroIds, myHeroIds };
+            const [rounds, total] = await Promise.all([
+                getSimLabRounds({
+                    ...filterArgs,
+                    offset,
+                    limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
+                }),
+                getSimLabRoundCount(filterArgs),
+            ]);
             const groups = groupSimLabRoundsByTarget(rounds);
             return sendJson(res, 200, {
                 ok: true,
+                total,
+                offset,
                 rounds,
                 groups,
                 filters: { testerUserId: testerUserId || null, opponentHeroIds, myHeroIds },

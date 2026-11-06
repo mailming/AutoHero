@@ -1590,7 +1590,7 @@ function renderSimLabFilters(paging = {}) {
         </div>
       </div>
       <div class="filter-group">
-        <div class="filter-title">Target includes</div>
+        <div class="filter-title">Opponent includes</div>
         <div class="chips" id="opponent-chips">
           ${renderHeroFilterChips('opponent', opponentHeroIds) || '<span class="muted">Any</span>'}
         </div>
@@ -1601,7 +1601,7 @@ function renderSimLabFilters(paging = {}) {
         </div>
       </div>
       <div class="filter-group">
-        <div class="filter-title">Attack includes</div>
+        <div class="filter-title">Your team includes</div>
         <div class="chips" id="my-chips">
           ${renderHeroFilterChips('my', myHeroIds) || '<span class="muted">Any</span>'}
         </div>
@@ -1616,362 +1616,30 @@ function renderSimLabFilters(paging = {}) {
   </section>`;
 }
 
-function renderSimLabAttemptRow(round, minWinRate) {
-    const stonesHtml = formatBannerStonesHtml(round.myBannerStones);
-    const flagMissing = round.myBanner == null || round.myBanner === '';
-    const slotsMissing = !stonesHtml;
-    const powerChip = round.maxUpgrade === false
-        ? '<span class="sim-chip"><span class="sim-chip-k">Power</span> acct</span>'
-        : (round.maxUpgrade === true
-            ? '<span class="sim-chip warn"><span class="sim-chip-k">Power</span> max</span>'
-            : '');
-    return `
-      <tr>
-        <td class="muted nowrap">${escapeHtml(formatWhen(round.testedAt))}</td>
-        <td>
-          ${renderComboLabelHtml(round.myHeroIds, round.myPet, round.myHeroNames)}
-          <div class="sim-meta-row">
-            ${powerChip}
-            <span class="muted sim-sub-inline">${escapeHtml(formatSourceLabel(round.source, round.label))}${round.testerName ? ` · ${escapeHtml(round.testerName)}` : ''}</span>
-          </div>
-        </td>
-        <td class="favor-cell">${formatFavorHtml(round.myFavor)}</td>
-        <td>
-          <span class="sim-chip${flagMissing ? ' warn' : ''}" title="${escapeHtml(formatFlagTitle(round.myBanner))}">
-            ${escapeHtml(formatFlagLabel(round.myBanner))}
-          </span>
-        </td>
-        <td>
-          ${slotsMissing
-              ? '<span class="sim-chip warn">—</span>'
-              : `<div class="sim-slots">${stonesHtml}</div>`}
-        </td>
-        <td class="num">${renderWinRateCell(round.winRate, minWinRate)}</td>
-        <td class="num muted">${escapeHtml(formatRecord(round.wins, round.losses))}</td>
-      </tr>`;
+function buildSimLabQueryBase(paging = {}) {
+    const params = new URLSearchParams();
+    if (paging.testerUserId) params.set('tester', paging.testerUserId);
+    for (const id of paging.opponentHeroIds || []) params.append('opponentHero', String(id));
+    for (const id of paging.myHeroIds || []) params.append('myHero', String(id));
+    if (paging.pageSize != null) params.set('limit', String(paging.pageSize));
+    if (paging.offset > 0) params.set('offset', String(paging.offset));
+    const qs = params.toString();
+    return qs ? `${qs}&` : '';
 }
 
-function renderSimLabTargetGroup(group, minWinRate) {
-    const name = group.opponentName || (group.opponentUserId ? `User ${group.opponentUserId}` : 'Unknown');
-    const metaParts = [
-        group.opponentUserId ? `id ${group.opponentUserId}` : null,
-        group.opponentPlace != null ? `#${group.opponentPlace}` : null,
-        group.opponentPower != null ? `${Math.round(Number(group.opponentPower))} pwr` : null,
-        formatSourceLabel(group.source),
-        `${group.runCount || group.rounds?.length || 0} runs`,
-    ].filter(Boolean);
-    const rows = (group.rounds || []).map((round) => renderSimLabAttemptRow(round, minWinRate)).join('');
-
+function renderSimLabNav(active = 'list') {
     return `
-    <section class="sim-target card">
-      <header class="sim-target-head">
-        <div class="sim-target-title">
-          <h2>${escapeHtml(name)}</h2>
-          <p class="muted">${escapeHtml(metaParts.join(' · '))}</p>
-        </div>
-        <div class="sim-target-best">${renderWinRateCell(group.bestWinRate, minWinRate)}</div>
-      </header>
-
-      <div class="sim-target-defense">
-        <div class="sim-side-label">Defense</div>
-        <div class="sim-defense-main">${renderComboLabelHtml(group.opponentHeroIds, group.opponentPet)}</div>
-        <div class="sim-meta-row">
-          ${renderSimLabSupportBits({
-              banner: group.opponentBanner,
-              bannerStones: group.opponentBannerStones,
-              favor: group.opponentFavor,
-          })}
-        </div>
-      </div>
-
-      <div class="table-wrap sim-attempts">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Attack</th>
-              <th>Favor</th>
-              <th>Flag</th>
-              <th>Slots</th>
-              <th class="num">Win %</th>
-              <th class="num">W/L</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows || '<tr><td colspan="7" class="muted">No runs</td></tr>'}
-          </tbody>
-        </table>
-      </div>
-    </section>`;
+  <nav class="page-nav" aria-label="Related pages">
+    <a href="/training/view">Training</a>
+    <a href="/training/simlab-view"${active === 'list' ? ' aria-current="page"' : ''}>SimLab</a>
+    <a href="#filters">Filters</a>
+    <a href="#results">Log</a>
+    <a href="/training/meta-view">Meta</a>
+  </nav>`;
 }
 
-/**
- * Dedicated SimLab results page — grouped by attacking target with pet/flag detail.
- */
-export function renderSimLabPage(groups = [], options = {}) {
-    const minWinRate = options.minWinRate ?? 90;
-    const limit = options.limit ?? 100;
-    const paging = {
-        testerUserId: options.testerUserId || '',
-        opponentHeroIds: options.opponentHeroIds || [],
-        myHeroIds: options.myHeroIds || [],
-        testers: options.testers || [],
-    };
-    const totalRuns = (Array.isArray(groups) ? groups : [])
-        .reduce((sum, group) => sum + (group.runCount || group.rounds?.length || 0), 0);
-    const groupBlocks = (Array.isArray(groups) ? groups : [])
-        .map((group) => renderSimLabTargetGroup(group, minWinRate))
-        .join('');
-    const jsonQuery = new URLSearchParams();
-    jsonQuery.set('limit', String(limit));
-    if (paging.testerUserId) jsonQuery.set('tester', paging.testerUserId);
-    for (const id of paging.opponentHeroIds) jsonQuery.append('opponentHero', String(id));
-    for (const id of paging.myHeroIds) jsonQuery.append('myHero', String(id));
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SimLab</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: system-ui, sans-serif;
-      background: #0f1419;
-      color: #e7ecf3;
-      line-height: 1.45;
-    }
-    .page { max-width: 1440px; margin: 0 auto; padding: 20px 24px 40px; }
-    .page-header {
-      display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
-      gap: 12px 24px; margin-bottom: 12px;
-    }
-    .page-header-main { min-width: 0; flex: 1; }
-    h1 { margin: 0 0 4px; font-size: 1.45rem; letter-spacing: -0.02em; }
-    .subtitle { margin: 0; color: #9fb3d1; font-size: 0.88rem; }
-    .page-nav {
-      display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px;
-      padding: 4px; border: 1px solid #243044; border-radius: 8px; background: #121820;
-      position: sticky; top: 8px; z-index: 2;
-    }
-    .page-nav a {
-      color: #c8d4e8; text-decoration: none; padding: 6px 10px; border-radius: 6px;
-      font-size: 0.82rem; white-space: nowrap;
-    }
-    .page-nav a:hover { background: #243044; color: #fff; }
-    .section { margin-bottom: 22px; scroll-margin-top: 56px; }
-    .section-head {
-      display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 10px;
-    }
-    .section-head h2 { margin: 0; font-size: 1.05rem; }
-    .section-lead { margin: 0; color: #9fb3d1; font-size: 0.84rem; }
-    .section-lead em { color: #c8d4e8; font-style: normal; font-weight: 600; }
-    .card { background: #151d28; border: 1px solid #243044; border-radius: 8px; }
-    .intro { padding: 10px 14px; margin-bottom: 12px; }
-    .intro-lead { margin: 0; color: #c8d4e8; font-size: 0.88rem; }
-    .stats-bar {
-      display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 14px; color: #9fb3d1; font-size: 0.84rem;
-    }
-    .stats-bar strong { color: #e7ecf3; }
-    .filters {
-      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 14px 20px; padding: 14px 16px; align-items: start;
-    }
-    @media (max-width: 820px) { .filters { grid-template-columns: 1fr; } }
-    .filter-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; height: 100%; }
-    .filter-title { font-size: 0.88rem; font-weight: 600; color: #e7ecf3; line-height: 1.2; }
-    .filter-help { margin: 0; font-size: 0.78rem; }
-    .filter-group .chips { flex: 1; }
-    .filter-row { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
-    .filter-row button {
-      color: #e7ecf3; background: #243044; border: 1px solid #3a4f6d; border-radius: 6px;
-      padding: 7px 12px; font-size: 0.84rem; cursor: pointer; flex-shrink: 0; min-height: 38px;
-    }
-    .filter-row button.ghost { background: transparent; border-color: #2f3f57; }
-    .tester-select {
-      min-width: 0; flex: 1; min-height: 38px; color: #e7ecf3; background: #1a2433;
-      border: 1px solid #2f3f57; border-radius: 6px; padding: 7px 10px; font-size: 0.88rem;
-    }
-    .tester-select:hover, .tester-select:focus {
-      background: #243044; border-color: #3a5a8a; outline: none;
-    }
-    .filter-group-tester {
-      grid-column: 1 / -1; height: auto; padding-bottom: 12px;
-      border-bottom: 1px solid #243044; margin-bottom: 2px;
-    }
-    .filter-picker { position: relative; min-width: 0; flex: 1; }
-    .filter-picker-trigger {
-      display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px;
-      color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57; border-radius: 6px;
-      padding: 5px 10px; font-size: 0.88rem; cursor: pointer; text-align: left;
-    }
-    .filter-picker-trigger:hover,
-    .filter-picker.open .filter-picker-trigger { background: #243044; border-color: #3a5a8a; }
-    .filter-picker-placeholder, .filter-picker-value {
-      color: #e7ecf3; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .filter-picker-placeholder { color: #8b9bb4; }
-    .filter-picker-caret { color: #9fb3d1; font-size: 0.75rem; margin-left: auto; }
-    .filter-picker-menu {
-      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
-      max-height: 320px; overflow: hidden; display: flex; flex-direction: column;
-      background: #151d28; border: 1px solid #3a5a8a; border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); padding: 6px;
-    }
-    .filter-picker-menu[hidden] { display: none; }
-    .filter-picker-search-wrap {
-      padding: 4px 4px 8px; border-bottom: 1px solid #243044; margin-bottom: 4px;
-    }
-    .filter-picker-search {
-      width: 100%; box-sizing: border-box; color: #e7ecf3; background: #1a2433;
-      border: 1px solid #2f3f57; border-radius: 6px; padding: 8px 10px; font-size: 0.88rem;
-    }
-    .filter-picker-search:focus {
-      outline: none; border-color: #3a5a8a; box-shadow: 0 0 0 2px rgba(58, 90, 138, 0.35);
-    }
-    .filter-picker-options { overflow: auto; max-height: 240px; padding-right: 2px; }
-    .filter-picker-empty { padding: 12px 8px; font-size: 0.85rem; text-align: center; }
-    .filter-picker-option[hidden], .filter-picker-group-label[hidden] { display: none; }
-    .filter-picker-group-label {
-      padding: 6px 8px 4px; font-size: 0.72rem; font-weight: 600; color: #9fb3d1;
-      text-transform: uppercase; letter-spacing: 0.04em;
-    }
-    .filter-picker-option {
-      display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px;
-      border: none; border-radius: 6px; background: transparent; color: #e7ecf3;
-      font-size: 0.88rem; text-align: left; cursor: pointer;
-    }
-    .filter-picker-option:hover, .filter-picker-option:focus { background: #243044; outline: none; }
-    .filter-picker-icon { width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0; }
-    .filter-picker-icon-fallback {
-      display: inline-block; width: 24px; height: 24px; background: #243044; border-radius: 4px;
-    }
-    .filter-picker-trigger .filter-picker-icon { width: 26px; height: 26px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; align-content: flex-start; }
-    .chip {
-      display: inline-flex; align-items: center; gap: 6px; color: #e7ecf3; background: #243044;
-      border: 1px solid #3a4f6d; border-radius: 999px; padding: 3px 9px; font-size: 0.82rem; cursor: pointer;
-    }
-    .chip:hover { background: #2f3f57; }
-    .chip-x { color: #9fb3d1; font-weight: 700; }
-    .filter-active {
-      grid-column: 1 / -1; padding: 8px 12px; border-radius: 6px;
-      background: #1a2a40; border: 1px solid #3a5a8a; color: #9fc5ff; font-size: 0.82rem;
-    }
-    .sim-legend { padding: 14px 16px; }
-    .sim-legend-grid {
-      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start;
-    }
-    @media (max-width: 1100px) { .sim-legend-grid { grid-template-columns: 1fr; } }
-    .sim-legend-panel { min-width: 0; }
-    .sim-legend h3 { margin: 0 0 4px; font-size: 0.92rem; color: #e7ecf3; }
-    .stats-note { margin: 0 0 8px; font-size: 0.78rem; }
-    .stats-note.ranks { margin-top: -4px; }
-    .legend-table-wrap { max-height: 280px; border: 1px solid #243044; border-radius: 8px; }
-    .sim-target { margin-bottom: 14px; padding: 0; overflow: hidden; }
-    .sim-target-head {
-      display: flex; justify-content: space-between; gap: 16px; align-items: flex-start;
-      padding: 12px 14px; border-bottom: 1px solid #243044;
-    }
-    .sim-target-title h2 { margin: 0 0 2px; font-size: 1.05rem; }
-    .sim-target-title p { margin: 0; font-size: 0.8rem; }
-    .sim-target-best { flex: 0 0 auto; padding-top: 2px; }
-    .sim-target-defense {
-      padding: 12px 14px; background: #121925; border-bottom: 1px solid #243044;
-    }
-    .sim-side-label {
-      font-size: 0.7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-      color: #9fb3d1; margin-bottom: 6px;
-    }
-    .sim-defense-main { margin-bottom: 2px; }
-    .sim-meta-row {
-      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: flex-start;
-    }
-    .sim-chip {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 3px 8px; border-radius: 999px; font-size: 0.78rem;
-      background: #1a2433; border: 1px solid #2f3f57; color: #d7e3f4;
-    }
-    .sim-chip.warn { border-color: #6a4a20; background: #2a2012; color: #f6d365; }
-    .sim-chip-k { color: #8b9bb4; font-weight: 600; text-transform: uppercase; font-size: 0.68rem; letter-spacing: .04em; }
-    .sim-chip-slots, .sim-chip-favor { align-items: flex-start; max-width: 100%; border-radius: 8px; }
-    .sim-slots { display: flex; flex-direction: column; gap: 2px; }
-    .sim-slot-line { font-size: 0.78rem; line-height: 1.3; color: #d7e3f4; }
-    .sim-slot-line .sim-chip-k { margin-right: 4px; }
-    .sim-sub-inline { font-size: 0.76rem; }
-    .favor-list, .favor-cell {
-      display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center;
-    }
-    .favor-pair {
-      display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
-    }
-    .favor-arrow { color: #8b9bb4; font-size: 0.75rem; }
-    .sim-attempts { border: 0; border-radius: 0; }
-    .table-wrap { overflow: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #243044; vertical-align: middle; }
-    th {
-      color: #9fb3d1; font-weight: 600; background: #151d28; position: sticky; top: 0; z-index: 1;
-      white-space: nowrap;
-    }
-    tr:hover td { background: #1a2433; }
-    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    th.num { text-align: right; }
-    .nowrap { white-space: nowrap; }
-    .muted { color: #8b9bb4; font-size: 0.82rem; }
-    .mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
-    .win { font-weight: 600; }
-    .good { color: #6ee7a0; }
-    .mid { color: #f6d365; }
-    .bad { color: #f87171; }
-    .badge {
-      display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
-      font-size: 0.7rem; font-weight: 600; vertical-align: middle;
-    }
-    .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
-    a { color: #7cb8ff; }
-    .empty {
-      padding: 24px 16px; text-align: center; color: #8b9bb4;
-      border: 1px dashed #2f3f57; border-radius: 8px;
-    }
-    ${HERO_ICON_TOOLTIP_CSS}
-  </style>
-</head>
-<body>
-  <div class="page">
-    <header class="page-header">
-      <div class="page-header-main">
-        <h1>SimLab</h1>
-        <p class="subtitle">Counter Suggest sims · pet favor, flag &amp; slots per target.</p>
-      </div>
-      <nav class="page-nav" aria-label="Related pages">
-        <a href="/training/view">Training</a>
-        <a href="#filters">Filters</a>
-        <a href="#legend">Legends</a>
-        <a href="/training/meta-view">Meta</a>
-        <a href="/training/simlab?${escapeHtml(jsonQuery.toString())}">JSON</a>
-      </nav>
-    </header>
-
-    <section class="intro card">
-      <p class="intro-lead">
-        Counter Suggest → <strong>Sim</strong>. Green = ${escapeHtml(String(minWinRate))}%+. Yellow = missing flag/slots/favor.
-      </p>
-    </section>
-
-    ${renderSimLabFilters(paging)}
-    ${renderSimLabLegend()}
-
-    <div class="stats-bar">
-      <span><strong>${escapeHtml(String(groups.length))}</strong> targets</span>
-      <span><strong>${escapeHtml(String(totalRuns))}</strong> runs</span>
-      <span>latest <strong>${escapeHtml(String(limit))}</strong></span>
-    </div>
-
-    ${groupBlocks || '<div class="empty">No runs — clear filters or Sim from Counter Suggest</div>'}
-  </div>
+function renderSimLabFilterScript() {
+    return `
   <script>
     function currentParams() {
       return new URL(window.location.href);
@@ -1988,6 +1656,7 @@ export function renderSimLabPage(groups = [], options = {}) {
       if (!url.searchParams.getAll(key).includes(String(id))) {
         url.searchParams.append(key, id);
       }
+      url.searchParams.delete('offset');
       window.location.href = url.toString();
     }
     function removeHeroFilter(side, id) {
@@ -1996,11 +1665,29 @@ export function renderSimLabPage(groups = [], options = {}) {
       const remaining = url.searchParams.getAll(key).filter((value) => value !== String(id));
       url.searchParams.delete(key);
       remaining.forEach((value) => url.searchParams.append(key, value));
+      url.searchParams.delete('offset');
       window.location.href = url.toString();
     }
     function clearHeroFilter(side) {
       const url = currentParams();
       url.searchParams.delete(heroFilterKey(side));
+      url.searchParams.delete('offset');
+      window.location.href = url.toString();
+    }
+    function applyTeamFilter(button) {
+      const side = button && button.dataset ? button.dataset.side : '';
+      const key = heroFilterKey(side);
+      if (!key || (side !== 'opponent' && side !== 'my')) return;
+      const ids = String(button.dataset.ids || '')
+        .split(',')
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (!ids.length) return;
+      const url = currentParams();
+      url.searchParams.delete(key);
+      ids.forEach((id) => url.searchParams.append(key, String(id)));
+      url.searchParams.delete('offset');
+      url.hash = 'filters';
       window.location.href = url.toString();
     }
     function applyTesterFilter(value) {
@@ -2011,6 +1698,7 @@ export function renderSimLabPage(groups = [], options = {}) {
         url.searchParams.delete('tester');
         url.searchParams.delete('testerUserId');
       }
+      url.searchParams.delete('offset');
       window.location.href = url.toString();
     }
     function closeAllFilterPickers() {
@@ -2143,21 +1831,8 @@ export function renderSimLabPage(groups = [], options = {}) {
             event.stopPropagation();
             setFilterPickerSelection(picker, option);
             closeAllFilterPickers();
-          });
-        });
-        trigger.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
             addHeroFilter(side);
-          } else if (event.key === 'Escape') {
-            closeAllFilterPickers();
-          } else if (event.key === 'ArrowDown' || event.key === ' ') {
-            event.preventDefault();
-            closeAllFilterPickers();
-            openFilterPicker(picker);
-            const firstOption = visibleFilterPickerOptions(picker)[0];
-            if (firstOption) firstOption.focus();
-          }
+          });
         });
       });
       document.addEventListener('click', closeAllFilterPickers);
@@ -2170,7 +1845,476 @@ export function renderSimLabPage(groups = [], options = {}) {
     if (testerSelect) {
       testerSelect.addEventListener('change', () => applyTesterFilter(testerSelect.value));
     }
-  </script>
+  </script>`;
+}
+
+function renderSimLabSharedStyles() {
+    return `
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #0f1419;
+      color: #e7ecf3;
+      line-height: 1.45;
+    }
+    .page { max-width: 1440px; margin: 0 auto; padding: 20px 24px 40px; }
+    .page-header {
+      display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+      gap: 12px 24px; margin-bottom: 12px;
+    }
+    .page-header-main { min-width: 0; flex: 1; }
+    h1 { margin: 0 0 4px; font-size: 1.45rem; letter-spacing: -0.02em; }
+    .subtitle { margin: 0; color: #9fb3d1; font-size: 0.88rem; }
+    .meta { color: #8b9bb4; margin: 8px 0 0; font-size: 0.85rem; }
+    .page-nav {
+      display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px;
+      padding: 4px; border: 1px solid #243044; border-radius: 8px; background: #121820;
+      position: sticky; top: 8px; z-index: 2;
+    }
+    .page-nav a {
+      color: #c8d4e8; text-decoration: none; padding: 6px 10px; border-radius: 6px;
+      font-size: 0.82rem; white-space: nowrap;
+    }
+    .page-nav a:hover, .page-nav a[aria-current="page"] { background: #243044; color: #fff; }
+    .section { margin-bottom: 22px; scroll-margin-top: 56px; }
+    .section-head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 10px;
+    }
+    .section-head h2 { margin: 0; font-size: 1.05rem; }
+    .section-lead { margin: 0; color: #9fb3d1; font-size: 0.84rem; }
+    .section-lead em { color: #c8d4e8; font-style: normal; font-weight: 600; }
+    .card { background: #151d28; border: 1px solid #243044; border-radius: 8px; }
+    .intro { padding: 10px 14px; margin-bottom: 12px; }
+    .intro-lead { margin: 0; color: #c8d4e8; font-size: 0.88rem; }
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
+      margin-bottom: 8px; min-height: 36px;
+    }
+    .toolbar a, .toolbar button, .detail-actions a {
+      color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57; border-radius: 6px;
+      padding: 6px 10px; font-size: 0.84rem; text-decoration: none; cursor: pointer;
+    }
+    .toolbar a:hover, .toolbar button:hover, .detail-actions a:hover, a.detail-btn:hover { background: #243044; }
+    a.detail-btn {
+      display: inline-block; color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57;
+      border-radius: 6px; padding: 5px 10px; font-size: 0.8rem; text-decoration: none; white-space: nowrap;
+    }
+    .status { color: #9fb3d1; font-size: 0.84rem; margin-right: auto; }
+    .filters {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 20px; padding: 14px 16px; align-items: start;
+    }
+    @media (max-width: 820px) { .filters { grid-template-columns: 1fr; } }
+    .filter-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; height: 100%; }
+    .filter-title { font-size: 0.88rem; font-weight: 600; color: #e7ecf3; line-height: 1.2; }
+    .filter-help { margin: 0; font-size: 0.78rem; }
+    .filter-group .chips { flex: 1; }
+    .filter-row { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
+    .filter-row button {
+      color: #e7ecf3; background: #243044; border: 1px solid #3a4f6d; border-radius: 6px;
+      padding: 7px 12px; font-size: 0.84rem; cursor: pointer; flex-shrink: 0; min-height: 38px;
+    }
+    .filter-row button.ghost { background: transparent; border-color: #2f3f57; }
+    .tester-select {
+      min-width: 0; flex: 1; min-height: 38px; color: #e7ecf3; background: #1a2433;
+      border: 1px solid #2f3f57; border-radius: 6px; padding: 7px 10px; font-size: 0.88rem;
+    }
+    .tester-select:hover, .tester-select:focus {
+      background: #243044; border-color: #3a5a8a; outline: none;
+    }
+    .filter-group-tester {
+      grid-column: 1 / -1; height: auto; padding-bottom: 12px;
+      border-bottom: 1px solid #243044; margin-bottom: 2px;
+    }
+    .filter-picker { position: relative; min-width: 0; flex: 1; }
+    .filter-picker-trigger {
+      display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px;
+      color: #e7ecf3; background: #1a2433; border: 1px solid #2f3f57; border-radius: 6px;
+      padding: 5px 10px; font-size: 0.88rem; cursor: pointer; text-align: left;
+    }
+    .filter-picker-trigger:hover,
+    .filter-picker.open .filter-picker-trigger { background: #243044; border-color: #3a5a8a; }
+    .filter-picker-placeholder, .filter-picker-value {
+      color: #e7ecf3; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .filter-picker-placeholder { color: #8b9bb4; }
+    .filter-picker-caret { color: #9fb3d1; font-size: 0.75rem; margin-left: auto; }
+    .filter-picker-menu {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+      max-height: 320px; overflow: hidden; display: flex; flex-direction: column;
+      background: #151d28; border: 1px solid #3a5a8a; border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); padding: 6px;
+    }
+    .filter-picker-menu[hidden] { display: none; }
+    .filter-picker-search-wrap {
+      padding: 4px 4px 8px; border-bottom: 1px solid #243044; margin-bottom: 4px;
+    }
+    .filter-picker-search {
+      width: 100%; box-sizing: border-box; color: #e7ecf3; background: #1a2433;
+      border: 1px solid #2f3f57; border-radius: 6px; padding: 8px 10px; font-size: 0.88rem;
+    }
+    .filter-picker-search:focus {
+      outline: none; border-color: #3a5a8a; box-shadow: 0 0 0 2px rgba(58, 90, 138, 0.35);
+    }
+    .filter-picker-options { overflow: auto; max-height: 240px; padding-right: 2px; }
+    .filter-picker-empty { padding: 12px 8px; font-size: 0.85rem; text-align: center; }
+    .filter-picker-option[hidden], .filter-picker-group-label[hidden] { display: none; }
+    .filter-picker-group-label {
+      padding: 6px 8px 4px; font-size: 0.72rem; font-weight: 600; color: #9fb3d1;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .filter-picker-option {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px;
+      border: none; border-radius: 6px; background: transparent; color: #e7ecf3;
+      font-size: 0.88rem; text-align: left; cursor: pointer;
+    }
+    .filter-picker-option:hover, .filter-picker-option:focus { background: #243044; outline: none; }
+    .filter-picker-icon { width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0; }
+    .filter-picker-icon-fallback {
+      display: inline-block; width: 24px; height: 24px; background: #243044; border-radius: 4px;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; align-content: flex-start; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; color: #e7ecf3; background: #243044;
+      border: 1px solid #3a4f6d; border-radius: 999px; padding: 3px 9px; font-size: 0.82rem; cursor: pointer;
+    }
+    .chip:hover { background: #2f3f57; }
+    .chip-x { color: #9fb3d1; font-weight: 700; }
+    .filter-active {
+      grid-column: 1 / -1; padding: 8px 12px; border-radius: 6px;
+      background: #1a2a40; border: 1px solid #3a5a8a; color: #9fc5ff; font-size: 0.82rem;
+    }
+    .sim-legend { padding: 14px 16px; }
+    .sim-legend-grid {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start;
+    }
+    @media (max-width: 1100px) { .sim-legend-grid { grid-template-columns: 1fr; } }
+    .sim-legend-panel { min-width: 0; }
+    .sim-legend h3 { margin: 0 0 4px; font-size: 0.92rem; color: #e7ecf3; }
+    .stats-note { margin: 0 0 8px; font-size: 0.78rem; }
+    .stats-note.ranks { margin-top: -4px; }
+    .legend-table-wrap { max-height: 280px; border: 1px solid #243044; border-radius: 8px; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #243044; vertical-align: middle; }
+    th {
+      color: #9fb3d1; font-weight: 600; background: #151d28; position: sticky; top: 0; z-index: 1;
+      white-space: nowrap;
+    }
+    tr:hover td { background: #1a2433; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    th.num { text-align: right; }
+    .nowrap { white-space: nowrap; }
+    .muted { color: #8b9bb4; font-size: 0.82rem; }
+    .mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
+    .win { font-weight: 600; }
+    .good { color: #6ee7a0; }
+    .mid { color: #f6d365; }
+    .bad { color: #f87171; }
+    .badge {
+      display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+      font-size: 0.7rem; font-weight: 600; vertical-align: middle;
+    }
+    .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
+    a { color: #7cb8ff; }
+    .empty {
+      padding: 24px 16px; text-align: center; color: #8b9bb4;
+      border: 1px dashed #2f3f57; border-radius: 8px;
+    }
+    .team-filter-btn {
+      appearance: none; border: 0; background: transparent; padding: 0; margin: 0;
+      color: inherit; font: inherit; cursor: pointer; text-align: left;
+    }
+    .team-filter-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+    .sim-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 8px; border-radius: 999px; font-size: 0.78rem;
+      background: #1a2433; border: 1px solid #2f3f57; color: #d7e3f4;
+    }
+    .sim-chip.warn { border-color: #6a4a20; background: #2a2012; color: #f6d365; }
+    .sim-chip-k { color: #8b9bb4; font-weight: 600; text-transform: uppercase; font-size: 0.68rem; letter-spacing: .04em; }
+    .sim-chip-slots, .sim-chip-favor { align-items: flex-start; max-width: 100%; border-radius: 8px; }
+    .sim-slots { display: flex; flex-direction: column; gap: 2px; }
+    .sim-slot-line { font-size: 0.78rem; line-height: 1.3; color: #d7e3f4; }
+    .favor-list, .favor-cell {
+      display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center;
+    }
+    .favor-pair {
+      display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+    }
+    .favor-arrow { color: #8b9bb4; font-size: 0.75rem; }
+    .detail-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+    }
+    @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+    .detail-card { padding: 14px 16px; }
+    .detail-card h2 { margin: 0 0 10px; font-size: 1rem; }
+    .detail-meta {
+      display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 12px; color: #9fb3d1; font-size: 0.84rem;
+    }
+    .detail-meta strong { color: #e7ecf3; }
+    .detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    .detail-block { margin-top: 12px; }
+    .detail-block-title {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      color: #9fb3d1; margin-bottom: 6px;
+    }
+    .sim-meta-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    pre.payload {
+      margin: 0; padding: 12px; overflow: auto; max-height: 420px;
+      background: #0f1419; border: 1px solid #243044; border-radius: 8px;
+      color: #c8d4e8; font-size: 0.75rem; line-height: 1.4;
+    }
+    ${HERO_ICON_TOOLTIP_CSS}
+`;
+}
+
+function renderSimLabLogRow(round, minWinRate) {
+    const name = round.opponentName || (round.opponentUserId ? `User ${round.opponentUserId}` : 'Unknown');
+    const place = round.opponentPlace != null ? `#${round.opponentPlace}` : '—';
+    const sessionId = round.sessionId ? String(round.sessionId) : '';
+    const detailHref = sessionId
+        ? `/training/simlab-view?sessionId=${encodeURIComponent(sessionId)}`
+        : '';
+    const detailCell = detailHref
+        ? `<a class="detail-btn" href="${escapeHtml(detailHref)}">View detail</a>`
+        : '<span class="muted">—</span>';
+    return `
+      <tr>
+        <td class="num muted">${escapeHtml(String(place))}</td>
+        <td>${renderClickableTeamFilter('opponent', round.opponentHeroIds, round.opponentPet)}</td>
+        <td class="muted">${escapeHtml(name)}</td>
+        <td class="muted">${escapeHtml(formatTesterLabel(round))}</td>
+        <td>${renderClickableTeamFilter('my', round.myHeroIds, round.myPet, round.myHeroNames)}</td>
+        <td class="num">${renderWinRateCell(round.winRate, minWinRate)}</td>
+        <td class="num muted">${escapeHtml(formatRecord(round.wins, round.losses))}</td>
+        <td class="muted nowrap">${escapeHtml(formatWhen(round.testedAt))}</td>
+        <td>${detailCell}</td>
+      </tr>`;
+}
+
+/**
+ * SimLab list page — main-view style log with filters + detail links.
+ */
+export function renderSimLabPage(rounds = [], options = {}) {
+    const minWinRate = options.minWinRate ?? 90;
+    const total = options.total ?? rounds.length;
+    const offset = options.offset ?? 0;
+    const pageSize = options.pageSize ?? rounds.length;
+    const paging = {
+        testerUserId: options.testerUserId || '',
+        opponentHeroIds: options.opponentHeroIds || [],
+        myHeroIds: options.myHeroIds || [],
+        testers: options.testers || [],
+        offset,
+        pageSize,
+    };
+    const shownFrom = total === 0 ? 0 : offset + 1;
+    const shownTo = Math.min(offset + rounds.length, total);
+    const nextOffset = offset + rounds.length;
+    const hasMore = nextOffset < total;
+    const queryBase = buildSimLabQueryBase({ ...paging, offset: 0 });
+    const allLink = `/training/simlab-view?${queryBase}limit=0`;
+    const nextLink = `/training/simlab-view?${buildSimLabQueryBase({ ...paging, offset: nextOffset })}limit=${pageSize}`;
+    const startLink = `/training/simlab-view?${queryBase}limit=${pageSize}`;
+    const rows = (Array.isArray(rounds) ? rounds : [])
+        .map((round) => renderSimLabLogRow(round, minWinRate))
+        .join('');
+    const jsonQuery = new URLSearchParams();
+    jsonQuery.set('limit', String(pageSize > 0 ? pageSize : 100));
+    if (paging.testerUserId) jsonQuery.set('tester', paging.testerUserId);
+    for (const id of paging.opponentHeroIds) jsonQuery.append('opponentHero', String(id));
+    for (const id of paging.myHeroIds) jsonQuery.append('myHero', String(id));
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SimLab</title>
+  <style>
+    ${renderSimLabSharedStyles()}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <div class="page-header-main">
+        <h1>SimLab</h1>
+        <p class="subtitle">Counter Suggest sims — same log layout as Training. Open View detail for favor, flag &amp; slots.</p>
+      </div>
+      ${renderSimLabNav('list')}
+    </header>
+
+    <section class="intro card">
+      <p class="intro-lead">
+        Filter and scan like the main Training log. Use <strong>View detail</strong> on a row for full pet favor, war flag, and banner slots.
+        Green = ${escapeHtml(String(minWinRate))}%+.
+      </p>
+    </section>
+
+    ${renderSimLabFilters(paging)}
+    ${renderSimLabLegend()}
+
+    <section class="section" id="results">
+      <div class="section-head">
+        <h2>Test log</h2>
+        <p class="section-lead">One row per Counter Suggest Sim run.</p>
+      </div>
+      <div class="toolbar">
+        <span class="status">${shownFrom}–${shownTo} / ${total}</span>
+        ${pageSize > 0 && offset + pageSize < total ? `<a href="${allLink}">All</a>` : ''}
+        ${hasMore ? `<a href="${nextLink}">+${Math.min(pageSize, total - nextOffset)}</a>` : ''}
+        ${offset > 0 ? `<a href="${startLink}">Start</a>` : ''}
+        <a href="/training/simlab?${escapeHtml(jsonQuery.toString())}">JSON</a>
+      </div>
+      <div class="table-wrap card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="num">#</th>
+              <th>Opponent</th>
+              <th>Label</th>
+              <th>Tester</th>
+              <th>Your team</th>
+              <th class="num">Win %</th>
+              <th class="num">W/L</th>
+              <th>When</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || '<tr><td colspan="9" class="muted">No runs — clear filters or Sim from Counter Suggest</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      ${hasMore ? `<p class="meta"><a href="${nextLink}">More</a> · <a href="${allLink}">All ${total}</a></p>` : ''}
+    </section>
+  </div>
+  ${renderSimLabFilterScript()}
+</body>
+</html>`;
+}
+
+/**
+ * Full SimLab result for one session (favor, flag, slots, payload).
+ */
+export function renderSimLabDetailPage(round, options = {}) {
+    const minWinRate = options.minWinRate ?? 90;
+    if (!round) {
+        return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8" /><title>SimLab detail</title>
+<style>${renderSimLabSharedStyles()}</style></head>
+<body><div class="page">
+  <header class="page-header">
+    <div class="page-header-main"><h1>SimLab detail</h1><p class="subtitle">Session not found.</p></div>
+    ${renderSimLabNav()}
+  </header>
+  <div class="empty">No SimLab session for that id.</div>
+  <p class="meta"><a href="/training/simlab-view">Back to SimLab</a></p>
+</div></body></html>`;
+    }
+
+    const name = round.opponentName || (round.opponentUserId ? `User ${round.opponentUserId}` : 'Unknown');
+    const payloadJson = round.payload
+        ? escapeHtml(JSON.stringify(round.payload, null, 2))
+        : '<span class="muted">No stored payload</span>';
+    const bestDetailJson = round.bestDetail
+        ? escapeHtml(JSON.stringify(round.bestDetail, null, 2))
+        : '';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SimLab · ${escapeHtml(name)}</title>
+  <style>
+    ${renderSimLabSharedStyles()}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <div class="page-header-main">
+        <h1>SimLab detail</h1>
+        <p class="subtitle">Full result for one Counter Suggest Sim run.</p>
+      </div>
+      ${renderSimLabNav()}
+    </header>
+
+    <div class="detail-actions">
+      <a href="/training/simlab-view">← Back to SimLab log</a>
+      <a href="/training/view">Training</a>
+      <a href="/training/simlab?sessionId=${encodeURIComponent(round.sessionId || '')}">JSON</a>
+    </div>
+
+    <div class="detail-meta">
+      <span><strong>When</strong> ${escapeHtml(formatWhen(round.testedAt))}</span>
+      <span><strong>Win</strong> ${renderWinRateCell(round.winRate, minWinRate)}</span>
+      <span><strong>W/L</strong> ${escapeHtml(formatRecord(round.wins, round.losses))}</span>
+      <span><strong>Tester</strong> ${escapeHtml(formatTesterLabel(round))}</span>
+      <span><strong>Source</strong> ${escapeHtml(formatSourceLabel(round.source, round.label))}</span>
+      <span class="mono"><strong>Session</strong> ${escapeHtml(round.sessionId || '—')}</span>
+    </div>
+
+    <div class="detail-grid">
+      <section class="detail-card card">
+        <h2>Target defense</h2>
+        <div class="detail-block">
+          <div class="detail-block-title">Team</div>
+          ${renderComboLabelHtml(round.opponentHeroIds, round.opponentPet)}
+          <div class="muted" style="margin-top:6px">
+            ${escapeHtml(name)}
+            ${round.opponentUserId ? ` · id ${escapeHtml(String(round.opponentUserId))}` : ''}
+            ${round.opponentPlace != null ? ` · #${escapeHtml(String(round.opponentPlace))}` : ''}
+            ${round.opponentPower != null ? ` · ${escapeHtml(String(Math.round(Number(round.opponentPower))))} pwr` : ''}
+          </div>
+        </div>
+        <div class="detail-block">
+          <div class="detail-block-title">Support</div>
+          <div class="sim-meta-row">
+            ${renderSimLabSupportBits({
+                banner: round.opponentBanner,
+                bannerStones: round.opponentBannerStones,
+                favor: round.opponentFavor,
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section class="detail-card card">
+        <h2>Your attack</h2>
+        <div class="detail-block">
+          <div class="detail-block-title">Team</div>
+          ${renderComboLabelHtml(round.myHeroIds, round.myPet, round.myHeroNames)}
+        </div>
+        <div class="detail-block">
+          <div class="detail-block-title">Support</div>
+          <div class="sim-meta-row">
+            ${renderSimLabSupportBits({
+                banner: round.myBanner,
+                bannerStones: round.myBannerStones,
+                favor: round.myFavor,
+                maxUpgrade: round.maxUpgrade,
+            })}
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="section" style="margin-top:18px">
+      <div class="section-head">
+        <h2>Stored payload</h2>
+        <p class="section-lead">Compact SimLab archive (no battle samples).</p>
+      </div>
+      <div class="card" style="padding:12px">
+        <pre class="payload">${payloadJson}</pre>
+        ${bestDetailJson ? `<p class="muted" style="margin:12px 0 6px">best_detail</p><pre class="payload">${bestDetailJson}</pre>` : ''}
+      </div>
+    </section>
+  </div>
 </body>
 </html>`;
 }

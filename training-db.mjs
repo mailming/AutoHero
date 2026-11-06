@@ -1702,6 +1702,153 @@ export async function getMetaTeamCandidates({ snapshotId, limit } = {}) {
     };
 }
 
+function buildSimLabWhere({ testerUserId, myHeroIds, opponentHeroIds, params }) {
+    const clauses = [`tr.label ILIKE 'simlab%'`];
+
+    if (testerUserId != null && testerUserId !== '') {
+        if (String(testerUserId) === '0') {
+            clauses.push(`COALESCE(tr.tester_user_id, '0') = '0' AND COALESCE(tr.max_upgrade, TRUE) = TRUE`);
+        } else {
+            params.push(String(testerUserId));
+            clauses.push(`tr.tester_user_id = $${params.length}`);
+        }
+    }
+
+    clauses.push(...appendComboHeroFilterClauses({
+        heroIds: myHeroIds,
+        heroColumn: 'COALESCE(tr.best_hero_ids, ARRAY[]::int[])',
+        petColumn: 'COALESCE(tr.best_pet, 0)',
+        params,
+    }));
+
+    clauses.push(...appendComboHeroFilterClauses({
+        heroIds: opponentHeroIds,
+        heroColumn: 'COALESCE(oc.hero_ids, ARRAY[]::int[])',
+        petColumn: 'COALESCE(oc.pet, 0)',
+        params,
+    }));
+
+    return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+}
+
+function mapSimLabRoundRow(row) {
+    let payload = row.payload;
+    if (typeof payload === 'string') {
+        try {
+            payload = JSON.parse(payload);
+        } catch {
+            payload = null;
+        }
+    }
+    let bestDetail = row.best_detail;
+    if (typeof bestDetail === 'string') {
+        try {
+            bestDetail = JSON.parse(bestDetail);
+        } catch {
+            bestDetail = null;
+        }
+    }
+    const best = payload?.best || payload?.rankings?.[0] || null;
+    const opponentTeam = payload?.opponent?.team || {};
+    const parsedCombo = parseComboKey(row.opponent_combo_key);
+
+    const opponentHeroIds = Array.isArray(opponentTeam.heroes) && opponentTeam.heroes.length
+        ? opponentTeam.heroes.map(Number)
+        : (Array.isArray(row.oc_hero_ids) && row.oc_hero_ids.length
+            ? row.oc_hero_ids.map(Number)
+            : parsedCombo.heroIds);
+    const opponentPet = opponentTeam.pet != null
+        ? Number(opponentTeam.pet)
+        : (row.oc_pet != null ? Number(row.oc_pet) : (parsedCombo.pet || null));
+    const opponentBanner = opponentTeam.banner != null
+        ? Number(opponentTeam.banner)
+        : (payload?.opponent?.banner != null
+            ? Number(payload.opponent.banner)
+            : (row.oc_banner != null ? Number(row.oc_banner) : (parsedCombo.banner || null)));
+
+    const myBanner = row.best_banner != null
+        ? Number(row.best_banner)
+        : (bestDetail?.banner != null
+            ? Number(bestDetail.banner)
+            : (best?.banner != null ? Number(best.banner) : null));
+    const myBannerStones = compactBannerStones(
+        bestDetail?.bannerStones || best?.bannerStones
+    );
+    const myFavor = (bestDetail?.favor && typeof bestDetail.favor === 'object' && Object.keys(bestDetail.favor).length)
+        ? bestDetail.favor
+        : (best?.favor && typeof best.favor === 'object' ? best.favor : {});
+    const opponentBannerStones = compactBannerStones(
+        opponentTeam.bannerStones || opponentTeam.defenceBannerStones
+    );
+
+    return {
+        sessionId: row.session_id,
+        label: row.label,
+        testedAt: row.completed_at || row.started_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        source: payload?.opponent?.source || payload?.source || null,
+        opponentComboKey: row.opponent_combo_key,
+        opponentUserId: row.opponent_user_id != null ? String(row.opponent_user_id) : null,
+        opponentName: row.opponent_name,
+        opponentPlace: row.opponent_place,
+        opponentPower: row.opponent_power != null ? Number(row.opponent_power) : null,
+        opponentHeroIds,
+        opponentPet,
+        opponentBanner,
+        opponentBannerStones,
+        opponentFavor: opponentTeam.favor && typeof opponentTeam.favor === 'object'
+            ? opponentTeam.favor
+            : {},
+        myHeroIds: row.best_hero_ids,
+        myHeroNames: row.best_hero_names,
+        myPet: row.best_pet != null
+            ? Number(row.best_pet)
+            : (best?.pet != null ? Number(best.pet) : null),
+        myBanner,
+        myBannerStones,
+        myFavor,
+        winRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
+        wins: row.best_wins != null
+            ? Number(row.best_wins)
+            : (best?.wins != null ? Number(best.wins) : null),
+        losses: row.best_losses != null
+            ? Number(row.best_losses)
+            : (best?.losses != null ? Number(best.losses) : null),
+        testerUserId: row.tester_user_id != null ? String(row.tester_user_id) : null,
+        testerName: row.tester_name || null,
+        maxUpgrade: row.max_upgrade !== false,
+        payload,
+        bestDetail,
+    };
+}
+
+const SIMLAB_SELECT_SQL = `
+            tr.session_id,
+            tr.label,
+            tr.started_at,
+            tr.completed_at,
+            tr.opponent_combo_key,
+            tr.opponent_user_id,
+            tr.opponent_name,
+            tr.opponent_place,
+            tr.opponent_power,
+            tr.best_win_rate,
+            tr.best_hero_ids,
+            tr.best_hero_names,
+            tr.best_pet,
+            tr.best_banner,
+            tr.best_wins,
+            tr.best_losses,
+            tr.best_detail,
+            tr.tester_user_id,
+            tr.tester_name,
+            tr.max_upgrade,
+            tr.payload,
+            oc.hero_ids AS oc_hero_ids,
+            oc.pet AS oc_pet,
+            oc.banner AS oc_banner`;
+
 /**
  * Accounts that have initiated SimLab runs.
  */
@@ -1740,8 +1887,9 @@ export async function getSimLabTesters() {
  */
 export async function getSimLabRounds({
     limit = 50,
+    offset = 0,
     testerUserId,
-    opponentHeroIds: opponentHeroFilter,
+    opponentHeroIds,
     myHeroIds,
 } = {}) {
     if (!pool) {
@@ -1749,158 +1897,79 @@ export async function getSimLabRounds({
     }
 
     const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
-    const requiredOpponentIds = normalizeHeroFilterIds(opponentHeroFilter);
+    const safeOffset = Math.max(0, Number(offset) || 0);
     const params = [];
-    const clauses = [`tr.label ILIKE 'simlab%'`];
-
-    if (testerUserId != null && testerUserId !== '') {
-        if (String(testerUserId) === '0') {
-            clauses.push(`COALESCE(tr.tester_user_id, '0') = '0' AND COALESCE(tr.max_upgrade, TRUE) = TRUE`);
-        } else {
-            params.push(String(testerUserId));
-            clauses.push(`tr.tester_user_id = $${params.length}`);
-        }
-    }
-
-    // myHero / pet filters are on training_rounds columns; opponent filters applied after enrich.
-    clauses.push(...appendComboHeroFilterClauses({
-        heroIds: myHeroIds,
-        heroColumn: 'COALESCE(tr.best_hero_ids, ARRAY[]::int[])',
-        petColumn: 'COALESCE(tr.best_pet, 0)',
+    const where = buildSimLabWhere({
+        testerUserId,
+        myHeroIds,
+        opponentHeroIds,
         params,
-    }));
+    });
 
     params.push(safeLimit);
+    const limitParam = `$${params.length}`;
+    params.push(safeOffset);
+    const offsetParam = `$${params.length}`;
+
     const result = await pool.query(
-        `SELECT
-            tr.session_id,
-            tr.label,
-            tr.started_at,
-            tr.completed_at,
-            tr.opponent_combo_key,
-            tr.opponent_user_id,
-            tr.opponent_name,
-            tr.opponent_place,
-            tr.opponent_power,
-            tr.best_win_rate,
-            tr.best_hero_ids,
-            tr.best_hero_names,
-            tr.best_pet,
-            tr.best_banner,
-            tr.best_wins,
-            tr.best_losses,
-            tr.best_detail,
-            tr.tester_user_id,
-            tr.tester_name,
-            tr.max_upgrade,
-            tr.payload,
-            oc.hero_ids AS oc_hero_ids,
-            oc.pet AS oc_pet,
-            oc.banner AS oc_banner
+        `SELECT ${SIMLAB_SELECT_SQL}
          FROM training_rounds tr
          LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
-         WHERE ${clauses.join(' AND ')}
+         ${where}
          ORDER BY COALESCE(tr.completed_at, tr.created_at) DESC NULLS LAST
-         LIMIT $${params.length}`,
+         LIMIT ${limitParam} OFFSET ${offsetParam}`,
         params
     );
 
-    return result.rows.map((row) => {
-        let payload = row.payload;
-        if (typeof payload === 'string') {
-            try {
-                payload = JSON.parse(payload);
-            } catch {
-                payload = null;
-            }
-        }
-        let bestDetail = row.best_detail;
-        if (typeof bestDetail === 'string') {
-            try {
-                bestDetail = JSON.parse(bestDetail);
-            } catch {
-                bestDetail = null;
-            }
-        }
-        const best = payload?.best || payload?.rankings?.[0] || null;
-        const opponentTeam = payload?.opponent?.team || {};
-        const parsedCombo = parseComboKey(row.opponent_combo_key);
+    return result.rows.map(mapSimLabRoundRow);
+}
 
-        const opponentHeroIds = Array.isArray(opponentTeam.heroes) && opponentTeam.heroes.length
-            ? opponentTeam.heroes.map(Number)
-            : (Array.isArray(row.oc_hero_ids) && row.oc_hero_ids.length
-                ? row.oc_hero_ids.map(Number)
-                : parsedCombo.heroIds);
-        const opponentPet = opponentTeam.pet != null
-            ? Number(opponentTeam.pet)
-            : (row.oc_pet != null ? Number(row.oc_pet) : (parsedCombo.pet || null));
-        const opponentBanner = opponentTeam.banner != null
-            ? Number(opponentTeam.banner)
-            : (payload?.opponent?.banner != null
-                ? Number(payload.opponent.banner)
-                : (row.oc_banner != null ? Number(row.oc_banner) : (parsedCombo.banner || null)));
+export async function getSimLabRoundCount({
+    testerUserId,
+    opponentHeroIds,
+    myHeroIds,
+} = {}) {
+    if (!pool) {
+        pool = createPool();
+    }
 
-        const myBanner = row.best_banner != null
-            ? Number(row.best_banner)
-            : (bestDetail?.banner != null
-                ? Number(bestDetail.banner)
-                : (best?.banner != null ? Number(best.banner) : null));
-        const myBannerStones = compactBannerStones(
-            bestDetail?.bannerStones || best?.bannerStones
-        );
-        const myFavor = (bestDetail?.favor && typeof bestDetail.favor === 'object' && Object.keys(bestDetail.favor).length)
-            ? bestDetail.favor
-            : (best?.favor && typeof best.favor === 'object' ? best.favor : {});
-        const opponentBannerStones = compactBannerStones(
-            opponentTeam.bannerStones || opponentTeam.defenceBannerStones
-        );
-
-        return {
-            sessionId: row.session_id,
-            label: row.label,
-            testedAt: row.completed_at || row.started_at,
-            source: payload?.opponent?.source || payload?.source || null,
-            opponentComboKey: row.opponent_combo_key,
-            opponentUserId: row.opponent_user_id != null ? String(row.opponent_user_id) : null,
-            opponentName: row.opponent_name,
-            opponentPlace: row.opponent_place,
-            opponentPower: row.opponent_power != null ? Number(row.opponent_power) : null,
-            opponentHeroIds,
-            opponentPet,
-            opponentBanner,
-            opponentBannerStones,
-            opponentFavor: opponentTeam.favor && typeof opponentTeam.favor === 'object'
-                ? opponentTeam.favor
-                : {},
-            myHeroIds: row.best_hero_ids,
-            myHeroNames: row.best_hero_names,
-            myPet: row.best_pet != null
-                ? Number(row.best_pet)
-                : (best?.pet != null ? Number(best.pet) : null),
-            myBanner,
-            myBannerStones,
-            myFavor,
-            winRate: row.best_win_rate != null ? Number(row.best_win_rate) : null,
-            wins: row.best_wins != null
-                ? Number(row.best_wins)
-                : (best?.wins != null ? Number(best.wins) : null),
-            losses: row.best_losses != null
-                ? Number(row.best_losses)
-                : (best?.losses != null ? Number(best.losses) : null),
-            testerUserId: row.tester_user_id != null ? String(row.tester_user_id) : null,
-            testerName: row.tester_name || null,
-            maxUpgrade: row.max_upgrade !== false,
-        };
-    }).filter((round) => {
-        if (!requiredOpponentIds.length) return true;
-        const heroes = new Set((round.opponentHeroIds || []).map(Number));
-        const pet = Number(round.opponentPet) || 0;
-        const requiredHeroes = requiredOpponentIds.filter((id) => id < 6000);
-        const requiredPets = requiredOpponentIds.filter((id) => id >= 6000);
-        if (!requiredHeroes.every((id) => heroes.has(id))) return false;
-        if (!requiredPets.every((id) => pet === id)) return false;
-        return true;
+    const params = [];
+    const where = buildSimLabWhere({
+        testerUserId,
+        myHeroIds,
+        opponentHeroIds,
+        params,
     });
+
+    const result = await pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM training_rounds tr
+         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+         ${where}`,
+        params
+    );
+
+    return result.rows[0]?.count || 0;
+}
+
+export async function getSimLabRoundBySession(sessionId) {
+    if (!sessionId) return null;
+    if (!pool) {
+        pool = createPool();
+    }
+
+    const result = await pool.query(
+        `SELECT ${SIMLAB_SELECT_SQL}
+         FROM training_rounds tr
+         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+         WHERE tr.session_id = $1
+           AND tr.label ILIKE 'simlab%'
+         LIMIT 1`,
+        [String(sessionId)]
+    );
+
+    if (!result.rows[0]) return null;
+    return mapSimLabRoundRow(result.rows[0]);
 }
 
 /**
