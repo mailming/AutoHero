@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.30.3
+// @version      1.30.4
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.30.3';
+    const EXTENSION_VERSION = '1.30.4';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -2872,7 +2872,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.30.3';
+    const COUNTER_SUGGEST_VERSION = '1.30.4';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -2929,6 +2929,7 @@
             enemy: null,
             counters: null,
             selected: null, // { match, source, key }
+            simHistory: null, // prior SimLab best for this defense (current power)
             simBest: null, // best SimLab config for selected lineup
             attacking: false,
             simming: false,
@@ -2962,22 +2963,119 @@
         }
 
         function selectionKey(match, source) {
-            const heroes = (match?.myHeroIds || []).map(Number).join(',');
-            const pet = Number(match?.myPet) || 0;
+            const heroes = (match?.myHeroIds || match?.heroes || []).map(Number).join(',');
+            const pet = Number(match?.myPet ?? match?.pet) || 0;
             return `${source || 'power'}:${heroes}|${pet}`;
+        }
+
+        function sameHeroSet(a, b) {
+            const left = (Array.isArray(a) ? a : []).map(Number).filter((id) => id > 0 && id < 6000).sort((x, y) => x - y);
+            const right = (Array.isArray(b) ? b : []).map(Number).filter((id) => id > 0 && id < 6000).sort((x, y) => x - y);
+            if (left.length !== 5 || right.length !== 5) return false;
+            return left.every((id, i) => id === right[i]);
+        }
+
+        function petLabel(petId) {
+            const id = Number(petId) || 0;
+            if (!id) return 'No pet';
+            return CONSTANTS.PET_NAMES[id] || heroName(id) || `Pet ${id}`;
+        }
+
+        function escapePanelText(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function favorCount(favor) {
+            if (!favor || typeof favor !== 'object') return 0;
+            return Object.keys(favor).filter((key) => {
+                const petId = Number(favor[key]);
+                return Number.isFinite(petId) && petId >= 6000 && petId < 7000;
+            }).length;
+        }
+
+        function formatRecordText(wins, losses) {
+            const w = Number(wins);
+            const l = Number(losses);
+            if (!Number.isFinite(w) && !Number.isFinite(l)) return '';
+            return `${Number.isFinite(w) ? w : 0}W/${Number.isFinite(l) ? l : 0}L`;
+        }
+
+        /** Compact support chips: Flag · Favor · record — mirrors SimLab detail Best attack. */
+        function formatSupportMetaHtml({ pet, banner, favor, winRate, wins, losses, badge }) {
+            const chips = [];
+            if (pet) {
+                chips.push(`<span class="chip"><span class="chip-k">Pet</span> ${escapePanelText(petLabel(pet))}</span>`);
+            }
+            if (Number(banner) > 0) {
+                chips.push(`<span class="chip"><span class="chip-k">Flag</span> ${escapePanelText(String(banner))}</span>`);
+            }
+            const favors = favorCount(favor);
+            chips.push(
+                `<span class="chip${favors ? '' : ' warn'}"><span class="chip-k">Favor</span> ${favors ? `${favors}/5` : '—'}</span>`
+            );
+            if (winRate != null && Number.isFinite(Number(winRate))) {
+                chips.push(
+                    `<span class="chip rate"><span class="chip-k">Win</span> ${Math.round(Number(winRate))}%</span>`
+                );
+            }
+            const record = formatRecordText(wins, losses);
+            if (record) {
+                chips.push(`<span class="chip"><span class="chip-k">Rec</span> ${escapePanelText(record)}</span>`);
+            }
+            if (badge) {
+                chips.push(`<span class="chip badge">${escapePanelText(badge)}</span>`);
+            }
+            return chips.join('');
+        }
+
+        function simHistoryMatchesMatch(match) {
+            const hist = panelState.simHistory;
+            if (!hist?.heroes?.length || !match) return null;
+            const matchHeroes = match.myHeroIds || match.heroes || [];
+            return sameHeroSet(hist.heroes, matchHeroes) ? hist : null;
+        }
+
+        function bindSimBestFromHistory(key, match, source = null) {
+            const src = source || panelState.selected?.source || '';
+            const hist = simHistoryMatchesMatch(match)
+                || (panelState.simHistory && src === 'simlab' ? panelState.simHistory : null);
+            // Prefer current-power SimLab history when heroes match this selection.
+            if (hist) {
+                panelState.simBest = {
+                    key,
+                    heroes: hist.heroes,
+                    pet: hist.pet,
+                    banner: hist.banner,
+                    bannerStones: hist.bannerStones,
+                    favor: hist.favor,
+                    winRate: hist.winRate,
+                    wins: hist.wins,
+                    losses: hist.losses,
+                    heroNames: hist.heroNames,
+                    fromHistory: true,
+                };
+                return panelState.simBest;
+            }
+            if (panelState.simBest?.key !== key) {
+                panelState.simBest = null;
+            }
+            return panelState.simBest;
         }
 
         function selectMatch(match, source) {
             if (!match) return;
-            const key = selectionKey(match, source);
-            if (panelState.selected?.key !== key) {
-                panelState.simBest = null;
-            }
+            const resolvedSource = source || 'power';
+            const key = selectionKey(match, resolvedSource);
             panelState.selected = {
                 match,
-                source: source || 'power',
+                source: resolvedSource,
                 key,
             };
+            bindSimBestFromHistory(key, match, resolvedSource);
             panelController?.render();
         }
 
@@ -2986,11 +3084,13 @@
             panelState.simBest = null;
         }
 
-        function petLabel(petId) {
-            const id = Number(petId) || 0;
-            if (!id) return 'No pet';
-            return CONSTANTS.PET_NAMES[id] || heroName(id) || `Pet ${id}`;
+        function clearSimHistory() {
+            panelState.simHistory = null;
+            if (panelState.simBest?.fromHistory) {
+                panelState.simBest = null;
+            }
         }
+
         let panelController = null;
         let pollTimer = null;
 
@@ -4257,6 +4357,12 @@
                         text-transform: uppercase;
                         letter-spacing: .08em;
                     }
+                    .section-title .count {
+                        font-weight: 600;
+                        letter-spacing: .02em;
+                        color: var(--muted);
+                        text-transform: none;
+                    }
                     .list {
                         display: flex;
                         flex-direction: column;
@@ -4264,9 +4370,8 @@
                     }
                     .row-wrap {
                         display: grid;
-                        grid-template-columns: 1fr 52px;
+                        grid-template-columns: 1fr 48px;
                         align-items: stretch;
-                        min-height: 56px;
                         border: 1px solid var(--gold-soft);
                         border-radius: 8px;
                         background: rgba(255,255,255,.035);
@@ -4281,11 +4386,20 @@
                         background: rgba(223,190,104,.22);
                         box-shadow: inset 3px 0 0 #ffe7a8;
                     }
+                    .row-wrap.sim-saved {
+                        border-color: rgba(120,170,230,.7);
+                        background: rgba(55,90,140,.18);
+                    }
+                    .row-wrap.sim-saved.selected {
+                        border-color: rgba(160,200,255,.95);
+                        background: rgba(55,90,140,.32);
+                        box-shadow: inset 3px 0 0 #9ec5ff;
+                    }
                     .row {
                         display: flex;
                         flex-direction: column;
                         justify-content: center;
-                        gap: 4px;
+                        gap: 6px;
                         width: 100%;
                         margin: 0;
                         padding: 8px 10px;
@@ -4310,21 +4424,47 @@
                         -webkit-line-clamp: 2;
                         -webkit-box-orient: vertical;
                     }
-                    .row-meta {
+                    .row-chips {
                         display: flex;
+                        flex-wrap: wrap;
+                        gap: 4px;
+                    }
+                    .chip {
+                        display: inline-flex;
                         align-items: center;
-                        justify-content: space-between;
-                        gap: 8px;
-                        font-size: 11px;
+                        gap: 3px;
+                        padding: 2px 6px;
+                        border: 1px solid rgba(223,190,104,.28);
+                        border-radius: 999px;
+                        background: rgba(0,0,0,.22);
+                        font-size: 10px;
+                        line-height: 1.2;
                         color: var(--muted);
+                        white-space: nowrap;
                     }
-                    .row-rate {
-                        flex: 0 0 auto;
+                    .chip-k {
+                        color: rgba(255,231,168,.72);
                         font-weight: 700;
-                        color: #c8f0c0;
-                        letter-spacing: .02em;
+                        letter-spacing: .03em;
+                        text-transform: uppercase;
+                        font-size: 8px;
                     }
-                    .row-wrap.selected .row-rate { color: #e8ffd8; }
+                    .chip.rate {
+                        border-color: rgba(140,210,130,.45);
+                        color: #c8f0c0;
+                    }
+                    .chip.badge {
+                        border-color: rgba(120,170,230,.55);
+                        background: rgba(55,90,140,.35);
+                        color: #d6e8ff;
+                        font-weight: 700;
+                        letter-spacing: .04em;
+                        text-transform: uppercase;
+                    }
+                    .chip.warn {
+                        border-color: rgba(210,150,80,.45);
+                        color: #f0d2a0;
+                    }
                     .simlab-btn {
                         margin: 0;
                         padding: 0 6px;
@@ -4337,7 +4477,6 @@
                         font-weight: 700;
                         letter-spacing: .04em;
                         cursor: pointer;
-                        writing-mode: horizontal-tb;
                     }
                     .simlab-btn:hover:not(:disabled) {
                         background: rgba(80,130,200,.48);
@@ -4364,18 +4503,35 @@
                         flex-direction: column;
                         gap: 8px;
                     }
-                    .attack-hint {
+                    .selected-card {
                         margin: 0;
-                        min-height: 14px;
-                        font-size: 10px;
-                        line-height: 1.35;
-                        color: var(--muted);
-                        text-align: center;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        white-space: nowrap;
+                        padding: 8px 10px;
+                        border: 1px solid rgba(223,190,104,.35);
+                        border-radius: 8px;
+                        background: rgba(255,255,255,.04);
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
                     }
-                    .attack-hint:empty { display: none; }
+                    .selected-card.empty-sel {
+                        border-style: dashed;
+                        color: var(--muted);
+                        font-size: 11px;
+                        text-align: center;
+                    }
+                    .selected-label {
+                        font-size: 9px;
+                        font-weight: 700;
+                        letter-spacing: .08em;
+                        text-transform: uppercase;
+                        color: var(--gold);
+                    }
+                    .selected-main {
+                        font-size: 11px;
+                        font-weight: 600;
+                        line-height: 1.3;
+                        color: var(--ink);
+                    }
                     .footer-actions {
                         display: grid;
                         grid-template-columns: 1fr 72px;
@@ -4445,22 +4601,26 @@
                         <div class="subtitle" id="enemyLabel">Waiting for Arena / Clan Domination attack…</div>
                         <div class="status" id="status"></div>
                     </div>
+                    <div class="section" id="simSection" hidden>
+                        <div class="section-title">SimLab <span class="count" id="simSectionCount">saved · current power</span></div>
+                        <div class="list" id="simLabList"></div>
+                    </div>
                     <div class="section">
-                        <div class="section-title">My power</div>
+                        <div class="section-title">My power <span class="count" id="atPowerCount"></span></div>
                         <div class="list" id="atPower"></div>
                     </div>
                     <div class="section">
-                        <div class="section-title">Max power</div>
+                        <div class="section-title">Max power <span class="count" id="maxBeatCount"></span></div>
                         <div class="list" id="maxBeat"></div>
                     </div>
                     <div class="footer" id="attackBar">
-                        <p class="attack-hint" id="attackHint">Select a lineup, then Attack</p>
+                        <div class="selected-card empty-sel" id="selectedCard">Select a lineup</div>
                         <div class="footer-actions" id="trainBox">
                             <button type="button" class="attack-btn" id="attackBtn" disabled>Attack</button>
                             <button type="button" class="train-btn" id="trainBtn" title="Run Arena Training on this defense (demo battles)">Train</button>
                         </div>
                         <p class="train-hint" id="trainHint"></p>
-                        <div class="note" id="panelNote">Select · Attack · SimLab / Train</div>
+                        <div class="note" id="panelNote">Select · Attack · Sim / Train</div>
                     </div>
                 </div>
             `;
@@ -4469,12 +4629,15 @@
             const panelTitle = shadow.getElementById('panelTitle');
             const enemyLabel = shadow.getElementById('enemyLabel');
             const statusEl = shadow.getElementById('status');
+            const simSection = shadow.getElementById('simSection');
+            const simSectionCount = shadow.getElementById('simSectionCount');
+            const simLabListEl = shadow.getElementById('simLabList');
             const atPowerEl = shadow.getElementById('atPower');
+            const atPowerCount = shadow.getElementById('atPowerCount');
             const maxBeatEl = shadow.getElementById('maxBeat');
-            const attackBar = shadow.getElementById('attackBar');
-            const attackHint = shadow.getElementById('attackHint');
+            const maxBeatCount = shadow.getElementById('maxBeatCount');
+            const selectedCard = shadow.getElementById('selectedCard');
             const attackBtn = shadow.getElementById('attackBtn');
-            const trainBox = shadow.getElementById('trainBox');
             const trainHint = shadow.getElementById('trainHint');
             const trainBtn = shadow.getElementById('trainBtn');
             const panelNote = shadow.getElementById('panelNote');
@@ -4517,25 +4680,58 @@
                 if (panel) panel.style.width = `${width}px`;
             }
 
-            function renderRow(match, source) {
+            function lineupNamesHtml(match, simOverlay = null) {
+                const names = Array.isArray(simOverlay?.heroNames) && simOverlay.heroNames.length === 5
+                    ? simOverlay.heroNames
+                    : (Array.isArray(match?.myHeroNames) && match.myHeroNames.length === 5
+                        ? match.myHeroNames
+                        : (match?.myHeroIds || match?.heroes || []).map(heroName));
+                return escapePanelText(names.join(' · '));
+            }
+
+            function renderRow(match, source, options = {}) {
                 const wrap = document.createElement('div');
                 const key = selectionKey(match, source);
                 const isSelected = panelState.selected?.key === key;
-                wrap.className = isSelected ? 'row-wrap selected' : 'row-wrap';
+                const simOverlay = options.simOverlay
+                    || (source !== 'max' ? simHistoryMatchesMatch(match) : null)
+                    || (panelState.simBest?.key === key ? panelState.simBest : null);
+                const isSimSaved = !!(simOverlay && (options.forceSimStyle || simOverlay.fromHistory || source === 'simlab'));
+                wrap.className = [
+                    'row-wrap',
+                    isSelected ? 'selected' : '',
+                    isSimSaved ? 'sim-saved' : '',
+                ].filter(Boolean).join(' ');
 
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'row';
                 button.disabled = isBusy();
-                button.title = 'Click to select this lineup';
-                const label = formatLineupLabel(match);
-                const rateSuffix = source === 'max' ? ' max' : '';
+                button.title = isSimSaved
+                    ? 'Saved SimLab loadout at current power — click to select'
+                    : 'Click to select this lineup';
+
+                const pet = Number(simOverlay?.pet ?? match?.myPet ?? match?.pet) || 0;
+                const banner = Number(simOverlay?.banner ?? match?.myBanner ?? match?.banner) || 0;
+                const favor = simOverlay?.favor || match?.myFavor || match?.favor || {};
+                const winRate = simOverlay?.winRate ?? match?.winRate;
+                const wins = simOverlay?.wins ?? match?.wins;
+                const losses = simOverlay?.losses ?? match?.losses;
+                const badge = isSimSaved
+                    ? 'SimLab'
+                    : (source === 'max' ? 'Max' : '');
+
                 button.innerHTML = `
-                    <div class="row-main">${label.names}</div>
-                    <div class="row-meta">
-                        <span>${label.petLabel}</span>
-                        <span class="row-rate">${label.winRate}${rateSuffix}</span>
-                    </div>
+                    <div class="row-main">${lineupNamesHtml(match, simOverlay)}</div>
+                    <div class="row-chips">${formatSupportMetaHtml({
+                        pet,
+                        banner,
+                        favor,
+                        winRate,
+                        wins,
+                        losses,
+                        badge,
+                    })}</div>
                 `;
                 button.addEventListener('click', () => {
                     if (isBusy()) return;
@@ -4565,6 +4761,20 @@
                 return wrap;
             }
 
+            function simHistoryAsMatch(hist) {
+                if (!hist?.heroes?.length) return null;
+                return {
+                    myHeroIds: hist.heroes,
+                    myHeroNames: hist.heroNames,
+                    myPet: hist.pet,
+                    myBanner: hist.banner,
+                    myFavor: hist.favor,
+                    winRate: hist.winRate,
+                    wins: hist.wins,
+                    losses: hist.losses,
+                };
+            }
+
             function render(force = false) {
                 place();
                 host.style.display = panelState.visible ? 'block' : 'none';
@@ -4577,9 +4787,13 @@
                 const isCd = panelState.mode === 'clanDomination' || enemy?.mode === 'clanDomination';
                 const atPower = normalizeCounterList(panelState.counters?.atPower);
                 const maxBeat = normalizeCounterList(panelState.counters?.maxBeat);
+                const simHist = panelState.simHistory;
+                const simMatch = simHistoryAsMatch(simHist);
+                const simCoveredByAtPower = !!(simMatch && atPower.some((m) => sameHeroSet(m.myHeroIds, simMatch.myHeroIds)));
 
                 // Resolve selection before painting rows so highlight is correct.
                 const listed = [
+                    ...(simMatch && !simCoveredByAtPower ? [selectionKey(simMatch, 'simlab')] : []),
                     ...atPower.slice(0, COUNTER_LIST_LIMIT).map((m) => selectionKey(m, 'power')),
                     ...maxBeat.slice(0, COUNTER_LIST_LIMIT).map((m) => selectionKey(m, 'max')),
                 ];
@@ -4587,15 +4801,29 @@
                     clearSelection();
                 }
                 if (!panelState.selected) {
-                    const autoMatch = atPower[0] || maxBeat[0] || null;
-                    const autoSource = atPower[0] ? 'power' : (maxBeat[0] ? 'max' : null);
+                    let autoMatch = null;
+                    let autoSource = null;
+                    if (simMatch) {
+                        const covered = atPower.find((m) => sameHeroSet(m.myHeroIds, simMatch.myHeroIds));
+                        autoMatch = covered || simMatch;
+                        autoSource = covered ? 'power' : 'simlab';
+                    } else if (atPower[0]) {
+                        autoMatch = atPower[0];
+                        autoSource = 'power';
+                    } else if (maxBeat[0]) {
+                        autoMatch = maxBeat[0];
+                        autoSource = 'max';
+                    }
                     if (autoMatch && autoSource) {
                         panelState.selected = {
                             match: autoMatch,
                             source: autoSource,
                             key: selectionKey(autoMatch, autoSource),
                         };
+                        bindSimBestFromHistory(panelState.selected.key, autoMatch);
                     }
+                } else if (panelState.selected) {
+                    bindSimBestFromHistory(panelState.selected.key, panelState.selected.match);
                 }
 
                 const signature = [
@@ -4608,6 +4836,10 @@
                     panelState.selected?.key || '',
                     panelState.simBest?.key || '',
                     panelState.simBest?.winRate ?? '',
+                    panelState.simHistory?.winRate ?? '',
+                    panelState.simHistory?.pet ?? '',
+                    panelState.simHistory?.banner ?? '',
+                    favorCount(panelState.simHistory?.favor),
                     panelState.attacking ? 1 : 0,
                     panelState.simming ? 1 : 0,
                     panelState.training ? 1 : 0,
@@ -4632,18 +4864,37 @@
                                         : ''
                 );
 
+                // Prior SimLab at current power: dedicated section only when it is not already a My-power row.
+                simLabListEl.innerHTML = '';
+                if (simMatch && !simCoveredByAtPower) {
+                    simSection.hidden = false;
+                    simSectionCount.textContent = `${Math.round(Number(simHist.winRate) || 0)}% · current power`;
+                    simLabListEl.appendChild(renderRow(simMatch, 'simlab', {
+                        simOverlay: simHist,
+                        forceSimStyle: true,
+                    }));
+                } else {
+                    simSection.hidden = true;
+                }
+
                 atPowerEl.innerHTML = '';
+                atPowerCount.textContent = atPower.length ? `${Math.min(atPower.length, COUNTER_LIST_LIMIT)}` : '';
                 maxBeatEl.innerHTML = '';
+                maxBeatCount.textContent = maxBeat.length ? `${Math.min(maxBeat.length, COUNTER_LIST_LIMIT)}` : '';
                 if (!atPower.length) {
                     const empty = document.createElement('div');
                     empty.className = 'empty';
                     empty.textContent = panelState.status === 'bridge_error'
                         ? 'Bridge/DB unavailable'
-                        : 'No at-power wins found';
+                        : (simMatch ? 'No other at-power DB counters' : 'No at-power wins found');
                     atPowerEl.appendChild(empty);
                 } else {
                     for (const match of atPower.slice(0, COUNTER_LIST_LIMIT)) {
-                        atPowerEl.appendChild(renderRow(match, 'power'));
+                        const overlay = simHistoryMatchesMatch(match);
+                        atPowerEl.appendChild(renderRow(match, 'power', {
+                            simOverlay: overlay,
+                            forceSimStyle: !!overlay,
+                        }));
                     }
                 }
                 if (!maxBeat.length) {
@@ -4662,18 +4913,28 @@
                 const selected = panelState.selected;
                 const canAttack = !!(selected?.match && enemy?.userId && !isBusy());
                 if (selected?.match) {
-                    const label = formatLineupLabel(selected.match);
-                    const shortNames = String(label.names || '').split(' · ').slice(0, 3).join(' · ');
-                    const more = String(label.names || '').split(' · ').length > 3 ? '…' : '';
                     const simBest = panelState.simBest?.key === selected.key ? panelState.simBest : null;
-                    const petText = simBest ? petLabel(simBest.pet) : label.petLabel;
-                    const simText = simBest
-                        ? ` · Sim ${Math.round(Number(simBest.winRate) || 0)}% B${simBest.banner}`
-                        : '';
-                    attackHint.textContent = `${selected.source === 'max' ? 'Max power' : 'My power'} · ${shortNames}${more} · ${petText}${simText}`;
+                    const sourceLabel = selected.source === 'max'
+                        ? 'Max power'
+                        : (selected.source === 'simlab' || simBest?.fromHistory ? 'SimLab · current power' : 'My power');
+                    selectedCard.className = 'selected-card';
+                    selectedCard.innerHTML = `
+                        <div class="selected-label">${escapePanelText(sourceLabel)}</div>
+                        <div class="selected-main">${lineupNamesHtml(selected.match, simBest)}</div>
+                        <div class="row-chips">${formatSupportMetaHtml({
+                            pet: Number(simBest?.pet ?? selected.match.myPet) || 0,
+                            banner: Number(simBest?.banner ?? selected.match.myBanner) || 0,
+                            favor: simBest?.favor || selected.match.myFavor || {},
+                            winRate: simBest?.winRate ?? selected.match.winRate,
+                            wins: simBest?.wins ?? selected.match.wins,
+                            losses: simBest?.losses ?? selected.match.losses,
+                            badge: simBest ? 'SimLab' : (selected.source === 'max' ? 'Max' : ''),
+                        })}</div>
+                    `;
                     attackBtn.textContent = panelState.attacking ? 'Attacking…' : 'Attack';
                 } else {
-                    attackHint.textContent = 'Select a lineup, then Attack';
+                    selectedCard.className = 'selected-card empty-sel';
+                    selectedCard.textContent = 'Select a lineup';
                     attackBtn.textContent = 'Attack';
                 }
                 attackBtn.disabled = !canAttack;
@@ -5219,22 +5480,42 @@
             lastFetchAt = Date.now();
             panelState.status = 'loading';
             panelState.message = 'Checking database…';
+            clearSimHistory();
+            clearSelection();
             panelController?.render();
 
             fetchInFlight = (async () => {
                 try {
                     const { userId } = await resolveCurrentTesterUserId();
-                    const counters = await fetchCounters(enemy.comboKey, userId);
+                    const [counters, simBestRaw] = await Promise.all([
+                        fetchCounters(enemy.comboKey, userId),
+                        fetchSimLabBestForCombo(enemy.comboKey, userId),
+                    ]);
                     if (lastComboKey !== requestKey) return;
                     panelState.counters = counters;
+                    panelState.simHistory = simLabBestToLoadout(simBestRaw);
                     panelState.status = 'ready';
+                    const simBits = panelState.simHistory
+                        ? ` · SimLab ${Math.round(Number(panelState.simHistory.winRate) || 0)}%`
+                        : '';
                     panelState.message = counters.opponentName
-                        ? `DB: ${counters.opponentName}`
-                        : (counters.reason === 'opponent_not_found' ? 'No training data for this defense' : '');
+                        ? `DB: ${counters.opponentName}${simBits}`
+                        : (counters.reason === 'opponent_not_found'
+                            ? (panelState.simHistory
+                                ? `SimLab history${simBits}`
+                                : 'No training data for this defense')
+                            : (simBits ? simBits.replace(/^ · /, '') : ''));
+                    console.log(`[${EXTENSION_NAME}] counters + SimLab history`, {
+                        comboKey: enemy.comboKey,
+                        atPower: normalizeCounterList(counters?.atPower).length,
+                        maxBeat: normalizeCounterList(counters?.maxBeat).length,
+                        simHistory: panelState.simHistory,
+                    });
                 } catch (error) {
                     if (lastComboKey !== requestKey) return;
                     console.warn(`[${EXTENSION_NAME}] counters fetch failed:`, error);
                     panelState.counters = { atPower: [], maxBeat: [] };
+                    panelState.simHistory = null;
                     panelState.status = 'bridge_error';
                     panelState.message = 'Bridge/DB unavailable';
                 } finally {
@@ -5641,8 +5922,12 @@
 
                 if (!best) throw new Error('SimLab produced no results');
 
+                const simKey = selectionKey(match, source);
+                const names = Array.isArray(match?.myHeroNames) && match.myHeroNames.length === 5
+                    ? match.myHeroNames
+                    : heroes.map(heroName);
                 panelState.simBest = {
-                    key: selectionKey(match, source),
+                    key: simKey,
                     heroes,
                     pet: best.pet,
                     banner: best.banner,
@@ -5651,13 +5936,29 @@
                     winRate: best.winRate,
                     wins: best.wins,
                     losses: best.losses,
+                    heroNames: names,
+                    fromHistory: false,
+                };
+                // Keep panel SimLab card in sync with the run we just finished.
+                panelState.simHistory = {
+                    heroes,
+                    pet: best.pet,
+                    banner: best.banner,
+                    bannerStones: best.bannerStones,
+                    favor: best.favor,
+                    winRate: best.winRate,
+                    wins: best.wins,
+                    losses: best.losses,
+                    heroNames: names,
+                    maxUpgrade: false,
+                    fromHistory: true,
                 };
 
-                const favorCount = Object.keys(best.favor || {}).length;
+                const assignedFavors = Object.keys(best.favor || {}).length;
                 const hitTarget = best.winRate >= SIMLAB_TARGET_WIN_RATE;
                 const msg = hitTarget
-                    ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${favorCount}`
-                    : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${favorCount} (<${SIMLAB_TARGET_WIN_RATE}%)`;
+                    ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors}`
+                    : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors} (<${SIMLAB_TARGET_WIN_RATE}%)`;
                 panelState.message = msg;
                 panelState.status = 'ready';
                 HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
@@ -5678,6 +5979,8 @@
 
         function simLabBestToLoadout(best, fallbackMatch = null) {
             if (!best || typeof best !== 'object') return null;
+            // Counter Suggest SimLab always runs at account power — ignore max-upgrade leftovers.
+            if (best.maxUpgrade === true) return null;
             const heroes = (best.myHeroIds || best.heroes || fallbackMatch?.myHeroIds || [])
                 .map(Number)
                 .filter((id) => id > 0 && id < 6000);
@@ -5692,7 +5995,9 @@
                 winRate: Number(best.winRate) || 0,
                 wins: Number(best.wins) || 0,
                 losses: Number(best.losses) || 0,
-                heroNames: best.myHeroNames || fallbackMatch?.myHeroNames,
+                heroNames: best.myHeroNames || best.heroNames || fallbackMatch?.myHeroNames,
+                maxUpgrade: false,
+                fromHistory: true,
             };
         }
 
