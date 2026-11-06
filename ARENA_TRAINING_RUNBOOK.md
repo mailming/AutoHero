@@ -189,18 +189,20 @@ Install **LLM Controller HwH Ext.user.js**
 - Raw URL: `https://github.com/mailming/AutoHero/raw/refs/heads/develop/LLM%20Controller%20HwH%20Ext.user.js`
 - Polls `http://127.0.0.1:9876/poll` so the bridge can run commands in-game
 
-### 6.3 Arena Training (required)
+### 6.3 Arena Training (required — includes Counter Suggest)
 
-Install **Arena Training HwH Ext.user.js**
+Install **Arena Training HwH Ext.user.js** (v1.29+).
 
 - Raw URL: `https://github.com/mailming/AutoHero/raw/refs/heads/develop/Arena%20Training%20HwH%20Ext.user.js`
 - Runs demo battles and saves results to PostgreSQL via the bridge
+- Also installs the **Counter Suggest** floating panel (HWH menu: **Arena Train** + **Counters**)
 
-### 6.4 Arena Counter Suggest (optional, live Arena attacks + SimLab)
+If you still have the old standalone **Arena Counter Suggest HwH Ext**, disable/uninstall it — that file is now a stub that logs a merge notice.
 
-Install **Arena Counter Suggest HwH Ext.user.js** (and keep **Arena Training HwH Ext** enabled for SimLab).
+### 6.4 Counter Suggest panel (Arena gather + Clan Domination + SimLab)
 
-- Raw URL: `https://github.com/mailming/AutoHero/raw/refs/heads/develop/Arena%20Counter%20Suggest%20HwH%20Ext.user.js`
+Built into Arena Training. No second userscript needed.
+
 - When the **Arena** attack team-gather popup opens, or the **Clan Domination** select-attack-target popup opens, shows a floating panel with:
   - up to **2** winning lineups tested at **your power** (`max_upgrade = false`)
   - **1** best **max-upgrade** counter
@@ -377,9 +379,9 @@ await pool.end();
 | Port 9876 in use | Kill old `node llm-bridge-server.mjs` process (see §5) |
 | Training never starts | Check console for errors; ensure `cheats.BattleCalc` is available (base HWH loaded) |
 | Skip-check not working | Restart bridge after updates; reload Arena Training userscript |
-| Counter Suggest empty / bridge error | Restart bridge after `/training/counters` update; ensure Combo was trained into DB; reload Counter Suggest userscript |
-| Counter Suggest panel never appears | Open regular Arena attack gather (`ArenaAttackTeamGatherPopupWithEnemyTeam`); check console for mediator dump |
-| SimLab says Arena Training not loaded | Enable **Arena Training HwH Ext** (exposes `window.ArenaTraining.simulateMatchup`) |
+| Counter Suggest empty / bridge error | Restart bridge after `/training/counters` update; ensure Combo was trained into DB; reload Arena Training userscript |
+| Counter Suggest panel never appears | Open Arena gather or CD attack target; reload Arena Training (v1.29+); disable old Counter Suggest stub if both installed |
+| SimLab / Train missing APIs | Enable **Arena Training HwH Ext** only (panel + `window.ArenaTraining.simulateMatchup` are in the same script) |
 | SimLab missing on `/training/simlab-view` | Restart bridge after update; confirm round `label` starts with `simlab`; open [http://127.0.0.1:9876/training/simlab-view](http://127.0.0.1:9876/training/simlab-view) |
 | CORS / fetch errors to localhost | Use same machine for browser and bridge; URL must be `127.0.0.1:9876` |
 
@@ -411,8 +413,8 @@ window.cheats?.translate('LIB_HERO_NAME_55')  // should return 'Iris'
 |------|---------|
 | `llm-bridge-server.mjs` | HTTP bridge + training routes |
 | `training-db.mjs` | PostgreSQL schema and queries |
-| `Arena Counter Suggest HwH Ext.user.js` | Floating counter panel on Arena attack gather (+ SimLab) |
-| `Arena Training HwH Ext.user.js` | Demo training loop + `simulateMatchup` for SimLab |
+| `Arena Training HwH Ext.user.js` | Demo training loop + Counter Suggest panel + `simulateMatchup` |
+| `Arena Counter Suggest HwH Ext.user.js` | Deprecated stub — uninstall; logic merged into Arena Training |
 | `training-view.mjs` | HTML results page (incl. SimLab section) |
 | `hero-names.mjs` | Hero/pet ID → name mapping (includes Robin `6011`) |
 | `PET_DATA_DOCUMENTATION.md` | Pet favor lib (`lib.data.pet`) and Robin details |
