@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.29.1
+// @version      1.29.2
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.29.1';
+    const EXTENSION_VERSION = '1.29.2';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -2800,7 +2800,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.3.14';
+    const COUNTER_SUGGEST_VERSION = '1.3.15';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -2812,6 +2812,8 @@
         const BANNER_STONE_DESC_CLASS = 'game.data.storage.resource.BannerStoneDescription';
         const SIMLAB_SIMULATIONS = 10;
         const SIMLAB_TARGET_WIN_RATE = 90;
+        /** Cap team-pet candidates SimLab tries (preferred + strongest owned). */
+        const SIMLAB_MAX_PETS = 8;
         const HOST_ID = 'ah-arena-counter-suggest-host';
         const POLL_ACTIVE_MS = 600;
         const POLL_IDLE_MS = 2500;
@@ -4308,26 +4310,112 @@
             };
         }
 
-        function listOwnedPets(heroes = [], preferredPet = null) {
-            const owned = (Array.isArray(heroes) ? heroes : [])
+        function petPowerFromHeroes(heroes, petId) {
+            const id = Number(petId);
+            const row = (Array.isArray(heroes) ? heroes : []).find((hero) => Number(hero?.id) === id);
+            return Number(row?.power || row?.sumPower || 0);
+        }
+
+        function listOwnedPetRecords(heroes = []) {
+            return (Array.isArray(heroes) ? heroes : [])
                 .filter((hero) => {
                     const id = Number(hero?.id);
                     return Number.isFinite(id) && id >= 6000 && id < 7000;
                 })
-                .sort((a, b) => Number(b?.power || b?.sumPower || 0) - Number(a?.power || a?.sumPower || 0))
-                .map((hero) => Number(hero.id));
-            const preferred = Number(preferredPet);
+                .sort((a, b) => Number(b?.power || b?.sumPower || 0) - Number(a?.power || a?.sumPower || 0));
+        }
+
+        function listOwnedPets(heroes = [], preferredPet = null, favorMaps = {}, limit = SIMLAB_MAX_PETS) {
+            const owned = listOwnedPetRecords(heroes).map((hero) => Number(hero.id));
             const ordered = [];
             const seen = new Set();
             const push = (id) => {
                 const pet = Number(id);
-                if (!Number.isFinite(pet) || pet < 6000 || seen.has(pet)) return;
+                if (!Number.isFinite(pet) || pet < 6000 || pet >= 7000 || seen.has(pet)) return;
                 seen.add(pet);
                 ordered.push(pet);
             };
-            push(preferred);
+            push(preferredPet);
+            // Favor map values are also owned pets even if heroGetAll shape is odd.
+            for (const map of Object.values(favorMaps || {})) {
+                if (!map || typeof map !== 'object') continue;
+                for (const petId of Object.values(map)) push(petId);
+            }
             for (const id of owned) push(id);
-            return ordered;
+            if (!ordered.length) push(CONSTANTS.DEFAULT_PET_ID);
+
+            if (!(limit > 0) || ordered.length <= limit) return ordered;
+
+            const preferred = Number(preferredPet);
+            const rest = ordered
+                .filter((id) => id !== preferred)
+                .sort((a, b) => petPowerFromHeroes(heroes, b) - petPowerFromHeroes(heroes, a));
+            const capped = [];
+            if (Number.isFinite(preferred) && preferred >= 6000) capped.push(preferred);
+            for (const id of rest) {
+                if (capped.length >= limit) break;
+                capped.push(id);
+            }
+            return capped;
+        }
+
+        function favorHeroIdsForPet(petLibEntry) {
+            if (!petLibEntry) return [];
+            const raw = petLibEntry.favorHeroes;
+            if (Array.isArray(raw)) {
+                return raw.map(Number).filter((id) => id > 0 && id < 6000);
+            }
+            if (raw && typeof raw === 'object') {
+                return Object.values(raw).map(Number).filter((id) => id > 0 && id < 6000);
+            }
+            return [];
+        }
+
+        function canPetFavorHero(petId, heroId, petLib = {}) {
+            const entry = petLib[petId] || petLib[String(petId)];
+            const heroes = favorHeroIdsForPet(entry);
+            // Missing lib entry: allow (game may still accept); empty favorHeroes means universal.
+            if (!entry) return true;
+            if (!heroes.length) return true;
+            return heroes.includes(Number(heroId));
+        }
+
+        /**
+         * Build hero→favor-pet map from owned pets that can favor each hero.
+         * Prefers current arena/CD favor when still owned + compatible; otherwise strongest unused pet.
+         */
+        function buildSimLabFavor(heroIds, ownedPetIds, {
+            heroes = [],
+            existingFavor = {},
+            petLib = null,
+        } = {}) {
+            const libPets = petLib || (typeof lib?.getData === 'function' ? (lib.getData('pet') || {}) : {});
+            const favor = {};
+            const used = new Set();
+
+            const petsRanked = [...new Set((ownedPetIds || []).map(Number).filter((id) => id >= 6000 && id < 7000))]
+                .sort((a, b) => petPowerFromHeroes(heroes, b) - petPowerFromHeroes(heroes, a));
+
+            for (const heroId of heroIds) {
+                const key = String(heroId);
+                const existing = Number(existingFavor[key] ?? existingFavor[heroId]);
+                if (Number.isFinite(existing) && existing >= 6000
+                    && petsRanked.includes(existing)
+                    && !used.has(existing)
+                    && canPetFavorHero(existing, heroId, libPets)) {
+                    favor[key] = existing;
+                    used.add(existing);
+                    continue;
+                }
+                const match = petsRanked.find((petId) => (
+                    !used.has(petId) && canPetFavorHero(petId, heroId, libPets)
+                ));
+                if (match) {
+                    favor[key] = match;
+                    used.add(match);
+                }
+            }
+            return favor;
         }
 
         function listOwnedBannerLoadouts(userInfo, preferredBanner = null) {
@@ -4676,17 +4764,17 @@
             const sweepBanners = source !== 'max';
             panelState.simming = true;
             panelState.status = 'simming';
-            panelState.message = source === 'max'
-                ? `SimLab: max power (pet sweep → ${SIMLAB_TARGET_WIN_RATE}%)…`
-                : `SimLab: my power (target ${SIMLAB_TARGET_WIN_RATE}%)…`;
+            panelState.message = 'SimLab: pet sweep…';
             panelController?.render();
             HWHFuncs.setProgress?.(`${EXTENSION_NAME}: SimLab…`, true);
 
             try {
                 const support = await fetchTeamSupport();
                 const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
-                const arenaFavor = support.favor?.arena || {};
-                const favor = pickFavor(heroes, arenaFavor);
+                const favorMaps = support.favor && typeof support.favor === 'object' ? support.favor : {};
+                const existingFavor = favorMaps.arena || favorMaps.clan_pvp_hero || {};
+                const pets = listOwnedPets(support.heroes, basePet, favorMaps, SIMLAB_MAX_PETS);
+                const petLib = typeof lib?.getData === 'function' ? (lib.getData('pet') || {}) : {};
                 const baseBanner = resolveBanner(
                     support.userInfo,
                     support.teamBanners,
@@ -4737,9 +4825,12 @@
                     source: isCd ? 'simlab-clanDomination' : 'simlab-gather',
                 };
 
-                const runOne = async (pet, banner, bannerStones, phaseLabel) => {
+                const runOne = async (pet, banner, bannerStones, favorMap, phaseLabel) => {
                     const petName = petLabel(pet);
-                    panelState.message = `SimLab ${phaseLabel}: ${petName} · banner ${banner}…`;
+                    const favorCount = favorMap && typeof favorMap === 'object'
+                        ? Object.keys(favorMap).length
+                        : 0;
+                    panelState.message = `SimLab ${phaseLabel}: ${petName} · B${banner} · favor ${favorCount}`;
                     panelController?.render();
                     HWHFuncs.setProgress?.(
                         `${EXTENSION_NAME}: SimLab ${phaseLabel} · ${petName}`,
@@ -4754,7 +4845,7 @@
                             heroes,
                             pet,
                             banner,
-                            favor,
+                            favor: favorMap || {},
                             bannerStones: bannerStones || {},
                             heroNames: match?.myHeroNames,
                         },
@@ -4765,7 +4856,7 @@
                         pet,
                         banner,
                         bannerStones: bannerStones || {},
-                        favor,
+                        favor: favorMap || {},
                         wins: Number(summary?.wins) || 0,
                         losses: Number(summary?.losses) || 0,
                         winRate,
@@ -4780,32 +4871,73 @@
                     if (!best || result.winRate > best.winRate) best = result;
                 };
 
-                // 1) Base suggested pet + current banner
-                const baseResult = await runOne(basePet, baseBanner, baseBannerStones, 'base');
-                consider(baseResult);
-
-                // 2) Pet sweep with current banner (my power + max power)
-                if (best.winRate < SIMLAB_TARGET_WIN_RATE) {
-                    const pets = listOwnedPets(support.heroes, basePet);
-                    for (const pet of pets) {
-                        if (pet === basePet) continue;
-                        const result = await runOne(pet, baseBanner, baseBannerStones, 'pet');
-                        consider(result);
-                        if (best.winRate >= SIMLAB_TARGET_WIN_RATE) break;
+                // 1) Always sweep team pets (no favor) → pick highest win-rate pet
+                console.log(`[${EXTENSION_NAME}] SimLab pet sweep`, {
+                    pets,
+                    basePet,
+                    ownedPetRows: listOwnedPetRecords(support.heroes).length,
+                });
+                let bestPet = basePet;
+                let bestPetWinRate = -1;
+                for (let i = 0; i < pets.length; i++) {
+                    const pet = pets[i];
+                    const result = await runOne(
+                        pet,
+                        baseBanner,
+                        baseBannerStones,
+                        {},
+                        `pet ${i + 1}/${pets.length}`
+                    );
+                    if (result.winRate > bestPetWinRate) {
+                        bestPetWinRate = result.winRate;
+                        bestPet = pet;
                     }
                 }
 
-                // 3) Banner + slots sweep — my power only
-                if (sweepBanners && best.winRate < SIMLAB_TARGET_WIN_RATE) {
-                    const petForBanners = best?.pet || basePet;
+                // 2) Assign available favors for the lineup, then sim best pet + favors
+                const favor = buildSimLabFavor(heroes, pets, {
+                    heroes: support.heroes,
+                    existingFavor,
+                    petLib,
+                });
+                console.log(`[${EXTENSION_NAME}] SimLab favor assignment`, {
+                    favor,
+                    bestPet,
+                    bestPetWinRate,
+                });
+                panelState.message = `SimLab favor: ${Object.keys(favor).length}/5 heroes…`;
+                panelController?.render();
+
+                if (!Object.keys(favor).length) {
+                    console.warn(`[${EXTENSION_NAME}] SimLab favor empty — no compatible owned pets for lineup`);
+                }
+
+                best = await runOne(
+                    bestPet,
+                    baseBanner,
+                    baseBannerStones,
+                    favor,
+                    'favor'
+                );
+
+                // 3) Banner / flag sweep with locked best pet + favors
+                if (sweepBanners) {
                     const banners = listOwnedBannerLoadouts(support.userInfo, baseBanner);
-                    for (const loadout of banners) {
+                    console.log(`[${EXTENSION_NAME}] SimLab banner sweep`, {
+                        count: banners.length,
+                        pet: bestPet,
+                        favor,
+                    });
+                    for (let i = 0; i < banners.length; i++) {
+                        const loadout = banners[i];
+                        // Favor phase already covered base banner + bestPet + favors.
                         if (Number(loadout.banner) === Number(baseBanner)) continue;
                         const result = await runOne(
-                            petForBanners,
+                            bestPet,
                             loadout.banner,
                             loadout.bannerStones,
-                            'banner'
+                            favor,
+                            `banner ${i + 1}/${banners.length}`
                         );
                         consider(result);
                         if (best.winRate >= SIMLAB_TARGET_WIN_RATE) break;
@@ -4826,16 +4958,19 @@
                     losses: best.losses,
                 };
 
+                const favorCount = Object.keys(best.favor || {}).length;
                 const hitTarget = best.winRate >= SIMLAB_TARGET_WIN_RATE;
                 const msg = hitTarget
-                    ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner}`
-                    : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} (<${SIMLAB_TARGET_WIN_RATE}%)`;
+                    ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${favorCount}`
+                    : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${favorCount} (<${SIMLAB_TARGET_WIN_RATE}%)`;
                 panelState.message = msg;
                 panelState.status = 'ready';
                 HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
                 console.log(`[${EXTENSION_NAME}] SimLab finished:`, {
                     source,
                     sweepBanners,
+                    petsTried: pets,
+                    favorAssigned: favor,
                     target: SIMLAB_TARGET_WIN_RATE,
                     best,
                 });
@@ -4868,10 +5003,16 @@
 
             try {
                 const support = await fetchTeamSupport();
-                const arenaFavor = support.favor?.arena || {};
+                const favorMaps = support.favor && typeof support.favor === 'object' ? support.favor : {};
+                const arenaFavor = favorMaps.arena || {};
+                const ownedPets = listOwnedPets(support.heroes, pet, favorMaps, SIMLAB_MAX_PETS);
                 const favor = (simBest?.favor && typeof simBest.favor === 'object' && Object.keys(simBest.favor).length)
                     ? simBest.favor
-                    : pickFavor(heroes, arenaFavor);
+                    : buildSimLabFavor(heroes, ownedPets, {
+                        heroes: support.heroes,
+                        existingFavor: arenaFavor,
+                        petLib: typeof lib?.getData === 'function' ? (lib.getData('pet') || {}) : {},
+                    });
                 const banner = Number(simBest?.banner) > 0
                     ? Number(simBest.banner)
                     : resolveBanner(
