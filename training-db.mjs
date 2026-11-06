@@ -2105,18 +2105,12 @@ export async function getSimLabGroupDetail(groupId) {
  * Best SimLab result for an enemy defense combo (heroes+pet; banner ignored).
  * Used by Counter Suggest Attack to reuse prior SimLab loadouts.
  */
-export async function getSimLabBestForCombo({
+function buildSimLabComboWhere({
     comboKey,
     testerUserId,
     maxAgeDays = 30,
+    currentPowerOnly = true,
 } = {}) {
-    if (!comboKey) {
-        return { ok: false, reason: 'missing_combo_key', best: null };
-    }
-    if (!pool) {
-        pool = createPool();
-    }
-
     const parsed = parseComboKey(comboKey);
     const params = [];
     const { clauses, valid } = buildOpponentSetMatchClauses({
@@ -2128,6 +2122,9 @@ export async function getSimLabBestForCombo({
     });
 
     const whereParts = [`tr.label ILIKE 'simlab%'`];
+    if (currentPowerOnly) {
+        whereParts.push(`COALESCE(tr.max_upgrade, TRUE) = FALSE`);
+    }
     if (valid) {
         whereParts.push(...clauses);
     } else {
@@ -2149,32 +2146,125 @@ export async function getSimLabBestForCombo({
         );
     }
 
+    return { params, whereSql: whereParts.join(' AND '), parsed };
+}
+
+function simAttackLineupKey(round) {
+    const heroes = (Array.isArray(round?.myHeroIds) ? round.myHeroIds : [])
+        .map(Number)
+        .filter((id) => id > 0 && id < 6000)
+        .sort((a, b) => a - b)
+        .join(',');
+    const pet = Number(round?.myPet) || 0;
+    const banner = Number(round?.myBanner) || 0;
+    return `${heroes}|${pet}|${banner}`;
+}
+
+/**
+ * Current-power SimLab options for one defense combo.
+ * One entry per Sim group, deduped by attack lineup (heroes+pet+flag), best win % first.
+ */
+export async function getSimLabOptionsForCombo({
+    comboKey,
+    testerUserId,
+    maxAgeDays = 30,
+    limit = 8,
+} = {}) {
+    if (!comboKey) {
+        return { ok: false, reason: 'missing_combo_key', best: null, options: [] };
+    }
+    if (!pool) {
+        pool = createPool();
+    }
+
+    const safeLimit = Math.max(1, Math.min(20, Number(limit) || 8));
+    const { params, whereSql } = buildSimLabComboWhere({
+        comboKey,
+        testerUserId,
+        maxAgeDays,
+        currentPowerOnly: true,
+    });
+    const groupExpr = simLabGroupIdSql('tr');
+
     const result = await pool.query(
-        `SELECT ${SIMLAB_SELECT_SQL}
-         FROM training_rounds tr
-         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
-         WHERE ${whereParts.join(' AND ')}
-         ORDER BY tr.best_win_rate DESC NULLS LAST,
-                  COALESCE(tr.completed_at, tr.started_at) DESC NULLS LAST
-         LIMIT 1`,
+        `WITH filtered AS (
+            SELECT ${SIMLAB_SELECT_SQL},
+                   ${groupExpr} AS group_id
+            FROM training_rounds tr
+            LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+            WHERE ${whereSql}
+         ),
+         ranked AS (
+            SELECT filtered.*,
+                   COUNT(*) OVER (PARTITION BY group_id)::int AS try_count,
+                   MAX(COALESCE(filtered.completed_at, filtered.started_at))
+                       OVER (PARTITION BY group_id) AS group_tested_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY group_id
+                       ORDER BY filtered.best_win_rate DESC NULLS LAST,
+                                COALESCE(filtered.completed_at, filtered.started_at) DESC NULLS LAST
+                   ) AS rn
+            FROM filtered
+         )
+         SELECT *
+         FROM ranked
+         WHERE rn = 1
+         ORDER BY best_win_rate DESC NULLS LAST,
+                  group_tested_at DESC NULLS LAST
+         LIMIT 40`,
         params
     );
 
-    if (!result.rows[0]) {
+    const rounds = result.rows.map(mapSimLabRoundRow);
+    const deduped = [];
+    const seen = new Set();
+    for (const round of rounds) {
+        const heroes = (Array.isArray(round?.myHeroIds) ? round.myHeroIds : [])
+            .map(Number)
+            .filter((id) => id > 0 && id < 6000);
+        if (heroes.length !== 5) continue;
+        const key = simAttackLineupKey(round);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(round);
+        if (deduped.length >= safeLimit) break;
+    }
+
+    if (!deduped.length) {
         return {
             ok: true,
             comboKey,
             reason: 'not_found',
             best: null,
+            options: [],
         };
     }
 
-    const best = mapSimLabRoundRow(result.rows[0]);
     return {
         ok: true,
-        comboKey: best.opponentComboKey || comboKey,
+        comboKey: deduped[0].opponentComboKey || comboKey,
         reason: null,
-        best,
+        best: deduped[0],
+        options: deduped,
+    };
+}
+
+export async function getSimLabBestForCombo({
+    comboKey,
+    testerUserId,
+    maxAgeDays = 30,
+} = {}) {
+    const lookup = await getSimLabOptionsForCombo({
+        comboKey,
+        testerUserId,
+        maxAgeDays,
+        limit: 1,
+    });
+    return {
+        ok: lookup.ok,
+        comboKey: lookup.comboKey,
+        reason: lookup.reason,
+        best: lookup.best,
     };
 }
 

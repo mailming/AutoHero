@@ -34,6 +34,7 @@ import {
     getSimLabRoundBySession,
     getSimLabGroupDetail,
     getSimLabBestForCombo,
+    getSimLabOptionsForCombo,
     getSimLabTesters,
     groupSimLabRoundsByTarget,
     getMetaTeamSnapshots,
@@ -308,10 +309,12 @@ const server = http.createServer(async (req, res) => {
                     || url.searchParams.get('testerUserId')
                     || undefined;
                 const maxAgeDays = Number(url.searchParams.get('maxAgeDays'));
-                const lookup = await getSimLabBestForCombo({
+                const limit = Number(url.searchParams.get('limit'));
+                const lookup = await getSimLabOptionsForCombo({
                     comboKey,
                     testerUserId,
                     maxAgeDays: Number.isFinite(maxAgeDays) && maxAgeDays > 0 ? maxAgeDays : 30,
+                    limit: Number.isFinite(limit) && limit > 0 ? limit : 8,
                 });
                 return sendJson(res, 200, lookup);
             }
