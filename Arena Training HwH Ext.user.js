@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.29.8
+// @version      1.30.0
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.29.8';
+    const EXTENSION_VERSION = '1.30.0';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -4366,6 +4366,7 @@
                     panelState.status = 'error';
                     panelState.message = error?.message || String(error);
                     panelState.attacking = false;
+                    panelState.simming = false;
                     render();
                 });
             });
@@ -4828,9 +4829,139 @@
             return resolveAttackBannerStonesFromClient(bannerId);
         }
 
-        async function fetchEnemyDefenceExtras(enemyUserId) {
+        /**
+         * Walk a battle replay side (defenders/attackers) for heroId → favorPetId.
+         * arenaFindEnemies / gather BattleTeam omit patronage; real fights store it here.
+         */
+        function extractFavorFromBattleReplaySide(side) {
+            const favor = {};
+            const heroes = [];
+            if (!side || typeof side !== 'object') return { favor, heroes };
+
+            const seen = new Set();
+            const walk = (value, depth) => {
+                if (!value || typeof value !== 'object' || depth > 12) return;
+                if (seen.has(value) || seen.size > 2000) return;
+                seen.add(value);
+
+                const type = value.type != null ? String(value.type) : '';
+                const id = Number(value.id ?? value.heroId);
+                if (
+                    (type === 'hero' || (type === '' && id > 0 && id < 6000 && value.favorPetId !== undefined))
+                    && Number.isFinite(id)
+                    && id > 0
+                    && id < 6000
+                ) {
+                    heroes.push(id);
+                    const petId = Number(value.favorPetId);
+                    if (Number.isFinite(petId) && petId >= 6000 && petId < 7000) {
+                        favor[String(id)] = petId;
+                    }
+                }
+
+                const children = Array.isArray(value) ? value : Object.values(value);
+                for (const child of children) walk(child, depth + 1);
+            };
+            walk(side, 0);
+            return { favor, heroes: [...new Set(heroes)] };
+        }
+
+        function scoreHeroOverlap(candidateHeroIds, targetHeroIds) {
+            const target = new Set((targetHeroIds || []).map(Number).filter((id) => id > 0 && id < 6000));
+            if (!target.size) return 0;
+            let hits = 0;
+            for (const id of candidateHeroIds || []) {
+                if (target.has(Number(id))) hits += 1;
+            }
+            return hits;
+        }
+
+        /**
+         * Arena list/gather never include enemy favorPetId. Recover patronage from our
+         * recent arena (then grand) battle replays where we attacked this opponent.
+         */
+        async function fetchEnemyFavorFromBattleLog(enemyUserId, heroIds = [], myUserId = null) {
+            if (enemyUserId == null) return {};
+            const target = String(enemyUserId);
+            const me = myUserId != null ? String(myUserId) : null;
+            const wantedHeroes = (heroIds || []).map(Number).filter((id) => id > 0 && id < 6000);
+
+            const collectFromType = async (battleType) => {
+                try {
+                    const response = await Send({
+                        calls: [{
+                            name: 'battleGetByType',
+                            args: { type: battleType, limit: 50, offset: 0 },
+                            context: { actionTs: Date.now() },
+                            ident: 'battleGetByType',
+                        }],
+                    });
+                    if (response?.error) return [];
+                    const body = response.results?.find((r) => r.ident === 'battleGetByType')?.result?.response
+                        || response.results?.[0]?.result?.response
+                        || {};
+                    const replays = Array.isArray(body?.replays)
+                        ? body.replays
+                        : Object.values(body?.replays || {});
+                    const candidates = [];
+                    for (const replay of replays) {
+                        if (!replay || typeof replay !== 'object') continue;
+                        const userId = replay.userId != null ? String(replay.userId) : '';
+                        const typeId = replay.typeId != null ? String(replay.typeId) : '';
+                        // Our attack on them: userId=us, typeId=enemy → defenders are their arena defense.
+                        const weAttacked = (me && userId === me && typeId === target)
+                            || (!me && typeId === target && userId !== target);
+                        if (!weAttacked) continue;
+
+                        const extracted = extractFavorFromBattleReplaySide(replay.defenders);
+                        if (!Object.keys(extracted.favor).length) continue;
+                        const overlap = scoreHeroOverlap(extracted.heroes, wantedHeroes);
+                        candidates.push({
+                            favor: extracted.favor,
+                            overlap,
+                            favorCount: Object.keys(extracted.favor).length,
+                            startTime: Number(replay.startTime) || 0,
+                        });
+                    }
+                    return candidates;
+                } catch (error) {
+                    console.warn(`[${EXTENSION_NAME}] battleGetByType(${battleType}) favor lookup failed:`, error);
+                    return [];
+                }
+            };
+
+            const candidates = [
+                ...(await collectFromType('arena')),
+                ...(await collectFromType('grand')),
+            ];
+            if (!candidates.length) return {};
+
+            candidates.sort((a, b) => {
+                if (b.overlap !== a.overlap) return b.overlap - a.overlap;
+                if (b.favorCount !== a.favorCount) return b.favorCount - a.favorCount;
+                return b.startTime - a.startTime;
+            });
+
+            const best = candidates[0];
+            if (wantedHeroes.length && best.overlap < Math.min(3, wantedHeroes.length)) {
+                console.warn(
+                    `[${EXTENSION_NAME}] battle-log favor for ${target} weak lineup match`
+                    + ` (${best.overlap}/${wantedHeroes.length}) — using newest attack anyway`
+                );
+            }
+            console.log(`[${EXTENSION_NAME}] battle-log defence favor for ${target}:`, best.favor, {
+                overlap: best.overlap,
+                favorCount: best.favorCount,
+            });
+            return best.favor;
+        }
+
+        async function fetchEnemyDefenceExtras(enemyUserId, options = {}) {
             const empty = { favor: {}, bannerStones: {}, banner: null, name: null, place: null, power: null };
             if (enemyUserId == null) return empty;
+            const heroIds = Array.isArray(options.heroIds) ? options.heroIds : [];
+            const myUserId = options.myUserId != null ? String(options.myUserId) : null;
+            let extras = { ...empty };
             try {
                 const response = await Send({
                     calls: [{
@@ -4848,25 +4979,29 @@
                     const id = row?.userId ?? row?.user?.id ?? row?.id;
                     return id != null && String(id) === target;
                 });
-                if (!entry) return empty;
-
-                const bannerEntry = Array.isArray(entry.banners) ? entry.banners[0] : null;
-                const banner = bannerEntry?.id != null
-                    ? Number(bannerEntry.id)
-                    : (entry.banner != null ? Number(entry.banner) : null);
-                const favor = extractFavorFromEnemyEntry(entry);
-                return {
-                    favor,
-                    bannerStones: normalizeBannerStones(bannerEntry?.slots || entry.bannerStones),
-                    banner: Number.isFinite(banner) && banner > 0 ? banner : null,
-                    name: entry.user?.name || entry.name || null,
-                    place: entry.place ?? null,
-                    power: entry.power ?? null,
-                };
+                if (entry) {
+                    const bannerEntry = Array.isArray(entry.banners) ? entry.banners[0] : null;
+                    const banner = bannerEntry?.id != null
+                        ? Number(bannerEntry.id)
+                        : (entry.banner != null ? Number(entry.banner) : null);
+                    extras = {
+                        favor: extractFavorFromEnemyEntry(entry),
+                        bannerStones: normalizeBannerStones(bannerEntry?.slots || entry.bannerStones),
+                        banner: Number.isFinite(banner) && banner > 0 ? banner : null,
+                        name: entry.user?.name || entry.name || null,
+                        place: entry.place ?? null,
+                        power: entry.power ?? null,
+                    };
+                }
             } catch (error) {
                 console.warn(`[${EXTENSION_NAME}] arenaFindEnemies for SimLab failed:`, error);
-                return empty;
             }
+
+            // arenaFindEnemies heroes are id/level/color/star only — recover favor from fight logs.
+            if (!Object.keys(extras.favor || {}).length) {
+                extras.favor = await fetchEnemyFavorFromBattleLog(enemyUserId, heroIds, myUserId);
+            }
+            return extras;
         }
 
         async function fetchCounters(comboKey, testerUserId) {
@@ -4886,6 +5021,72 @@
                 throw new Error('Missing combo key');
             }
             return data;
+        }
+
+        /** Best prior SimLab loadout for this enemy defense combo (heroes+pet). */
+        async function fetchSimLabBestForCombo(comboKey, testerUserId) {
+            if (!comboKey) return null;
+            const params = new URLSearchParams({
+                comboKey,
+                maxAgeDays: String(MAX_AGE_DAYS),
+            });
+            if (testerUserId) params.set('testerUserId', String(testerUserId));
+            try {
+                const res = await fetch(`${BRIDGE_URL}/training/simlab?${params}`);
+                if (!res.ok) return null;
+                const data = await res.json();
+                if (!data?.ok || !data?.best) return null;
+                return data.best;
+            } catch (error) {
+                console.warn(`[${EXTENSION_NAME}] SimLab history lookup failed:`, error);
+                return null;
+            }
+        }
+
+        /**
+         * Real arenaAttack battles carry defender favorPetId (list/gather do not).
+         * Pull patronage + optional pet/banner from the first battle in the response.
+         */
+        function extractDefenceFromArenaAttackResponse(responseBody) {
+            const battles = Array.isArray(responseBody?.battles)
+                ? responseBody.battles
+                : (responseBody?.battle ? [responseBody.battle] : []);
+            const battle = battles[0] || null;
+            if (!battle) {
+                return { favor: {}, heroes: [], pet: 0, banner: 0, bannerStones: {} };
+            }
+
+            const fromDefenders = extractFavorFromBattleReplaySide(battle.defenders);
+            let pet = 0;
+            const seen = new Set();
+            const walkPet = (value, depth) => {
+                if (!value || typeof value !== 'object' || depth > 10 || pet) return;
+                if (seen.has(value) || seen.size > 1500) return;
+                seen.add(value);
+                const id = Number(value.id);
+                if (value.type === 'pet' && id >= 6000 && id < 7000) {
+                    pet = id;
+                    return;
+                }
+                const children = Array.isArray(value) ? value : Object.values(value);
+                for (const child of children) walkPet(child, depth + 1);
+            };
+            walkPet(battle.defenders, 0);
+
+            const bannerObj = battle.effects?.defendersBanner
+                || battle.defendersBanner
+                || battle.effects?.defenderBanner
+                || null;
+            const banner = Number(bannerObj?.id) || 0;
+            const bannerStones = normalizeBannerStones(bannerObj?.slots || {});
+
+            return {
+                favor: fromDefenders.favor || {},
+                heroes: fromDefenders.heroes || [],
+                pet: pet || 0,
+                banner,
+                bannerStones,
+            };
         }
 
         async function loadCountersForEnemy(enemy) {
@@ -4962,7 +5163,11 @@
             const isCd = enemy.mode === 'clanDomination' || panelState.mode === 'clanDomination';
 
             if (!isCd) {
-                const extras = await fetchEnemyDefenceExtras(enemy.userId);
+                const { userId: myUserId } = await resolveCurrentTesterUserId();
+                const extras = await fetchEnemyDefenceExtras(enemy.userId, {
+                    heroIds: enemy.heroes || [],
+                    myUserId,
+                });
                 favor = {
                     ...favor,
                     ...normalizeFavorMap(extras.favor),
@@ -5055,8 +5260,8 @@
             }
         }
 
-        async function onSimLabClick(match, source) {
-            if (isBusy()) return;
+        async function onSimLabClick(match, source, options = {}) {
+            if (isBusy() && !options.forceWhileBusy) return;
             const enemy = panelState.enemy;
             if (!enemy?.userId) throw new Error('Enemy userId missing');
 
@@ -5071,9 +5276,16 @@
 
             const sweepBanners = source !== 'max';
             const simLabGroupId = `simlab_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const defenceOverride = options.defenceOverride && typeof options.defenceOverride === 'object'
+                ? options.defenceOverride
+                : null;
             panelState.simming = true;
+            panelState.attacking = false;
             panelState.status = 'simming';
-            panelState.message = 'SimLab: pet sweep…';
+            panelState.visible = true;
+            panelState.message = options.reason
+                ? `SimLab (${options.reason}): pet sweep…`
+                : 'SimLab: pet sweep…';
             panelController?.render();
             HWHFuncs.setProgress?.(`${EXTENSION_NAME}: SimLab…`, true);
 
@@ -5099,9 +5311,30 @@
                 let defenceName = null;
                 let defencePlace = null;
                 let defencePower = enemy.power ?? null;
-                if (!isCd) {
-                    const defenceExtras = await fetchEnemyDefenceExtras(enemy.userId);
-                    // Prefer arenaFindEnemies favors (hero.favorPetId), keep gather favors as fallback.
+
+                // Attack-response override wins — real defender favorPetId from arenaAttack.
+                if (defenceOverride) {
+                    defenceFavor = {
+                        ...defenceFavor,
+                        ...normalizeFavorMap(defenceOverride.favor),
+                    };
+                    if (defenceOverride.banner) defenceBanner = Number(defenceOverride.banner) || defenceBanner;
+                    if (hasBannerStones(defenceOverride.bannerStones)) {
+                        defenceBannerStones = normalizeBannerStones(defenceOverride.bannerStones);
+                    }
+                    if (defenceOverride.pet) {
+                        // keep enemy.pet unless override provides one
+                    }
+                    defenceName = defenceOverride.name || defenceName;
+                    defencePlace = defenceOverride.place ?? defencePlace;
+                    defencePower = defenceOverride.power ?? defencePower;
+                } else if (!isCd) {
+                    const myUserId = support.userInfo?.userId ?? support.userInfo?.id ?? null;
+                    const defenceExtras = await fetchEnemyDefenceExtras(enemy.userId, {
+                        heroIds: enemy.heroes || [],
+                        myUserId,
+                    });
+                    // Prefer arenaFindEnemies / battle-log favors; keep gather favors as fallback.
                     defenceFavor = {
                         ...defenceFavor,
                         ...normalizeFavorMap(defenceExtras.favor),
@@ -5114,13 +5347,32 @@
                     defencePlace = defenceExtras.place;
                     defencePower = defenceExtras.power ?? defencePower;
                 }
+
+                const defencePet = Number(defenceOverride?.pet) > 0
+                    ? Number(defenceOverride.pet)
+                    : (Number(enemy.pet) || 0);
+
+                if (Object.keys(defenceFavor).length && panelState.enemy) {
+                    panelState.enemy = {
+                        ...panelState.enemy,
+                        favor: defenceFavor,
+                        banner: defenceBanner,
+                        bannerStones: defenceBannerStones,
+                        pet: defencePet || panelState.enemy.pet,
+                    };
+                }
                 if (!Object.keys(defenceFavor).length) {
                     console.warn(
                         `[${EXTENSION_NAME}] SimLab defence favor empty for enemy ${enemy.userId}`
-                        + ' — Arena list often omits favorPetId; demos run without patronage'
+                        + (defenceOverride
+                            ? ' — attack response had no favorPetId on defenders'
+                            : ' — arenaFindEnemies omits favorPetId and no matching arena/grand attack'
+                              + ' replay was found; demos run without enemy patronage')
                     );
                 } else {
-                    console.log(`[${EXTENSION_NAME}] SimLab defence favor:`, defenceFavor);
+                    console.log(`[${EXTENSION_NAME}] SimLab defence favor:`, defenceFavor, {
+                        fromAttack: !!defenceOverride,
+                    });
                 }
 
                 if (!hasBannerStones(baseBannerStones)) {
@@ -5134,13 +5386,15 @@
                     userId: enemy.userId,
                     name: defenceName,
                     heroes: enemy.heroes,
-                    pet: enemy.pet,
+                    pet: defencePet || enemy.pet,
                     banner: defenceBanner,
                     favor: defenceFavor,
                     bannerStones: defenceBannerStones,
                     place: defencePlace,
                     power: defencePower,
-                    source: isCd ? 'simlab-clanDomination' : 'simlab-gather',
+                    source: isCd
+                        ? 'simlab-clanDomination'
+                        : (defenceOverride ? 'simlab-after-attack' : 'simlab-gather'),
                 };
 
                 const runOne = async (pet, banner, bannerStones, favorMap, phaseLabel) => {
@@ -5301,15 +5555,35 @@
             }
         }
 
+        function simLabBestToLoadout(best, fallbackMatch = null) {
+            if (!best || typeof best !== 'object') return null;
+            const heroes = (best.myHeroIds || best.heroes || fallbackMatch?.myHeroIds || [])
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000);
+            const pet = Number(best.myPet ?? best.pet ?? fallbackMatch?.myPet);
+            if (heroes.length !== 5 || !Number.isFinite(pet) || pet < 6000) return null;
+            return {
+                heroes,
+                pet,
+                banner: Number(best.myBanner ?? best.banner) || 0,
+                bannerStones: best.myBannerStones || best.bannerStones || {},
+                favor: best.myFavor || best.favor || {},
+                winRate: Number(best.winRate) || 0,
+                wins: Number(best.wins) || 0,
+                losses: Number(best.losses) || 0,
+                heroNames: best.myHeroNames || fallbackMatch?.myHeroNames,
+            };
+        }
+
         async function onSuggestClick(match, source) {
             if (isBusy()) return;
             const enemy = panelState.enemy;
             if (!enemy?.userId) throw new Error('Enemy userId missing');
 
-            const heroes = (match?.myHeroIds || []).map(Number).filter((id) => id > 0 && id < 6000);
             const selKey = selectionKey(match, source);
-            const simBest = panelState.simBest?.key === selKey ? panelState.simBest : null;
-            const pet = Number(simBest?.pet ?? match?.myPet);
+            const sessionSimBest = panelState.simBest?.key === selKey ? panelState.simBest : null;
+            let heroes = (match?.myHeroIds || []).map(Number).filter((id) => id > 0 && id < 6000);
+            let pet = Number(sessionSimBest?.pet ?? match?.myPet);
             if (heroes.length !== 5) throw new Error('Suggested lineup needs 5 heroes');
             if (!Number.isFinite(pet) || pet < 6000) throw new Error('Suggested lineup needs a pet');
 
@@ -5318,7 +5592,7 @@
             panelState.status = 'attacking';
             panelState.message = isCd
                 ? (source === 'max' ? 'Clan Domination: setting max-power team…' : 'Clan Domination: setting my-power team…')
-                : (source === 'max' ? 'Attacking with max-power lineup…' : 'Attacking with my-power lineup…');
+                : 'Attack: checking SimLab history…';
             panelController?.render();
             HWHFuncs.setProgress?.(`${EXTENSION_NAME}: attacking…`, true);
 
@@ -5326,6 +5600,45 @@
                 const support = await fetchTeamSupport();
                 const favorMaps = support.favor && typeof support.favor === 'object' ? support.favor : {};
                 const arenaFavor = favorMaps.arena || {};
+                const myUserId = support.userInfo?.userId ?? support.userInfo?.id ?? null;
+
+                // Arena Attack: reuse SimLab history when this defense was already simmed;
+                // otherwise attack first (to capture real favour), then SimLab.
+                let priorSimLab = null;
+                let usedPriorSimLab = false;
+                if (!isCd && enemy.comboKey) {
+                    priorSimLab = sessionSimBest
+                        ? simLabBestToLoadout(sessionSimBest, match)
+                        : simLabBestToLoadout(
+                            await fetchSimLabBestForCombo(enemy.comboKey, myUserId),
+                            match
+                        );
+                    if (priorSimLab) {
+                        usedPriorSimLab = true;
+                        heroes = priorSimLab.heroes;
+                        pet = priorSimLab.pet;
+                        panelState.simBest = {
+                            key: selKey,
+                            heroes,
+                            pet,
+                            banner: priorSimLab.banner,
+                            bannerStones: priorSimLab.bannerStones,
+                            favor: priorSimLab.favor,
+                            winRate: priorSimLab.winRate,
+                            wins: priorSimLab.wins,
+                            losses: priorSimLab.losses,
+                        };
+                        panelState.message = `Attack: using SimLab ${priorSimLab.winRate.toFixed(0)}% loadout…`;
+                        panelController?.render();
+                        console.log(`[${EXTENSION_NAME}] Attack using prior SimLab loadout`, priorSimLab);
+                    } else {
+                        panelState.message = 'Attack: no SimLab history — attacking to capture defense favor…';
+                        panelController?.render();
+                        console.log(`[${EXTENSION_NAME}] No SimLab history for ${enemy.comboKey} — attack-first`);
+                    }
+                }
+
+                const simBest = panelState.simBest?.key === selKey ? panelState.simBest : null;
                 const ownedPets = listOwnedPets(support.heroes, pet, favorMaps, SIMLAB_MAX_PETS);
                 const favor = (simBest?.favor && typeof simBest.favor === 'object' && Object.keys(simBest.favor).length)
                     ? simBest.favor
@@ -5527,16 +5840,74 @@
                     || response.results?.[0]?.result
                     || null;
                 const win = responseBody?.win;
+                const defenceFromFight = extractDefenceFromArenaAttackResponse(responseBody);
+                console.log(`[${EXTENSION_NAME}] arenaAttack response:`, responseBody || response);
+                console.log(`[${EXTENSION_NAME}] defence from fight:`, defenceFromFight);
+
+                if (Object.keys(defenceFromFight.favor || {}).length && panelState.enemy) {
+                    panelState.enemy = {
+                        ...panelState.enemy,
+                        favor: {
+                            ...(panelState.enemy.favor || {}),
+                            ...defenceFromFight.favor,
+                        },
+                        banner: defenceFromFight.banner || panelState.enemy.banner,
+                        bannerStones: hasBannerStones(defenceFromFight.bannerStones)
+                            ? defenceFromFight.bannerStones
+                            : panelState.enemy.bannerStones,
+                        pet: defenceFromFight.pet || panelState.enemy.pet,
+                    };
+                }
+
+                const shouldSimAfterAttack = !usedPriorSimLab || win === false;
+                if (shouldSimAfterAttack) {
+                    const reason = !usedPriorSimLab
+                        ? 'after first attack'
+                        : 'after loss';
+                    const resultLabel = win === true ? 'Victory' : win === false ? 'Defeat' : 'Attack sent';
+                    panelState.attacking = false;
+                    panelState.message = `${resultLabel} — starting SimLab ${reason}…`;
+                    panelState.status = 'simming';
+                    panelState.visible = true;
+                    panelController?.render();
+                    HWHFuncs.setProgress?.(
+                        `${EXTENSION_NAME}: ${resultLabel}, running SimLab…`,
+                        true
+                    );
+
+                    const simMatch = {
+                        myHeroIds: heroes,
+                        myPet: pet,
+                        myHeroNames: match?.myHeroNames || priorSimLab?.heroNames,
+                    };
+                    await onSimLabClick(simMatch, source, {
+                        forceWhileBusy: true,
+                        reason,
+                        defenceOverride: {
+                            favor: defenceFromFight.favor,
+                            banner: defenceFromFight.banner || enemy.banner || 1,
+                            bannerStones: defenceFromFight.bannerStones,
+                            pet: defenceFromFight.pet || enemy.pet,
+                            name: enemy.name,
+                            place: enemy.place,
+                            power: enemy.power,
+                        },
+                    });
+                    return;
+                }
+
                 const msg = win === true ? 'Victory' : win === false ? 'Defeat' : 'Attack sent';
-                panelState.message = msg;
+                panelState.message = usedPriorSimLab
+                    ? `${msg} (SimLab loadout)`
+                    : msg;
                 panelState.status = 'done';
                 panelState.attacking = false;
                 panelState.visible = false;
                 panelController?.render();
                 HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
-                console.log(`[${EXTENSION_NAME}] arenaAttack response:`, responseBody || response);
             } catch (error) {
                 panelState.attacking = false;
+                panelState.simming = false;
                 throw error;
             }
         }

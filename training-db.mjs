@@ -2102,6 +2102,83 @@ export async function getSimLabGroupDetail(groupId) {
 }
 
 /**
+ * Best SimLab result for an enemy defense combo (heroes+pet; banner ignored).
+ * Used by Counter Suggest Attack to reuse prior SimLab loadouts.
+ */
+export async function getSimLabBestForCombo({
+    comboKey,
+    testerUserId,
+    maxAgeDays = 30,
+} = {}) {
+    if (!comboKey) {
+        return { ok: false, reason: 'missing_combo_key', best: null };
+    }
+    if (!pool) {
+        pool = createPool();
+    }
+
+    const parsed = parseComboKey(comboKey);
+    const params = [];
+    const { clauses, valid } = buildOpponentSetMatchClauses({
+        heroIds: parsed.heroIds,
+        pet: parsed.pet,
+        banner: 0,
+        params,
+        alias: 'oc',
+    });
+
+    const whereParts = [`tr.label ILIKE 'simlab%'`];
+    if (valid) {
+        whereParts.push(...clauses);
+    } else {
+        params.push(String(comboKey));
+        whereParts.push(`tr.opponent_combo_key = $${params.length}`);
+    }
+
+    if (testerUserId != null && testerUserId !== '') {
+        params.push(String(testerUserId));
+        whereParts.push(`tr.tester_user_id = $${params.length}`);
+    }
+
+    const ageDays = Number(maxAgeDays);
+    if (Number.isFinite(ageDays) && ageDays > 0) {
+        params.push(Math.floor(ageDays));
+        whereParts.push(
+            `COALESCE(tr.completed_at, tr.started_at, tr.created_at)`
+            + ` >= NOW() - ($${params.length}::int * INTERVAL '1 day')`
+        );
+    }
+
+    const result = await pool.query(
+        `SELECT ${SIMLAB_SELECT_SQL}
+         FROM training_rounds tr
+         LEFT JOIN opponent_combos oc ON oc.combo_key = tr.opponent_combo_key
+         WHERE ${whereParts.join(' AND ')}
+         ORDER BY tr.best_win_rate DESC NULLS LAST,
+                  COALESCE(tr.completed_at, tr.started_at) DESC NULLS LAST
+         LIMIT 1`,
+        params
+    );
+
+    if (!result.rows[0]) {
+        return {
+            ok: true,
+            comboKey,
+            reason: 'not_found',
+            best: null,
+        };
+    }
+
+    const best = mapSimLabRoundRow(result.rows[0]);
+    return {
+        ok: true,
+        comboKey: best.opponentComboKey || comboKey,
+        reason: null,
+        best,
+    };
+}
+
+/**
  * Group SimLab rounds by attacking target (opponent user + defense combo).
  */
 export function groupSimLabRoundsByTarget(rounds = []) {

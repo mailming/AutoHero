@@ -33,6 +33,7 @@ import {
     getSimLabRoundCount,
     getSimLabRoundBySession,
     getSimLabGroupDetail,
+    getSimLabBestForCombo,
     getSimLabTesters,
     groupSimLabRoundsByTarget,
     getMetaTeamSnapshots,
@@ -287,6 +288,7 @@ const server = http.createServer(async (req, res) => {
             }
             const groupId = url.searchParams.get('groupId') || undefined;
             const sessionId = url.searchParams.get('sessionId') || undefined;
+            const comboKey = url.searchParams.get('comboKey') || undefined;
             if (groupId) {
                 const detail = await getSimLabGroupDetail(groupId);
                 if (!detail) {
@@ -300,6 +302,18 @@ const server = http.createServer(async (req, res) => {
                     return sendJson(res, 404, { ok: false, error: 'SimLab session not found' });
                 }
                 return sendJson(res, 200, { ok: true, round });
+            }
+            if (comboKey) {
+                const testerUserId = url.searchParams.get('tester')
+                    || url.searchParams.get('testerUserId')
+                    || undefined;
+                const maxAgeDays = Number(url.searchParams.get('maxAgeDays'));
+                const lookup = await getSimLabBestForCombo({
+                    comboKey,
+                    testerUserId,
+                    maxAgeDays: Number.isFinite(maxAgeDays) && maxAgeDays > 0 ? maxAgeDays : 30,
+                });
+                return sendJson(res, 200, lookup);
             }
             const limit = Number(url.searchParams.get('limit'));
             const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
