@@ -1817,9 +1817,16 @@ function mapSimLabRoundRow(row) {
         opponentPet,
         opponentBanner,
         opponentBannerStones,
-        opponentFavor: opponentTeam.favor && typeof opponentTeam.favor === 'object'
-            ? opponentTeam.favor
-            : {},
+        opponentFavor: (() => {
+            const fromTeam = opponentTeam.favor && typeof opponentTeam.favor === 'object'
+                ? opponentTeam.favor
+                : {};
+            if (fromTeam && Object.keys(fromTeam).length) return fromTeam;
+            const fromOpponent = payload?.opponent?.favor && typeof payload.opponent.favor === 'object'
+                ? payload.opponent.favor
+                : {};
+            return fromOpponent || {};
+        })(),
         myHeroIds: row.best_hero_ids,
         myHeroNames: row.best_hero_names,
         myPet: row.best_pet != null

@@ -414,47 +414,50 @@ function renderSimLabLegend() {
           </tr>`)
         .join('');
 
+    // Collapsed by default so the log stays first (Training puts reference tables after results).
     return `
   <section class="section" id="legend">
-    <div class="section-head">
-      <h2>Legends</h2>
-      <p class="section-lead">Pet favor, war flags, and flag slots.</p>
-    </div>
-    <div class="sim-legend card">
-      <div class="sim-legend-grid">
-        <div class="sim-legend-panel">
-          <h3>Pet favor</h3>
-          <p class="muted stats-note">Hero → Pet = patronage on that hero. Team pet is separate (shown after +).</p>
-          <div class="table-wrap legend-table-wrap">
-            <table class="data-table">
-              <thead><tr><th class="num">ID</th><th>Pet</th></tr></thead>
-              <tbody>${petRows}</tbody>
-            </table>
+    <details class="sim-legend-details card">
+      <summary>
+        <span class="sim-legend-summary-title">Legends</span>
+        <span class="muted">Pet favor · war flags · flag slots</span>
+      </summary>
+      <div class="sim-legend">
+        <div class="sim-legend-grid">
+          <div class="sim-legend-panel">
+            <h3>Pet favor</h3>
+            <p class="muted stats-note">Hero → Pet = patronage on that hero. Team pet is separate (shown after +).</p>
+            <div class="table-wrap legend-table-wrap">
+              <table class="data-table">
+                <thead><tr><th class="num">ID</th><th>Pet</th></tr></thead>
+                <tbody>${petRows}</tbody>
+              </table>
+            </div>
           </div>
-        </div>
-        <div class="sim-legend-panel">
-          <h3>War flags</h3>
-          <p class="muted stats-note">Flag # on each run. Effects listed here.</p>
-          <div class="table-wrap legend-table-wrap">
-            <table class="data-table">
-              <thead><tr><th class="num">#</th><th>Name</th><th>Effect</th></tr></thead>
-              <tbody>${flagRows}</tbody>
-            </table>
+          <div class="sim-legend-panel">
+            <h3>War flags</h3>
+            <p class="muted stats-note">Flag # on each run. Effects listed here.</p>
+            <div class="table-wrap legend-table-wrap">
+              <table class="data-table">
+                <thead><tr><th class="num">#</th><th>Name</th><th>Effect</th></tr></thead>
+                <tbody>${flagRows}</tbody>
+              </table>
+            </div>
           </div>
-        </div>
-        <div class="sim-legend-panel">
-          <h3>Flag slots</h3>
-          <p class="muted stats-note">S1–S3 patterns. ID = type×12 + rank (White→Red+6).</p>
-          <p class="muted stats-note ranks">${escapeHtml(PATTERN_COLORS.join(' · '))}</p>
-          <div class="table-wrap legend-table-wrap">
-            <table class="data-table">
-              <thead><tr><th class="num">IDs</th><th>Type</th></tr></thead>
-              <tbody>${typeRows}</tbody>
-            </table>
+          <div class="sim-legend-panel">
+            <h3>Flag slots</h3>
+            <p class="muted stats-note">S1–S3 patterns. ID = type×12 + rank (White→Red+6).</p>
+            <p class="muted stats-note ranks">${escapeHtml(PATTERN_COLORS.join(' · '))}</p>
+            <div class="table-wrap legend-table-wrap">
+              <table class="data-table">
+                <thead><tr><th class="num">IDs</th><th>Type</th></tr></thead>
+                <tbody>${typeRows}</tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </details>
   </section>`;
 }
 
@@ -1985,6 +1988,14 @@ function renderSimLabSharedStyles() {
       grid-column: 1 / -1; padding: 8px 12px; border-radius: 6px;
       background: #1a2a40; border: 1px solid #3a5a8a; color: #9fc5ff; font-size: 0.82rem;
     }
+    .sim-legend-details { padding: 0; overflow: hidden; }
+    .sim-legend-details > summary {
+      list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline;
+      gap: 6px 12px; padding: 12px 16px; user-select: none;
+    }
+    .sim-legend-details > summary::-webkit-details-marker { display: none; }
+    .sim-legend-summary-title { font-size: 0.95rem; font-weight: 600; color: #e7ecf3; }
+    .sim-legend-details[open] > summary { border-bottom: 1px solid #243044; }
     .sim-legend { padding: 14px 16px; }
     .sim-legend-grid {
       display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start;
@@ -1996,6 +2007,11 @@ function renderSimLabSharedStyles() {
     .stats-note.ranks { margin-top: -4px; }
     .legend-table-wrap { max-height: 280px; border: 1px solid #243044; border-radius: 8px; }
     .table-wrap { overflow: auto; }
+    #results .table-wrap { max-height: calc(100vh - 140px); }
+    .sim-meta-row-compact { margin-top: 6px; gap: 4px; }
+    .sim-meta-row-compact .sim-chip { font-size: 0.72rem; padding: 2px 6px; }
+    .sim-meta-row-compact .favor-list { gap: 2px 6px; }
+    .sim-meta-row-compact .sim-slots { display: none; }
     table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #243044; vertical-align: middle; }
     th {
@@ -2081,14 +2097,29 @@ function renderSimLabLogRow(round, minWinRate) {
     const detailCell = detailHref
         ? `<a class="detail-btn" href="${escapeHtml(detailHref)}">View detail</a>`
         : '<span class="muted">—</span>';
+    const defenseBits = renderSimLabSupportBits({
+        banner: round.opponentBanner,
+        bannerStones: round.opponentBannerStones,
+        favor: round.opponentFavor,
+    });
+    const attackBits = renderSimLabSupportBits({
+        banner: round.myBanner,
+        bannerStones: round.myBannerStones,
+        favor: round.myFavor,
+        maxUpgrade: round.maxUpgrade,
+    });
     return `
       <tr>
         <td class="num muted">${escapeHtml(String(place))}</td>
-        <td>${renderClickableTeamFilter('opponent', round.opponentHeroIds, round.opponentPet)}</td>
+        <td>
+          ${renderClickableTeamFilter('opponent', round.opponentHeroIds, round.opponentPet)}
+          <div class="sim-meta-row sim-meta-row-compact">${defenseBits}</div>
+        </td>
         <td class="muted">${escapeHtml(name)}</td>
         <td class="muted">${escapeHtml(formatTesterLabel(round))}</td>
         <td>
           ${renderClickableTeamFilter('my', round.myHeroIds, round.myPet, round.myHeroNames)}
+          <div class="sim-meta-row sim-meta-row-compact">${attackBits}</div>
           <div class="muted" style="margin-top:4px">${tryCount} tr${tryCount === 1 ? 'y' : 'ies'}</div>
         </td>
         <td class="num">${renderWinRateCell(round.winRate, minWinRate)}</td>
@@ -2159,12 +2190,11 @@ export function renderSimLabPage(rounds = [], options = {}) {
     </section>
 
     ${renderSimLabFilters(paging)}
-    ${renderSimLabLegend()}
 
     <section class="section" id="results">
       <div class="section-head">
         <h2>Test log</h2>
-        <p class="section-lead">One row per Sim group — best result only.</p>
+        <p class="section-lead">One row per Sim group — best result only. Flag / favor chips show target defense and best attack.</p>
       </div>
       <div class="toolbar">
         <span class="status">${shownFrom}–${shownTo} / ${total}</span>
@@ -2195,6 +2225,8 @@ export function renderSimLabPage(rounds = [], options = {}) {
       </div>
       ${hasMore ? `<p class="meta"><a href="${nextLink}">More</a> · <a href="${allLink}">All ${total}</a></p>` : ''}
     </section>
+
+    ${renderSimLabLegend()}
   </div>
   ${renderSimLabFilterScript()}
 </body>

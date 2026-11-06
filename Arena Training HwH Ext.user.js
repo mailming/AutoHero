@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.29.3
+// @version      1.29.5
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.29.3';
+    const EXTENSION_VERSION = '1.29.5';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -585,31 +585,48 @@
         const serverSeed = battleData.seed;
         const simulations = [];
         let endDemoPayload = null;
+        let demoEnded = false;
         log(`[Arena Training] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
-        for (let i = 0; i < total; i++) {
-            if (isStopped()) break;
-            const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + nextRandom(0, 1e3) + i;
-            const usedSeed = seed == null ? serverSeed : seed;
-            setProgress(`Arena Training: BattleCalc local ${i + 1}/${total}`);
-            try {
-                const sample = await calcBattleCopy(battleData, seed, battleCalc, getBattleType, isValidBattleResult);
-                if (!endDemoPayload && sample.endDemo) {
-                    endDemoPayload = sample.endDemo;
+        try {
+            for (let i = 0; i < total; i++) {
+                if (isStopped()) break;
+                const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + nextRandom(0, 1e3) + i;
+                const usedSeed = seed == null ? serverSeed : seed;
+                setProgress(`Arena Training: BattleCalc local ${i + 1}/${total}`);
+                try {
+                    const sample = await calcBattleCopy(battleData, seed, battleCalc, getBattleType, isValidBattleResult);
+                    if (!endDemoPayload && sample.endDemo) {
+                        endDemoPayload = sample.endDemo;
+                    }
+                    simulations.push(slimSimulationSample(sample));
+                    log(`[Arena Training] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
+                } catch (error) {
+                    console.error(`[Arena Training] BattleCalc local ${i + 1}/${total} failed:`, error);
+                    simulations.push({ win: false, battleTime: 0, error: error.message });
                 }
-                simulations.push(slimSimulationSample(sample));
-                log(`[Arena Training] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
-            } catch (error) {
-                console.error(`[Arena Training] BattleCalc local ${i + 1}/${total} failed:`, error);
-                simulations.push({ win: false, battleTime: 0, error: error.message });
+                // Yield again after each calc so the tab stays interactive between sims.
+                await yieldForUi();
             }
-            // Yield again after each calc so the tab stays interactive between sims.
-            await yieldForUi();
-        }
 
-        if (endDemoPayload && endDemo) {
-            await endDemo(endDemoPayload, battleData);
+            if (endDemo && endDemoPayload) {
+                await endDemo(endDemoPayload, battleData);
+                demoEnded = true;
+            }
+        } finally {
+            // Always close the server demo — an open demo blocks real arenaAttack (NotAvailable).
+            if (endDemo && !demoEnded) {
+                try {
+                    await endDemo(
+                        endDemoPayload || { result: { win: false, stars: 0 }, progress: null },
+                        battleData
+                    );
+                    demoEnded = true;
+                } catch (cleanupError) {
+                    console.warn('[Arena Training] demoBattles_endBattle cleanup failed:', cleanupError);
+                }
+            }
+            endDemoPayload = null;
         }
-        endDemoPayload = null;
 
         const wins = simulations.filter((sample) => sample.win).length;
         const losses = simulations.length - wins;
@@ -2808,7 +2825,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.3.15';
+    const COUNTER_SUGGEST_VERSION = '1.3.17';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -3464,6 +3481,96 @@
             return [];
         }
 
+        function normalizeFavorMap(raw) {
+            const favor = {};
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return favor;
+            for (const [key, value] of Object.entries(raw)) {
+                const heroId = Number(key);
+                const petId = Number(
+                    value && typeof value === 'object'
+                        ? (value.favorPetId ?? value.petId ?? value.id ?? value.pet)
+                        : value
+                );
+                if (heroId > 0 && heroId < 6000 && petId >= 6000 && petId < 7000) {
+                    favor[String(heroId)] = petId;
+                }
+            }
+            return favor;
+        }
+
+        function extractFavorPetFromUnit(unit) {
+            if (unit == null) return 0;
+            if (typeof unit === 'number' || typeof unit === 'string') return 0;
+            const direct = Number(
+                unit.favorPetId ?? unit.favor_pet_id ?? unit.patronPetId ?? unit.favorPet
+            );
+            if (Number.isFinite(direct) && direct >= 6000 && direct < 7000) return direct;
+            try {
+                const via = callSemantic(unit, 'get_favorPetId')
+                    ?? callSemantic(unit, 'get_favorPet')
+                    ?? callSemantic(unit, 'get_patronPetId')
+                    ?? callSemantic(unit, 'get_patron');
+                const fromSemantic = extractPetId(via);
+                if (fromSemantic) return fromSemantic;
+            } catch {
+                // continue
+            }
+            return 0;
+        }
+
+        function extractFavorFromUnitList(units) {
+            const favor = {};
+            const list = Array.isArray(units)
+                ? units
+                : (units && typeof units === 'object' ? Object.values(units) : []);
+            for (const unit of list) {
+                if (unit == null) continue;
+                if (typeof unit === 'number' || typeof unit === 'string') continue;
+                const heroId = Number(unit.id ?? unit.heroId ?? callUnitId(unit));
+                if (!Number.isFinite(heroId) || heroId <= 0 || heroId >= 6000) continue;
+                const petId = extractFavorPetFromUnit(unit);
+                if (petId) favor[String(heroId)] = petId;
+            }
+            return favor;
+        }
+
+        function extractFavorFromBattleTeam(team) {
+            const favor = {};
+            if (!team) return favor;
+            try {
+                const map = callSemantic(team, 'get_favor')
+                    || callSemantic(team, 'get_favors')
+                    || team.favor
+                    || team.favors;
+                Object.assign(favor, normalizeFavorMap(map));
+            } catch {
+                // continue
+            }
+            try {
+                const units = typeof team.Wi === 'function' ? team.Wi()
+                    : (callSemantic(team, 'get_units') || team.nC || []);
+                Object.assign(favor, extractFavorFromUnitList(units));
+            } catch {
+                // continue
+            }
+            return favor;
+        }
+
+        /** Arena list entries often omit top-level favor — build it from hero favorPetId. */
+        function extractFavorFromEnemyEntry(entry) {
+            if (!entry || typeof entry !== 'object') return {};
+            const fromMap = normalizeFavorMap(entry.favor || entry.favors || entry.defenceFavor);
+            if (Object.keys(fromMap).length) return fromMap;
+            return extractFavorFromUnitList(
+                entry.heroes
+                || entry.heroIds
+                || entry.team?.units
+                || entry.team?.heroes
+                || entry.defenceTeam?.units
+                || entry.units
+            );
+        }
+
         function extractFromPlayerArenaEnemy(enemy) {
             if (!enemy || typeof enemy !== 'object') return null;
 
@@ -3496,13 +3603,14 @@
 
             const banner = extractBannerId(team);
             const bannerStones = extractBannerStonesFromBattleTeam(team);
+            const favor = extractFavorFromBattleTeam(team);
             return {
                 userId,
                 heroes,
                 pet: pet || 0,
                 banner: banner || 0,
                 bannerStones,
-                favor: {},
+                favor,
             };
         }
 
@@ -4558,8 +4666,9 @@
                 const banner = bannerEntry?.id != null
                     ? Number(bannerEntry.id)
                     : (entry.banner != null ? Number(entry.banner) : null);
+                const favor = extractFavorFromEnemyEntry(entry);
                 return {
-                    favor: entry.favor && typeof entry.favor === 'object' ? entry.favor : {},
+                    favor,
                     bannerStones: normalizeBannerStones(bannerEntry?.slots || entry.bannerStones),
                     banner: Number.isFinite(banner) && banner > 0 ? banner : null,
                     name: entry.user?.name || entry.name || null,
@@ -4654,7 +4763,7 @@
         }
 
         async function buildOpponentOverrideForTraining(enemy) {
-            let favor = enemy.favor && typeof enemy.favor === 'object' ? { ...enemy.favor } : {};
+            let favor = normalizeFavorMap(enemy.favor);
             let banner = Number(enemy.banner) || 1;
             let bannerStones = hasBannerStones(enemy.bannerStones)
                 ? normalizeBannerStones(enemy.bannerStones)
@@ -4666,7 +4775,10 @@
 
             if (!isCd) {
                 const extras = await fetchEnemyDefenceExtras(enemy.userId);
-                if (extras.favor && Object.keys(extras.favor).length) favor = extras.favor;
+                favor = {
+                    ...favor,
+                    ...normalizeFavorMap(extras.favor),
+                };
                 if (extras.banner) banner = extras.banner;
                 if (hasBannerStones(extras.bannerStones)) {
                     bannerStones = normalizeBannerStones(extras.bannerStones);
@@ -4791,7 +4903,7 @@
                 );
                 const baseBannerStones = resolveAttackBannerStones(support.userInfo, baseBanner);
 
-                let defenceFavor = enemy.favor && typeof enemy.favor === 'object' ? enemy.favor : {};
+                let defenceFavor = normalizeFavorMap(enemy.favor);
                 let defenceBanner = enemy.banner || 1;
                 let defenceBannerStones = hasBannerStones(enemy.bannerStones)
                     ? normalizeBannerStones(enemy.bannerStones)
@@ -4801,10 +4913,11 @@
                 let defencePower = enemy.power ?? null;
                 if (!isCd) {
                     const defenceExtras = await fetchEnemyDefenceExtras(enemy.userId);
-                    if (defenceExtras.favor && typeof defenceExtras.favor === 'object'
-                        && Object.keys(defenceExtras.favor).length > 0) {
-                        defenceFavor = defenceExtras.favor;
-                    }
+                    // Prefer arenaFindEnemies favors (hero.favorPetId), keep gather favors as fallback.
+                    defenceFavor = {
+                        ...defenceFavor,
+                        ...normalizeFavorMap(defenceExtras.favor),
+                    };
                     if (defenceExtras.banner) defenceBanner = defenceExtras.banner;
                     if (hasBannerStones(defenceExtras.bannerStones)) {
                         defenceBannerStones = normalizeBannerStones(defenceExtras.bannerStones);
@@ -4812,6 +4925,14 @@
                     defenceName = defenceExtras.name;
                     defencePlace = defenceExtras.place;
                     defencePower = defenceExtras.power ?? defencePower;
+                }
+                if (!Object.keys(defenceFavor).length) {
+                    console.warn(
+                        `[${EXTENSION_NAME}] SimLab defence favor empty for enemy ${enemy.userId}`
+                        + ' — demos will run without patronage'
+                    );
+                } else {
+                    console.log(`[${EXTENSION_NAME}] SimLab defence favor:`, defenceFavor);
                 }
 
                 if (!hasBannerStones(baseBannerStones)) {
@@ -5089,32 +5210,129 @@
                     return;
                 }
 
+                // Keep gather open until arenaAttack succeeds — closing first cancels the
+                // pending challenge and often yields NotAvailable after a long SimLab.
                 const gather = readEnemyFromGather();
-                closeGather(gather?.mediator);
 
-                const args = {
+                const normalizeFavor = (map) => {
+                    const out = {};
+                    if (!map || typeof map !== 'object') return out;
+                    for (const [key, value] of Object.entries(map)) {
+                        const heroId = Number(key);
+                        const petId = Number(value);
+                        if (heroId > 0 && heroId < 6000 && petId >= 6000 && petId < 7000) {
+                            out[String(heroId)] = petId;
+                        }
+                    }
+                    return out;
+                };
+
+                const extractSendError = (response) => {
+                    if (response?.error) return response.error;
+                    for (const item of response?.results || []) {
+                        if (item?.error) return item.error;
+                        if (item?.result?.error) return item.result.error;
+                    }
+                    return null;
+                };
+
+                const isNotAvailable = (err) => {
+                    const text = `${err?.name || ''} ${err?.description || ''}`.toLowerCase();
+                    return text.includes('notavailable') || text.includes('not available');
+                };
+
+                const sendArenaAttack = async (args, label) => {
+                    console.log(`[${EXTENSION_NAME}] arenaAttack`, args, { source, label });
+                    const response = await Send({
+                        calls: [{
+                            name: 'arenaAttack',
+                            args,
+                            context: { actionTs: Date.now() },
+                            ident: 'body',
+                        }],
+                    });
+                    return { response, error: extractSendError(response) };
+                };
+
+                // Confirm opponent is still on the current Arena list when possible.
+                let opponentOnList = null;
+                try {
+                    const listResponse = await Send({
+                        calls: [{
+                            name: 'arenaFindEnemies',
+                            args: {},
+                            context: { actionTs: Date.now() },
+                            ident: 'arenaFindEnemies',
+                        }],
+                    });
+                    const list = listResponse.results?.find((r) => r.ident === 'arenaFindEnemies')?.result?.response
+                        || listResponse.results?.[0]?.result?.response
+                        || [];
+                    const target = String(enemy.userId);
+                    opponentOnList = (Array.isArray(list) ? list : []).some((row) => {
+                        const id = row?.userId ?? row?.user?.id ?? row?.id;
+                        return id != null && String(id) === target;
+                    });
+                    if (!opponentOnList) {
+                        console.warn(
+                            `[${EXTENSION_NAME}] opponent ${enemy.userId} missing from arenaFindEnemies — attacking anyway while gather is open`
+                        );
+                    }
+                } catch (listError) {
+                    console.warn(`[${EXTENSION_NAME}] arenaFindEnemies pre-check failed:`, listError);
+                }
+
+                let args = {
                     userId: Number(enemy.userId),
                     heroes,
                     pet,
-                    favor,
+                    favor: normalizeFavor(favor),
                     banners: [banner],
                 };
 
-                console.log(`[${EXTENSION_NAME}] arenaAttack`, args, { source });
-                const response = await Send({
-                    calls: [{
-                        name: 'arenaAttack',
-                        args,
-                        context: { actionTs: Date.now() },
-                        ident: 'body',
-                    }],
-                });
+                let { response, error: attackError } = await sendArenaAttack(args, 'primary');
 
-                if (response?.error) {
-                    const name = response.error.name || 'Unknown';
-                    const desc = response.error.description || '';
+                // SimLab may pick a banner/favor combo demo accepts but arenaAttack rejects.
+                // Retry once with the equipped arena banner + stored arena favors.
+                if (attackError && isNotAvailable(attackError) && simBest) {
+                    const safeBanner = resolveBanner(
+                        support.userInfo,
+                        support.teamBanners,
+                        'arena'
+                    );
+                    const safeFavor = normalizeFavor(pickFavor(heroes, arenaFavor));
+                    const retryArgs = {
+                        userId: Number(enemy.userId),
+                        heroes,
+                        pet,
+                        favor: safeFavor,
+                        banners: [safeBanner],
+                    };
+                    const sameAsPrimary = safeBanner === banner
+                        && JSON.stringify(safeFavor) === JSON.stringify(args.favor);
+                    if (!sameAsPrimary) {
+                        console.warn(
+                            `[${EXTENSION_NAME}] arenaAttack NotAvailable with SimLab loadout — retrying equipped banner/favor`,
+                            { primary: args, retry: retryArgs }
+                        );
+                        args = retryArgs;
+                        ({ response, error: attackError } = await sendArenaAttack(args, 'safe-retry'));
+                    }
+                }
+
+                if (attackError) {
+                    const name = attackError.name || 'Unknown';
+                    const desc = attackError.description || '';
+                    if (isNotAvailable(attackError)) {
+                        const hint = opponentOnList === false
+                            ? 'Opponent left your Arena list — reopen gather on a current enemy.'
+                            : 'May be peace time, no attempts left, arena locked, or an unfinished demo battle.';
+                        throw new Error(`arenaAttack failed: ${name}${desc ? ` - ${desc}` : ''} (${hint})`);
+                    }
                     throw new Error(`arenaAttack failed: ${name}${desc ? ` - ${desc}` : ''}`);
                 }
+
+                closeGather(gather?.mediator);
 
                 const responseBody = response.results?.[0]?.result?.response
                     || response.results?.[0]?.response
