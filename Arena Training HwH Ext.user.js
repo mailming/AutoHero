@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.30.1
+// @version      1.30.2
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.30.1';
+    const EXTENSION_VERSION = '1.30.2';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -3706,6 +3706,118 @@
             return favor;
         }
 
+        function heroSetKey(heroIds = []) {
+            return (Array.isArray(heroIds) ? heroIds : [])
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000)
+                .slice()
+                .sort((a, b) => a - b)
+                .join(',');
+        }
+
+        function parseArenaFindEnemyEntry(entry) {
+            if (!entry || typeof entry !== 'object') return null;
+            const heroes = [];
+            let pet = 0;
+            for (const item of entry.heroes || []) {
+                const id = Number(item?.id ?? item);
+                if (!Number.isFinite(id)) continue;
+                if (id >= 6000 && id < 7000) pet = id;
+                else if (id > 0 && id < 6000) heroes.push(id);
+            }
+            const userId = entry.userId ?? entry.user?.id ?? entry.id;
+            if (userId == null || heroes.length !== 5) return null;
+            return {
+                userId,
+                heroes,
+                pet: pet || 0,
+                name: entry.user?.name || entry.name || null,
+                place: entry.place ?? null,
+                power: entry.power ?? null,
+                entry,
+            };
+        }
+
+        /**
+         * Fresh arenaFindEnemies + arenaCheckTargetRange right before attack.
+         * Prefer matching by userId; fall back to defense hero+pet lineup when gather _id is wrong.
+         */
+        async function refreshArenaAttackTarget(enemy) {
+            const empty = {
+                userId: enemy?.userId != null ? Number(enemy.userId) : null,
+                onList: false,
+                inRange: null,
+                matchedBy: null,
+                listCount: 0,
+            };
+            if (!enemy?.userId && !enemy?.heroes?.length) return empty;
+
+            const response = await Send({
+                calls: [{
+                    name: 'arenaFindEnemies',
+                    args: {},
+                    context: { actionTs: Date.now() },
+                    ident: 'arenaFindEnemies',
+                }],
+            });
+            const list = response.results?.find((r) => r.ident === 'arenaFindEnemies')?.result?.response
+                || response.results?.[0]?.result?.response
+                || [];
+            const rows = (Array.isArray(list) ? list : [])
+                .map(parseArenaFindEnemyEntry)
+                .filter(Boolean);
+
+            const wantId = enemy.userId != null ? String(enemy.userId) : '';
+            const wantHeroes = heroSetKey(enemy.heroes);
+            const wantPet = Number(enemy.pet) || 0;
+
+            const byId = wantId
+                ? rows.find((row) => String(row.userId) === wantId)
+                : null;
+            const byLineup = wantHeroes
+                ? rows.find((row) => (
+                    heroSetKey(row.heroes) === wantHeroes
+                    && (!wantPet || !row.pet || row.pet === wantPet)
+                ))
+                : null;
+            const matched = byId || byLineup || null;
+            if (!matched) {
+                return { ...empty, listCount: rows.length };
+            }
+
+            let inRange = null;
+            try {
+                const checkResponse = await Send({
+                    calls: [{
+                        name: 'arenaCheckTargetRange',
+                        args: { ids: [String(matched.userId)] },
+                        context: { actionTs: Date.now() },
+                        ident: 'arenaCheckTargetRange',
+                    }],
+                });
+                const check = checkResponse.results?.find((r) => r.ident === 'arenaCheckTargetRange')
+                    ?.result?.response
+                    || checkResponse.results?.[0]?.result?.response
+                    || {};
+                if (Object.prototype.hasOwnProperty.call(check, String(matched.userId))) {
+                    inRange = !!check[String(matched.userId)];
+                }
+            } catch (error) {
+                console.warn(`[${EXTENSION_NAME}] arenaCheckTargetRange failed:`, error);
+            }
+
+            return {
+                userId: Number(matched.userId),
+                onList: true,
+                inRange,
+                matchedBy: byId ? 'userId' : 'lineup',
+                listCount: rows.length,
+                name: matched.name,
+                place: matched.place,
+                power: matched.power,
+            };
+        }
+
         /** Arena list entries often omit top-level favor — build it from hero favorPetId. */
         function extractFavorFromEnemyEntry(entry) {
             if (!entry || typeof entry !== 'object') return {};
@@ -5740,7 +5852,7 @@
                     return text.includes('notavailable') || text.includes('not available');
                 };
 
-                // Open demos from a prior SimLab block real arenaAttack with NotAvailable.
+                // Only end a demo if one may still be open — blind endBattle can itself upset attack state.
                 const forceCloseOpenDemoBattle = async () => {
                     try {
                         const response = await Send({
@@ -5757,76 +5869,100 @@
                         const err = extractSendError(response);
                         if (err) {
                             console.log(
-                                `[${EXTENSION_NAME}] demoBattles_endBattle before attack:`,
+                                `[${EXTENSION_NAME}] demoBattles_endBattle before retry:`,
                                 err.name || err
                             );
                         } else {
-                            console.log(`[${EXTENSION_NAME}] closed dangling demo before arenaAttack`);
+                            console.log(`[${EXTENSION_NAME}] closed dangling demo before arenaAttack retry`);
                         }
                     } catch (error) {
-                        console.log(`[${EXTENSION_NAME}] demo close before attack skipped:`, error?.message || error);
+                        console.log(`[${EXTENSION_NAME}] demo close before retry skipped:`, error?.message || error);
                     }
                 };
 
-                await forceCloseOpenDemoBattle();
-
-                // Informative only — gather open is what matters for the pending challenge.
-                let opponentOnList = null;
-                try {
-                    const listResponse = await Send({
-                        calls: [{
-                            name: 'arenaFindEnemies',
-                            args: {},
-                            context: { actionTs: Date.now() },
-                            ident: 'arenaFindEnemies',
-                        }],
-                    });
-                    const list = listResponse.results?.find((r) => r.ident === 'arenaFindEnemies')?.result?.response
-                        || listResponse.results?.[0]?.result?.response
-                        || [];
-                    const target = String(enemy.userId);
-                    opponentOnList = (Array.isArray(list) ? list : []).some((row) => {
-                        const id = row?.userId ?? row?.user?.id ?? row?.id;
-                        return id != null && String(id) === target;
-                    });
-                    if (!opponentOnList) {
-                        console.warn(
-                            `[${EXTENSION_NAME}] opponent ${enemy.userId} missing from arenaFindEnemies`
-                            + ' — still attacking while gather challenge is open'
-                        );
-                    }
-                } catch (listError) {
-                    console.warn(`[${EXTENSION_NAME}] arenaFindEnemies pre-check failed:`, listError);
-                }
-
                 let gather = readEnemyFromGather();
                 if (!gather?.enemy?.userId) {
+                    throw new Error('Keep the Arena gather popup open on this enemy, then click Attack.');
+                }
+
+                // Refresh the live Arena list + range check immediately before arenaAttack.
+                // Gather _id can disagree with arenaFindEnemies userId — prefer the fresh list id.
+                panelState.message = 'Attack: refreshing Arena target…';
+                panelController?.render();
+                let refreshed;
+                try {
+                    refreshed = await refreshArenaAttackTarget({
+                        userId: gather.enemy.userId,
+                        heroes: gather.enemy.heroes || enemy.heroes,
+                        pet: gather.enemy.pet || enemy.pet,
+                    });
+                } catch (refreshError) {
+                    console.warn(`[${EXTENSION_NAME}] refreshArenaAttackTarget failed:`, refreshError);
+                    refreshed = {
+                        userId: Number(gather.enemy.userId || enemy.userId),
+                        onList: null,
+                        inRange: null,
+                        matchedBy: null,
+                        listCount: 0,
+                    };
+                }
+
+                console.log(`[${EXTENSION_NAME}] Attack target refresh`, {
+                    gatherUserId: gather.enemy.userId,
+                    panelUserId: enemy.userId,
+                    refreshed,
+                });
+
+                if (refreshed.onList === false) {
                     throw new Error(
-                        'Keep the Arena gather popup open on this enemy, then click Attack.'
-                        + ' After a long SimLab the challenge often expires — reopen gather first.'
+                        `Enemy ${enemy.userId} not in the current arenaFindEnemies list`
+                        + ` (${refreshed.listCount} foes). Tap Arena refresh, open gather again, then Attack.`
                     );
                 }
-                if (String(gather.enemy.userId) !== String(enemy.userId)) {
+                if (refreshed.inRange === false) {
                     throw new Error(
-                        `Gather enemy is ${gather.enemy.userId}, panel has ${enemy.userId}`
-                        + ' — reopen gather on the panel target.'
+                        `Enemy ${refreshed.userId} failed arenaCheckTargetRange`
+                        + ' — refresh the Arena list, open gather again, then Attack.'
                     );
+                }
+
+                const attackUserId = Number(refreshed.userId || gather.enemy.userId || enemy.userId);
+                if (!Number.isFinite(attackUserId) || attackUserId <= 0) {
+                    throw new Error('Could not resolve a valid Arena attack userId');
+                }
+                if (String(attackUserId) !== String(enemy.userId) && panelState.enemy) {
+                    console.warn(
+                        `[${EXTENSION_NAME}] correcting panel userId ${enemy.userId} → ${attackUserId}`
+                        + ` (matched by ${refreshed.matchedBy})`
+                    );
+                    panelState.enemy = { ...panelState.enemy, userId: attackUserId };
+                }
+
+                // Re-read gather after the refresh RPCs — must still be the same challenge.
+                gather = readEnemyFromGather();
+                if (!gather?.enemy?.userId) {
+                    throw new Error('Gather closed during target refresh — reopen gather, then Attack.');
                 }
 
                 const sendArenaAttack = async (args, label) => {
-                    // Re-check gather immediately before each send — async prep can expire it.
                     gather = readEnemyFromGather();
-                    if (!gather?.enemy?.userId
-                        || String(gather.enemy.userId) !== String(enemy.userId)) {
+                    if (!gather?.enemy?.userId) {
                         return {
                             response: null,
                             error: {
                                 name: 'NotAvailable',
-                                description: 'Gather challenge closed or changed before arenaAttack',
+                                description: 'Gather challenge closed before arenaAttack',
                             },
                         };
                     }
-                    console.log(`[${EXTENSION_NAME}] arenaAttack`, args, { source, label });
+                    console.log(`[${EXTENSION_NAME}] arenaAttack`, args, {
+                        source,
+                        label,
+                        gatherUserId: gather.enemy.userId,
+                        refreshedUserId: attackUserId,
+                        matchedBy: refreshed.matchedBy,
+                        inRange: refreshed.inRange,
+                    });
                     const response = await Send({
                         calls: [{
                             name: 'arenaAttack',
@@ -5839,7 +5975,7 @@
                 };
 
                 let args = {
-                    userId: Number(enemy.userId),
+                    userId: attackUserId,
                     heroes,
                     pet,
                     favor: normalizeFavor(favor),
@@ -5848,7 +5984,7 @@
 
                 let { response, error: attackError } = await sendArenaAttack(args, 'primary');
 
-                // NotAvailable: close any leftover demo, then retry with equipped banner/favor.
+                // NotAvailable: close leftover demo once, then retry with equipped banner/favor.
                 if (attackError && isNotAvailable(attackError)) {
                     await forceCloseOpenDemoBattle();
                     const safeBanner = resolveBanner(
@@ -5858,7 +5994,7 @@
                     );
                     const safeFavor = normalizeFavor(pickFavor(heroes, arenaFavor));
                     const retryArgs = {
-                        userId: Number(enemy.userId),
+                        userId: attackUserId,
                         heroes,
                         pet,
                         favor: Object.keys(safeFavor).length ? safeFavor : args.favor,
@@ -5866,7 +6002,7 @@
                     };
                     console.warn(
                         `[${EXTENSION_NAME}] arenaAttack NotAvailable — retrying after demo close`,
-                        { primary: args, retry: retryArgs, opponentOnList }
+                        { primary: args, retry: retryArgs, refreshed }
                     );
                     args = retryArgs;
                     ({ response, error: attackError } = await sendArenaAttack(args, 'demo-close-retry'));
@@ -5880,9 +6016,10 @@
                         let hint;
                         if (!gatherStillOpen) {
                             hint = 'Gather closed — reopen Arena gather on this enemy, then Attack.';
-                        } else if (opponentOnList === false) {
-                            hint = 'Opponent not on your current Arena list; gather challenge may have expired'
-                                + ' — close gather, pick them again from the list, then Attack.';
+                        } else if (refreshed.onList === false) {
+                            hint = 'Enemy missing from fresh arenaFindEnemies — refresh Arena list and reopen gather.';
+                        } else if (refreshed.inRange === false) {
+                            hint = 'Enemy failed arenaCheckTargetRange — refresh Arena list and reopen gather.';
                         } else {
                             hint = 'May be peace time, no attempts left, arena locked, or a demo still open.';
                         }
