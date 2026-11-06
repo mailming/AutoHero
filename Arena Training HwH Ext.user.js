@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.30.6
+// @version      1.30.7
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.30.6';
+    const EXTENSION_VERSION = '1.30.7';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -2872,7 +2872,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.30.6';
+    const COUNTER_SUGGEST_VERSION = '1.30.7';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -2885,6 +2885,10 @@
         const BANNER_STONE_DESC_CLASS = 'game.data.storage.resource.BannerStoneDescription';
         const SIMLAB_SIMULATIONS = 10;
         const SIMLAB_TARGET_WIN_RATE = 90;
+        /** Gold SimLab: full defense favor/flag/slots; badge when win rate ≥ this. */
+        const GOLD_SIMLAB_WIN_RATE = 95;
+        const GOLD_SIMLAB_MIN_SLOTS = 3;
+        const GOLD_SIMLAB_MIN_FAVORS = 5;
         /** Team-pet candidates SimLab tries. 0 = every owned pet (no cap). */
         const SIMLAB_MAX_PETS = 0;
         const HOST_ID = 'ah-arena-counter-suggest-host';
@@ -3022,6 +3026,7 @@
                     losses: hist.losses,
                     heroNames: hist.heroNames,
                     fromHistory: true,
+                    goldSimLab: !!hist.goldSimLab,
                 };
                 return panelState.simBest;
             }
@@ -3068,6 +3073,7 @@
                 winRate: opt.winRate,
                 wins: opt.wins,
                 losses: opt.losses,
+                goldSimLab: !!opt.goldSimLab,
             };
         }
 
@@ -3117,6 +3123,35 @@
 
         function hasBannerStones(slots) {
             return !!(slots && typeof slots === 'object' && Object.keys(slots).length > 0);
+        }
+
+        function countFilledBannerSlots(slots) {
+            if (!slots || typeof slots !== 'object') return 0;
+            return Object.entries(slots)
+                .filter(([, value]) => value != null && value !== '')
+                .length;
+        }
+
+        /** Gold SimLab = enemy defense had full favors + flag + all slots. */
+        function isGoldSimLabDefense({ favor, banner, bannerStones, heroIds } = {}) {
+            const heroes = Array.isArray(heroIds)
+                ? heroIds.map(Number).filter((id) => id > 0 && id < 6000)
+                : [];
+            const favorNeed = heroes.length || GOLD_SIMLAB_MIN_FAVORS;
+            const favorCount = favor && typeof favor === 'object'
+                ? Object.keys(favor).filter((k) => favor[k] != null && favor[k] !== '').length
+                : 0;
+            const hasFlag = banner != null && banner !== '' && Number(banner) > 0;
+            const slotCount = countFilledBannerSlots(bannerStones);
+            return hasFlag && slotCount >= GOLD_SIMLAB_MIN_SLOTS && favorCount >= favorNeed;
+        }
+
+        function isGoldSimLabBadge(round = {}) {
+            const winRate = round.winRate != null ? Number(round.winRate) : null;
+            return !!round.goldSimLab
+                && winRate != null
+                && Number.isFinite(winRate)
+                && winRate >= GOLD_SIMLAB_WIN_RATE;
         }
 
         function getIntMapBacking(map) {
@@ -4463,6 +4498,11 @@
                         letter-spacing: .06em;
                         text-transform: uppercase;
                     }
+                    .sim-badge.gold {
+                        border-color: rgba(201,162,39,.85);
+                        background: linear-gradient(135deg, rgba(61,46,18,.9), rgba(90,69,24,.9));
+                        color: #f6e27a;
+                    }
                     .row-wrap.selected .row-rate { color: #e8ffd8; }
                     .simlab-btn {
                         margin: 0;
@@ -4714,11 +4754,15 @@
                     : 'Click to select this lineup';
 
                 const rateSuffix = source === 'max' ? ' max' : '';
+                const goldBadge = isSim && isGoldSimLabBadge(match);
+                const simBadgeHtml = goldBadge
+                    ? `<span class="sim-badge gold" title="Gold SimLab · full defense favor/flag/slots · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold</span>`
+                    : '<span class="sim-badge">SimLab</span>';
                 button.innerHTML = isSim
                     ? `
                         <div class="row-main">${lineupNamesHtml(match)}</div>
                         <div class="row-meta">
-                            <span class="sim-badge">SimLab</span>
+                            ${simBadgeHtml}
                             <span class="row-rate">${winRateText(match)}</span>
                         </div>
                     `
@@ -4899,15 +4943,19 @@
                 if (selected?.match) {
                     const simBest = panelState.simBest?.key === selected.key ? panelState.simBest : null;
                     const isSimSel = selected.source === 'simlab';
+                    const goldSel = isSimSel && isGoldSimLabBadge(selected.match);
                     const sourceLabel = selected.source === 'max'
                         ? 'Max power'
-                        : (isSimSel ? 'SimLab' : 'My power');
+                        : (goldSel ? 'Gold SimLab' : (isSimSel ? 'SimLab' : 'My power'));
+                    const selBadgeHtml = goldSel
+                        ? `<span class="sim-badge gold" title="Gold SimLab · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold</span>`
+                        : (isSimSel ? '<span class="sim-badge">SimLab</span>' : '<span></span>');
                     selectedCard.className = 'selected-card';
                     selectedCard.innerHTML = `
                         <div class="selected-label">${escapePanelText(sourceLabel)}</div>
                         <div class="selected-main">${lineupNamesHtml(selected.match, simBest)}</div>
                         <div class="row-meta">
-                            ${isSimSel ? '<span class="sim-badge">SimLab</span>' : '<span></span>'}
+                            ${selBadgeHtml}
                             <span class="row-rate">${winRateText(selected.match, simBest)}${selected.source === 'max' ? ' max' : ''}</span>
                         </div>
                     `;
@@ -5916,6 +5964,12 @@
                 const names = Array.isArray(match?.myHeroNames) && match.myHeroNames.length === 5
                     ? match.myHeroNames
                     : heroes.map(heroName);
+                const goldSimLab = isGoldSimLabDefense({
+                    favor: defenceFavor,
+                    banner: defenceBanner,
+                    bannerStones: defenceBannerStones,
+                    heroIds: enemy.heroes || [],
+                });
                 const freshOption = {
                     simId: simLabGroupId || `local_${Date.now()}`,
                     heroes,
@@ -5929,6 +5983,7 @@
                     heroNames: names,
                     maxUpgrade: false,
                     fromHistory: true,
+                    goldSimLab,
                 };
                 // Put the fresh result first and drop older same lineup.
                 panelState.simOptions = [
@@ -5958,13 +6013,17 @@
                     losses: best.losses,
                     heroNames: names,
                     fromHistory: true,
+                    goldSimLab,
                 };
 
                 const assignedFavors = Object.keys(best.favor || {}).length;
+                const hitGold = goldSimLab && best.winRate >= GOLD_SIMLAB_WIN_RATE;
                 const hitTarget = best.winRate >= SIMLAB_TARGET_WIN_RATE;
-                const msg = hitTarget
-                    ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors}`
-                    : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors} (<${SIMLAB_TARGET_WIN_RATE}%)`;
+                const msg = hitGold
+                    ? `Gold SimLab ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors}`
+                    : (hitTarget
+                        ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors}`
+                        : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors} (<${SIMLAB_TARGET_WIN_RATE}%)`);
                 panelState.message = msg;
                 panelState.status = 'ready';
                 HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
@@ -5997,6 +6056,13 @@
                 || best.sessionId
                 || fallbackMatch?.simId
                 || `${heroes.join(',')}|${pet}|${Number(best.myBanner ?? best.banner) || 0}`;
+            const goldSimLab = best.goldSimLab === true
+                || isGoldSimLabDefense({
+                    favor: best.opponentFavor || {},
+                    banner: best.opponentBanner,
+                    bannerStones: best.opponentBannerStones || {},
+                    heroIds: best.opponentHeroIds || [],
+                });
             return {
                 simId: String(simId),
                 heroes,
@@ -6010,6 +6076,7 @@
                 heroNames: best.myHeroNames || best.heroNames || fallbackMatch?.myHeroNames,
                 maxUpgrade: false,
                 fromHistory: true,
+                goldSimLab,
             };
         }
 

@@ -280,6 +280,54 @@ function renderWinRateCell(winRate, minWinRate = 90) {
     return `<span class="win ${cls}">${escapeHtml(formatPct(winRate))}</span>${solved}`;
 }
 
+/** Gold SimLab: defense tested with full pet favors + flag + slots. Badge at ≥95%. */
+const GOLD_SIMLAB_WIN_RATE = 95;
+const GOLD_SIMLAB_MIN_SLOTS = 3;
+const GOLD_SIMLAB_MIN_FAVORS = 5;
+
+function countFilledBannerSlots(stones) {
+    if (!stones || typeof stones !== 'object') return 0;
+    return Object.entries(stones)
+        .filter(([, value]) => value != null && value !== '')
+        .length;
+}
+
+export function isGoldSimLabDefense(round = {}) {
+    const heroIds = Array.isArray(round.opponentHeroIds)
+        ? round.opponentHeroIds.map(Number).filter((id) => id > 0 && id < 6000)
+        : [];
+    const favorNeed = heroIds.length || GOLD_SIMLAB_MIN_FAVORS;
+    const favorCount = formatFavorEntries(round.opponentFavor).length;
+    const banner = round.opponentBanner;
+    const hasFlag = banner != null && banner !== '' && Number(banner) > 0;
+    const slotCount = countFilledBannerSlots(round.opponentBannerStones);
+    return hasFlag && slotCount >= GOLD_SIMLAB_MIN_SLOTS && favorCount >= favorNeed;
+}
+
+export function isGoldSimLabBadge(round = {}, goldWinRate = GOLD_SIMLAB_WIN_RATE) {
+    const winRate = round.winRate != null ? Number(round.winRate) : null;
+    return isGoldSimLabDefense(round)
+        && winRate != null
+        && Number.isFinite(winRate)
+        && winRate >= goldWinRate;
+}
+
+function renderGoldSimLabBadge() {
+    return `<span class="badge gold" title="Gold SimLab · full defense favor / flag / slots · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold</span>`;
+}
+
+function renderSimLabWinRateCell(round, minWinRate = 90) {
+    const winRate = round?.winRate;
+    const cls = winRateClass(winRate, minWinRate);
+    if (isGoldSimLabBadge(round)) {
+        return `<span class="win ${cls}">${escapeHtml(formatPct(winRate))}</span>${renderGoldSimLabBadge()}`;
+    }
+    const solved = winRate != null && winRate >= minWinRate
+        ? `<span class="badge solved">${escapeHtml(String(minWinRate))}%+</span>`
+        : '';
+    return `<span class="win ${cls}">${escapeHtml(formatPct(winRate))}</span>${solved}`;
+}
+
 function renderPageIntro(minWinRate = 90) {
     return `
   <section class="intro card">
@@ -1536,15 +1584,19 @@ function sanitizeHeroNames(names) {
     return cleaned.some(Boolean) ? cleaned : null;
 }
 
-function renderSimLabSupportBits({ banner, bannerStones, favor, maxUpgrade }) {
+function renderSimLabSupportBits({ banner, bannerStones, favor, maxUpgrade, goldDefense = false }) {
     const flagText = formatFlagLabel(banner);
     const flagTitle = formatFlagTitle(banner);
     const stonesHtml = formatBannerStonesHtml(bannerStones);
     const flagMissing = banner == null || banner === '';
     const favorEntries = formatFavorEntries(favor);
-    const bits = [
+    const bits = [];
+    if (goldDefense) {
+        bits.push('<span class="sim-chip gold-sim" title="Gold SimLab defense · full favor / flag / slots"><span class="sim-chip-k">Gold</span> Sim</span>');
+    }
+    bits.push(
         `<span class="sim-chip${flagMissing ? ' warn' : ''}" title="${escapeHtml(flagTitle)}"><span class="sim-chip-k">Flag</span> ${escapeHtml(flagText)}</span>`,
-    ];
+    );
     if (stonesHtml) {
         bits.push(`<span class="sim-chip sim-chip-slots"><span class="sim-chip-k">Slots</span> <span class="sim-slots">${stonesHtml}</span></span>`);
     } else {
@@ -2033,6 +2085,13 @@ function renderSimLabSharedStyles() {
       font-size: 0.7rem; font-weight: 600; vertical-align: middle;
     }
     .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
+    .badge.gold {
+      background: linear-gradient(135deg, #3d2e12 0%, #5a4518 100%);
+      color: #f6e27a;
+      border: 1px solid #c9a227;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
     a { color: #7cb8ff; }
     .empty {
       padding: 24px 16px; text-align: center; color: #8b9bb4;
@@ -2049,6 +2108,9 @@ function renderSimLabSharedStyles() {
       background: #1a2433; border: 1px solid #2f3f57; color: #d7e3f4;
     }
     .sim-chip.warn { border-color: #6a4a20; background: #2a2012; color: #f6d365; }
+    .sim-chip.gold-sim {
+      border-color: #c9a227; background: #2a2412; color: #f6e27a;
+    }
     .sim-chip-k { color: #8b9bb4; font-weight: 600; text-transform: uppercase; font-size: 0.68rem; letter-spacing: .04em; }
     .sim-chip-slots, .sim-chip-favor { align-items: flex-start; max-width: 100%; border-radius: 8px; }
     .sim-slots { display: flex; flex-direction: column; gap: 2px; }
@@ -2097,10 +2159,12 @@ function renderSimLabLogRow(round, minWinRate) {
     const detailCell = detailHref
         ? `<a class="detail-btn" href="${escapeHtml(detailHref)}">View detail</a>`
         : '<span class="muted">—</span>';
+    const goldDefense = isGoldSimLabDefense(round);
     const defenseBits = renderSimLabSupportBits({
         banner: round.opponentBanner,
         bannerStones: round.opponentBannerStones,
         favor: round.opponentFavor,
+        goldDefense,
     });
     const attackBits = renderSimLabSupportBits({
         banner: round.myBanner,
@@ -2122,7 +2186,7 @@ function renderSimLabLogRow(round, minWinRate) {
           <div class="sim-meta-row sim-meta-row-compact">${attackBits}</div>
           <div class="muted" style="margin-top:4px">${tryCount} tr${tryCount === 1 ? 'y' : 'ies'}</div>
         </td>
-        <td class="num">${renderWinRateCell(round.winRate, minWinRate)}</td>
+        <td class="num">${renderSimLabWinRateCell(round, minWinRate)}</td>
         <td class="num muted">${escapeHtml(formatRecord(round.wins, round.losses))}</td>
         <td class="muted nowrap">${escapeHtml(formatWhen(round.testedAt))}</td>
         <td>${detailCell}</td>
@@ -2185,7 +2249,9 @@ export function renderSimLabPage(rounds = [], options = {}) {
     <section class="intro card">
       <p class="intro-lead">
         Same layout as Training. Each row is one Counter Suggest Sim <em>group</em> showing the best win %.
-        Open <strong>View detail</strong> for every attempt (pet, favor, flag). Green = ${escapeHtml(String(minWinRate))}%+.
+        Open <strong>View detail</strong> for every attempt (pet, favor, flag).
+        Green = ${escapeHtml(String(minWinRate))}%.
+        <span class="badge gold">Gold</span> = full defense favor / flag / slots and ≥${GOLD_SIMLAB_WIN_RATE}%.
       </p>
     </section>
 
@@ -2322,7 +2388,7 @@ tr.sim-try-best td { background: #1a2a40; }
 
     <div class="detail-meta">
       <span><strong>When</strong> ${escapeHtml(formatWhen(best.testedAt))}</span>
-      <span><strong>Best win</strong> ${renderWinRateCell(best.winRate, minWinRate)}</span>
+      <span><strong>Best win</strong> ${renderSimLabWinRateCell(best, minWinRate)}</span>
       <span><strong>W/L</strong> ${escapeHtml(formatRecord(best.wins, best.losses))}</span>
       <span><strong>Tries</strong> ${escapeHtml(String(detail?.tryCount || tries.length))}</span>
       <span><strong>Tester</strong> ${escapeHtml(formatTesterLabel(best))}</span>
@@ -2349,6 +2415,7 @@ tr.sim-try-best td { background: #1a2a40; }
                 banner: best.opponentBanner,
                 bannerStones: best.opponentBannerStones,
                 favor: best.opponentFavor,
+                goldDefense: isGoldSimLabDefense(best),
             })}
           </div>
         </div>
