@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.30.5
+// @version      1.30.6
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.30.5';
+    const EXTENSION_VERSION = '1.30.6';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -2872,7 +2872,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.30.5';
+    const COUNTER_SUGGEST_VERSION = '1.30.6';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -3819,10 +3819,11 @@
         }
 
         /**
-         * Fresh arenaFindEnemies + arenaCheckTargetRange right before attack.
-         * Prefer matching by userId; fall back to defense hero+pet lineup when gather _id is wrong.
+         * Soft pre-attack check. When gather is already open, do NOT call arenaFindEnemies —
+         * that rotates the 3-foe list and often drops the gather target (false "not on list").
+         * Trust the open gather userId; optionally soft-check range only.
          */
-        async function refreshArenaAttackTarget(enemy) {
+        async function refreshArenaAttackTarget(enemy, { gatherOpen = false } = {}) {
             const empty = {
                 userId: enemy?.userId != null ? Number(enemy.userId) : null,
                 onList: false,
@@ -3831,6 +3832,37 @@
                 listCount: 0,
             };
             if (!enemy?.userId && !enemy?.heroes?.length) return empty;
+
+            const gatherUserId = Number(enemy.userId);
+            if (gatherOpen && Number.isFinite(gatherUserId) && gatherUserId > 0) {
+                let inRange = null;
+                try {
+                    const checkResponse = await Send({
+                        calls: [{
+                            name: 'arenaCheckTargetRange',
+                            args: { ids: [String(gatherUserId)] },
+                            context: { actionTs: Date.now() },
+                            ident: 'arenaCheckTargetRange',
+                        }],
+                    });
+                    const check = checkResponse.results?.find((r) => r.ident === 'arenaCheckTargetRange')
+                        ?.result?.response
+                        || checkResponse.results?.[0]?.result?.response
+                        || {};
+                    if (Object.prototype.hasOwnProperty.call(check, String(gatherUserId))) {
+                        inRange = !!check[String(gatherUserId)];
+                    }
+                } catch (error) {
+                    console.warn(`[${EXTENSION_NAME}] arenaCheckTargetRange (gather) failed:`, error);
+                }
+                return {
+                    userId: gatherUserId,
+                    onList: true,
+                    inRange,
+                    matchedBy: 'gather',
+                    listCount: 0,
+                };
+            }
 
             const response = await Send({
                 calls: [{
@@ -6182,9 +6214,9 @@
                     throw new Error('Keep the Arena gather popup open on this enemy, then click Attack.');
                 }
 
-                // Refresh the live Arena list + range check immediately before arenaAttack.
-                // Gather _id can disagree with arenaFindEnemies userId — prefer the fresh list id.
-                panelState.message = 'Attack: refreshing Arena target…';
+                // Gather is already open — trust its userId. Do not call arenaFindEnemies
+                // (it rotates the 3-foe list and often drops this gather target).
+                panelState.message = 'Attack: confirming gather target…';
                 panelController?.render();
                 let refreshed;
                 try {
@@ -6192,14 +6224,14 @@
                         userId: gather.enemy.userId,
                         heroes: gather.enemy.heroes || enemy.heroes,
                         pet: gather.enemy.pet || enemy.pet,
-                    });
+                    }, { gatherOpen: true });
                 } catch (refreshError) {
                     console.warn(`[${EXTENSION_NAME}] refreshArenaAttackTarget failed:`, refreshError);
                     refreshed = {
                         userId: Number(gather.enemy.userId || enemy.userId),
-                        onList: null,
+                        onList: true,
                         inRange: null,
-                        matchedBy: null,
+                        matchedBy: 'gather-fallback',
                         listCount: 0,
                     };
                 }
@@ -6210,20 +6242,17 @@
                     refreshed,
                 });
 
-                if (refreshed.onList === false) {
-                    throw new Error(
-                        `Enemy ${enemy.userId} not in the current arenaFindEnemies list`
-                        + ` (${refreshed.listCount} foes). Tap Arena refresh, open gather again, then Attack.`
-                    );
-                }
+                // Soft range warn only — gather challenge is authoritative while the popup is open.
                 if (refreshed.inRange === false) {
-                    throw new Error(
-                        `Enemy ${refreshed.userId} failed arenaCheckTargetRange`
-                        + ' — refresh the Arena list, open gather again, then Attack.'
+                    console.warn(
+                        `[${EXTENSION_NAME}] arenaCheckTargetRange=false for gather ${refreshed.userId}`
+                        + ' — attacking anyway while gather stays open'
                     );
                 }
 
-                const attackUserId = Number(refreshed.userId || gather.enemy.userId || enemy.userId);
+                const attackUserId = Number(
+                    gather.enemy.userId || refreshed.userId || enemy.userId
+                );
                 if (!Number.isFinite(attackUserId) || attackUserId <= 0) {
                     throw new Error('Could not resolve a valid Arena attack userId');
                 }
