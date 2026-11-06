@@ -315,9 +315,26 @@ function buildCompactRoundPayload(body, fields) {
                 bannerStones: compactBannerStones(
                     opponentTeam.bannerStones || opponentTeam.defenceBannerStones
                 ),
-                favor: opponentTeam.favor && typeof opponentTeam.favor === 'object'
-                    ? opponentTeam.favor
-                    : {},
+                favor: (() => {
+                    const fromMap = opponentTeam.favor && typeof opponentTeam.favor === 'object'
+                        ? opponentTeam.favor
+                        : {};
+                    if (fromMap && Object.keys(fromMap).length) return fromMap;
+                    // Rebuild from unit objects when only favorPetId was stored on heroes.
+                    const favor = {};
+                    const units = Array.isArray(opponentTeam.heroes)
+                        ? opponentTeam.heroes
+                        : Object.values(opponentTeam.heroes || {});
+                    for (const unit of units) {
+                        if (!unit || typeof unit !== 'object') continue;
+                        const heroId = Number(unit.id ?? unit.heroId);
+                        const petId = Number(unit.favorPetId ?? unit.patronPetId ?? unit.favorPet);
+                        if (heroId > 0 && heroId < 6000 && petId >= 6000 && petId < 7000) {
+                            favor[String(heroId)] = petId;
+                        }
+                    }
+                    return favor;
+                })(),
             },
         },
         tester: {
@@ -1818,14 +1835,27 @@ function mapSimLabRoundRow(row) {
         opponentBanner,
         opponentBannerStones,
         opponentFavor: (() => {
-            const fromTeam = opponentTeam.favor && typeof opponentTeam.favor === 'object'
-                ? opponentTeam.favor
-                : {};
-            if (fromTeam && Object.keys(fromTeam).length) return fromTeam;
-            const fromOpponent = payload?.opponent?.favor && typeof payload.opponent.favor === 'object'
-                ? payload.opponent.favor
-                : {};
-            return fromOpponent || {};
+            const collect = (favor) => (
+                favor && typeof favor === 'object' && Object.keys(favor).length ? favor : null
+            );
+            const fromTeam = collect(opponentTeam.favor);
+            if (fromTeam) return fromTeam;
+            const fromOpponent = collect(payload?.opponent?.favor);
+            if (fromOpponent) return fromOpponent;
+            // Rebuild from unit objects when only favorPetId was stored on heroes.
+            const favor = {};
+            const units = Array.isArray(opponentTeam.heroes)
+                ? opponentTeam.heroes
+                : Object.values(opponentTeam.heroes || {});
+            for (const unit of units) {
+                if (!unit || typeof unit !== 'object') continue;
+                const heroId = Number(unit.id ?? unit.heroId);
+                const petId = Number(unit.favorPetId ?? unit.patronPetId ?? unit.favorPet);
+                if (heroId > 0 && heroId < 6000 && petId >= 6000 && petId < 7000) {
+                    favor[String(heroId)] = petId;
+                }
+            }
+            return favor;
         })(),
         myHeroIds: row.best_hero_ids,
         myHeroNames: row.best_hero_names,

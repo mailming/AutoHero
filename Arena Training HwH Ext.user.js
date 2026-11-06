@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.29.5
+// @version      1.29.8
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.29.5';
+    const EXTENSION_VERSION = '1.29.8';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -1380,9 +1380,34 @@
                 banner = typeof b === 'number' ? b : (b?.id || 1);
             }
 
-            const favor = opponent?.favor && typeof opponent.favor === 'object'
+            const favor = {};
+            const sourceFavor = opponent?.favor && typeof opponent.favor === 'object'
                 ? opponent.favor
-                : {};
+                : null;
+            if (sourceFavor) {
+                for (const [key, value] of Object.entries(sourceFavor)) {
+                    const heroId = Number(key);
+                    const petId = Number(
+                        value && typeof value === 'object'
+                            ? (value.favorPetId ?? value.petId ?? value.id ?? value.pet)
+                            : value
+                    );
+                    if (heroId > 0 && heroId < 6000 && petId >= 6000 && petId < 7000) {
+                        favor[String(heroId)] = petId;
+                    }
+                }
+            }
+            // When heroes arrive as full unit objects, patronage often lives on favorPetId.
+            if (!Object.keys(favor).length) {
+                for (const item of opponent?.heroes || []) {
+                    if (!item || typeof item !== 'object') continue;
+                    const heroId = Number(item.id ?? item.heroId);
+                    const petId = Number(item.favorPetId ?? item.patronPetId ?? item.favorPet);
+                    if (heroId > 0 && heroId < 6000 && petId >= 6000 && petId < 7000) {
+                        favor[String(heroId)] = petId;
+                    }
+                }
+            }
             const bannerStones = opponent?.bannerStones
                 || opponent?.defenceBannerStones
                 || {};
@@ -2803,6 +2828,28 @@
                     ...(result.counterLineup || {}),
                     ...counterLineup,
                 };
+                // Re-assert defense patronage so Target Defense Favor on the detail page is populated.
+                if (result.opponent && typeof result.opponent === 'object') {
+                    const existingTeam = result.opponent.team && typeof result.opponent.team === 'object'
+                        ? result.opponent.team
+                        : {};
+                    const favor = opponentOverride.favor && typeof opponentOverride.favor === 'object'
+                        ? opponentOverride.favor
+                        : {};
+                    result.opponent = {
+                        ...result.opponent,
+                        team: {
+                            ...existingTeam,
+                            heroes: existingTeam.heroes || defenceHeroes,
+                            pet: existingTeam.pet ?? opponentOverride.pet,
+                            banner: existingTeam.banner ?? opponentOverride.banner,
+                            bannerStones: existingTeam.bannerStones || opponentOverride.bannerStones || {},
+                            favor: (existingTeam.favor && Object.keys(existingTeam.favor).length)
+                                ? existingTeam.favor
+                                : favor,
+                        },
+                    };
+                }
                 if (options.simLabGroupId) result.simLabGroupId = String(options.simLabGroupId);
                 if (options.simLabPhase) result.simLabPhase = String(options.simLabPhase);
 
@@ -2825,7 +2872,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.3.17';
+    const COUNTER_SUGGEST_VERSION = '1.3.20';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -2837,8 +2884,8 @@
         const BANNER_STONE_DESC_CLASS = 'game.data.storage.resource.BannerStoneDescription';
         const SIMLAB_SIMULATIONS = 10;
         const SIMLAB_TARGET_WIN_RATE = 90;
-        /** Cap team-pet candidates SimLab tries (preferred + strongest owned). */
-        const SIMLAB_MAX_PETS = 8;
+        /** Team-pet candidates SimLab tries. 0 = every owned pet (no cap). */
+        const SIMLAB_MAX_PETS = 0;
         const HOST_ID = 'ah-arena-counter-suggest-host';
         const POLL_ACTIVE_MS = 600;
         const POLL_IDLE_MS = 2500;
@@ -3509,9 +3556,42 @@
                 const via = callSemantic(unit, 'get_favorPetId')
                     ?? callSemantic(unit, 'get_favorPet')
                     ?? callSemantic(unit, 'get_patronPetId')
-                    ?? callSemantic(unit, 'get_patron');
+                    ?? callSemantic(unit, 'get_patron')
+                    ?? callSemantic(unit, 'get_favor');
                 const fromSemantic = extractPetId(via);
                 if (fromSemantic) return fromSemantic;
+            } catch {
+                // continue
+            }
+            // HeroWars unit wrappers often stash stats on Ge()/get_hero descriptions.
+            try {
+                const desc = typeof unit.Ge === 'function'
+                    ? unit.Ge()
+                    : (callSemantic(unit, 'get_hero')
+                        || callSemantic(unit, 'get_unit')
+                        || callSemantic(unit, 'get_data')
+                        || null);
+                if (desc && typeof desc === 'object') {
+                    const nested = Number(
+                        desc.favorPetId ?? desc.favor_pet_id ?? desc.patronPetId ?? desc.favorPet
+                    );
+                    if (Number.isFinite(nested) && nested >= 6000 && nested < 7000) return nested;
+                    const viaDesc = callSemantic(desc, 'get_favorPetId')
+                        || callSemantic(desc, 'get_favorPet')
+                        || callSemantic(desc, 'get_patronPetId');
+                    const fromDesc = extractPetId(viaDesc);
+                    if (fromDesc) return fromDesc;
+                }
+            } catch {
+                // continue
+            }
+            // Last resort: any own property whose name looks like favor/patron.
+            try {
+                for (const key of Object.keys(unit)) {
+                    if (!/favor|patron/i.test(key)) continue;
+                    const petId = extractPetId(unit[key]);
+                    if (petId) return petId;
+                }
             } catch {
                 // continue
             }
@@ -3534,12 +3614,79 @@
             return favor;
         }
 
-        function extractFavorFromBattleTeam(team) {
+        /**
+         * Arena gather client objects rarely expose a plain `favor` field.
+         * Walk the enemy/team graph for heroId→petId maps and unit.favorPetId records.
+         */
+        function deepCollectFavorMap(root, heroIds = [], maxDepth = 8) {
+            const favor = {};
+            const heroSet = new Set((heroIds || []).map(Number).filter((id) => id > 0 && id < 6000));
+            if (!root || typeof root !== 'object' || !heroSet.size) return favor;
+            const seen = new Set();
+            const walk = (value, depth) => {
+                if (!value || typeof value !== 'object' || depth > maxDepth) return;
+                if (seen.has(value) || seen.size > 2500) return;
+                seen.add(value);
+
+                // Plain unit-like record.
+                try {
+                    const unitId = Number(value.id ?? value.heroId ?? callUnitId(value));
+                    if (heroSet.has(unitId)) {
+                        const petId = extractFavorPetFromUnit(value);
+                        if (petId) favor[String(unitId)] = petId;
+                    }
+                } catch {
+                    // continue
+                }
+
+                // Favor map shape: { "12": 6004, ... } or IntMap backing.
+                let mapCandidate = value;
+                if (classNameOf(value) === INT_MAP_CLASS) {
+                    mapCandidate = getIntMapBacking(value) || value;
+                }
+                if (mapCandidate && typeof mapCandidate === 'object' && !Array.isArray(mapCandidate)) {
+                    let hits = 0;
+                    const candidate = {};
+                    try {
+                        for (const [key, raw] of Object.entries(mapCandidate)) {
+                            const heroId = Number(key);
+                            if (!heroSet.has(heroId)) continue;
+                            const petId = Number(
+                                raw && typeof raw === 'object'
+                                    ? (raw.favorPetId ?? raw.petId ?? raw.id ?? raw.pet)
+                                    : raw
+                            );
+                            if (Number.isFinite(petId) && petId >= 6000 && petId < 7000) {
+                                candidate[String(heroId)] = petId;
+                                hits += 1;
+                            }
+                        }
+                    } catch {
+                        hits = 0;
+                    }
+                    if (hits > 0) Object.assign(favor, candidate);
+                }
+
+                try {
+                    for (const child of Object.values(value)) {
+                        if (child && typeof child === 'object') walk(child, depth + 1);
+                    }
+                } catch {
+                    // ignore non-enumerable graphs
+                }
+            };
+            walk(root, 0);
+            return favor;
+        }
+
+        function extractFavorFromBattleTeam(team, heroIds = []) {
             const favor = {};
             if (!team) return favor;
             try {
                 const map = callSemantic(team, 'get_favor')
                     || callSemantic(team, 'get_favors')
+                    || callSemantic(team, 'get_heroFavor')
+                    || callSemantic(team, 'get_patronage')
                     || team.favor
                     || team.favors;
                 Object.assign(favor, normalizeFavorMap(map));
@@ -3553,22 +3700,39 @@
             } catch {
                 // continue
             }
+            if (Object.keys(favor).length < Math.min(2, (heroIds || []).length || 2)) {
+                Object.assign(favor, deepCollectFavorMap(team, heroIds.length ? heroIds : Object.keys(favor).map(Number)));
+            }
             return favor;
         }
 
         /** Arena list entries often omit top-level favor — build it from hero favorPetId. */
         function extractFavorFromEnemyEntry(entry) {
             if (!entry || typeof entry !== 'object') return {};
-            const fromMap = normalizeFavorMap(entry.favor || entry.favors || entry.defenceFavor);
+            const fromMap = normalizeFavorMap(
+                entry.favor
+                || entry.favors
+                || entry.defenceFavor
+                || entry.defenseFavor
+                || entry.team?.favor
+                || entry.defence?.favor
+                || entry.defense?.favor
+            );
             if (Object.keys(fromMap).length) return fromMap;
-            return extractFavorFromUnitList(
-                entry.heroes
+            const units = entry.heroes
                 || entry.heroIds
                 || entry.team?.units
                 || entry.team?.heroes
                 || entry.defenceTeam?.units
-                || entry.units
-            );
+                || entry.defence?.units
+                || entry.defense?.units
+                || entry.units;
+            const fromUnits = extractFavorFromUnitList(units);
+            if (Object.keys(fromUnits).length) return fromUnits;
+            const heroIds = (Array.isArray(units) ? units : Object.values(units || {}))
+                .map((unit) => Number(unit?.id ?? unit?.heroId ?? unit))
+                .filter((id) => id > 0 && id < 6000);
+            return deepCollectFavorMap(entry, heroIds);
         }
 
         function extractFromPlayerArenaEnemy(enemy) {
@@ -3603,7 +3767,11 @@
 
             const banner = extractBannerId(team);
             const bannerStones = extractBannerStonesFromBattleTeam(team);
-            const favor = extractFavorFromBattleTeam(team);
+            let favor = extractFavorFromBattleTeam(team, heroes);
+            if (Object.keys(favor).length < 2) {
+                // PlayerArenaEnemy may keep patronage on sibling fields, not the BattleTeam.
+                Object.assign(favor, deepCollectFavorMap(enemy, heroes));
+            }
             return {
                 userId,
                 heroes,
@@ -3623,21 +3791,41 @@
                 enemy = null;
             }
             if (!enemy) enemy = mediator.fj || null;
-            const fromEnemy = extractFromPlayerArenaEnemy(enemy);
-            if (fromEnemy) return fromEnemy;
+            let fromEnemy = extractFromPlayerArenaEnemy(enemy);
 
             // Fallback: some builds keep enemy user separately
-            try {
-                const enemyUser = callSemantic(mediator, 'get_enemyUser');
-                const userId = Number(enemyUser?._id ?? enemyUser?.id ?? enemyUser?.userId);
-                if (Number.isFinite(userId) && userId > 0 && enemy) {
-                    const partial = extractFromPlayerArenaEnemy({ ...enemy, _id: userId });
-                    if (partial) return partial;
+            if (!fromEnemy) {
+                try {
+                    const enemyUser = callSemantic(mediator, 'get_enemyUser');
+                    const userId = Number(enemyUser?._id ?? enemyUser?.id ?? enemyUser?.userId);
+                    if (Number.isFinite(userId) && userId > 0 && enemy) {
+                        fromEnemy = extractFromPlayerArenaEnemy({ ...enemy, _id: userId });
+                    }
+                } catch {
+                    // ignore
                 }
-            } catch {
-                // ignore
             }
-            return null;
+
+            if (fromEnemy && Object.keys(fromEnemy.favor || {}).length < 2) {
+                const mediatorFavor = normalizeFavorMap(
+                    callSemantic(mediator, 'get_favor')
+                    || callSemantic(mediator, 'get_favors')
+                    || callSemantic(mediator, 'get_enemyFavor')
+                    || callSemantic(mediator, 'get_defenceFavor')
+                    || callSemantic(mediator, 'get_defenseFavor')
+                );
+                const deepFavor = deepCollectFavorMap(mediator, fromEnemy.heroes);
+                fromEnemy = {
+                    ...fromEnemy,
+                    favor: {
+                        ...normalizeFavorMap(fromEnemy.favor),
+                        ...mediatorFavor,
+                        ...deepFavor,
+                    },
+                };
+            }
+
+            return fromEnemy;
         }
 
         function readEnemyFromGather() {
@@ -4929,7 +5117,7 @@
                 if (!Object.keys(defenceFavor).length) {
                     console.warn(
                         `[${EXTENSION_NAME}] SimLab defence favor empty for enemy ${enemy.userId}`
-                        + ' — demos will run without patronage'
+                        + ' — Arena list often omits favorPetId; demos run without patronage'
                     );
                 } else {
                     console.log(`[${EXTENSION_NAME}] SimLab defence favor:`, defenceFavor);
