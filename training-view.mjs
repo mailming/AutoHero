@@ -312,7 +312,14 @@ export function isGoldSimLabBadge(round = {}, goldWinRate = GOLD_SIMLAB_WIN_RATE
         && winRate >= goldWinRate;
 }
 
-function renderGoldSimLabBadge() {
+export function isGoldSimMax(round = {}, goldWinRate = GOLD_SIMLAB_WIN_RATE) {
+    return isGoldSimLabBadge(round, goldWinRate) && round.maxUpgrade === true;
+}
+
+function renderGoldSimLabBadge(round = {}) {
+    if (isGoldSimMax(round)) {
+        return `<span class="badge gold simmax" title="Gold SimMax · max→max · full defense favor / flag / slots · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold SimMax</span>`;
+    }
     return `<span class="badge gold" title="Gold SimLab · full defense favor / flag / slots · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold</span>`;
 }
 
@@ -320,7 +327,7 @@ function renderSimLabWinRateCell(round, minWinRate = 90) {
     const winRate = round?.winRate;
     const cls = winRateClass(winRate, minWinRate);
     if (isGoldSimLabBadge(round)) {
-        return `<span class="win ${cls}">${escapeHtml(formatPct(winRate))}</span>${renderGoldSimLabBadge()}`;
+        return `<span class="win ${cls}">${escapeHtml(formatPct(winRate))}</span>${renderGoldSimLabBadge(round)}`;
     }
     const solved = winRate != null && winRate >= minWinRate
         ? `<span class="badge solved">${escapeHtml(String(minWinRate))}%+</span>`
@@ -2114,6 +2121,7 @@ function renderSimLabSharedStyles() {
       letter-spacing: .04em;
       text-transform: uppercase;
     }
+    .badge.gold.simmax { letter-spacing: .03em; }
     a { color: #7cb8ff; }
     .empty {
       padding: 24px 16px; text-align: center; color: #8b9bb4;
@@ -2274,6 +2282,7 @@ export function renderSimLabPage(rounds = [], options = {}) {
         Open <strong>View detail</strong> for every attempt (pet, favor, flag).
         Green = ${escapeHtml(String(minWinRate))}%.
         <span class="badge gold">Gold</span> = full defense favor / flag / slots and ≥${GOLD_SIMLAB_WIN_RATE}%.
+        <span class="badge gold simmax">Gold SimMax</span> = same on max→max.
       </p>
     </section>
 

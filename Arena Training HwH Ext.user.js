@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.31.0
+// @version      1.32.2
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.31.0';
+    const EXTENSION_VERSION = '1.32.2';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -2911,7 +2911,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.31.0';
+    const COUNTER_SUGGEST_VERSION = '1.32.2';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -2930,6 +2930,12 @@
         const GOLD_SIMLAB_MIN_FAVORS = 5;
         /** Team-pet candidates SimLab tries. 0 = every owned pet (no cap). */
         const SIMLAB_MAX_PETS = 0;
+        /** Pattern types in ID order (12 ranks each). Red+6 = last rank → ids 12,24,…,156. */
+        const SIMLAB_PATTERN_TYPE_COUNT = 13;
+        /** Favor assignment variants to shuffle/sim after pet+flag+slots are locked. */
+        const SIMLAB_FAVOR_VARIANT_LIMIT = 10;
+        /** 0 = all C(13,3) Red+6 slot triples; set >0 to cap long sweeps. */
+        const SIMLAB_MAX_SLOT_COMBOS = 0;
         const HOST_ID = 'ah-arena-counter-suggest-host';
         const POLL_ACTIVE_MS = 600;
         const POLL_IDLE_MS = 2500;
@@ -3113,6 +3119,8 @@
                 wins: opt.wins,
                 losses: opt.losses,
                 goldSimLab: !!opt.goldSimLab,
+                maxUpgrade: !!opt.maxUpgrade,
+                powerMode: opt.powerMode || (opt.maxUpgrade ? 'max→max' : 'power→max'),
             };
         }
 
@@ -3191,6 +3199,21 @@
                 && winRate != null
                 && Number.isFinite(winRate)
                 && winRate >= GOLD_SIMLAB_WIN_RATE;
+        }
+
+        function isGoldSimMax(round = {}) {
+            return isGoldSimLabBadge(round)
+                && (round.maxUpgrade === true || round.powerMode === 'max→max');
+        }
+
+        function goldSimBadgeHtml(round = {}) {
+            if (isGoldSimMax(round)) {
+                return `<span class="sim-badge gold simmax" title="Gold SimMax · max→max · full defense favor/flag/slots · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold SimMax</span>`;
+            }
+            if (isGoldSimLabBadge(round)) {
+                return `<span class="sim-badge gold" title="Gold SimLab · full defense favor/flag/slots · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold</span>`;
+            }
+            return null;
         }
 
         function getIntMapBacking(map) {
@@ -4532,6 +4555,10 @@
                         background: linear-gradient(135deg, rgba(61,46,18,.9), rgba(90,69,24,.9));
                         color: #f6e27a;
                     }
+                    .sim-badge.gold.simmax {
+                        letter-spacing: .04em;
+                        padding: 2px 8px;
+                    }
                     .row-wrap.selected .row-rate { color: #e8ffd8; }
                     .simlab-btn {
                         margin: 0;
@@ -4783,16 +4810,18 @@
                     : 'Click to select this lineup';
 
                 const rateSuffix = source === 'max' ? ' max' : '';
-                const goldBadge = isSim && isGoldSimLabBadge(match);
-                const simBadgeHtml = goldBadge
-                    ? `<span class="sim-badge gold" title="Gold SimLab · full defense favor/flag/slots · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold</span>`
-                    : '<span class="sim-badge">SimLab</span>';
+                const powerMode = match?.powerMode
+                    || (match?.maxUpgrade ? 'max→max' : 'power→max');
+                const simBadgeHtml = (isSim && goldSimBadgeHtml(match))
+                    || (isSim
+                        ? `<span class="sim-badge" title="SimLab ${escapePanelText(powerMode)}">SimLab</span>`
+                        : '');
                 button.innerHTML = isSim
                     ? `
                         <div class="row-main">${lineupNamesHtml(match)}</div>
                         <div class="row-meta">
                             ${simBadgeHtml}
-                            <span class="row-rate">${winRateText(match)}</span>
+                            <span class="row-rate">${winRateText(match)}${match?.maxUpgrade ? ' max' : ''}</span>
                         </div>
                     `
                     : `
@@ -4815,7 +4844,9 @@
                     simBtn.type = 'button';
                     simBtn.className = 'simlab-btn';
                     simBtn.textContent = 'Sim';
-                    simBtn.title = 'Simulate this lineup at your current power (demo battles)';
+                    simBtn.title = source === 'max'
+                        ? 'SimLab max→max: pet → flag → Red+6 slots → favor shuffle'
+                        : 'SimLab power→max: pet → flag → Red+6 slots → favor shuffle';
                     simBtn.disabled = isBusy();
                     simBtn.addEventListener('click', (event) => {
                         event.stopPropagation();
@@ -4972,13 +5003,15 @@
                 if (selected?.match) {
                     const simBest = panelState.simBest?.key === selected.key ? panelState.simBest : null;
                     const isSimSel = selected.source === 'simlab';
-                    const goldSel = isSimSel && isGoldSimLabBadge(selected.match);
+                    const goldSelHtml = isSimSel ? goldSimBadgeHtml(selected.match) : null;
+                    const goldMaxSel = isSimSel && isGoldSimMax(selected.match);
                     const sourceLabel = selected.source === 'max'
                         ? 'Max power'
-                        : (goldSel ? 'Gold SimLab' : (isSimSel ? 'SimLab' : 'My power'));
-                    const selBadgeHtml = goldSel
-                        ? `<span class="sim-badge gold" title="Gold SimLab · ≥${GOLD_SIMLAB_WIN_RATE}%">Gold</span>`
-                        : (isSimSel ? '<span class="sim-badge">SimLab</span>' : '<span></span>');
+                        : (goldMaxSel
+                            ? 'Gold SimMax'
+                            : (goldSelHtml ? 'Gold SimLab' : (isSimSel ? 'SimLab' : 'My power')));
+                    const selBadgeHtml = goldSelHtml
+                        || (isSimSel ? '<span class="sim-badge">SimLab</span>' : '<span></span>');
                     selectedCard.className = 'selected-card';
                     selectedCard.innerHTML = `
                         <div class="selected-label">${escapePanelText(sourceLabel)}</div>
@@ -5127,29 +5160,41 @@
         /**
          * Build hero→favor-pet map from owned pets that can favor each hero.
          * Prefers current arena/CD favor when still owned + compatible; otherwise strongest unused pet.
+         * `heroOrder` / `preservePetOrder` enable shuffle variants for SimLab.
          */
         function buildSimLabFavor(heroIds, ownedPetIds, {
             heroes = [],
             existingFavor = {},
             petLib = null,
+            heroOrder = null,
+            preservePetOrder = false,
+            skipExisting = false,
         } = {}) {
             const libPets = petLib || (typeof lib?.getData === 'function' ? (lib.getData('pet') || {}) : {});
             const favor = {};
             const used = new Set();
+            const heroList = (Array.isArray(heroOrder) && heroOrder.length
+                ? heroOrder
+                : heroIds
+            ).map(Number).filter((id) => id > 0 && id < 6000);
 
-            const petsRanked = [...new Set((ownedPetIds || []).map(Number).filter((id) => id >= 6000 && id < 7000))]
-                .sort((a, b) => petPowerFromHeroes(heroes, b) - petPowerFromHeroes(heroes, a));
+            let petsRanked = [...new Set((ownedPetIds || []).map(Number).filter((id) => id >= 6000 && id < 7000))];
+            if (!preservePetOrder) {
+                petsRanked.sort((a, b) => petPowerFromHeroes(heroes, b) - petPowerFromHeroes(heroes, a));
+            }
 
-            for (const heroId of heroIds) {
+            for (const heroId of heroList) {
                 const key = String(heroId);
-                const existing = Number(existingFavor[key] ?? existingFavor[heroId]);
-                if (Number.isFinite(existing) && existing >= 6000
-                    && petsRanked.includes(existing)
-                    && !used.has(existing)
-                    && canPetFavorHero(existing, heroId, libPets)) {
-                    favor[key] = existing;
-                    used.add(existing);
-                    continue;
+                if (!skipExisting) {
+                    const existing = Number(existingFavor[key] ?? existingFavor[heroId]);
+                    if (Number.isFinite(existing) && existing >= 6000
+                        && petsRanked.includes(existing)
+                        && !used.has(existing)
+                        && canPetFavorHero(existing, heroId, libPets)) {
+                        favor[key] = existing;
+                        used.add(existing);
+                        continue;
+                    }
                 }
                 const match = petsRanked.find((petId) => (
                     !used.has(petId) && canPetFavorHero(petId, heroId, libPets)
@@ -5160,6 +5205,148 @@
                 }
             }
             return favor;
+        }
+
+        /** Distinct favor maps via hero-order / pet-order shuffles (compatible pets only). */
+        function buildSimLabFavorVariants(heroIds, ownedPetIds, opts = {}, limit = SIMLAB_FAVOR_VARIANT_LIMIT) {
+            const heroes = (Array.isArray(heroIds) ? heroIds : [])
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000);
+            const petsPower = [...new Set((ownedPetIds || []).map(Number).filter((id) => id >= 6000 && id < 7000))]
+                .sort((a, b) => (
+                    petPowerFromHeroes(opts.heroes || [], b) - petPowerFromHeroes(opts.heroes || [], a)
+                ));
+            const variants = [];
+            const seen = new Set();
+            const favorKey = (favor) => heroes.map((id) => `${id}:${favor[String(id)] || 0}`).join('|');
+            const push = (favor) => {
+                if (!favor || typeof favor !== 'object') return;
+                if (Object.keys(favor).length < Math.min(heroes.length, 1)) return;
+                const key = favorKey(favor);
+                if (seen.has(key)) return;
+                seen.add(key);
+                variants.push(favor);
+            };
+
+            push(buildSimLabFavor(heroes, petsPower, opts));
+            push(buildSimLabFavor(heroes, petsPower, { ...opts, skipExisting: true }));
+
+            for (let rot = 1; rot < heroes.length && variants.length < limit; rot++) {
+                const order = heroes.slice(rot).concat(heroes.slice(0, rot));
+                push(buildSimLabFavor(heroes, petsPower, {
+                    ...opts,
+                    heroOrder: order,
+                    skipExisting: true,
+                }));
+            }
+
+            for (let rot = 1; rot < petsPower.length && variants.length < limit; rot++) {
+                const petOrder = petsPower.slice(rot).concat(petsPower.slice(0, rot));
+                push(buildSimLabFavor(heroes, petOrder, {
+                    ...opts,
+                    preservePetOrder: true,
+                    skipExisting: true,
+                }));
+            }
+
+            push(buildSimLabFavor(heroes, [...petsPower].reverse(), {
+                ...opts,
+                preservePetOrder: true,
+                skipExisting: true,
+            }));
+
+            return variants.slice(0, Math.max(1, limit));
+        }
+
+        function shuffleInPlace(list) {
+            const arr = Array.isArray(list) ? list : [];
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const tmp = arr[i];
+                arr[i] = arr[j];
+                arr[j] = tmp;
+            }
+            return arr;
+        }
+
+        function listPetsThatCanFavorHero(heroId, petLib = {}) {
+            const pets = [];
+            for (const key of Object.keys(petLib || {})) {
+                const petId = Number(key);
+                if (!(petId >= 6000 && petId < 7000)) continue;
+                if (canPetFavorHero(petId, heroId, petLib)) pets.push(petId);
+            }
+            return pets;
+        }
+
+        /**
+         * Random max-defence patronage: unique pets, only when canPetFavorHero allows.
+         * Used when gather/list omit favorPetId so SimLab still models patronage.
+         */
+        function buildRandomDefenceFavor(heroIds, petLib = null, existingFavor = {}) {
+            const libPets = petLib || (typeof lib?.getData === 'function' ? (lib.getData('pet') || {}) : {});
+            const favor = normalizeFavorMap(existingFavor);
+            const used = new Set(Object.values(favor).map(Number).filter((id) => id >= 6000));
+            const heroes = shuffleInPlace(
+                (Array.isArray(heroIds) ? heroIds : [])
+                    .map(Number)
+                    .filter((id) => id > 0 && id < 6000)
+            );
+
+            for (const heroId of heroes) {
+                const key = String(heroId);
+                if (favor[key] != null) continue;
+                const candidates = shuffleInPlace(
+                    listPetsThatCanFavorHero(heroId, libPets).filter((id) => !used.has(id))
+                );
+                if (!candidates.length) continue;
+                favor[key] = candidates[0];
+                used.add(candidates[0]);
+            }
+            return favor;
+        }
+
+        /** Red+6 pattern IDs: 12, 24, 36, … (one per pattern type). */
+        function listRedPlus6PatternIds() {
+            const ids = [];
+            for (let type = 1; type <= SIMLAB_PATTERN_TYPE_COUNT; type++) {
+                ids.push(type * 12);
+            }
+            return ids;
+        }
+
+        function combinationsOf(items, k) {
+            const list = Array.isArray(items) ? items : [];
+            const out = [];
+            if (k <= 0 || list.length < k) return out;
+            const picked = [];
+            const walk = (start) => {
+                if (picked.length === k) {
+                    out.push(picked.slice());
+                    return;
+                }
+                for (let i = start; i < list.length; i++) {
+                    picked.push(list[i]);
+                    walk(i + 1);
+                    picked.pop();
+                }
+            };
+            walk(0);
+            return out;
+        }
+
+        /** Unordered Red+6 triples → slot map {1,2,3}. Order does not matter. */
+        function listRedPlus6SlotCombos(limit = SIMLAB_MAX_SLOT_COMBOS) {
+            const ids = listRedPlus6PatternIds();
+            let triples = combinationsOf(ids, 3);
+            if (limit > 0 && triples.length > limit) {
+                triples = triples.slice(0, limit);
+            }
+            return triples.map((triple) => ({
+                1: triple[0],
+                2: triple[1],
+                3: triple[2],
+            }));
         }
 
         function listOwnedBannerLoadouts(userInfo, preferredBanner = null) {
@@ -5739,7 +5926,9 @@
             if (heroes.length !== 5) throw new Error('Suggested lineup needs 5 heroes');
             if (!Number.isFinite(basePet) || basePet < 6000) throw new Error('Suggested lineup needs a pet');
 
-            const sweepBanners = source !== 'max';
+            // power row → account ATK vs max DEF; max row → max ATK vs max DEF
+            const attackMaxUpgrade = source === 'max';
+            const powerLabel = attackMaxUpgrade ? 'max→max' : 'power→max';
             const simLabGroupId = `simlab_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const defenceOverride = options.defenceOverride && typeof options.defenceOverride === 'object'
                 ? options.defenceOverride
@@ -5749,10 +5938,10 @@
             panelState.status = 'simming';
             panelState.visible = true;
             panelState.message = options.reason
-                ? `SimLab (${options.reason}): pet sweep…`
-                : 'SimLab: pet sweep…';
+                ? `SimLab ${powerLabel} (${options.reason}): pet sweep…`
+                : `SimLab ${powerLabel}: pet sweep…`;
             panelController?.render();
-            HWHFuncs.setProgress?.(`${EXTENSION_NAME}: SimLab…`, true);
+            HWHFuncs.setProgress?.(`${EXTENSION_NAME}: SimLab ${powerLabel}…`, true);
 
             try {
                 const support = await fetchTeamSupport();
@@ -5817,6 +6006,24 @@
                     ? Number(defenceOverride.pet)
                     : (Number(enemy.pet) || 0);
 
+                const defenceHeroIds = (enemy.heroes || [])
+                    .map(Number)
+                    .filter((id) => id > 0 && id < 6000);
+                const knownFavorCount = Object.keys(defenceFavor).length;
+                // Max DEF demos always apply patronage — fill missing favors with compatible random pets.
+                if (knownFavorCount < defenceHeroIds.length) {
+                    defenceFavor = buildRandomDefenceFavor(defenceHeroIds, petLib, defenceFavor);
+                    console.log(`[${EXTENSION_NAME}] SimLab defence favor filled randomly:`, defenceFavor, {
+                        knownBefore: knownFavorCount,
+                        filled: Object.keys(defenceFavor).length,
+                        fromAttack: !!defenceOverride,
+                    });
+                } else {
+                    console.log(`[${EXTENSION_NAME}] SimLab defence favor:`, defenceFavor, {
+                        fromAttack: !!defenceOverride,
+                    });
+                }
+
                 if (Object.keys(defenceFavor).length && panelState.enemy) {
                     panelState.enemy = {
                         ...panelState.enemy,
@@ -5828,16 +6035,9 @@
                 }
                 if (!Object.keys(defenceFavor).length) {
                     console.warn(
-                        `[${EXTENSION_NAME}] SimLab defence favor empty for enemy ${enemy.userId}`
-                        + (defenceOverride
-                            ? ' — attack response had no favorPetId on defenders'
-                            : ' — arenaFindEnemies omits favorPetId and no matching arena/grand attack'
-                              + ' replay was found; demos run without enemy patronage')
+                        `[${EXTENSION_NAME}] SimLab defence favor still empty for enemy ${enemy.userId}`
+                        + ' — pet lib had no compatible favor pets for these heroes'
                     );
-                } else {
-                    console.log(`[${EXTENSION_NAME}] SimLab defence favor:`, defenceFavor, {
-                        fromAttack: !!defenceOverride,
-                    });
                 }
 
                 if (!hasBannerStones(baseBannerStones)) {
@@ -5867,15 +6067,17 @@
                     const favorCount = favorMap && typeof favorMap === 'object'
                         ? Object.keys(favorMap).length
                         : 0;
-                    panelState.message = `SimLab ${phaseLabel}: ${petName} · B${banner} · favor ${favorCount}`;
+                    panelState.message = `SimLab ${powerLabel} ${phaseLabel}: ${petName} · B${banner} · favor ${favorCount}`;
                     panelController?.render();
                     HWHFuncs.setProgress?.(
-                        `${EXTENSION_NAME}: SimLab ${phaseLabel} · ${petName}`,
+                        `${EXTENSION_NAME}: SimLab ${powerLabel} ${phaseLabel} · ${petName}`,
                         true
                     );
                     const summary = await training.simulateMatchup({
-                        label: isCd ? 'simlab-counter-cd' : 'simlab-counter',
-                        maxUpgrade: false,
+                        label: isCd
+                            ? (attackMaxUpgrade ? 'simlab-counter-cd-max' : 'simlab-counter-cd')
+                            : (attackMaxUpgrade ? 'simlab-counter-max' : 'simlab-counter'),
+                        maxUpgrade: attackMaxUpgrade,
                         simulationsPerCombo: SIMLAB_SIMULATIONS,
                         saveToBridge: true,
                         simLabGroupId,
@@ -5901,6 +6103,7 @@
                         winRate,
                         summary,
                         phaseLabel,
+                        maxUpgrade: attackMaxUpgrade,
                     };
                 };
 
@@ -5910,14 +6113,14 @@
                     if (!best || result.winRate > best.winRate) best = result;
                 };
 
-                // 1) Always sweep team pets (no favor) → pick highest win-rate pet
-                console.log(`[${EXTENSION_NAME}] SimLab pet sweep`, {
+                // 1) Pet sweep (empty favor, base flag/slots) → highest win-rate pet
+                console.log(`[${EXTENSION_NAME}] SimLab ${powerLabel} pet sweep`, {
                     pets,
                     basePet,
                     ownedPetRows: listOwnedPetRecords(support.heroes).length,
                 });
                 let bestPet = basePet;
-                let bestPetWinRate = -1;
+                let bestPetResult = null;
                 for (let i = 0; i < pets.length; i++) {
                     const pet = pets[i];
                     const result = await runOne(
@@ -5927,60 +6130,100 @@
                         {},
                         `pet ${i + 1}/${pets.length}`
                     );
-                    if (result.winRate > bestPetWinRate) {
-                        bestPetWinRate = result.winRate;
+                    consider(result);
+                    if (!bestPetResult || result.winRate > bestPetResult.winRate) {
+                        bestPetResult = result;
                         bestPet = pet;
                     }
                 }
 
-                // 2) Assign available favors for the lineup, then sim best pet + favors
-                const favor = buildSimLabFavor(heroes, pets, {
+                // 2) Flag sweep with locked best pet (still no favor) → highest flag
+                const banners = listOwnedBannerLoadouts(support.userInfo, baseBanner);
+                console.log(`[${EXTENSION_NAME}] SimLab ${powerLabel} flag sweep`, {
+                    count: banners.length,
+                    pet: bestPet,
+                });
+                let bestBanner = Number(bestPetResult?.banner) || baseBanner;
+                let bestBannerStones = bestPetResult?.bannerStones || baseBannerStones;
+                let bestFlagWinRate = Number(bestPetResult?.winRate) || -1;
+                for (let i = 0; i < banners.length; i++) {
+                    const loadout = banners[i];
+                    // Pet phase already covered base flag + bestPet.
+                    if (Number(loadout.banner) === Number(baseBanner)) continue;
+                    const result = await runOne(
+                        bestPet,
+                        loadout.banner,
+                        loadout.bannerStones,
+                        {},
+                        `flag ${i + 1}/${banners.length}`
+                    );
+                    consider(result);
+                    if (result.winRate > bestFlagWinRate) {
+                        bestFlagWinRate = result.winRate;
+                        bestBanner = loadout.banner;
+                        bestBannerStones = loadout.bannerStones || {};
+                    }
+                }
+
+                // 3) Flag-slot sweep: only Red+6 patterns (12,24,36,…); unordered 3-slot combos
+                const slotCombos = listRedPlus6SlotCombos(SIMLAB_MAX_SLOT_COMBOS);
+                console.log(`[${EXTENSION_NAME}] SimLab ${powerLabel} Red+6 slot sweep`, {
+                    combos: slotCombos.length,
+                    pet: bestPet,
+                    banner: bestBanner,
+                });
+                let bestSlotStones = bestBannerStones;
+                for (let i = 0; i < slotCombos.length; i++) {
+                    const stones = slotCombos[i];
+                    const result = await runOne(
+                        bestPet,
+                        bestBanner,
+                        stones,
+                        {},
+                        `slot ${i + 1}/${slotCombos.length}`
+                    );
+                    consider(result);
+                    if (result.winRate >= (best?.winRate || 0)) {
+                        bestSlotStones = stones;
+                    }
+                }
+                if (best) {
+                    bestSlotStones = best.bannerStones || bestSlotStones;
+                    bestBanner = Number(best.banner) || bestBanner;
+                    bestPet = Number(best.pet) || bestPet;
+                }
+
+                // 4) Favor fill + shuffle (compatible pets only) → pick highest
+                const favorOpts = {
                     heroes: support.heroes,
                     existingFavor,
                     petLib,
-                });
-                console.log(`[${EXTENSION_NAME}] SimLab favor assignment`, {
-                    favor,
-                    bestPet,
-                    bestPetWinRate,
-                });
-                panelState.message = `SimLab favor: ${Object.keys(favor).length}/5 heroes…`;
-                panelController?.render();
-
-                if (!Object.keys(favor).length) {
-                    console.warn(`[${EXTENSION_NAME}] SimLab favor empty — no compatible owned pets for lineup`);
-                }
-
-                best = await runOne(
-                    bestPet,
-                    baseBanner,
-                    baseBannerStones,
-                    favor,
-                    'favor'
+                };
+                let favorVariants = buildSimLabFavorVariants(
+                    heroes,
+                    pets,
+                    favorOpts,
+                    SIMLAB_FAVOR_VARIANT_LIMIT
                 );
-
-                // 3) Banner / flag sweep with locked best pet + favors
-                if (sweepBanners) {
-                    const banners = listOwnedBannerLoadouts(support.userInfo, baseBanner);
-                    console.log(`[${EXTENSION_NAME}] SimLab banner sweep`, {
-                        count: banners.length,
-                        pet: bestPet,
-                        favor,
-                    });
-                    for (let i = 0; i < banners.length; i++) {
-                        const loadout = banners[i];
-                        // Favor phase already covered base banner + bestPet + favors.
-                        if (Number(loadout.banner) === Number(baseBanner)) continue;
-                        const result = await runOne(
-                            bestPet,
-                            loadout.banner,
-                            loadout.bannerStones,
-                            favor,
-                            `banner ${i + 1}/${banners.length}`
-                        );
-                        consider(result);
-                        if (best.winRate >= SIMLAB_TARGET_WIN_RATE) break;
-                    }
+                if (!favorVariants.length) {
+                    favorVariants = [buildSimLabFavor(heroes, pets, favorOpts)];
+                }
+                console.log(`[${EXTENSION_NAME}] SimLab ${powerLabel} favor shuffle`, {
+                    variants: favorVariants.length,
+                    pet: bestPet,
+                    banner: bestBanner,
+                    stones: bestSlotStones,
+                });
+                for (let i = 0; i < favorVariants.length; i++) {
+                    const favorMap = favorVariants[i] || {};
+                    const result = await runOne(
+                        bestPet,
+                        bestBanner,
+                        bestSlotStones,
+                        favorMap,
+                        `favor ${i + 1}/${favorVariants.length}`
+                    );
+                    consider(result);
                 }
 
                 if (!best) throw new Error('SimLab produced no results');
@@ -6005,17 +6248,19 @@
                     wins: best.wins,
                     losses: best.losses,
                     heroNames: names,
-                    maxUpgrade: false,
+                    maxUpgrade: attackMaxUpgrade,
                     fromHistory: true,
                     goldSimLab,
+                    powerMode: powerLabel,
                 };
-                // Put the fresh result first and drop older same lineup.
+                // Put the fresh result first and drop older same lineup + power mode.
                 panelState.simOptions = [
                     freshOption,
                     ...panelState.simOptions.filter((opt) => !(
                         sameHeroSet(opt.heroes, heroes)
                         && Number(opt.pet) === Number(best.pet)
                         && Number(opt.banner || 0) === Number(best.banner || 0)
+                        && !!opt.maxUpgrade === !!attackMaxUpgrade
                     )),
                 ].slice(0, SIMLAB_LIST_LIMIT);
                 const simMatch = simOptionAsMatch(freshOption);
@@ -6038,25 +6283,35 @@
                     heroNames: names,
                     fromHistory: true,
                     goldSimLab,
+                    maxUpgrade: attackMaxUpgrade,
+                    powerMode: powerLabel,
                 };
 
                 const assignedFavors = Object.keys(best.favor || {}).length;
                 const hitGold = goldSimLab && best.winRate >= GOLD_SIMLAB_WIN_RATE;
+                const hitGoldSimMax = hitGold && attackMaxUpgrade;
                 const hitTarget = best.winRate >= SIMLAB_TARGET_WIN_RATE;
-                const msg = hitGold
-                    ? `Gold SimLab ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors}`
+                const slotBit = hasBannerStones(best.bannerStones)
+                    ? ` · slots ${Object.values(best.bannerStones).join('/')}`
+                    : '';
+                const goldTag = hitGoldSimMax ? 'Gold SimMax' : (hitGold ? 'Gold SimLab' : null);
+                const msg = goldTag
+                    ? `${goldTag} ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner}${slotBit} · favor ${assignedFavors}`
                     : (hitTarget
-                        ? `SimLab OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors}`
-                        : `SimLab best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner} · favor ${assignedFavors} (<${SIMLAB_TARGET_WIN_RATE}%)`);
+                        ? `SimLab ${powerLabel} OK ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner}${slotBit} · favor ${assignedFavors}`
+                        : `SimLab ${powerLabel} best ${best.wins}W/${best.losses}L (${best.winRate.toFixed(0)}%) · ${petLabel(best.pet)} · B${best.banner}${slotBit} · favor ${assignedFavors} (<${SIMLAB_TARGET_WIN_RATE}%)`);
                 panelState.message = msg;
                 panelState.status = 'ready';
                 HWHFuncs.setProgress?.(`${EXTENSION_NAME}: ${msg}`, false);
                 console.log(`[${EXTENSION_NAME}] SimLab finished:`, {
                     source,
+                    powerLabel,
+                    attackMaxUpgrade,
                     simLabGroupId,
-                    sweepBanners,
                     petsTried: pets,
-                    favorAssigned: favor,
+                    flagsTried: banners.length,
+                    slotCombos: slotCombos.length,
+                    favorVariants: favorVariants.length,
                     target: SIMLAB_TARGET_WIN_RATE,
                     best,
                 });
@@ -6068,7 +6323,7 @@
 
         function simLabBestToLoadout(best, fallbackMatch = null) {
             if (!best || typeof best !== 'object') return null;
-            // Counter Suggest SimLab always runs at account power — ignore max-upgrade leftovers.
+            // Account-power Attack uses current-power SimLab only; max→max stays view/Train.
             if (best.maxUpgrade === true) return null;
             const heroes = (best.myHeroIds || best.heroes || fallbackMatch?.myHeroIds || [])
                 .map(Number)
@@ -6101,6 +6356,7 @@
                 maxUpgrade: false,
                 fromHistory: true,
                 goldSimLab,
+                powerMode: best.powerMode || 'power→max',
             };
         }
 
