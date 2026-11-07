@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.32.3
+// @version      1.32.5
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.32.3';
+    const EXTENSION_VERSION = '1.32.5';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -2930,6 +2930,8 @@
         const GOLD_SIMLAB_MIN_FAVORS = 5;
         /** Team-pet candidates SimLab tries. 0 = every owned pet (no cap). */
         const SIMLAB_MAX_PETS = 0;
+        /** War flags in the game (Fervor…False Immortality). SimLab sweeps all, not only owned. */
+        const SIMLAB_BANNER_ID_MAX = 11;
         /** Pattern types in ID order (12 ranks each). Red+6 = last rank → ids 12,24,…,156. */
         const SIMLAB_PATTERN_TYPE_COUNT = 13;
         /** Favor assignment variants to shuffle/sim after pet+flag+slots are locked. */
@@ -5426,6 +5428,40 @@
             return loadouts;
         }
 
+        /**
+         * SimLab flag candidates.
+         * max→max (`allFlags`): every war flag 1…SIMLAB_BANNER_ID_MAX.
+         * power→max: owned flags only.
+         * Owned loadouts keep their slots; filled-in flags reuse fallbackStones.
+         */
+        function listSimLabBannerLoadouts(
+            userInfo,
+            preferredBanner = null,
+            fallbackStones = {},
+            { allFlags = false } = {}
+        ) {
+            const owned = listOwnedBannerLoadouts(userInfo, preferredBanner);
+            if (!allFlags) return owned;
+
+            const byId = new Map(owned.map((entry) => [Number(entry.banner), entry]));
+            const stonesFallback = hasBannerStones(fallbackStones)
+                ? normalizeBannerStones(fallbackStones)
+                : (owned.find((entry) => hasBannerStones(entry.bannerStones))?.bannerStones || {});
+            const loadouts = [];
+            for (let id = 1; id <= SIMLAB_BANNER_ID_MAX; id++) {
+                const existing = byId.get(id);
+                if (existing) {
+                    loadouts.push(existing);
+                    continue;
+                }
+                loadouts.push({
+                    banner: id,
+                    bannerStones: { ...stonesFallback },
+                });
+            }
+            return loadouts;
+        }
+
         function resolveBannerIdFromTeamBanners(teamBanners, mode = 'arena') {
             if (!teamBanners || typeof teamBanners !== 'object') return null;
             const keys = mode === 'clanDomination'
@@ -6171,25 +6207,37 @@
                     }
                 }
 
-                // 2) Flag sweep with locked best pet (still no favor) → highest flag
-                const banners = listOwnedBannerLoadouts(support.userInfo, baseBanner);
+                // 2) Flag sweep with locked best pet (still no favor).
+                // max→max: all 11 war flags; power→max: owned only.
+                const banners = listSimLabBannerLoadouts(
+                    support.userInfo,
+                    baseBanner,
+                    baseBannerStones,
+                    { allFlags: attackMaxUpgrade }
+                );
+                const flagsToRun = banners.filter(
+                    (loadout) => Number(loadout.banner) !== Number(baseBanner)
+                );
                 console.log(`[${EXTENSION_NAME}] SimLab ${powerLabel} flag sweep`, {
                     count: banners.length,
+                    allFlags: attackMaxUpgrade,
+                    banners: banners.map((b) => b.banner),
+                    skipBase: baseBanner,
+                    remaining: flagsToRun.length,
                     pet: bestPet,
                 });
                 let bestBanner = Number(bestPetResult?.banner) || baseBanner;
                 let bestBannerStones = bestPetResult?.bannerStones || baseBannerStones;
                 let bestFlagWinRate = Number(bestPetResult?.winRate) || -1;
-                for (let i = 0; i < banners.length; i++) {
-                    const loadout = banners[i];
+                for (let i = 0; i < flagsToRun.length; i++) {
+                    const loadout = flagsToRun[i];
                     // Pet phase already covered base flag + bestPet.
-                    if (Number(loadout.banner) === Number(baseBanner)) continue;
                     const result = await runOne(
                         bestPet,
                         loadout.banner,
                         loadout.bannerStones,
                         {},
-                        `flag ${i + 1}/${banners.length}`
+                        `flag ${i + 1}/${flagsToRun.length}`
                     );
                     consider(result);
                     if (result.winRate > bestFlagWinRate) {
