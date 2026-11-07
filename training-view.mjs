@@ -61,10 +61,10 @@ function buildTrainingQueryBase(paging = {}) {
 
 const TRAINING_SORT_LABELS = {
     list: 'arena list rank',
-    opponent: 'opponent team',
+    opponent: 'defend team',
     label: 'label',
     tester: 'tester',
-    team: 'your team',
+    team: 'attack team',
     winRate: 'win rate',
     record: 'sim record',
     when: 'date tested',
@@ -92,7 +92,7 @@ function renderTestLogLead(paging = {}) {
     const sort = paging.sort || 'when';
     const order = paging.order || 'desc';
     if (sort === 'when' && order === 'desc') {
-        return 'One row per matchup. Click a team to filter; click headers to sort.';
+        return 'Attack next to defend. Click a team to filter; click headers to sort.';
     }
     const label = TRAINING_SORT_LABELS[sort] || sort;
     const direction = order === 'asc' ? 'asc' : 'desc';
@@ -719,17 +719,27 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
 
     const rows = results.map((row) => {
         const opponentLabel = row.opponentPlayer || 'Unknown';
-        const source = row.opponentPlace ? `#${row.opponentPlace}` : '—';
+        const place = row.opponentPlace != null ? `#${row.opponentPlace}` : '';
         const testerLabel = formatTesterLabel(row);
         return `
         <tr>
-            <td class="num muted">${escapeHtml(source)}</td>
-            <td>${renderClickableTeamFilter('opponent', row.opponentCombo.heroIds, row.opponentCombo.pet, row.opponentCombo.heroNames)}</td>
-            <td class="muted">${escapeHtml(opponentLabel)}</td>
-            <td class="muted">${escapeHtml(testerLabel)}</td>
-            <td>${renderClickableTeamFilter('my', row.myCombo.heroIds, row.myCombo.pet, row.myCombo.heroNames)}</td>
+            <td class="num muted">${escapeHtml(place || '—')}</td>
+            <td>
+              <div class="matchup-side">
+                <span class="matchup-k">ATK</span>
+                ${renderClickableTeamFilter('my', row.myCombo.heroIds, row.myCombo.pet, row.myCombo.heroNames)}
+              </div>
+              <div class="muted matchup-meta">${escapeHtml(testerLabel)}</div>
+            </td>
+            <td class="matchup-vs muted">vs</td>
+            <td>
+              <div class="matchup-side">
+                <span class="matchup-k">DEF</span>
+                ${renderClickableTeamFilter('opponent', row.opponentCombo.heroIds, row.opponentCombo.pet, row.opponentCombo.heroNames)}
+              </div>
+              <div class="muted matchup-meta">${escapeHtml(opponentLabel)}${place ? ` · ${escapeHtml(place)}` : ''}</div>
+            </td>
             <td class="num">${renderWinRateCell(row.winRate, minWinRate)}</td>
-            <td class="num muted">${escapeHtml(formatRecord(row.wins, row.losses))}</td>
             <td class="muted nowrap">${escapeHtml(formatWhen(row.testedAt))}</td>
         </tr>`;
     }).join('');
@@ -1121,6 +1131,20 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     .badge.solved { background: #1a3d2e; color: #6ee7a0; border: 1px solid #2d6a4f; }
     a { color: #7cb8ff; }
     .status { color: #9fb3d1; font-size: 0.84rem; margin-right: auto; }
+    .matchup-log td { vertical-align: top; }
+    .matchup-side {
+      display: flex; align-items: flex-start; gap: 8px;
+    }
+    .matchup-k {
+      flex: 0 0 auto; margin-top: 2px;
+      font-size: 0.68rem; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase; color: #8b9bb4;
+    }
+    .matchup-vs {
+      width: 2.2rem; text-align: center; color: #8b9bb4;
+      font-size: 0.78rem; font-weight: 600; vertical-align: middle !important;
+    }
+    .matchup-meta { margin-top: 4px; font-size: 0.78rem; }
     ${HERO_ICON_TOOLTIP_CSS}
   </style>
 </head>
@@ -1153,21 +1177,19 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
         ${offset > 0 ? `<a href="/?${queryBase}limit=${pageSize}">Start</a>` : ''}
       </div>
       <div class="table-wrap card">
-        <table class="data-table">
+        <table class="data-table matchup-log">
           <thead>
             <tr>
               ${renderSortableTh('#', 'list', paging, 'num')}
-              ${renderSortableTh('Opponent', 'opponent', paging)}
-              ${renderSortableTh('Label', 'label', paging)}
-              ${renderSortableTh('Tester', 'tester', paging)}
-              ${renderSortableTh('Your team', 'team', paging)}
+              ${renderSortableTh('Attack', 'team', paging)}
+              <th class="matchup-vs" aria-hidden="true"></th>
+              ${renderSortableTh('Defend', 'opponent', paging)}
               ${renderSortableTh('Win %', 'winRate', paging, 'num')}
-              ${renderSortableTh('W/L', 'record', paging, 'num')}
               ${renderSortableTh('When', 'when', paging)}
             </tr>
           </thead>
           <tbody>
-            ${rows || '<tr><td colspan="8" class="muted">No results yet — run Arena Training in HWH</td></tr>'}
+            ${rows || '<tr><td colspan="6" class="muted">No results yet — run Arena Training in HWH</td></tr>'}
           </tbody>
         </table>
       </div>

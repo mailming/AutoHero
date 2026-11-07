@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.30.7
+// @version      1.31.0
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.30.7';
+    const EXTENSION_VERSION = '1.31.0';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -298,6 +298,18 @@
         return CONSTANTS.HERO_NAMES[id] || `Hero ${id}`;
     }
 
+    function formatLineupShort(heroIds, pet, nameFn) {
+        const heroes = (Array.isArray(heroIds) ? heroIds : [])
+            .map(Number)
+            .filter((id) => id > 0 && id < 6000)
+            .slice(0, 5)
+            .map((id) => (typeof nameFn === 'function' ? nameFn(id) : String(id)));
+        const petId = Number(pet) || 0;
+        const petBit = petId >= 6000
+            ? ` +${typeof nameFn === 'function' ? nameFn(petId) : petId}`
+            : '';
+        return `${heroes.join(', ') || '—'}${petBit}`;
+    }
 
     /** BattleCalc returns huge battleLogs + battleData; never retain those past a single sample. */
     function slimEndDemoPayload(calcResult) {
@@ -1957,7 +1969,13 @@
                     }
 
                     if (!counterLineup) {
-                        status.message = `Round ${roundNum} attempt ${attempt} — max search (${excludeKeys.size} excluded)`;
+                        const defShort = formatLineupShort(
+                            opponentCombo.heroes,
+                            opponentCombo.pet,
+                            heroName
+                        );
+                        status.message = `R${roundNum} a${attempt} max vs DEF ${defShort}`;
+                        HWHFuncs.setProgress(`Arena Training: ${status.message}`, true);
                         maxResult = await this.runSingle({
                             ...trainOptions,
                             maxUpgrade: true,
@@ -2067,7 +2085,18 @@
                     }
 
                     if (!userResult) {
-                        status.message = `Round ${roundNum} attempt ${attempt} — user test same lineup`;
+                        const atkShort = formatLineupShort(
+                            counterLineup.heroes,
+                            counterLineup.pet,
+                            heroName
+                        );
+                        const defShort = formatLineupShort(
+                            opponentCombo.heroes,
+                            opponentCombo.pet,
+                            heroName
+                        );
+                        status.message = `R${roundNum} a${attempt} ATK ${atkShort}  vs  DEF ${defShort}`;
+                        HWHFuncs.setProgress(`Arena Training: ${status.message}`, true);
                         userResult = await this.runSingle({
                             ...trainOptions,
                             maxUpgrade: false,
@@ -2203,7 +2232,14 @@
                         roundNum++;
                         status.loopRound = roundNum;
                         const phaseLabel = runOptions.phaseLabel || 'Loop';
-                        status.message = `${phaseLabel} round ${roundNum} — ${opponentMeta?.name || opponentMeta?.userId || 'opponent'}`;
+                        const defShort = formatLineupShort(
+                            opponentMeta?.heroes || opponentMeta?.heroIds,
+                            opponentMeta?.pet,
+                            heroName
+                        );
+                        const defWho = opponentMeta?.name || opponentMeta?.userId || 'opponent';
+                        status.message = `${phaseLabel} R${roundNum} vs DEF ${defShort} (${defWho})`;
+                        HWHFuncs.setProgress(`Arena Training: ${status.message}`, true);
 
                         try {
                             const opponentRaw = runOptions.opponentOverride ?? opponentMeta.raw ?? null;
@@ -2502,8 +2538,11 @@
                             status.message = `${phaseLabel} ${i + 1}/${candidates.length}`;
 
                             const heroLabels = candidate.heroes.map(heroName);
+                            const atkLabel = formatLineupShort(candidate.heroes, candidate.pet, heroName);
+                            const defLabel = formatLineupShort(opponentTeam.heroes, opponentTeam.pet, heroName);
+                            const defName = opponentRaw?.user?.name || opponentRaw?.name || opponentRaw?.userId || 'def';
                             HWHFuncs.setProgress(
-                                `Arena Training [${phaseLabel}] ${heroLabels.join(', ')}`,
+                                `Arena Training [${phaseLabel}] ATK ${atkLabel}  vs  DEF ${defLabel} (${defName})`,
                                 true
                             );
 
@@ -2872,7 +2911,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.30.7';
+    const COUNTER_SUGGEST_VERSION = '1.31.0';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -4289,16 +4328,6 @@
             return resolveHeroName(heroId, cheats, lib);
         }
 
-        function formatLineupLabel(match) {
-            const names = Array.isArray(match?.myHeroNames) && match.myHeroNames.length === 5
-                ? match.myHeroNames
-                : (match?.myHeroIds || []).map(heroName);
-            const petId = Number(match?.myPet) || 0;
-            const petLabel = petId ? (CONSTANTS.PET_NAMES[petId] || heroName(petId) || `Pet ${petId}`) : 'No pet';
-            const winRate = match?.winRate != null ? `${Math.round(Number(match.winRate))}%` : '?%';
-            return { names: names.join(' · '), petLabel, winRate };
-        }
-
         function getLargestCanvasRect() {
             const canvases = [...document.querySelectorAll('canvas')];
             let best = null;
@@ -5457,11 +5486,6 @@
             }
         }
 
-        async function fetchSimLabBestForCombo(comboKey, testerUserId) {
-            const options = await fetchSimLabOptionsForCombo(comboKey, testerUserId);
-            return options[0] || null;
-        }
-
         /**
          * Real arenaAttack battles carry defender favorPetId (list/gather do not).
          * Pull patronage + optional pet/banner from the first battle in the response.
@@ -6607,6 +6631,152 @@
             );
         }
 
+        /**
+         * Public entry for Auto Daily (and others): run SimLab vs a defender that already
+         * includes fight-level favor / flag / slots (gold-quality defense data).
+         */
+        async function runForDefender(options = {}) {
+            const userId = options.userId != null ? String(options.userId) : '';
+            if (!userId) throw new Error('SimLab runForDefender: userId required');
+
+            const heroes = (options.heroes || [])
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000)
+                .slice(0, 5);
+            if (heroes.length !== 5) throw new Error('SimLab runForDefender: defender needs 5 heroes');
+
+            const myHeroIds = (options.myHeroIds || [])
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000)
+                .slice(0, 5);
+            const myPet = Number(options.myPet);
+            if (myHeroIds.length !== 5) throw new Error('SimLab runForDefender: attack team needs 5 heroes');
+            if (!Number.isFinite(myPet) || myPet < 6000) {
+                throw new Error('SimLab runForDefender: attack team needs a pet');
+            }
+
+            const pet = Number(options.pet) || 0;
+            const banner = Number(options.banner) || 0;
+            const favor = options.favor && typeof options.favor === 'object' ? options.favor : {};
+            const bannerStones = options.bannerStones && typeof options.bannerStones === 'object'
+                ? options.bannerStones
+                : {};
+            const reason = options.reason || 'after Auto Daily loss';
+
+            panelState.mode = 'arena';
+            panelState.visible = true;
+            panelState.enemy = {
+                mode: 'arena',
+                userId,
+                heroes,
+                pet,
+                banner,
+                favor,
+                bannerStones,
+                name: options.name || null,
+                place: options.place ?? null,
+                power: options.power != null ? Number(options.power) : null,
+                comboKey: buildComboKey(heroes, pet, banner),
+                source: options.source || 'auto-daily-loss',
+            };
+            clearSelection();
+            panelController?.render();
+            setPollDelay(POLL_ACTIVE_MS);
+
+            await onSimLabClick(
+                {
+                    myHeroIds,
+                    myPet,
+                    myHeroNames: options.myHeroNames,
+                },
+                'power',
+                {
+                    forceWhileBusy: true,
+                    reason,
+                    defenceOverride: {
+                        favor,
+                        banner: banner || 1,
+                        bannerStones,
+                        pet,
+                        name: options.name || null,
+                        place: options.place ?? null,
+                        power: options.power != null ? Number(options.power) : null,
+                    },
+                }
+            );
+        }
+
+        /**
+         * Auto Daily Arena loss hook: merge fight-level defender detail with the
+         * pre-fight lineup, then run SimLab.
+         */
+        async function runAfterArenaLoss({
+            responseBody = null,
+            opponent = null,
+            attackTeam = null,
+            opponentTeamConfig = null,
+            reason = 'after Auto Daily loss',
+        } = {}) {
+            const defence = extractDefenceFromArenaAttackResponse(responseBody);
+            const opp = opponent?.opponent || opponent || {};
+            const preHeroes = Array.isArray(opponentTeamConfig?.heroes) ? opponentTeamConfig.heroes : [];
+            const fightHeroes = Array.isArray(defence?.heroes) ? defence.heroes : [];
+            const heroes = (preHeroes.length === 5 ? preHeroes : fightHeroes)
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000)
+                .slice(0, 5);
+            if (heroes.length !== 5) {
+                throw new Error('SimLab after loss: could not resolve 5 defender heroes');
+            }
+
+            const myHeroIds = Array.isArray(attackTeam?.heroes) ? attackTeam.heroes : [];
+            const myPet = Number(attackTeam?.pet);
+            if (myHeroIds.length !== 5 || !Number.isFinite(myPet) || myPet < 6000) {
+                throw new Error('SimLab after loss: attack team incomplete');
+            }
+
+            const userId = opp.id ?? opp.userId ?? opponent?.id;
+            if (userId == null) {
+                throw new Error('SimLab after loss: missing opponent userId');
+            }
+
+            const favor = defence?.favor && Object.keys(defence.favor).length
+                ? defence.favor
+                : (opponentTeamConfig?.favor || {});
+            const banner = Number(defence?.banner)
+                || Number(opponentTeamConfig?.banner)
+                || 1;
+            const bannerStones = (defence?.bannerStones && Object.keys(defence.bannerStones).length)
+                ? defence.bannerStones
+                : (opponentTeamConfig?.bannerStones || {});
+            const pet = Number(defence?.pet)
+                || Number(opponentTeamConfig?.pet)
+                || 0;
+
+            return runForDefender({
+                userId,
+                heroes,
+                pet,
+                banner,
+                favor,
+                bannerStones,
+                name: opp.name || opp.nick || null,
+                place: opponent?.rank ?? opp.place ?? null,
+                power: opp.power ?? opp.teamPower ?? null,
+                myHeroIds,
+                myPet,
+                reason,
+                source: 'auto-daily-loss',
+            });
+        }
+
+        window.AHSimLab = {
+            version: EXTENSION_VERSION,
+            extractDefenceFromAttackResponse: extractDefenceFromArenaAttackResponse,
+            runForDefender,
+            runAfterArenaLoss,
+        };
+
         function tick() {
             if (isBusy()) {
                 setPollDelay(POLL_ACTIVE_MS);
@@ -6699,10 +6869,13 @@
             } catch (error) {
                 console.warn(`[${EXTENSION_NAME}] instance teardown error:`, error);
             }
+            if (window.AHSimLab?.version === EXTENSION_VERSION) {
+                delete window.AHSimLab;
+            }
             delete window.__ahCounterSuggestTeardown;
         };
 
-        console.log(`${EXTENSION_NAME}: polling for ${POPUP_CLASS}, ${CD_ATTACK_POPUP_CLASS}, and ${CD_MAP_POPUP_CLASS} (observe getEnemyTeams)`);
+        console.log(`${EXTENSION_NAME}: polling for ${POPUP_CLASS}, ${CD_ATTACK_POPUP_CLASS}, and ${CD_MAP_POPUP_CLASS} (observe getEnemyTeams); AHSimLab API ready`);
         return { openCounters };
     }
 

@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.60
+// @version      3.5.62
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.60";
+    const EXTENSION_VERSION = "3.5.62";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2834,6 +2834,7 @@
         this.arenaInfo = null;
         this.teamInfo = null;
         this.opponents = [];
+        this.opponentsList = [];
         this.myUserId = null;
         this.myClanId = null;
         this.allyUserIds = new Set();
@@ -2864,17 +2865,7 @@
                 await this.getAvailableTeams();
                 await this.loadAllyUserIds();
 
-                // Get detailed opponent information
-                const detailedOpponents = await this.getArenaOpponents();
-                if (detailedOpponents && (detailedOpponents.array || detailedOpponents.map)) {
-                    // Store both map and array to preserve API order
-                    this.opponentsData = detailedOpponents;
-                } else if (detailedOpponents && typeof detailedOpponents === 'object' && Object.keys(detailedOpponents).length > 0) {
-                    // Fallback: old format (just map)
-                    this.opponents = detailedOpponents;
-                }
-
-                // Process opponents in API order (one by one, no sorting)
+                this.opponentsList = await this.getArenaOpponents();
                 this.findEasiestOpponents();
 
                 // Execute battles
@@ -3049,87 +3040,41 @@
                     }
                 }
                 console.log('Detailed opponents info:', opponents);
-
-                // Return both map (for lookup) and array (for order preservation)
-                const opponentsMap = {};
-                const opponentsArray = [];
-                
-                if (Array.isArray(opponents)) {
-                    // Preserve the order from API response
-                    opponents.forEach(opponent => {
-                        opponentsMap[opponent.userId] = opponent;
-                        opponentsArray.push(opponent);
-                    });
-                }
-
-                return {
-                    map: opponentsMap,
-                    array: opponentsArray  // Preserve API order
-                };
+                return Array.isArray(opponents) ? opponents : [];
             } catch (error) {
                 console.error('Error getting arena opponents:', error);
-                return { map: {}, array: [] };
+                return [];
             }
         }
 
         this.findEasiestOpponents = function() {
-            // Process opponents in the exact order they come from API
-            // Arena will try them one by one as returned by the server (no sorting)
-            if (this.opponentsData && this.opponentsData.array && Array.isArray(this.opponentsData.array)) {
-                const availableOpponents = [];
+            // Highest place first; try them one by one from arenaFindEnemies / grandFindEnemies.
+            const list = Array.isArray(this.opponentsList) ? this.opponentsList : [];
+            const availableOpponents = list.map((opponentData) => ({
+                opponent: {
+                    ...opponentData,
+                    id: opponentData.userId ?? opponentData.id,
+                    power: parseInt(opponentData.power, 10) || 0,
+                    place: parseInt(opponentData.place, 10) || 1000,
+                    heroes: opponentData.heroes
+                        ?? opponentData.heroIds
+                        ?? opponentData.team?.heroes
+                        ?? opponentData.team?.units
+                        ?? [],
+                    banners: opponentData.banners
+                        || (opponentData.banner != null ? [opponentData.banner] : []),
+                    user: opponentData.user || {},
+                },
+                rank: parseInt(opponentData.place, 10) || 1000,
+                difficulty: parseInt(opponentData.power, 10) || 0,
+            }));
 
-                // Process in API order (preserve original array order)
-                this.opponentsData.array.forEach(opponentData => {
-                    availableOpponents.push({
-                        opponent: {
-                            ...opponentData,
-                            id: opponentData.userId ?? opponentData.id,
-                            power: parseInt(opponentData.power) || 0,
-                            place: parseInt(opponentData.place) || 1000,
-                            heroes: opponentData.heroes ?? opponentData.heroIds ?? opponentData.team?.heroes ?? opponentData.team?.units ?? [],
-                            banners: opponentData.banners || (opponentData.banner != null ? [opponentData.banner] : []),
-                            user: opponentData.user || {}
-                        },
-                        rank: parseInt(opponentData.place) || 1000,
-                        difficulty: parseInt(opponentData.power) || 0
-                    });
-                });
-
-                this.opponents = availableOpponents.sort((a, b) => a.rank - b.rank);
-                console.log(`[OPPONENTS] Highest ranking first (place 1 = top). Order:`, this.opponents.map(o => ({
-                    id: o.opponent.id,
-                    place: o.rank,
-                    power: o.difficulty
-                })));
-            } else if (this.opponents && typeof this.opponents === 'object') {
-                // Fallback: if we have the old format (map), convert to array
-                // Note: Object.entries() may not preserve order, but we'll try
-                const availableOpponents = [];
-                for (const [opponentId, opponentData] of Object.entries(this.opponents)) {
-                    availableOpponents.push({
-                        opponent: {
-                            ...opponentData,
-                            id: opponentData.userId ?? opponentData.id ?? opponentId,
-                            power: parseInt(opponentData.power) || 0,
-                            place: parseInt(opponentData.place) || 1000,
-                            heroes: opponentData.heroes ?? opponentData.heroIds ?? opponentData.team?.heroes ?? opponentData.team?.units ?? [],
-                            banners: opponentData.banners || (opponentData.banner != null ? [opponentData.banner] : []),
-                            user: opponentData.user || {}
-                        },
-                        rank: parseInt(opponentData.place) || 1000,
-                        difficulty: parseInt(opponentData.power) || 0
-                    });
-                }
-                this.opponents = availableOpponents.sort((a, b) => a.rank - b.rank);
-                console.log(`[OPPONENTS] Highest ranking first (fallback). Order:`, this.opponents.map(o => ({
-                    id: o.opponent.id,
-                    place: o.rank,
-                    power: o.difficulty
-                })));
-            } else {
-                console.log('[OPPONENTS] No opponents data to process');
-                this.opponents = [];
-            }
+            this.opponents = availableOpponents.sort((a, b) => a.rank - b.rank);
+            console.log('[OPPONENTS] Highest ranking first (place 1 = top). Order:', this.opponents.map((o) => ({
+                id: o.opponent.id,
+                place: o.rank,
+                power: o.difficulty,
+            })));
         }
 
         this.loadAllyUserIds = async function() {
@@ -3399,6 +3344,11 @@
 
                 await this.endArenaBattle(battleResult);
 
+                // On Arena loss, start SimLab with fight-level defender favor/flag/slots when available.
+                if (!battleResult.win && this.arenaType === 'arena') {
+                    await this.maybeStartSimLabAfterLoss(opponent, attackTeam, battleResult, opponentTeamConfig);
+                }
+
                 console.log(`[DEMO] ===== Battle completed for opponent ${opponentId} =====`);
                 return battleResult;
             } catch (error) {
@@ -3412,6 +3362,29 @@
                 };
             }
         }
+
+        this.maybeStartSimLabAfterLoss = async function(opponent, attackTeam, battleResult, opponentTeamConfig) {
+            const simLab = window.AHSimLab;
+            if (typeof simLab?.runAfterArenaLoss !== 'function') {
+                console.log('[ARENA] SimLab not available — skip after-loss SimLab');
+                return;
+            }
+
+            setProgress('Arena: loss — starting SimLab with full defender…');
+            try {
+                await simLab.runAfterArenaLoss({
+                    responseBody: battleResult?.responseBody,
+                    opponent,
+                    attackTeam,
+                    opponentTeamConfig,
+                    reason: 'after Auto Daily loss',
+                });
+                setProgress('Arena: SimLab finished after loss');
+            } catch (error) {
+                console.warn('[ARENA] SimLab after loss failed:', error);
+                setProgress(`Arena: SimLab after loss failed — ${error?.message || error}`);
+            }
+        };
 
         this.checkTargetRange = async function(targetId) {
             if (this.arenaType !== 'grand') {
@@ -4460,7 +4433,8 @@
                     progress: last.progress || [],
                     result: last.result,
                     battleTimer: 0,
-                    battleTime: 0
+                    battleTime: 0,
+                    responseBody,
                 };
             }
 
@@ -4488,7 +4462,8 @@
                 progress: lastProgress,
                 result: lastResult,
                 battleTimer,
-                battleTime
+                battleTime,
+                responseBody,
             };
         }
 
