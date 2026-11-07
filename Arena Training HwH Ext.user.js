@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.32.2
+// @version      1.32.3
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.32.2';
+    const EXTENSION_VERSION = '1.32.3';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -5315,6 +5315,24 @@
             return ids;
         }
 
+        /** Push a pattern id to Red+6 of its type: 1–12→12, 13–24→24, … */
+        function maxBannerStoneId(id) {
+            const n = Number(id);
+            if (!Number.isFinite(n) || n <= 0) return null;
+            return Math.ceil(n / 12) * 12;
+        }
+
+        /** Max each filled defender slot to Red+6 while keeping type + slot index. */
+        function maxOutBannerStones(slots) {
+            const normalized = normalizeBannerStones(slots);
+            const out = {};
+            for (const [key, value] of Object.entries(normalized)) {
+                const maxed = maxBannerStoneId(value);
+                if (maxed != null) out[key] = maxed;
+            }
+            return out;
+        }
+
         function combinationsOf(items, k) {
             const list = Array.isArray(items) ? items : [];
             const out = [];
@@ -6038,6 +6056,22 @@
                         `[${EXTENSION_NAME}] SimLab defence favor still empty for enemy ${enemy.userId}`
                         + ' — pet lib had no compatible favor pets for these heroes'
                     );
+                }
+
+                // Max DEF: push each filled flag slot to Red+6 of its type (1–12→12, …).
+                if (hasBannerStones(defenceBannerStones)) {
+                    const beforeSlots = { ...defenceBannerStones };
+                    defenceBannerStones = maxOutBannerStones(defenceBannerStones);
+                    console.log(`[${EXTENSION_NAME}] SimLab defence slots maxed to Red+6:`, {
+                        before: beforeSlots,
+                        after: defenceBannerStones,
+                    });
+                    if (panelState.enemy) {
+                        panelState.enemy = {
+                            ...panelState.enemy,
+                            bannerStones: defenceBannerStones,
+                        };
+                    }
                 }
 
                 if (!hasBannerStones(baseBannerStones)) {
