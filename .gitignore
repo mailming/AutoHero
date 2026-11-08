@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+_tmp_*
+
+# Generated files (optional - uncomment if you don't want to track these)
+# schedule_extracted.csv
+# hero_wars_events_email.txt
+# hero_wars_schedule.ics
+
+# Node
+node_modules/
+
+# Environment variables
+.env
