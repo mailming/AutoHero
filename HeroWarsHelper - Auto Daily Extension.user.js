@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.63
+// @version      3.5.64
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,7 +15,7 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.63";
+    const EXTENSION_VERSION = "3.5.64";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
@@ -2691,6 +2691,52 @@
         return raw;
     }
 
+    function resolveArenaHeroName(heroId) {
+        const id = Number(heroId);
+        if (!Number.isFinite(id)) return String(heroId);
+        try {
+            const key = id >= 6000 && id < 7000
+                ? `LIB_PET_NAME_${id}`
+                : `LIB_HERO_NAME_${id}`;
+            const translated = cheats?.translate?.(key);
+            if (translated && translated !== key) return translated;
+            const data = window.lib?.getData?.('hero');
+            const hero = data?.[id] || data?.[String(id)];
+            if (hero?.name || hero?.caption) return hero.name || hero.caption;
+        } catch {
+            // fall through
+        }
+        return id >= 6000 && id < 7000 ? `Pet ${id}` : `Hero ${id}`;
+    }
+
+    function formatArenaLineup(heroIds, pet) {
+        const heroes = (Array.isArray(heroIds) ? heroIds : [])
+            .map(Number)
+            .filter((id) => id > 0 && id < 6000)
+            .slice(0, 5)
+            .map(resolveArenaHeroName);
+        const petId = Number(pet) || 0;
+        const petBit = petId >= 6000 ? ` +${resolveArenaHeroName(petId)}` : '';
+        return `${heroes.join(', ') || '—'}${petBit}`;
+    }
+
+    /** Pull ATK/DEF hero+pet ids from demo battle payload for matchup logs. */
+    function extractBattleSideLineup(side) {
+        const team = Array.isArray(side) ? side[0] : side;
+        const record = team && typeof team === 'object' ? team : {};
+        const ids = Object.keys(record).map(Number).filter((id) => Number.isFinite(id) && id > 0);
+        return {
+            heroes: ids.filter((id) => id < 6000).slice(0, 5),
+            pet: ids.find((id) => id >= 6000 && id < 7000) || 0,
+        };
+    }
+
+    function formatBattleMatchupLabel(battleData) {
+        const atk = extractBattleSideLineup(battleData?.attackers);
+        const def = extractBattleSideLineup(battleData?.defenders);
+        return `ATK ${formatArenaLineup(atk.heroes, atk.pet)}  vs  DEF ${formatArenaLineup(def.heroes, def.pet)}`;
+    }
+
     function random(min, max) {
         return Math.floor(Math.random() * (max - min + 1) + min);
     }
@@ -4156,20 +4202,21 @@
         this.runLocalTestFights = async function(battleData, mechanic, count) {
             const total = Math.max(1, count);
             const arenaName = this.arenaType === 'grand' ? 'Grand Arena' : 'Arena';
-            const serverSeed = battleData?.seed;
             const simulations = [];
-            console.log(`[Arena pre-check] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
+            const matchupLabel = formatBattleMatchupLabel(battleData);
+            console.log(`[Arena pre-check] BattleCalc local x${total} — ${matchupLabel}`);
             for (let i = 0; i < total; i++) {
                 // First sample keeps the server seed. Each later sample gets its own copy and seed.
                 const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + random(0, 1e3) + i;
-                const usedSeed = seed == null ? serverSeed : seed;
-                setProgress(`${arenaName}: BattleCalc local ${i + 1}/${total}`);
+                setProgress(`${arenaName}: ${i + 1}/${total} — ${matchupLabel}`);
                 try {
                     const sample = await this.calcBattleCopy(battleData, mechanic, seed);
                     simulations.push(sample);
-                    console.log(`[Arena pre-check] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
                 } catch (error) {
-                    console.error(`[Arena pre-check] BattleCalc local ${i + 1}/${total} failed:`, error);
+                    console.error(
+                        `[Arena pre-check] BattleCalc local ${i + 1}/${total} failed — ${matchupLabel}:`,
+                        error
+                    );
                     simulations.push({ win: false, battleTime: 0, error: error.message });
                 }
             }
@@ -4180,8 +4227,10 @@
             const averageBattleTime = battleTimes.length
                 ? battleTimes.reduce((a, b) => a + b, 0) / battleTimes.length
                 : 0;
-            const summary = `${arenaName}: BattleCalc local ${wins}W/${losses}L (${winRate.toFixed(0)}% of ${simulations.length})`;
-            console.log(`[Arena pre-check] ${summary}. Server demo calls this matchup: 1.`);
+            const summary =
+                `[Arena pre-check] ${matchupLabel} — ${wins}W/${losses}L ` +
+                `(${winRate.toFixed(0)}% of ${simulations.length})`;
+            console.log(summary);
             setProgress(summary);
             return {
                 total: simulations.length,
