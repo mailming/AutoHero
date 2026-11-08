@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.32.5
+// @version      1.32.6
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.32.5';
+    const EXTENSION_VERSION = '1.32.6';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -311,6 +311,13 @@
         return `${heroes.join(', ') || '—'}${petBit}`;
     }
 
+    function formatTeamLineup(team, nameFn) {
+        const resolve = typeof nameFn === 'function'
+            ? nameFn
+            : (id) => resolveHeroName(id, window.cheats, window.lib);
+        return formatLineupShort(team?.heroes || team?.units, team?.pet, resolve);
+    }
+
     /** BattleCalc returns huge battleLogs + battleData; never retain those past a single sample. */
     function slimEndDemoPayload(calcResult) {
         if (!calcResult) return null;
@@ -598,22 +605,26 @@
         const simulations = [];
         let endDemoPayload = null;
         let demoEnded = false;
-        log(`[Arena Training] BattleCalc local x${total} starting (server seed ${serverSeed}). No further demoBattles_startBattle for this matchup.`);
+        const atkLabel = formatTeamLineup(myTeam);
+        const defLabel = formatTeamLineup(opponentTeam);
+        const matchupLabel = `ATK ${atkLabel}  vs  DEF ${defLabel}`;
+        log(`[Arena Training] BattleCalc local x${total} — ${matchupLabel}`);
         try {
             for (let i = 0; i < total; i++) {
                 if (isStopped()) break;
                 const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + nextRandom(0, 1e3) + i;
-                const usedSeed = seed == null ? serverSeed : seed;
-                setProgress(`Arena Training: BattleCalc local ${i + 1}/${total}`);
+                setProgress(`Arena Training: ${i + 1}/${total} — ${matchupLabel}`);
                 try {
                     const sample = await calcBattleCopy(battleData, seed, battleCalc, getBattleType, isValidBattleResult);
                     if (!endDemoPayload && sample.endDemo) {
                         endDemoPayload = sample.endDemo;
                     }
                     simulations.push(slimSimulationSample(sample));
-                    log(`[Arena Training] BattleCalc local ${i + 1}/${total} seed=${usedSeed} ${sample.win ? 'WIN' : 'LOSS'}${sample.error ? ' ' + sample.error : ''}`);
                 } catch (error) {
-                    console.error(`[Arena Training] BattleCalc local ${i + 1}/${total} failed:`, error);
+                    console.error(
+                        `[Arena Training] BattleCalc local ${i + 1}/${total} failed — ${matchupLabel}:`,
+                        error
+                    );
                     simulations.push({ win: false, battleTime: 0, error: error.message });
                 }
                 // Yield again after each calc so the tab stays interactive between sims.
@@ -647,8 +658,10 @@
             ? battleTimes.reduce((sum, time) => sum + time, 0) / battleTimes.length
             : 0;
         const winRate = simulations.length ? (wins / simulations.length) * 100 : 0;
-        const summary = `Arena Training: BattleCalc local ${wins}W/${losses}L (${winRate.toFixed(0)}% of ${simulations.length})`;
-        log(`[Arena Training] ${summary}. Server demo calls this matchup: 1.`);
+        const summary =
+            `[Arena Training] ${matchupLabel} — ${wins}W/${losses}L ` +
+            `(${winRate.toFixed(0)}% of ${simulations.length})`;
+        log(summary);
         setProgress(summary);
 
         return {
