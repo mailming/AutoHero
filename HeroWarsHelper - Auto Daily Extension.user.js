@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.62
+// @version      3.5.63
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,14 +15,15 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.62";
+    const EXTENSION_VERSION = "3.5.63";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
 
     // Dungeon knobs (set on window before run): HWH_DEBUG_DUNGEON, HWH_LOG_PREDICTION_CARDS,
     // HWH_DUNGEON_USE_ORACLE_CARDS, HWH_DUNGEON_NUM_TRIES, HWH_DUNGEON_STEP_DELAY_MS,
     // HWH_DUNGEON_BRUTEFORCE_MS, HWH_DUNGEON_EVAL_BRUTEFORCE_MS, HWH_DUNGEON_EXECUTE_BRUTEFORCE_MS,
-    // HWH_DUNGEON_MAX_TIMER_TRIES, HWH_DUNGEON_ELEMENTAL_ATTEMPTS, HWH_BATTLE_CALC_TIMEOUT_MS.
+    // HWH_DUNGEON_MAX_TIMER_TRIES, HWH_DUNGEON_ELEMENTAL_ATTEMPTS, HWH_DUNGEON_RESTART_TRIES,
+    // HWH_DUNGEON_NO_WIN_RETRIES, HWH_BATTLE_CALC_TIMEOUT_MS.
 
     // ASCII-safe UI icons (userscript managers can mangle UTF-8)
     const UI_ICON = {
@@ -1199,6 +1200,7 @@
         }
 
         // Skip re-sim when the chosen option is already the latest server battle.
+        // Returns true on success, false on hard stop, 'next' to try another winning door.
         async function executeChosenOption(option, attackerType, debug = '', skipRestart = false) {
             if (stopDung || end) {
                 return false;
@@ -1206,18 +1208,43 @@
             let finalOption = option;
             const isLastSimulated = lastSimulatedOption === option;
             if (!skipRestart && !isLastSimulated) {
-                const restarted = await startAndSimulate(
-                    option.teamNum,
-                    option.heroes,
-                    option.pet,
-                    attackerType,
-                    option.favor || {},
-                    RESTART_BRUTEFORCE_MS
-                );
+                // Evaluating other doors starts a new server battle and invalidates the
+                // earlier winning seed. Restart can lose to RNG — retry a couple times,
+                // then let the caller try another door / re-evaluate the floor.
+                const restartTries = Math.max(1, Math.min(3, Number(window.HWH_DUNGEON_RESTART_TRIES) || 2));
+                let restarted = null;
+                for (let attempt = 1; attempt <= restartTries; attempt++) {
+                    if (stopDung || end) {
+                        return false;
+                    }
+                    restarted = await startAndSimulate(
+                        option.teamNum,
+                        option.heroes,
+                        option.pet,
+                        attackerType,
+                        option.favor || {},
+                        RESTART_BRUTEFORCE_MS
+                    );
+                    if (restarted?.win) {
+                        break;
+                    }
+                    const reason = !restarted
+                        ? 'start/sim returned null (API or BattleCalc)'
+                        : `sim loss (dead=${getDeads(restarted)})`;
+                    console.warn(
+                        `[Dungeon] Restart failed for ${attackerType} team ${option.teamNum} ` +
+                        `(${attempt}/${restartTries}): ${reason}`
+                    );
+                    setBattleOpen(false);
+                    if (attempt < restartTries) {
+                        await sleep(800);
+                    }
+                }
                 if (!restarted?.win) {
-                    lastError = 'Restart failed';
-                    endDungeon(lastError);
-                    return false;
+                    console.warn(
+                        `[Dungeon] Restart could not re-win ${attackerType} team ${option.teamNum} — trying next door if any`
+                    );
+                    return 'next';
                 }
                 finalOption = restarted;
                 lastDebugString += debugString(restarted, attackerType) + ' [restart]';
@@ -1613,35 +1640,77 @@
                     return false;
                 }
             }
-            consecutiveNoWin = 0;
-
             lastDebugString += valid.map((v) => debugString(v.option, v.attackerType)).join(' | ');
 
-            const best = valid.length === 1
-                ? valid[0]
-                : valid.reduce((b, cur) => {
-                    // Soft prefer survival-safe doors when quality is otherwise close.
-                    if ((b.passesSurvival === true) !== (cur.passesSurvival === true)
-                        && !isOptionBetter(b.option, cur.option)
-                        && !isOptionBetter(cur.option, b.option)) {
-                        return cur.passesSurvival === true ? cur : b;
+            // Rank best-first; if restart RNG fails on #1, try the next winning door.
+            const ranked = valid.length === 1
+                ? valid.slice()
+                : valid.slice().sort((a, b) => {
+                    if ((a.passesSurvival === true) !== (b.passesSurvival === true)
+                        && !isOptionBetter(a.option, b.option)
+                        && !isOptionBetter(b.option, a.option)) {
+                        return a.passesSurvival === true ? -1 : 1;
                     }
-                    return isOptionBetter(b.option, cur.option) ? cur : b;
+                    if (isOptionBetter(a.option, b.option)) return -1;
+                    if (isOptionBetter(b.option, a.option)) return 1;
+                    return 0;
                 });
 
-            if (!best?.option) {
+            if (!ranked[0]?.option) {
                 lastError = 'No best battle found';
                 endDungeon(lastError);
                 return false;
             }
 
-            lastDebugString += ` -> ${best.option.teamNum} `;
-
+            lastDebugString += ` -> ${ranked[0].option.teamNum} `;
             if (DUNGEON_VERBOSE) console.log('[Dungeon]', lastDebugString);
-            const ok = await executeChosenOption(best.option, best.attackerType, lastDebugString);
-            stepCount++;
+
+            for (let i = 0; i < ranked.length; i++) {
+                if (stopDung || end) {
+                    timeDungeon.steps += Date.now() - stepStart;
+                    return false;
+                }
+                const candidate = ranked[i];
+                if (i > 0) {
+                    console.warn(
+                        `[Dungeon] Trying next winning door ${candidate.attackerType} ` +
+                        `team ${candidate.option.teamNum} (${i + 1}/${ranked.length})`
+                    );
+                }
+                const ok = await executeChosenOption(
+                    candidate.option,
+                    candidate.attackerType,
+                    lastDebugString
+                );
+                if (ok === true) {
+                    consecutiveNoWin = 0;
+                    stepCount++;
+                    timeDungeon.steps += Date.now() - stepStart;
+                    return true;
+                }
+                if (ok === 'next') {
+                    continue;
+                }
+                // false = hard stop (endDungeon already called)
+                timeDungeon.steps += Date.now() - stepStart;
+                return false;
+            }
+
+            // All evaluated winning doors failed to restart-win (RNG). Re-evaluate floor.
+            consecutiveNoWin++;
+            console.warn(
+                `[Dungeon] All winning-door restarts failed — re-evaluating floor ` +
+                `(${consecutiveNoWin}/${NO_WIN_RETRIES})`
+            );
+            if (consecutiveNoWin > NO_WIN_RETRIES) {
+                lastError = 'Restart failed (could not re-win any chosen door after retries)';
+                endDungeon(lastError);
+                timeDungeon.steps += Date.now() - stepStart;
+                return false;
+            }
+            await sleep(1000);
             timeDungeon.steps += Date.now() - stepStart;
-            return ok !== false;
+            return true;
         }
 
         function showStats() {
