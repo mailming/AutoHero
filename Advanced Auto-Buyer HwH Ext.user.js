@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Advanced Auto-Buyer HwH Ext
 // @namespace    HeroWarsHelper.AdvancedAutoBuyer
-// @version      1.10
-// @description  Slot-ID auto-buyer for standard shops plus Clan Raid shopBuy (Mon–Wed, when available).
+// @version      1.11
+// @description  Slot-ID auto-buyer for standard shops, Secret Wealth (shopBuy …0026), and Clan Raid (Mon–Wed). Per-shop Run for testing.
 // @author       YourName & Coding Partner
 // @match        https://www.hero-wars.com/*
 // @match        https://apps-1701433570146040.apps.fbsbx.com/*
@@ -28,6 +28,7 @@
 
         const { HWHClasses, HWHFuncs, cheats, Caller, lib } = window;
         const STORAGE_PREFIX = 'advAutoBuyer_';
+        const STANDARD_SHOP_IDS = new Set([1, 4, 5, 6, 8, 9, 10, 13, 17]);
 
         // --- DATA STRUCTURES & HELPERS ---
         const SHOPS = [
@@ -44,27 +45,47 @@
             { id: 'CLAN_RAID', name: 'Clan Raid Shop', buyApi: 'clanRaid_shopBuy' }
         ];
 
-        // Helper function to find Secret Wealth Shop by pattern (ends with 0026)
+        function shopLooksLikeSecretWealth(shop) {
+            if (!shop || !shop.slots) return false;
+            for (const slot of Object.values(shop.slots)) {
+                if (slot && slot.cost && (slot.cost.consumable || slot.cost.starmoney != null)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Secret Wealth shopId is dynamic (e.g. 2898000026 / 1576000026) — ends with 0026.
+         * Matches captured shopBuy: { shopId, slot, cost: { consumable|starmoney }, reward }.
+         */
         function findSecretWealthShop(shopsData) {
+            if (!shopsData || typeof shopsData !== 'object') return null;
+
+            // Prefer IDs ending in 0026 (real Secret Wealth instances)
             for (const shopId in shopsData) {
-                const shopIdNum = typeof shopId === 'string' ? parseInt(shopId) : shopId;
-                if (!isNaN(shopIdNum) && shopIdNum.toString().endsWith('0026')) {
-                    const shop = shopsData[shopId];
-                    // Verify it's actually a Secret Wealth Shop by checking for consumable/starmoney costs
-                    if (shop && shop.slots) {
-                        for (const slotId in shop.slots) {
-                            const slot = shop.slots[slotId];
-                            if (slot.cost && (slot.cost.consumable || slot.cost.starmoney)) {
-                                return { id: shopIdNum, shop: shop };
-                            }
-                        }
-                    }
+                if (!Object.prototype.hasOwnProperty.call(shopsData, shopId)) continue;
+                const shopIdNum = typeof shopId === 'string' ? parseInt(shopId, 10) : shopId;
+                if (isNaN(shopIdNum) || !String(shopIdNum).endsWith('0026')) continue;
+                const shop = shopsData[shopId];
+                if (shopLooksLikeSecretWealth(shop)) {
+                    return { id: shopIdNum, shop };
+                }
+            }
+
+            // Fallback: any non-standard shop priced in consumable / starmoney
+            for (const shopId in shopsData) {
+                if (!Object.prototype.hasOwnProperty.call(shopsData, shopId)) continue;
+                const shopIdNum = typeof shopId === 'string' ? parseInt(shopId, 10) : shopId;
+                if (STANDARD_SHOP_IDS.has(shopIdNum)) continue;
+                const shop = shopsData[shopId];
+                if (shopLooksLikeSecretWealth(shop)) {
+                    return { id: shopIdNum, shop };
                 }
             }
             return null;
         }
 
-        // Helper function to get storage key for Secret Wealth Shop (consistent regardless of actual ID)
         function getSecretWealthStorageKey() {
             return STORAGE_PREFIX + 'SECRET_WEALTH';
         }
@@ -76,8 +97,53 @@
         function parseSlotIds(value) {
             return value.split(',')
                 .map(s => s.trim())
-                .filter(s => s && !isNaN(parseInt(s)))
-                .map(s => parseInt(s));
+                .filter(s => s && !isNaN(parseInt(s, 10)))
+                .map(s => parseInt(s, 10));
+        }
+
+        /** Resolve slot number from object key and/or slot.id (Secret Wealth often keys only). */
+        function resolveSlotId(slotKey, slot) {
+            if (slot && slot.id != null && slot.id !== '' && !isNaN(Number(slot.id))) {
+                return Number(slot.id);
+            }
+            const fromKey = Number(slotKey);
+            return Number.isFinite(fromKey) ? fromKey : null;
+        }
+
+        /** Normalize cost/reward so numeric string amounts become numbers (API expects numbers). */
+        function normalizeMoneyTree(value) {
+            if (value == null || typeof value !== 'object') {
+                if (typeof value === 'string' && value !== '' && !isNaN(Number(value))) return Number(value);
+                return value;
+            }
+            const out = Array.isArray(value) ? [] : {};
+            for (const key in value) {
+                if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+                out[key] = normalizeMoneyTree(value[key]);
+            }
+            return out;
+        }
+
+        /**
+         * Build shopBuy cost for Secret Wealth: prefer consumable when both exist
+         * (matches capture ShopBuySecretShop — consumable 85 for slot 6).
+         */
+        function pickSecretWealthCost(slotCost) {
+            if (!slotCost || typeof slotCost !== 'object') return {};
+            if (slotCost.consumable) {
+                return { consumable: normalizeMoneyTree(slotCost.consumable) };
+            }
+            if (slotCost.starmoney != null) {
+                return { starmoney: normalizeMoneyTree(slotCost.starmoney) };
+            }
+            return normalizeMoneyTree(slotCost);
+        }
+
+        function isSupportedShopCost(slotCost) {
+            if (!slotCost || typeof slotCost !== 'object') return false;
+            const keys = Object.keys(slotCost);
+            if (keys.length === 0) return false;
+            return keys.some(k => k === 'gold' || k === 'coin' || k === 'consumable' || k === 'starmoney');
         }
 
         // --- Import/Export Functions ---
@@ -152,14 +218,14 @@
             input.click();
         }
 
-        // --- UI LOGIC: one list of all shops, each with a slot-ID textbox ---
+        // --- UI LOGIC: one list of all shops, each with a slot-ID textbox + Run ---
         // IMPORTANT: never wipe .PopUp_Container — that destroys HWH's shared popup
         // (msgText / buttons / .PopUp_custom) and breaks every later menu popup.
         // Inject into popup.custom only, then clearCustomBlock() after close.
         async function openSettingsPopup() {
             try {
                 const popupContent = document.createElement('div');
-                popupContent.style.cssText = 'display: flex; flex-direction: column; max-height: 70vh; color: #fce1ac; text-shadow: 0 0 2px black; min-width: 420px;';
+                popupContent.style.cssText = 'display: flex; flex-direction: column; max-height: 70vh; color: #fce1ac; text-shadow: 0 0 2px black; min-width: 480px;';
 
                 const headerContainer = document.createElement('div');
                 headerContainer.style.cssText = 'display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ce9767; margin-bottom: 10px; padding-bottom: 8px;';
@@ -187,21 +253,22 @@
                 headerContainer.appendChild(buttonContainer);
 
                 const hint = document.createElement('p');
-                hint.textContent = 'Slot IDs per shop (e.g. 6, 3). Clan Raid buys Mon–Wed only, and only slots still available.';
+                hint.textContent = 'Slot IDs per shop (e.g. 6, 3). Use Run to test one shop. Clan Raid: Mon–Wed only, available slots.';
                 hint.style.cssText = 'color: #fce1ac; font-size: 12px; margin: 0 0 10px 0; opacity: 0.9;';
 
                 const listContainer = document.createElement('div');
                 listContainer.style.cssText = 'flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;';
 
-                const inputStyle = 'flex: 1; min-width: 160px; padding: 6px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
-                const labelStyle = 'width: 160px; flex-shrink: 0; color: #ffcc66;';
+                const inputStyle = 'flex: 1; min-width: 140px; padding: 6px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                const labelStyle = 'width: 150px; flex-shrink: 0; color: #ffcc66;';
+                const runBtnStyle = 'flex-shrink: 0; padding: 6px 10px; border: 1px solid #4a7c3e; background: #3a5a2e; color: #aaffaa; cursor: pointer; font-weight: bold;';
 
                 SHOPS.forEach(shop => {
                     const storageKey = getShopStorageKey(shop.id);
                     const savedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
 
                     const row = document.createElement('div');
-                    row.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+                    row.style.cssText = 'display: flex; align-items: center; gap: 8px;';
 
                     const label = document.createElement('label');
                     label.textContent = shop.name;
@@ -222,22 +289,41 @@
 
                     // Titan Artifact Shop: bulk amount next to slots
                     if (shop.id === 13) {
-                        const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '9999');
+                        const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '9999', 10);
                         const amountInput = document.createElement('input');
                         amountInput.type = 'number';
                         amountInput.min = '1';
                         amountInput.title = 'Bulk purchase amount';
                         amountInput.placeholder = 'qty';
                         amountInput.value = savedAmount;
-                        amountInput.style.cssText = 'width: 72px; padding: 6px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
+                        amountInput.style.cssText = 'width: 64px; padding: 6px 8px; border: 1px solid #ce9767; background: #3a2e24; color: #fce1ac;';
                         amountInput.onchange = () => {
-                            const amount = Math.max(1, parseInt(amountInput.value) || 9999);
+                            const amount = Math.max(1, parseInt(amountInput.value, 10) || 9999);
                             amountInput.value = amount;
                             localStorage.setItem(storageKey + '_amount', String(amount));
                         };
                         amountInput.onblur = amountInput.onchange;
                         row.appendChild(amountInput);
                     }
+
+                    const runBtn = document.createElement('button');
+                    runBtn.textContent = 'Run';
+                    runBtn.title = `Buy configured slots for ${shop.name} only`;
+                    runBtn.style.cssText = runBtnStyle;
+                    runBtn.onclick = async () => {
+                        // Persist slots before running
+                        localStorage.setItem(storageKey + '_slots', JSON.stringify(parseSlotIds(slotInput.value)));
+                        runBtn.disabled = true;
+                        const prev = runBtn.textContent;
+                        runBtn.textContent = '...';
+                        try {
+                            await runAutoBuy(shop.id);
+                        } finally {
+                            runBtn.disabled = false;
+                            runBtn.textContent = prev;
+                        }
+                    };
+                    row.appendChild(runBtn);
 
                     listContainer.appendChild(row);
                 });
@@ -370,231 +456,228 @@
             }
         }
 
-        async function runAutoBuy() {
-            console.log("--- Advanced Auto-Buyer RUNNING (v1.10 Clan Raid Mon–Wed) ---");
-            HWHFuncs.setProgress("Auto-Buyer: Fetching data...");
-            try {
-                const caller = new Caller(['shopGetAll']);
-                await caller.send();
-                const shopsData = caller.result('shopGetAll');
+        function collectStandardShopBuys(shopsData, shop, secretWealthShop, callsToMake) {
+            let shopId = shop.id;
+            let currentShopData = null;
+            const isSecret = shopId === 'SECRET_WEALTH';
 
-                // Find Secret Wealth Shop dynamically by pattern
-                const secretWealthShop = findSecretWealthShop(shopsData);
-                if (secretWealthShop) {
-                    console.log(`Secret Wealth Shop detected with ID: ${secretWealthShop.id}`);
-                } else {
-                    console.log("Secret Wealth Shop not found (no shop ID ending in 0026)");
+            if (isSecret) {
+                if (!secretWealthShop) {
+                    console.log(`Shop ${shop.name}: Not available (no Secret Wealth shop found)`);
+                    return;
+                }
+                shopId = secretWealthShop.id;
+                currentShopData = secretWealthShop.shop;
+            } else {
+                currentShopData = shopsData[shopId] || shopsData[String(shopId)] || shopsData[Number(shopId)];
+            }
+
+            if (!currentShopData || !currentShopData.slots) {
+                console.log(`Shop ${shop.name} (ID: ${shopId}): No shop data or slots found`);
+                return;
+            }
+
+            const storageKey = getShopStorageKey(shop.id);
+            const fixedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
+            const slotIdSet = new Set(fixedSlotIds.map(Number));
+
+            console.log(`Shop ${shop.name} (ID: ${shopId}): Found ${Object.keys(currentShopData.slots).length} slots, ${fixedSlotIds.length} fixed slots`);
+
+            if (fixedSlotIds.length === 0) {
+                return;
+            }
+
+            for (const [slotKey, slot] of Object.entries(currentShopData.slots)) {
+                if (!slot) continue;
+
+                const slotId = resolveSlotId(slotKey, slot);
+                if (slotId == null || !slotIdSet.has(Number(slotId))) continue;
+
+                if (slot.bought === true) {
+                    console.log(`Shop ${shop.name}: Slot ${slotId} already bought, skipping`);
+                    continue;
+                }
+
+                let itemDisplayName = `Slot ${slotId}`;
+                try {
+                    const rewardType = Object.keys(slot.reward || {})[0];
+                    const rewardId = rewardType != null ? Object.keys(slot.reward[rewardType])[0] : null;
+                    if (rewardType != null && rewardId != null) {
+                        const libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
+                        const translationKey = `LIB_${libTypeForTranslate}_NAME_${rewardId}`;
+                        itemDisplayName = cheats.translate(translationKey) || itemDisplayName;
+                    }
+                } catch (e) {
+                    // Keep default slot ID if translation fails
+                }
+
+                const slotCost = slot.cost || {};
+                if (!isSupportedShopCost(slotCost)) {
+                    console.log(`Shop ${shop.name}: Slot ${slotId} has unsupported cost, skipping`, slotCost);
+                    continue;
+                }
+
+                const normalizedCost = isSecret
+                    ? pickSecretWealthCost(slotCost)
+                    : normalizeMoneyTree(slotCost);
+
+                // Captured Secret Wealth shopBuy:
+                // { shopId: 2898000026, slot: 6, cost: { consumable: { "85": 40000 } }, reward: { consumable: { "55": 80 } } }
+                const shopBuyArgs = {
+                    shopId: Number(shopId),
+                    slot: Number(slotId),
+                    cost: normalizedCost,
+                    reward: normalizeMoneyTree(slot.reward || {})
+                };
+
+                // Titan Artifact Shop supports bulk amount
+                if (Number(shopId) === 13 && slot.staticShopMultiplePurchase === 1) {
+                    const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '0', 10);
+                    shopBuyArgs.amount = savedAmount > 0 ? savedAmount : (slot.maxAmount || slot.maxPurchaseAmount || 9999);
+                }
+
+                console.log(`Queue shopBuy:`, shopBuyArgs);
+                callsToMake.push({
+                    name: 'shopBuy',
+                    args: shopBuyArgs,
+                    itemInfo: `- ${itemDisplayName} (Slot ${slotId}) from ${shop.name}`
+                });
+            }
+        }
+
+        async function executePurchases(callsToMake) {
+            if (callsToMake.length === 0) {
+                HWHFuncs.setProgress("Auto-Buyer: No items to buy.", true);
+                return;
+            }
+
+            HWHFuncs.setProgress(`Auto-Buyer: Attempting to buy ${callsToMake.length} item(s) (one at a time)...`);
+            const errors = [];
+            const successes = [];
+
+            for (let i = 0; i < callsToMake.length; i++) {
+                const purchaseCall = callsToMake[i];
+                const itemInfo = purchaseCall.itemInfo || `Item ${i + 1}`;
+
+                try {
+                    HWHFuncs.setProgress(`Auto-Buyer: Purchasing item ${i + 1}/${callsToMake.length}...`);
+
+                    const caller = new Caller([{ name: purchaseCall.name, args: purchaseCall.args }]);
+                    await caller.send();
+
+                    const sideResults = caller.sideResults[purchaseCall.name] || [];
+
+                    if (sideResults && sideResults.length > 0 && sideResults[0] && sideResults[0].error) {
+                        const error = sideResults[0].error;
+                        const errorMsg = typeof error === 'string' ? error : (error.name || error.description || JSON.stringify(error));
+                        errors.push(`${itemInfo}: ${errorMsg}`);
+                        console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', error);
+                        continue;
+                    }
+
+                    const callResult = caller.result(purchaseCall.name);
+
+                    console.log(`%cPurchase result for ${itemInfo}:`, 'color: blue;', {
+                        callResult,
+                        args: purchaseCall.args,
+                        sideResults
+                    });
+
+                    if (callResult && Array.isArray(callResult) && callResult.length > 0) {
+                        const responseObj = callResult[0];
+                        if (responseObj !== null && responseObj !== undefined) {
+                            successes.push(itemInfo);
+                            console.log(`%cPurchase Success: ${itemInfo}`, 'color: lightgreen; font-weight: bold;', responseObj);
+                        } else if (sideResults.length === 0 || !sideResults[0] || !sideResults[0].error) {
+                            successes.push(itemInfo);
+                            console.log(`%cPurchase Success: ${itemInfo} (no response data but no error)`, 'color: lightgreen; font-weight: bold;');
+                        } else {
+                            errors.push(`${itemInfo}: No response data`);
+                            console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', 'No response data');
+                        }
+                    } else if (callResult && !Array.isArray(callResult)) {
+                        // Single unwrapped response object
+                        successes.push(itemInfo);
+                        console.log(`%cPurchase Success: ${itemInfo}`, 'color: lightgreen; font-weight: bold;', callResult);
+                    } else if (sideResults.length === 0 || !sideResults[0] || !sideResults[0].error) {
+                        successes.push(itemInfo);
+                        console.log(`%cPurchase Success: ${itemInfo} (no result array but no error)`, 'color: lightgreen; font-weight: bold;');
+                    } else {
+                        errors.push(`${itemInfo}: No response received`);
+                        console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', 'No response received');
+                    }
+                } catch (callError) {
+                    errors.push(`${itemInfo}: ${callError.message || 'Unknown error'}`);
+                    console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', callError);
+                }
+
+                if (i < callsToMake.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+
+            if (errors.length > 0) {
+                console.error('%c--- Purchase Errors ---', 'color: red; font-weight: bold;');
+                errors.forEach(error => console.error(`%c${error}`, 'color: red;'));
+            }
+
+            if (successes.length > 0) {
+                console.log('%c--- Items Bought Successfully ---', 'color: lightgreen; font-weight: bold;');
+                successes.forEach(success => console.log(`%c${success}`, 'color: lightgreen;'));
+            }
+
+            const summary = `Bought ${successes.length}/${callsToMake.length} items. ${errors.length > 0 ? `${errors.length} failed - check console.` : ''}`;
+            HWHFuncs.setProgress(summary, true);
+        }
+
+        /**
+         * @param {string|number|null} shopFilter - If set, only run that shop id (e.g. 'SECRET_WEALTH', 1, 'CLAN_RAID').
+         */
+        async function runAutoBuy(shopFilter = null) {
+            const filterLabel = shopFilter == null ? 'all shops' : String(shopFilter);
+            console.log(`--- Advanced Auto-Buyer RUNNING (v1.11, ${filterLabel}) ---`);
+            HWHFuncs.setProgress(shopFilter == null
+                ? "Auto-Buyer: Fetching data..."
+                : `Auto-Buyer: Running ${filterLabel}...`);
+
+            try {
+                const shopsToRun = shopFilter == null
+                    ? SHOPS
+                    : SHOPS.filter(s => s.id === shopFilter || String(s.id) === String(shopFilter));
+
+                if (shopsToRun.length === 0) {
+                    HWHFuncs.setProgress(`Auto-Buyer: Unknown shop filter ${shopFilter}`, true);
+                    return;
+                }
+
+                const needsShopGetAll = shopsToRun.some(s => s.id !== 'CLAN_RAID');
+                let shopsData = null;
+                let secretWealthShop = null;
+
+                if (needsShopGetAll) {
+                    const caller = new Caller(['shopGetAll']);
+                    await caller.send();
+                    shopsData = caller.result('shopGetAll');
+                    if (Array.isArray(shopsData)) shopsData = shopsData[0];
+
+                    secretWealthShop = findSecretWealthShop(shopsData);
+                    if (secretWealthShop) {
+                        console.log(`Secret Wealth Shop detected with ID: ${secretWealthShop.id}`);
+                    } else {
+                        console.log("Secret Wealth Shop not found (no …0026 / consumable-starmoney shop)");
+                    }
                 }
 
                 const callsToMake = [];
-                for (const shop of SHOPS) {
-                    // Clan Raid uses clanRaid_shopBuy / clanRaid_getInfo, not shopGetAll
-                    if (shop.id === 'CLAN_RAID') continue;
-
-                    let shopId = shop.id;
-                    let currentShopData = null;
-
-                    // Handle Secret Wealth Shop dynamically
-                    if (shopId === 'SECRET_WEALTH') {
-                        if (!secretWealthShop) {
-                            console.log(`Shop ${shop.name}: Not available (no shop ID ending in 0026 found)`);
-                            continue;
-                        }
-                        shopId = secretWealthShop.id;
-                        currentShopData = secretWealthShop.shop;
-                    } else {
-                        // Try both string and number format for shopId (API may return string IDs)
-                        currentShopData = shopsData[shopId] || shopsData[String(shopId)] || shopsData[Number(shopId)];
-                    }
-
-                    if (!currentShopData || !currentShopData.slots) {
-                        console.log(`Shop ${shop.name} (ID: ${shopId}): No shop data or slots found`);
+                for (const shop of shopsToRun) {
+                    if (shop.id === 'CLAN_RAID') {
+                        await collectClanRaidBuys(callsToMake);
                         continue;
                     }
-
-                    const storageKey = getShopStorageKey(shop.id);
-                    const fixedSlotIds = JSON.parse(localStorage.getItem(storageKey + '_slots') || '[]');
-
-                    console.log(`Shop ${shop.name} (ID: ${shopId}): Found ${Object.keys(currentShopData.slots).length} slots, ${fixedSlotIds.length} fixed slots`);
-
-                    if (fixedSlotIds.length === 0) {
-                        continue;
-                    }
-
-                    for (const slot of Object.values(currentShopData.slots)) {
-                        if (!slot) continue;
-
-                        if (!fixedSlotIds.includes(Number(slot.id)) && !fixedSlotIds.includes(slot.id)) continue;
-
-                        let itemDisplayName = `Slot ${slot.id}`;
-                        try {
-                            const rewardType = Object.keys(slot.reward)[0];
-                            const rewardId = Object.keys(slot.reward[rewardType])[0];
-                            const libTypeForTranslate = rewardType.replace('fragment', '').toUpperCase();
-                            const translationKey = `LIB_${libTypeForTranslate}_NAME_${rewardId}`;
-                            itemDisplayName = cheats.translate(translationKey) || itemDisplayName;
-                        } catch (e) {
-                            // Keep default slot ID if translation fails
-                        }
-
-                        // Use slot.cost if available, otherwise use empty object (API will handle validation)
-                        const slotCost = slot.cost || {};
-                        const currencyType = slotCost ? Object.keys(slotCost)[0] : null;
-
-                        // Support gold/coin (standard shops), consumable/starmoney (Secret Wealth)
-                        if (!slotCost || currencyType === 'gold' || currencyType === 'coin' || currencyType === 'consumable' || currencyType === 'starmoney') {
-                            const normalizedCost = {};
-                            if (slotCost) {
-                                for (const costType in slotCost) {
-                                    if (typeof slotCost[costType] === 'object' && slotCost[costType] !== null) {
-                                        normalizedCost[costType] = {};
-                                        for (const costKey in slotCost[costType]) {
-                                            const costValue = slotCost[costType][costKey];
-                                            normalizedCost[costType][costKey] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
-                                        }
-                                    } else {
-                                        const costValue = slotCost[costType];
-                                        normalizedCost[costType] = typeof costValue === 'string' && !isNaN(Number(costValue)) ? Number(costValue) : costValue;
-                                    }
-                                }
-                            }
-
-                            const shopBuyArgs = {
-                                shopId: shopId,
-                                slot: slot.id,
-                                cost: normalizedCost,
-                                reward: slot.reward || {}
-                            };
-
-                            // Titan Artifact Shop supports bulk amount
-                            if (shopId === 13 && slot.staticShopMultiplePurchase === 1) {
-                                const savedAmount = parseInt(localStorage.getItem(storageKey + '_amount') || '0');
-                                shopBuyArgs.amount = savedAmount > 0 ? savedAmount : (slot.maxAmount || slot.maxPurchaseAmount || 9999);
-                            }
-
-                            callsToMake.push({
-                                name: 'shopBuy',
-                                args: shopBuyArgs,
-                                itemInfo: `- ${itemDisplayName} (Slot ${slot.id}) from ${shop.name}`
-                            });
-                        }
-                    }
+                    collectStandardShopBuys(shopsData, shop, secretWealthShop, callsToMake);
                 }
 
-                // Clan Raid shop: only when clanRaid_getInfo returns an active shop
-                await collectClanRaidBuys(callsToMake);
-
-                // Process purchases one by one (1 API call per item)
-                // This way, if one purchase fails, others can still succeed
-                if (callsToMake.length > 0) {
-                    HWHFuncs.setProgress(`Auto-Buyer: Attempting to buy ${callsToMake.length} item(s) (one at a time)...`);
-                    const errors = [];
-                    const successes = [];
-                    
-                    for (let i = 0; i < callsToMake.length; i++) {
-                        const purchaseCall = callsToMake[i];
-                        const itemInfo = purchaseCall.itemInfo || `Item ${i + 1}`;
-                        
-                        try {
-                            HWHFuncs.setProgress(`Auto-Buyer: Purchasing item ${i + 1}/${callsToMake.length}...`);
-                            
-                            // Send individual API call for this purchase
-                            const caller = new Caller([{ name: purchaseCall.name, args: purchaseCall.args }]);
-                            await caller.send();
-                            
-                            // Check for errors first
-                            const sideResults = caller.sideResults[purchaseCall.name] || [];
-                            
-                            // Check if there's an error in side results
-                            if (sideResults && sideResults.length > 0 && sideResults[0] && sideResults[0].error) {
-                                const error = sideResults[0].error;
-                                const errorMsg = typeof error === 'string' ? error : (error.name || error.description || JSON.stringify(error));
-                                errors.push(`${itemInfo}: ${errorMsg}`);
-                                console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', error);
-                                continue;
-                            }
-                            
-                            // Get result - caller.result() returns an array of response objects
-                            // For shopBuy, the response is: [{"fragmentTitanArtifact":{"2005":5}}] or similar
-                            const callResult = caller.result(purchaseCall.name);
-                            
-                            // Debug logging
-                            console.log(`%cPurchase result for ${itemInfo}:`, 'color: blue;', {
-                                callResult,
-                                callResultType: typeof callResult,
-                                callResultIsArray: Array.isArray(callResult),
-                                callResultLength: callResult ? callResult.length : 0,
-                                firstElement: callResult && callResult.length > 0 ? callResult[0] : null,
-                                sideResults
-                            });
-                            
-                            // Check if we have a valid result
-                            // If callResult is an array with at least one element, and no error in sideResults, it's a success
-                            // The response object can be empty {} or contain data - both mean success if no error
-                            if (callResult && Array.isArray(callResult) && callResult.length > 0) {
-                                // We got a response - check the first element
-                                const responseObj = callResult[0];
-                                // If responseObj is an object (even empty), it's a success
-                                // If responseObj is null/undefined, might still be success if no error
-                                if (responseObj !== null && responseObj !== undefined) {
-                                    // Success - we got a response
-                                    successes.push(itemInfo);
-                                    console.log(`%cPurchase Success: ${itemInfo}`, 'color: lightgreen; font-weight: bold;', responseObj);
-                                } else if (sideResults.length === 0 || !sideResults[0] || !sideResults[0].error) {
-                                    // Response is null/undefined but no error - might still be success (API returned successfully)
-                                    successes.push(itemInfo);
-                                    console.log(`%cPurchase Success: ${itemInfo} (no response data but no error)`, 'color: lightgreen; font-weight: bold;');
-                                } else {
-                                    // Response is null/undefined and there's an error
-                                    errors.push(`${itemInfo}: No response data`);
-                                    console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', 'No response data');
-                                }
-                            } else {
-                                // No result array or empty array - check if there's an error
-                                // If no error in sideResults, might still be success (unlikely but possible)
-                                if (sideResults.length === 0 || !sideResults[0] || !sideResults[0].error) {
-                                    // No error but no result - might be success
-                                    successes.push(itemInfo);
-                                    console.log(`%cPurchase Success: ${itemInfo} (no result array but no error)`, 'color: lightgreen; font-weight: bold;');
-                                } else {
-                                    // No result and there's an error
-                                    console.warn(`%cPurchase result check failed for ${itemInfo}`, 'color: orange;', {
-                                        callResult,
-                                        callResultType: typeof callResult,
-                                        callResultIsArray: Array.isArray(callResult),
-                                        callResultLength: callResult ? callResult.length : 0,
-                                        sideResults
-                                    });
-                                    errors.push(`${itemInfo}: No response received`);
-                                    console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', 'No response received');
-                                }
-                            }
-                        } catch (callError) {
-                            errors.push(`${itemInfo}: ${callError.message || 'Unknown error'}`);
-                            console.error(`%cPurchase Failed: ${itemInfo}`, 'color: red; font-weight: bold;', callError);
-                        }
-                        
-                        // Small delay between purchases to avoid rate limiting
-                        if (i < callsToMake.length - 1) {
-                            await new Promise(resolve => setTimeout(resolve, 100));
-                        }
-                    }
-                    
-                    if (errors.length > 0) {
-                        console.error('%c--- Purchase Errors ---', 'color: red; font-weight: bold;');
-                        errors.forEach(error => console.error(`%c${error}`, 'color: red;'));
-                    }
-                    
-                    if (successes.length > 0) {
-                        console.log('%c--- Items Bought Successfully ---', 'color: lightgreen; font-weight: bold;');
-                        successes.forEach(success => console.log(`%c${success}`, 'color: lightgreen;'));
-                    }
-                    
-                    const summary = `Bought ${successes.length}/${callsToMake.length} items. ${errors.length > 0 ? `${errors.length} failed - check console.` : ''}`;
-                    HWHFuncs.setProgress(summary, true);
-                } else {
-                    HWHFuncs.setProgress("Auto-Buyer: No items to buy.", true);
-                }
+                await executePurchases(callsToMake);
             } catch (error) {
                 console.error("Auto-Buyer Error:", error);
                 HWHFuncs.setProgress("Auto-Buyer Error: Check console.", true);
@@ -606,16 +689,14 @@
         const { ScriptMenu } = HWHClasses;
         const scriptMenu = ScriptMenu.getInst();
         scriptMenu.addCombinedButton([
-            { name: 'Auto-Buy', title: 'Run the automatic buyer based on your settings', onClick: runAutoBuy, color: 'green' },
-            { name: '⚙️', title: 'Open Auto-Buyer Settings', onClick: openSettingsPopup, color: 'green' }
+            { name: 'Auto-Buy', title: 'Run the automatic buyer based on your settings', onClick: () => runAutoBuy(null), color: 'green' },
+            { name: '⚙️', title: 'Open Auto-Buyer Settings (per-shop Run buttons)', onClick: openSettingsPopup, color: 'green' }
         ]);
         console.log('Advanced Auto-Buyer: UI initialized and attached to HWH menu.');
 
         // --- AUTO-EXECUTE ON SCRIPT LOAD ---
-        // Automatically run auto-buy when script loads (after menu is set up)
-        // Use setTimeout to ensure menu initialization completes first
         setTimeout(() => {
-            runAutoBuy().catch(error => {
+            runAutoBuy(null).catch(error => {
                 console.error('Advanced Auto-Buyer: Failed to auto-execute on load:', error);
             });
         }, 100);
