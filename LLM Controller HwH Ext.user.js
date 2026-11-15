@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LLM Controller HwH Ext
 // @namespace    HeroWarsHelper.LLMController
-// @version      1.5
+// @version      1.5.1
 // @description  Provides an LLM-accessible API interface and localhost bridge for Cursor control
 // @author       YourName
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = "LLM Controller Extension";
-    const EXTENSION_VERSION = "1.5";
+    const EXTENSION_VERSION = "1.5.1";
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const BRIDGE_POLL_MS = 500;
     const EXTENSION_AUTHOR = "YourName";
@@ -727,6 +727,20 @@
                 return window.ArenaTraining.stop();
             },
 
+            arenaTrainingPause() {
+                if (!window.ArenaTraining) {
+                    throw new Error('Arena Training not available (install Arena Training HwH Ext)');
+                }
+                return window.ArenaTraining.pause();
+            },
+
+            arenaTrainingResume() {
+                if (!window.ArenaTraining) {
+                    throw new Error('Arena Training not available (install Arena Training HwH Ext)');
+                }
+                return window.ArenaTraining.resume();
+            },
+
             arenaTrainingStartLoop(options = {}) {
                 if (!window.ArenaTraining) {
                     throw new Error('Arena Training not available (install Arena Training HwH Ext)');
@@ -913,8 +927,10 @@
                         arenaTrainingGetOpponents: 'List arena opponents (topGet arena list by default)',
                         arenaTrainingGetResults: 'Get latest arena training results',
                         arenaTrainingExportResults: 'Export latest arena training results',
-                        arenaTrainingGetStatus: 'Arena training run status',
+                        arenaTrainingGetStatus: 'Arena training run status (includes paused)',
                         arenaTrainingStop: 'Stop arena training run',
+                        arenaTrainingPause: 'Pause arena training (keeps progress; resume later)',
+                        arenaTrainingResume: 'Resume a paused arena training run/loop',
                         arenaTrainingStartLoop: 'Start loop training (auto-saves each round)',
                         arenaTrainingStopLoop: 'Stop loop training',
                         arenaTrainingGetLoopHistory: 'Get in-browser loop session history',

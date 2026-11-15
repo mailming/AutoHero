@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.32.6
+// @version      1.33.1
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.32.6';
+    const EXTENSION_VERSION = '1.33.1';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -24,6 +24,12 @@
     const AUTO_START_DELAY_MS = 5 * 60_000;
     /** How often to re-check Auto Daily / dungeon / AutoBattle busy flags. */
     const AUTO_START_POLL_MS = 60_000;
+    /** Default ms to yield between BattleCalc samples (override with window.HWH_ARENA_TRAINING_YIELD_MS). */
+    const DEFAULT_TRAINING_YIELD_MS = 16;
+    /** How often pause-wait polls for resume/stop. */
+    const PAUSE_POLL_MS = 250;
+    /** How many top-arena foes the Counters menu picker loads. */
+    const COUNTERS_PICKER_LIMIT = 12;
     let autoStartTimer = null;
     let autoStartWaitToken = 0;
 
@@ -454,7 +460,7 @@
     /**
      * Yield so clicks/paint/network outrank training BattleCalc.
      * Prefers scheduler.yield / background postTask; falls back to idle / setTimeout(0).
-     * Optional extra pause: `window.HWH_ARENA_TRAINING_YIELD_MS = 16` (or higher).
+     * Extra delay defaults to 16ms; raise with `window.HWH_ARENA_TRAINING_YIELD_MS = 50` (or set 0 to disable).
      */
     async function yieldForUi() {
         try {
@@ -479,7 +485,10 @@
         } catch (_) {
             await new Promise((resolve) => setTimeout(resolve, 0));
         }
-        const extraMs = Number(typeof window !== 'undefined' ? window.HWH_ARENA_TRAINING_YIELD_MS : 0);
+        const configured = typeof window !== 'undefined' ? window.HWH_ARENA_TRAINING_YIELD_MS : undefined;
+        const extraMs = configured === undefined
+            ? DEFAULT_TRAINING_YIELD_MS
+            : Number(configured);
         if (Number.isFinite(extraMs) && extraMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, extraMs));
         }
@@ -546,6 +555,7 @@
             log = () => {},
             setProgress = () => {},
             isStopped = () => false,
+            waitWhilePaused = async () => {},
             nextRandom = randomInt,
             getActionTs = () => Date.now(),
             throwIfSendError = () => {},
@@ -612,6 +622,8 @@
         try {
             for (let i = 0; i < total; i++) {
                 if (isStopped()) break;
+                await waitWhilePaused();
+                if (isStopped()) break;
                 const seed = i === 0 ? null : Math.floor(Date.now() / 1000) + nextRandom(0, 1e3) + i;
                 setProgress(`Arena Training: ${i + 1}/${total} — ${matchupLabel}`);
                 try {
@@ -629,6 +641,7 @@
                 }
                 // Yield again after each calc so the tab stays interactive between sims.
                 await yieldForUi();
+                await waitWhilePaused();
             }
 
             if (endDemo && endDemoPayload) {
@@ -712,6 +725,8 @@
             window.LLMHWH.arenaTrainingExportResults = () => training.exportResults();
             window.LLMHWH.arenaTrainingGetStatus = () => training.getStatus();
             window.LLMHWH.arenaTrainingStop = () => training.stop();
+            window.LLMHWH.arenaTrainingPause = () => training.pause();
+            window.LLMHWH.arenaTrainingResume = () => training.resume();
             window.LLMHWH.arenaTrainingSimulateMatchup = (options) => training.simulateMatchup(options);
         }
 
@@ -727,14 +742,33 @@
                 color: 'purple',
             },
             {
+                name: 'Pause Train',
+                title: 'Pause or continue the current Arena Training run/loop (keeps progress; Stop ends it)',
+                onClick: () => {
+                    const current = training.getStatus?.() || {};
+                    if (current.paused) {
+                        training.resume();
+                    } else {
+                        training.pause();
+                    }
+                },
+                color: 'orange',
+            },
+            {
+                name: 'Stop Train',
+                title: 'Stop Arena Training (cannot continue — start a new loop afterward)',
+                onClick: () => training.stop(),
+                color: 'red',
+            },
+            {
                 name: 'Counters',
-                title: 'Counter Suggest — Arena gather or Clan Domination attack target',
+                title: 'Open Counter Suggest — live gather/CD target, or pick a top-arena opponent',
                 onClick: () => counterPanel?.openCounters?.(),
                 color: 'purple',
             },
         ]);
 
-        console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} ready (includes Counter Suggest panel)`);
+        console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} ready (includes Counter Suggest panel + pause/resume)`);
     }
 
     function createArenaTraining({ Send, cheats, lib, HWHFuncs }) {
@@ -742,7 +776,8 @@
         let running = false;
         let loopRunning = false;
         let stopRequested = false;
-        let status = { running: false, loopRunning: false };
+        let paused = false;
+        let status = { running: false, loopRunning: false, paused: false };
         let lastResults = null;
         let loopSession = null;
         let opponentsCache = null;
@@ -750,6 +785,33 @@
 
         function sleep(ms) {
             return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        /** Cooperative pause: waits between sims/combos/rounds until resume() or stop(). */
+        async function waitWhilePaused() {
+            if (!paused || stopRequested) return;
+            let announced = false;
+            while (paused && !stopRequested) {
+                if (!announced) {
+                    announced = true;
+                    status.paused = true;
+                    status.message = 'Paused by user';
+                    console.log(
+                        '[Arena Training] Paused — click Pause Train again, or ArenaTraining.resume()'
+                    );
+                    HWHFuncs.setProgress?.(
+                        'Arena Training: PAUSED — click Pause Train / ArenaTraining.resume() to continue',
+                        true
+                    );
+                }
+                await sleep(PAUSE_POLL_MS);
+            }
+            if (!stopRequested && announced) {
+                status.paused = false;
+                status.message = 'Resumed';
+                console.log('[Arena Training] Resumed');
+                HWHFuncs.setProgress?.('Arena Training: resumed...', true);
+            }
         }
 
         const FATAL_ERROR_PATTERNS = [
@@ -778,7 +840,9 @@
                 return false;
             }
             stopRequested = true;
+            paused = false;
             loopRunning = false;
+            status.paused = false;
             const prefix = context ? `${context}: ` : '';
             status.message = `${prefix}${error.message}`;
             if (loopSession) {
@@ -1552,6 +1616,7 @@
                 log: (message) => console.log(message),
                 setProgress: (message) => HWHFuncs.setProgress(message),
                 isStopped: () => stopRequested,
+                waitWhilePaused,
                 getActionTs,
                 throwIfSendError,
             });
@@ -1814,6 +1879,8 @@
             getStatus() {
                 return {
                     ...status,
+                    paused,
+                    running,
                     ...this.getLoopStatus(),
                     lastResultsId: lastResults?.sessionId || null,
                 };
@@ -1827,9 +1894,39 @@
                 return lastResults ? { exportedAt: new Date().toISOString(), ...lastResults } : null;
             },
 
+            pause() {
+                if (!running && !loopRunning) {
+                    console.log('[Arena Training] Nothing to pause');
+                    return { paused: false, ...this.getStatus(), message: 'Nothing to pause' };
+                }
+                if (paused) {
+                    return { paused: true, ...this.getStatus(), message: 'Already paused' };
+                }
+                paused = true;
+                status.paused = true;
+                status.message = 'Pause requested…';
+                HWHFuncs.setProgress?.('Arena Training: pause requested (finishing current BattleCalc)…', true);
+                console.log('[Arena Training] Pause requested — will idle after the current BattleCalc');
+                return { paused: true, ...this.getStatus(), message: 'Pause requested' };
+            },
+
+            resume() {
+                if (!paused) {
+                    return { paused: false, ...this.getStatus(), message: 'Not paused' };
+                }
+                paused = false;
+                status.paused = false;
+                status.message = 'Resume requested…';
+                console.log('[Arena Training] Resume requested');
+                HWHFuncs.setProgress?.('Arena Training: resuming…', true);
+                return { paused: false, ...this.getStatus(), message: 'Resumed' };
+            },
+
             stop() {
                 stopRequested = true;
+                paused = false;
                 loopRunning = false;
+                status.paused = false;
                 return this.getStatus();
             },
 
@@ -1844,6 +1941,7 @@
             getLoopStatus() {
                 return {
                     loopRunning,
+                    paused,
                     loopId: loopSession?.loopId || null,
                     roundCount: loopSession?.rounds?.length || 0,
                     startedAt: loopSession?.startedAt || null,
@@ -1959,6 +2057,8 @@
                 };
 
                 while (!stopRequested && (!loopSession || loopRunning)) {
+                    await waitWhilePaused();
+                    if (stopRequested || (loopSession && !loopRunning)) break;
                     attempt++;
                     let counterLineup = null;
                     let maxResult = null;
@@ -2220,6 +2320,7 @@
 
                 loopRunning = true;
                 stopRequested = false;
+                paused = false;
                 loopSession = {
                     loopId: `loop_${Date.now()}`,
                     label: trainOptions.label,
@@ -2230,12 +2331,15 @@
                 };
 
                 status.loopRunning = true;
+                status.paused = false;
                 status.message = 'Loop training started';
 
                 (async () => {
                     let roundNum = 0;
 
                     const runOpponentRound = async (opponentMeta, runOptions = {}) => {
+                        if (!loopRunning || stopRequested) return false;
+                        await waitWhilePaused();
                         if (!loopRunning || stopRequested) return false;
                         if (trainOptions.maxRounds > 0 && roundNum >= trainOptions.maxRounds) {
                             loopRunning = false;
@@ -2308,12 +2412,16 @@
 
                     try {
                         while (loopRunning && !stopRequested) {
+                            await waitWhilePaused();
+                            if (!loopRunning || stopRequested) break;
                             const opponents = await this.getOpponents(true, trainOptions);
                             const indexes = Array.isArray(trainOptions.opponentIndexes) && trainOptions.opponentIndexes.length
                                 ? trainOptions.opponentIndexes
                                 : opponents.map((o) => o.index);
 
                             for (const idx of indexes) {
+                                if (!loopRunning || stopRequested) break;
+                                await waitWhilePaused();
                                 if (!loopRunning || stopRequested) break;
                                 const opponentList = await this.getOpponents(false, trainOptions);
                                 const opponentMeta = opponentList.find((o) => o.index === idx);
@@ -2339,6 +2447,8 @@
                                     );
                                     for (const opponentMeta of meta.opponents) {
                                         if (!loopRunning || stopRequested) break;
+                                        await waitWhilePaused();
+                                        if (!loopRunning || stopRequested) break;
                                         const shouldContinue = await runOpponentRound.call(this, opponentMeta, {
                                             phaseLabel: 'Meta opponent',
                                             opponentOverride: opponentMeta.raw,
@@ -2356,7 +2466,9 @@
                         }
                     } finally {
                         loopRunning = false;
+                        paused = false;
                         status.loopRunning = false;
+                        status.paused = false;
                         status.message = loopSession?.fatalError
                             ? `Loop stopped — ${loopSession.fatalError}`
                             : stopRequested
@@ -2422,6 +2534,10 @@
                 options = applyTrainingOptions(options);
                 running = true;
                 stopRequested = false;
+                // Preserve an outer loop pause; only clear pause for standalone single runs.
+                if (!loopRunning) {
+                    paused = false;
+                }
                 const maxUpgrade = options.maxUpgrade !== false;
                 const userTeamOnly = options.userTeamOnly === true;
                 const counterLineupOnly = options.counterLineupOnly === true && !!options.counterLineup;
@@ -2435,6 +2551,8 @@
 
                 status = {
                     running: true,
+                    loopRunning,
+                    paused,
                     sessionId,
                     currentCombo: 0,
                     totalCombos: 0,
@@ -2537,6 +2655,7 @@
                     const battleOptions = { maxUpgrade };
                     const testCandidateBatch = async (candidates, phaseLabel) => {
                         for (let i = 0; i < candidates.length; i++) {
+                            await waitWhilePaused();
                             if (stopRequested) {
                                 stoppedBecause = 'user_stop';
                                 return true;
@@ -2568,6 +2687,11 @@
                             );
 
                             await yieldForUi();
+                            await waitWhilePaused();
+                            if (stopRequested) {
+                                stoppedBecause = 'user_stop';
+                                return true;
+                            }
                             const simulation = await simulateTeam(
                                 myTeam,
                                 opponentTeam,
@@ -2786,8 +2910,13 @@
                     return lastResults;
                 } finally {
                     running = false;
+                    if (!loopRunning) {
+                        paused = false;
+                    }
                     status = {
                         running: false,
+                        loopRunning,
+                        paused,
                         sessionId,
                         currentCombo: status.currentCombo,
                         totalCombos: status.totalCombos,
@@ -2988,6 +3117,8 @@
         let fetchInFlight = null;
         let panelState = {
             visible: false,
+            /** Keep panel open when opened from the Counters menu (poller must not auto-hide). */
+            pinned: false,
             status: 'idle',
             message: '',
             mode: 'arena',
@@ -2996,6 +3127,7 @@
             selected: null, // { match, source, key }
             simOptions: [], // prior SimLab loadouts for this defense (current power)
             simBest: null, // full SimLab loadout bound to the selected row
+            pickerOpponents: [], // top-arena list when opened from menu without gather/CD
             attacking: false,
             simming: false,
             training: false,
@@ -4605,6 +4737,35 @@
                         color: var(--muted);
                         text-align: center;
                     }
+                    .picker-row {
+                        display: grid;
+                        grid-template-columns: 1fr auto;
+                        gap: 8px;
+                        align-items: center;
+                        width: 100%;
+                        margin: 0 0 6px;
+                        padding: 8px 10px;
+                        border: 1px solid rgba(223,190,104,.28);
+                        border-radius: 8px;
+                        background: rgba(255,255,255,.04);
+                        color: var(--ink);
+                        text-align: left;
+                        cursor: pointer;
+                    }
+                    .picker-row:hover {
+                        border-color: rgba(223,190,104,.7);
+                        background: rgba(223,190,104,.1);
+                    }
+                    .picker-main {
+                        font-size: 11px;
+                        line-height: 1.35;
+                        word-break: break-word;
+                    }
+                    .picker-meta {
+                        font-size: 10px;
+                        color: var(--gold);
+                        white-space: nowrap;
+                    }
                     .footer {
                         margin-top: 12px;
                         padding-top: 10px;
@@ -4711,15 +4872,19 @@
                         <div class="subtitle" id="enemyLabel">Waiting for Arena / Clan Domination attack…</div>
                         <div class="status" id="status"></div>
                     </div>
+                    <div class="section" id="pickerSection" hidden>
+                        <div class="section-title">Arena top <span class="count" id="pickerCount"></span></div>
+                        <div class="list" id="pickerList"></div>
+                    </div>
                     <div class="section" id="simSection" hidden>
                         <div class="section-title">SimLab <span class="count" id="simSectionCount">saved · current power</span></div>
                         <div class="list" id="simLabList"></div>
                     </div>
-                    <div class="section">
+                    <div class="section" id="powerSection">
                         <div class="section-title">My power <span class="count" id="atPowerCount"></span></div>
                         <div class="list" id="atPower"></div>
                     </div>
-                    <div class="section">
+                    <div class="section" id="maxSection">
                         <div class="section-title">Max power <span class="count" id="maxBeatCount"></span></div>
                         <div class="list" id="maxBeat"></div>
                     </div>
@@ -4739,11 +4904,16 @@
             const panelTitle = shadow.getElementById('panelTitle');
             const enemyLabel = shadow.getElementById('enemyLabel');
             const statusEl = shadow.getElementById('status');
+            const pickerSection = shadow.getElementById('pickerSection');
+            const pickerCount = shadow.getElementById('pickerCount');
+            const pickerListEl = shadow.getElementById('pickerList');
             const simSection = shadow.getElementById('simSection');
             const simSectionCount = shadow.getElementById('simSectionCount');
             const simLabListEl = shadow.getElementById('simLabList');
+            const powerSection = shadow.getElementById('powerSection');
             const atPowerEl = shadow.getElementById('atPower');
             const atPowerCount = shadow.getElementById('atPowerCount');
+            const maxSection = shadow.getElementById('maxSection');
             const maxBeatEl = shadow.getElementById('maxBeat');
             const maxBeatCount = shadow.getElementById('maxBeatCount');
             const selectedCard = shadow.getElementById('selectedCard');
@@ -4751,6 +4921,7 @@
             const trainHint = shadow.getElementById('trainHint');
             const trainBtn = shadow.getElementById('trainBtn');
             const panelNote = shadow.getElementById('panelNote');
+            const attackBar = shadow.getElementById('attackBar');
 
             attackBtn.addEventListener('click', () => {
                 const selected = panelState.selected;
@@ -4892,6 +5063,13 @@
 
                 const enemy = panelState.enemy;
                 const isCd = panelState.mode === 'clanDomination' || enemy?.mode === 'clanDomination';
+                const pickerOpponents = Array.isArray(panelState.pickerOpponents)
+                    ? panelState.pickerOpponents
+                    : [];
+                const showPicker = !enemy && (panelState.status === 'pick'
+                    || panelState.status === 'loading'
+                    || pickerOpponents.length > 0
+                    || panelState.pinned);
                 const atPower = normalizeCounterList(panelState.counters?.atPower);
                 const maxBeat = normalizeCounterList(panelState.counters?.maxBeat);
                 const simOptions = Array.isArray(panelState.simOptions) ? panelState.simOptions : [];
@@ -4941,6 +5119,7 @@
                 const signature = [
                     panelState.mode,
                     panelState.status,
+                    panelState.pinned ? 1 : 0,
                     panelState.message || '',
                     enemy?.comboKey || '',
                     enemy?.userId || '',
@@ -4948,6 +5127,7 @@
                     panelState.selected?.key || '',
                     panelState.simBest?.key || '',
                     panelState.simBest?.winRate ?? '',
+                    pickerOpponents.map((o) => o.userId).join(';'),
                     simOptions.map((o) => `${o.simId}:${o.winRate}`).join(';'),
                     panelState.attacking ? 1 : 0,
                     panelState.simming ? 1 : 0,
@@ -4959,22 +5139,67 @@
                 lastRenderSignature = signature;
 
                 panelTitle.textContent = isCd ? 'Counter · Domination' : 'Counter Suggest';
-                panelNote.textContent = 'Select · Attack · Sim / Train';
+                panelNote.textContent = showPicker && !enemy
+                    ? 'Pick a defense · or open Arena gather / CD attack'
+                    : 'Select · Attack · Sim / Train';
                 enemyLabel.textContent = enemy
-                    ? `vs ${enemy.userId}${enemy.levelId != null ? ` @${enemy.levelId}` : ''} · ${enemy.heroes.map(heroName).join(', ')}`
-                    : (isCd ? 'Loading Clan Domination enemy…' : 'Enemy lineup not readable yet');
+                    ? `vs ${enemy.name || enemy.userId}${enemy.levelId != null ? ` @${enemy.levelId}` : ''} · ${enemy.heroes.map(heroName).join(', ')}`
+                    : (isCd
+                        ? 'Loading Clan Domination enemy…'
+                        : (showPicker
+                            ? 'No live target — pick a top-arena defense below'
+                            : 'Enemy lineup not readable yet'));
 
                 statusEl.textContent = panelState.message || (
                     panelState.status === 'loading' ? 'Checking database…'
-                        : panelState.status === 'attacking' ? 'Attacking…'
-                            : panelState.status === 'simming' ? 'SimLab running…'
-                                : panelState.status === 'training' ? 'Training this defense…'
-                                    : panelState.status === 'bridge_error' ? 'Bridge/DB unavailable'
-                                        : ''
+                        : panelState.status === 'pick' ? 'Pick an opponent'
+                            : panelState.status === 'attacking' ? 'Attacking…'
+                                : panelState.status === 'simming' ? 'SimLab running…'
+                                    : panelState.status === 'training' ? 'Training this defense…'
+                                        : panelState.status === 'bridge_error' ? 'Bridge/DB unavailable'
+                                            : ''
                 );
 
+                pickerListEl.innerHTML = '';
+                if (showPicker) {
+                    pickerSection.hidden = false;
+                    pickerCount.textContent = pickerOpponents.length
+                        ? `${pickerOpponents.length}`
+                        : (panelState.status === 'loading' ? '…' : '');
+                    if (!pickerOpponents.length) {
+                        const empty = document.createElement('div');
+                        empty.className = 'empty';
+                        empty.textContent = panelState.status === 'loading'
+                            ? 'Loading arena top opponents…'
+                            : (panelState.message || 'No opponents loaded');
+                        pickerListEl.appendChild(empty);
+                    } else {
+                        for (const opp of pickerOpponents) {
+                            const btn = document.createElement('button');
+                            btn.type = 'button';
+                            btn.className = 'picker-row';
+                            const lineup = (opp.heroNames || (opp.heroes || []).map(heroName)).join(', ');
+                            const petBit = opp.pet ? ` +${heroName(opp.pet)}` : '';
+                            btn.innerHTML = `
+                                <div class="picker-main">${escapePanelText(`${opp.name || opp.userId}${petBit}`)}<br>${escapePanelText(lineup)}</div>
+                                <div class="picker-meta">#${escapePanelText(String(opp.place ?? opp.index ?? '?'))}</div>
+                            `;
+                            btn.title = `Load counters for ${opp.name || opp.userId}`;
+                            btn.addEventListener('click', () => selectPickerOpponent(opp));
+                            pickerListEl.appendChild(btn);
+                        }
+                    }
+                } else {
+                    pickerSection.hidden = true;
+                }
+
+                const showCounterSections = !!enemy;
+                powerSection.hidden = !showCounterSections;
+                maxSection.hidden = !showCounterSections;
+                attackBar.hidden = !showCounterSections;
+
                 simLabListEl.innerHTML = '';
-                if (simMatches.length) {
+                if (showCounterSections && simMatches.length) {
                     simSection.hidden = false;
                     simSectionCount.textContent = `${simMatches.length} saved`;
                     for (const match of simMatches) {
@@ -4988,26 +5213,26 @@
                 atPowerCount.textContent = atPower.length ? `${Math.min(atPower.length, COUNTER_LIST_LIMIT)}` : '';
                 maxBeatEl.innerHTML = '';
                 maxBeatCount.textContent = maxBeat.length ? `${Math.min(maxBeat.length, COUNTER_LIST_LIMIT)}` : '';
-                if (!atPower.length) {
+                if (showCounterSections && !atPower.length) {
                     const empty = document.createElement('div');
                     empty.className = 'empty';
                     empty.textContent = panelState.status === 'bridge_error'
                         ? 'Bridge/DB unavailable'
                         : 'No at-power wins found';
                     atPowerEl.appendChild(empty);
-                } else {
+                } else if (showCounterSections) {
                     for (const match of atPower.slice(0, COUNTER_LIST_LIMIT)) {
                         atPowerEl.appendChild(renderRow(match, 'power'));
                     }
                 }
-                if (!maxBeat.length) {
+                if (showCounterSections && !maxBeat.length) {
                     const empty = document.createElement('div');
                     empty.className = 'empty';
                     empty.textContent = panelState.status === 'bridge_error'
                         ? 'Bridge/DB unavailable'
                         : 'No max-upgrade counter found';
                     maxBeatEl.appendChild(empty);
-                } else {
+                } else if (showCounterSections) {
                     for (const match of maxBeat.slice(0, COUNTER_LIST_LIMIT)) {
                         maxBeatEl.appendChild(renderRow(match, 'max'));
                     }
@@ -6909,10 +7134,12 @@
         }
 
         function hidePanel() {
-            if (!panelState.visible && !panelState.enemy) return;
+            if (!panelState.visible && !panelState.enemy && !panelState.pinned) return;
             panelState.visible = false;
+            panelState.pinned = false;
             panelState.enemy = null;
             panelState.counters = null;
+            panelState.pickerOpponents = [];
             clearSelection();
             panelState.message = '';
             panelState.status = 'idle';
@@ -6922,6 +7149,110 @@
             panelController?.render();
         }
 
+        function enemyFromPickerOpponent(meta) {
+            const raw = meta?.raw && typeof meta.raw === 'object' ? meta.raw : meta;
+            const heroes = (Array.isArray(meta?.heroes) ? meta.heroes : [])
+                .map(Number)
+                .filter((id) => id > 0 && id < 6000)
+                .slice(0, 5);
+            const pet = Number(meta?.pet) || 0;
+            const banner = Number(meta?.banner) || 1;
+            const favor = {};
+            const sourceFavor = raw?.favor && typeof raw.favor === 'object' ? raw.favor : null;
+            if (sourceFavor) {
+                for (const [key, value] of Object.entries(sourceFavor)) {
+                    const heroId = Number(key);
+                    const petId = Number(
+                        value && typeof value === 'object'
+                            ? (value.favorPetId ?? value.petId ?? value.id ?? value.pet)
+                            : value
+                    );
+                    if (heroId > 0 && heroId < 6000 && petId >= 6000 && petId < 7000) {
+                        favor[String(heroId)] = petId;
+                    }
+                }
+            }
+            return {
+                mode: 'arena',
+                userId: meta?.userId,
+                heroes,
+                pet,
+                banner,
+                favor,
+                bannerStones: raw?.bannerStones || raw?.defenceBannerStones || {},
+                name: meta?.name || null,
+                place: meta?.place ?? null,
+                power: meta?.power != null ? Number(meta.power) : null,
+                comboKey: buildComboKey(heroes, pet, banner),
+                source: 'menu-picker',
+            };
+        }
+
+        function selectPickerOpponent(meta) {
+            const enemy = enemyFromPickerOpponent(meta);
+            if (!enemy.userId || enemy.heroes.length !== 5) {
+                panelState.status = 'error';
+                panelState.message = 'Selected opponent has an incomplete defense';
+                panelController?.render(true);
+                return;
+            }
+            panelState.pinned = true;
+            showEnemyPanel(enemy, 'arena');
+            HWHFuncs.setProgress?.(
+                `${EXTENSION_NAME}: counters for ${enemy.name || enemy.userId}`,
+                false
+            );
+        }
+
+        async function openOpponentPicker() {
+            panelState.pinned = true;
+            panelState.visible = true;
+            panelState.mode = 'arena';
+            panelState.status = 'loading';
+            panelState.message = 'Loading arena top opponents…';
+            panelState.enemy = null;
+            panelState.counters = null;
+            panelState.pickerOpponents = [];
+            clearSelection();
+            panelController?.render(true);
+            setPollDelay(POLL_IDLE_MS);
+
+            try {
+                if (typeof training?.getOpponents !== 'function') {
+                    throw new Error('Arena Training opponents API unavailable');
+                }
+                const list = await training.getOpponents(true, {
+                    opponentSource: 'topGet',
+                    topLimit: COUNTERS_PICKER_LIMIT,
+                });
+                if (!panelState.pinned) return;
+                panelState.pickerOpponents = (Array.isArray(list) ? list : [])
+                    .filter((opp) => Array.isArray(opp?.heroes) && opp.heroes.length === 5)
+                    .slice(0, COUNTERS_PICKER_LIMIT);
+                panelState.status = panelState.pickerOpponents.length ? 'pick' : 'idle';
+                panelState.message = panelState.pickerOpponents.length
+                    ? 'Pick an opponent to view counters / SimLab / Train'
+                    : 'No arena opponents loaded — open Arena gather or try again';
+                panelController?.render(true);
+                HWHFuncs.setProgress?.(
+                    panelState.pickerOpponents.length
+                        ? `${EXTENSION_NAME}: pick a top-arena defense`
+                        : `${EXTENSION_NAME}: no arena opponents available`,
+                    false
+                );
+            } catch (error) {
+                if (!panelState.pinned) return;
+                panelState.status = 'error';
+                panelState.message = error?.message || 'Failed to load arena opponents';
+                panelState.pickerOpponents = [];
+                panelController?.render(true);
+                HWHFuncs.setProgress?.(
+                    `${EXTENSION_NAME}: ${panelState.message}`,
+                    false
+                );
+            }
+        }
+
         function showEnemyPanel(enemy, mode) {
             panelState.visible = true;
             panelState.mode = mode;
@@ -6929,6 +7260,10 @@
                 clearSelection();
             }
             panelState.enemy = enemy;
+            // Keep picker list available as a back-reference when pinned from menu.
+            if (!panelState.pinned) {
+                panelState.pickerOpponents = [];
+            }
             const needsFetch = enemy.comboKey !== lastComboKey
                 || (!panelState.counters && panelState.status !== 'loading');
             panelController?.render();
@@ -6955,12 +7290,15 @@
         function openCounters() {
             const gather = readEnemyFromGather();
             if (gather?.enemy) {
+                panelState.pinned = false;
                 showEnemyPanel({ ...gather.enemy, mode: 'arena' }, 'arena');
                 setPollDelay(POLL_ACTIVE_MS);
+                HWHFuncs.setProgress?.(`${EXTENSION_NAME}: Counters — live Arena gather`, false);
                 return;
             }
             const cdTarget = readClanDominationTarget();
             if (cdTarget?.levelId) {
+                panelState.pinned = false;
                 panelState.mode = 'clanDomination';
                 panelState.visible = true;
                 panelState.message = `Loading Domination enemy @${cdTarget.levelId}…`;
@@ -6976,10 +7314,17 @@
                     });
                 return;
             }
-            HWHFuncs.setProgress?.(
-                `${EXTENSION_NAME}: open Arena gather or Clan Domination attack target first`,
-                false
-            );
+
+            // No live target: toggle closed if the menu-pinned panel is already open.
+            if (panelState.pinned && panelState.visible) {
+                hidePanel();
+                HWHFuncs.setProgress?.(`${EXTENSION_NAME}: Counters closed`, false);
+                return;
+            }
+
+            openOpponentPicker().catch((error) => {
+                console.warn(`[${EXTENSION_NAME}] Counters picker failed:`, error);
+            });
         }
 
         /**
@@ -7139,6 +7484,8 @@
                 setPollDelay(POLL_ACTIVE_MS);
                 panelState.mode = 'arena';
                 panelState.visible = true;
+                // Live gather wins over a menu-pinned picker.
+                panelState.pinned = false;
                 if (!gather.enemy) {
                     panelState.enemy = null;
                     panelState.counters = null;
@@ -7151,53 +7498,63 @@
                 return;
             }
 
-            if (!isClanDominationMapOpen()) {
-                setPollDelay(POLL_IDLE_MS);
+            if (isClanDominationMapOpen()) {
+                setPollDelay(POLL_ACTIVE_MS);
+
+                // Only show Counters when the attack-target popup is open.
+                const cdTarget = readClanDominationTarget();
+                if (cdTarget?.enemy) {
+                    panelState.pinned = false;
+                    showEnemyPanel(cdTarget.enemy, 'clanDomination');
+                    return;
+                }
+                if (cdTarget?.levelId) {
+                    panelState.pinned = false;
+                    panelState.mode = 'clanDomination';
+                    panelState.visible = true;
+                    const cached = getCachedClanDominationEnemy(cdTarget.levelId);
+                    if (cached) {
+                        showEnemyPanel(cached, 'clanDomination');
+                        return;
+                    }
+
+                    panelState.message = `Loading Domination enemy @${cdTarget.levelId}…`;
+                    panelState.status = 'loading';
+                    panelController?.render();
+                    fetchClanDominationEnemy(cdTarget.levelId)
+                        .then((enemy) => {
+                            if (isBusy()) return;
+                            if (!isClanDominationMapOpen()) return;
+                            const still = readClanDominationTarget();
+                            if (still?.levelId != null && Number(still.levelId) !== Number(cdTarget.levelId)) return;
+                            showEnemyPanel(enemy, 'clanDomination');
+                        })
+                        .catch((error) => {
+                            console.warn(`[${EXTENSION_NAME}] Clan Domination enemy fetch failed:`, error);
+                            if (isBusy()) return;
+                            panelState.enemy = null;
+                            panelState.counters = null;
+                            panelState.status = 'error';
+                            panelState.message = error?.message || 'Failed to load Domination enemy';
+                            panelController?.render();
+                        });
+                    return;
+                }
+
+                // Map/castle open but no attack target — keep a menu-pinned panel.
+                if (panelState.pinned) {
+                    setPollDelay(POLL_IDLE_MS);
+                    return;
+                }
                 hidePanel();
                 return;
             }
 
-            setPollDelay(POLL_ACTIVE_MS);
-
-            // Only show Counters when the attack-target popup is open.
-            const cdTarget = readClanDominationTarget();
-            if (cdTarget?.enemy) {
-                showEnemyPanel(cdTarget.enemy, 'clanDomination');
+            // No gather / CD map: keep menu-pinned Counters open; otherwise hide.
+            setPollDelay(POLL_IDLE_MS);
+            if (panelState.pinned) {
                 return;
             }
-            if (cdTarget?.levelId) {
-                panelState.mode = 'clanDomination';
-                panelState.visible = true;
-                const cached = getCachedClanDominationEnemy(cdTarget.levelId);
-                if (cached) {
-                    showEnemyPanel(cached, 'clanDomination');
-                    return;
-                }
-
-                panelState.message = `Loading Domination enemy @${cdTarget.levelId}…`;
-                panelState.status = 'loading';
-                panelController?.render();
-                fetchClanDominationEnemy(cdTarget.levelId)
-                    .then((enemy) => {
-                        if (isBusy()) return;
-                        if (!isClanDominationMapOpen()) return;
-                        const still = readClanDominationTarget();
-                        if (still?.levelId != null && Number(still.levelId) !== Number(cdTarget.levelId)) return;
-                        showEnemyPanel(enemy, 'clanDomination');
-                    })
-                    .catch((error) => {
-                        console.warn(`[${EXTENSION_NAME}] Clan Domination enemy fetch failed:`, error);
-                        if (isBusy()) return;
-                        panelState.enemy = null;
-                        panelState.counters = null;
-                        panelState.status = 'error';
-                        panelState.message = error?.message || 'Failed to load Domination enemy';
-                        panelController?.render();
-                    });
-                return;
-            }
-
-            // Map/castle open but no attack target selected — keep panel hidden.
             hidePanel();
         }
 
