@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.33.1
+// @version      1.33.2
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.33.1';
+    const EXTENSION_VERSION = '1.33.2';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -30,6 +30,13 @@
     const PAUSE_POLL_MS = 250;
     /** How many top-arena foes the Counters menu picker loads. */
     const COUNTERS_PICKER_LIMIT = 12;
+    /** ASCII-safe transport icons (userscript managers can mangle UTF-8). */
+    const TRAIN_ICON = {
+        play: '\u25B6',   // ▶
+        pause: '\u23F8',  // ⏸
+        stop: '\u25A0',   // ■
+    };
+    const TRANSPORT_SYNC_MS = 1000;
     let autoStartTimer = null;
     let autoStartWaitToken = 0;
 
@@ -734,30 +741,109 @@
         scheduleAutoStart(training, HWHFuncs);
 
         const counterPanel = initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training });
-        HWHClasses.ScriptMenu.getInst().addCombinedButton([
+        const transportButtons = installTrainingTransportButtons(training, counterPanel);
+
+        // Keep ▶/⏸/■ labels + enabled state in sync with running/paused/idle.
+        if (typeof training.setStatusListener === 'function') {
+            training.setStatusListener(() => syncTrainingTransportButtons(transportButtons, training));
+        }
+        syncTrainingTransportButtons(transportButtons, training);
+        setInterval(() => syncTrainingTransportButtons(transportButtons, training), TRANSPORT_SYNC_MS);
+
+        console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} ready (includes Counter Suggest panel + play/pause/stop)`);
+    }
+
+    function getMenuButtonLabelEl(button) {
+        if (!button) return null;
+        return button.querySelector?.('.scriptMenu_buttonText, .scriptMenu_btnPlate') || button;
+    }
+
+    function styleTransportButton(button, { active = false, enabled = true } = {}) {
+        if (!button) return;
+        button.style.flexGrow = '0';
+        button.style.width = '42px';
+        button.style.minWidth = '42px';
+        // Keep clicks enabled so idle/paused presses can still show a status toast.
+        button.style.opacity = enabled ? (active ? '1' : '0.95') : '0.38';
+        button.style.cursor = enabled ? 'pointer' : 'default';
+        button.dataset.transportEnabled = enabled ? '1' : '0';
+        button.dataset.transportActive = active ? '1' : '0';
+        if (active && enabled) {
+            button.style.boxShadow = 'inset 0 0 0 1px rgba(255,230,150,.55)';
+        } else {
+            button.style.boxShadow = '';
+        }
+    }
+
+    function setTransportButton(button, { icon, title, active = false, enabled = true }) {
+        if (!button) return;
+        button.title = title;
+        const label = getMenuButtonLabelEl(button);
+        if (label) label.textContent = icon;
+        styleTransportButton(button, { active, enabled });
+    }
+
+    function installTrainingTransportButtons(training, counterPanel) {
+        const combined = window.HWHClasses.ScriptMenu.getInst().addCombinedButton([
             {
-                name: 'Arena Train',
-                title: 'Loop arena top-list training — auto-saves results (demo battles, no attempts)',
-                onClick: () => training.startLoop({ label: 'menu-loop', opponentSource: 'topGet' }),
-                color: 'purple',
+                name: TRAIN_ICON.play,
+                title: 'Start arena training loop',
+                onClick: () => {
+                    const status = training.getStatus?.() || {};
+                    const active = !!(status.running || status.loopRunning);
+                    if (status.paused && active) {
+                        training.resume();
+                    } else if (!active) {
+                        training.startLoop({ label: 'menu-loop', opponentSource: 'topGet' });
+                    } else {
+                        window.HWHFuncs?.setProgress?.(
+                            'Arena Training: already running — use ⏸ to pause or ■ to stop',
+                            false
+                        );
+                    }
+                    syncTrainingTransportButtons(buttons, training);
+                },
+                color: 'green',
             },
             {
-                name: 'Pause Train',
-                title: 'Pause or continue the current Arena Training run/loop (keeps progress; Stop ends it)',
+                name: TRAIN_ICON.pause,
+                title: 'Pause arena training',
                 onClick: () => {
-                    const current = training.getStatus?.() || {};
-                    if (current.paused) {
-                        training.resume();
+                    const status = training.getStatus?.() || {};
+                    const active = !!(status.running || status.loopRunning);
+                    if (!active) {
+                        window.HWHFuncs?.setProgress?.(
+                            'Arena Training: nothing running — press ▶ to start',
+                            false
+                        );
+                    } else if (status.paused) {
+                        window.HWHFuncs?.setProgress?.(
+                            'Arena Training: already paused — press ▶ to resume',
+                            false
+                        );
                     } else {
                         training.pause();
                     }
+                    syncTrainingTransportButtons(buttons, training);
                 },
                 color: 'orange',
             },
             {
-                name: 'Stop Train',
-                title: 'Stop Arena Training (cannot continue — start a new loop afterward)',
-                onClick: () => training.stop(),
+                name: TRAIN_ICON.stop,
+                title: 'Stop arena training',
+                onClick: () => {
+                    const status = training.getStatus?.() || {};
+                    const active = !!(status.running || status.loopRunning);
+                    if (!active) {
+                        window.HWHFuncs?.setProgress?.(
+                            'Arena Training: nothing to stop — press ▶ to start',
+                            false
+                        );
+                    } else {
+                        training.stop();
+                    }
+                    syncTrainingTransportButtons(buttons, training);
+                },
                 color: 'red',
             },
             {
@@ -768,7 +854,88 @@
             },
         ]);
 
-        console.log(`${EXTENSION_NAME} v${EXTENSION_VERSION} ready (includes Counter Suggest panel + pause/resume)`);
+        const buttons = {
+            play: combined?.children?.[0] || null,
+            pause: combined?.children?.[1] || null,
+            stop: combined?.children?.[2] || null,
+            counters: combined?.children?.[3] || null,
+            row: combined || null,
+        };
+
+        if (buttons.counters) {
+            buttons.counters.style.flexGrow = '1';
+        }
+        return buttons;
+    }
+
+    function syncTrainingTransportButtons(buttons, training) {
+        if (!buttons) return;
+        const status = training?.getStatus?.() || {};
+        const active = !!(status.running || status.loopRunning);
+        const isPaused = !!(status.paused && active);
+
+        if (!active) {
+            setTransportButton(buttons.play, {
+                icon: TRAIN_ICON.play,
+                title: '▶ Start arena training loop (idle)',
+                active: false,
+                enabled: true,
+            });
+            setTransportButton(buttons.pause, {
+                icon: TRAIN_ICON.pause,
+                title: '⏸ Pause — nothing running yet',
+                active: false,
+                enabled: false,
+            });
+            setTransportButton(buttons.stop, {
+                icon: TRAIN_ICON.stop,
+                title: '■ Stop — nothing running yet',
+                active: false,
+                enabled: false,
+            });
+            return;
+        }
+
+        if (isPaused) {
+            setTransportButton(buttons.play, {
+                icon: TRAIN_ICON.play,
+                title: '▶ Resume paused training',
+                active: true,
+                enabled: true,
+            });
+            setTransportButton(buttons.pause, {
+                icon: TRAIN_ICON.pause,
+                title: '⏸ Paused — press ▶ to resume',
+                active: true,
+                enabled: false,
+            });
+            setTransportButton(buttons.stop, {
+                icon: TRAIN_ICON.stop,
+                title: '■ Stop paused training',
+                active: false,
+                enabled: true,
+            });
+            return;
+        }
+
+        setTransportButton(buttons.play, {
+            icon: TRAIN_ICON.play,
+            title: '▶ Running — use ⏸ to pause',
+            active: false,
+            enabled: false,
+        });
+        setTransportButton(buttons.pause, {
+            icon: TRAIN_ICON.pause,
+            title: '⏸ Pause training (keeps progress)',
+            active: true,
+            enabled: true,
+        });
+        setTransportButton(buttons.stop, {
+            icon: TRAIN_ICON.stop,
+            title: '■ Stop training (cannot continue)',
+            active: false,
+            enabled: true,
+        });
     }
 
     function createArenaTraining({ Send, cheats, lib, HWHFuncs }) {
@@ -782,9 +949,32 @@
         let loopSession = null;
         let opponentsCache = null;
         let opponentsMeta = { myPlace: null, serverId: null };
+        let statusListener = null;
 
         function sleep(ms) {
             return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        function emitStatusChange() {
+            try {
+                statusListener?.(getPublicStatus());
+            } catch (error) {
+                console.warn('[Arena Training] status listener failed:', error);
+            }
+        }
+
+        function getPublicStatus() {
+            return {
+                ...status,
+                paused,
+                running,
+                loopRunning,
+                loopId: loopSession?.loopId || null,
+                roundCount: loopSession?.rounds?.length || 0,
+                startedAt: loopSession?.startedAt || null,
+                lastSavedAt: loopSession?.lastSavedAt || null,
+                lastResultsId: lastResults?.sessionId || null,
+            };
         }
 
         /** Cooperative pause: waits between sims/combos/rounds until resume() or stop(). */
@@ -796,11 +986,12 @@
                     announced = true;
                     status.paused = true;
                     status.message = 'Paused by user';
+                    emitStatusChange();
                     console.log(
-                        '[Arena Training] Paused — click Pause Train again, or ArenaTraining.resume()'
+                        '[Arena Training] Paused — press ▶ / ArenaTraining.resume() to continue'
                     );
                     HWHFuncs.setProgress?.(
-                        'Arena Training: PAUSED — click Pause Train / ArenaTraining.resume() to continue',
+                        'Arena Training: PAUSED — press ▶ / ArenaTraining.resume() to continue',
                         true
                     );
                 }
@@ -809,6 +1000,7 @@
             if (!stopRequested && announced) {
                 status.paused = false;
                 status.message = 'Resumed';
+                emitStatusChange();
                 console.log('[Arena Training] Resumed');
                 HWHFuncs.setProgress?.('Arena Training: resumed...', true);
             }
@@ -849,6 +1041,7 @@
                 loopSession.fatalError = error.message;
                 loopSession.stoppedAt = new Date().toISOString();
             }
+            emitStatusChange();
             HWHFuncs.setProgress(`Arena Training stopped — ${error.message}`, true);
             console.error(`[Arena Training] Fatal error, stopping loop${context ? ` (${context})` : ''}:`, error);
             return true;
@@ -1877,13 +2070,12 @@
             },
 
             getStatus() {
-                return {
-                    ...status,
-                    paused,
-                    running,
-                    ...this.getLoopStatus(),
-                    lastResultsId: lastResults?.sessionId || null,
-                };
+                return getPublicStatus();
+            },
+
+            setStatusListener(listener) {
+                statusListener = typeof listener === 'function' ? listener : null;
+                return this.getStatus();
             },
 
             getResults() {
@@ -1905,6 +2097,7 @@
                 paused = true;
                 status.paused = true;
                 status.message = 'Pause requested…';
+                emitStatusChange();
                 HWHFuncs.setProgress?.('Arena Training: pause requested (finishing current BattleCalc)…', true);
                 console.log('[Arena Training] Pause requested — will idle after the current BattleCalc');
                 return { paused: true, ...this.getStatus(), message: 'Pause requested' };
@@ -1917,6 +2110,7 @@
                 paused = false;
                 status.paused = false;
                 status.message = 'Resume requested…';
+                emitStatusChange();
                 console.log('[Arena Training] Resume requested');
                 HWHFuncs.setProgress?.('Arena Training: resuming…', true);
                 return { paused: false, ...this.getStatus(), message: 'Resumed' };
@@ -1927,6 +2121,8 @@
                 paused = false;
                 loopRunning = false;
                 status.paused = false;
+                status.message = 'Stop requested…';
+                emitStatusChange();
                 return this.getStatus();
             },
 
@@ -2333,6 +2529,7 @@
                 status.loopRunning = true;
                 status.paused = false;
                 status.message = 'Loop training started';
+                emitStatusChange();
 
                 (async () => {
                     let roundNum = 0;
@@ -2476,6 +2673,7 @@
                                 : `Loop finished after ${roundNum} rounds`;
                         loopSession.completedAt = new Date().toISOString();
                         loopSession.totalRounds = roundNum;
+                        emitStatusChange();
                         HWHFuncs.setProgress(status.message, true);
                     }
                 })();
@@ -2561,6 +2759,7 @@
                     label: options.label || 'arena-training',
                     message: 'Loading arena data...',
                 };
+                emitStatusChange();
 
                 try {
                     HWHFuncs.setProgress('Arena Training: loading opponents and heroes...', true);
@@ -2922,6 +3121,7 @@
                         totalCombos: status.totalCombos,
                         message: stopRequested ? 'Stopped by user' : 'Completed',
                     };
+                    emitStatusChange();
                 }
             },
 
