@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.33.2
+// @version      1.33.3
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.33.2';
+    const EXTENSION_VERSION = '1.33.3';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -24,6 +24,9 @@
     const AUTO_START_DELAY_MS = 5 * 60_000;
     /** How often to re-check Auto Daily / dungeon / AutoBattle busy flags. */
     const AUTO_START_POLL_MS = 60_000;
+    /** Retry binding Auto Arena Training checkbox until HWH settings UI exists. */
+    const AUTO_START_BIND_RETRY_MS = 500;
+    const AUTO_START_BIND_RETRY_MAX_MS = 60_000;
     /** Default ms to yield between BattleCalc samples (override with window.HWH_ARENA_TRAINING_YIELD_MS). */
     const DEFAULT_TRAINING_YIELD_MS = 16;
     /** How often pause-wait polls for resume/stop. */
@@ -124,36 +127,62 @@
         }, 50);
     }
 
+    function readSavedAutoStart(HWHFuncs) {
+        const checkboxDef = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX];
+        const fallback = checkboxDef?.default === true;
+        return !!HWHFuncs?.getSaveVal?.(AUTO_START_CHECKBOX, fallback);
+    }
+
+    function syncAutoStartCheckboxFromSave(HWHFuncs, checkbox) {
+        if (!checkbox) return false;
+        checkbox.dataset.name = AUTO_START_CHECKBOX;
+        if (checkbox.dataset.arenaTrainingSynced === '1') {
+            return !!checkbox.checked;
+        }
+        // HWH may create the cbox with default=false before our saved value is applied.
+        checkbox.checked = readSavedAutoStart(HWHFuncs);
+        checkbox.dataset.arenaTrainingSynced = '1';
+        return !!checkbox.checked;
+    }
+
     function ensureSettingsCheckboxUI(HWHFuncs) {
         registerSettingsCheckbox();
         const checkboxDef = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX];
-        if (!checkboxDef || checkboxDef.cbox) {
-            return checkboxDef?.cbox || null;
-        }
-
-        const scriptMenu = window.HWHClasses?.ScriptMenu?.getInst?.();
-        const settingsDetails = document.querySelector('details.scriptMenu_Details[data-name="settings"]');
-        if (!scriptMenu || !settingsDetails) {
+        if (!checkboxDef) {
             return null;
         }
 
-        checkboxDef.cbox = scriptMenu.addCheckbox(checkboxDef.label, checkboxDef.title, settingsDetails);
+        if (!checkboxDef.cbox) {
+            const scriptMenu = window.HWHClasses?.ScriptMenu?.getInst?.();
+            const settingsDetails = document.querySelector('details.scriptMenu_Details[data-name="settings"]');
+            if (!scriptMenu || !settingsDetails) {
+                return null;
+            }
 
-        const expeditionCheckbox = window.HWHData.checkboxes.sendExpedition?.cbox;
-        if (expeditionCheckbox && checkboxDef.cbox) {
-            const expeditionRow = expeditionCheckbox.closest('.scriptMenu_divInput');
-            const autoRow = checkboxDef.cbox.closest('.scriptMenu_divInput');
-            if (expeditionRow && autoRow && expeditionRow.nextSibling !== autoRow) {
-                expeditionRow.parentNode.insertBefore(autoRow, expeditionRow.nextSibling);
+            checkboxDef.cbox = scriptMenu.addCheckbox(checkboxDef.label, checkboxDef.title, settingsDetails);
+
+            const expeditionCheckbox = window.HWHData.checkboxes.sendExpedition?.cbox;
+            if (expeditionCheckbox && checkboxDef.cbox) {
+                const expeditionRow = expeditionCheckbox.closest('.scriptMenu_divInput');
+                const autoRow = checkboxDef.cbox.closest('.scriptMenu_divInput');
+                if (expeditionRow && autoRow && expeditionRow.nextSibling !== autoRow) {
+                    expeditionRow.parentNode.insertBefore(autoRow, expeditionRow.nextSibling);
+                }
             }
         }
 
-        const savedValue = HWHFuncs.getSaveVal?.(AUTO_START_CHECKBOX, checkboxDef.default);
-        checkboxDef.cbox.checked = !!savedValue;
-        checkboxDef.cbox.dataset.name = AUTO_START_CHECKBOX;
-        checkboxDef.cbox.addEventListener('change', function onAutoStartToggle() {
-            HWHFuncs.setSaveVal?.(AUTO_START_CHECKBOX, this.checked);
-        });
+        if (!checkboxDef.cbox) {
+            return null;
+        }
+
+        syncAutoStartCheckboxFromSave(HWHFuncs, checkboxDef.cbox);
+
+        if (checkboxDef.cbox.dataset.arenaTrainingSaveBound !== '1') {
+            checkboxDef.cbox.dataset.arenaTrainingSaveBound = '1';
+            checkboxDef.cbox.addEventListener('change', function onAutoStartToggle() {
+                HWHFuncs.setSaveVal?.(AUTO_START_CHECKBOX, this.checked);
+            });
+        }
 
         return checkboxDef.cbox;
     }
@@ -169,9 +198,10 @@
     function isAutoStartEnabled(HWHFuncs) {
         const checkboxDef = window.HWHData?.checkboxes?.[AUTO_START_CHECKBOX];
         if (checkboxDef?.cbox) {
-            return checkboxDef.cbox.checked;
+            // Keep persisted value aligned with the live checkbox.
+            return !!checkboxDef.cbox.checked;
         }
-        return !!HWHFuncs?.getSaveVal?.(AUTO_START_CHECKBOX, false);
+        return readSavedAutoStart(HWHFuncs);
     }
 
     async function waitForHigherPriorityIdle(HWHFuncs, waitToken) {
@@ -196,7 +226,10 @@
 
     function scheduleAutoStart(training, HWHFuncs) {
         clearAutoStartTimer();
+        // Make sure checkbox/save are reconciled before deciding.
+        ensureSettingsCheckboxUI(HWHFuncs);
         if (!isAutoStartEnabled(HWHFuncs)) {
+            console.log('[Arena Training] Auto-start not enabled (checkbox/save off)');
             return;
         }
 
@@ -208,6 +241,7 @@
         autoStartTimer = setTimeout(async () => {
             autoStartTimer = null;
             if (waitToken !== autoStartWaitToken || !isAutoStartEnabled(HWHFuncs)) {
+                console.log('[Arena Training] Auto-start cancelled before start (disabled or rescheduled)');
                 return;
             }
 
@@ -220,9 +254,12 @@
                 }
 
                 const status = training.getStatus?.() || {};
-                const loopStatus = training.getLoopStatus?.() || {};
-                if (status.running || loopStatus.loopRunning) {
-                    console.log('[Arena Training] Auto-start skipped — training already running');
+                if (status.running || status.loopRunning) {
+                    console.log('[Arena Training] Auto-start skipped — training already running', {
+                        running: !!status.running,
+                        loopRunning: !!status.loopRunning,
+                        paused: !!status.paused,
+                    });
                     return;
                 }
                 if (isHigherPriorityBusy()) {
@@ -232,21 +269,50 @@
 
                 console.log('[Arena Training] Auto-starting training loop (Auto Daily idle)');
                 HWHFuncs.setProgress('Arena Training: auto-starting loop...', true);
-                training.startLoop({ label: 'auto-loop', opponentSource: 'topGet' });
+                try {
+                    const started = training.startLoop({ label: 'auto-loop', opponentSource: 'topGet' });
+                    if (started?.started === false) {
+                        console.warn('[Arena Training] Auto-start startLoop declined:', started.message || started);
+                    }
+                } catch (error) {
+                    console.error('[Arena Training] Auto-start startLoop failed:', error);
+                    HWHFuncs.setProgress?.(
+                        `Arena Training: auto-start failed — ${error?.message || error}`,
+                        true
+                    );
+                }
                 return;
             }
         }, AUTO_START_DELAY_MS);
     }
 
     function bindAutoStartCheckbox(training, HWHFuncs) {
-        const checkbox = ensureSettingsCheckboxUI(HWHFuncs);
-        if (!checkbox || checkbox.dataset.arenaTrainingBound === '1') {
+        const tryBind = () => {
+            const checkbox = ensureSettingsCheckboxUI(HWHFuncs);
+            if (!checkbox) {
+                return false;
+            }
+            if (checkbox.dataset.arenaTrainingBound !== '1') {
+                checkbox.dataset.arenaTrainingBound = '1';
+                checkbox.addEventListener('change', () => {
+                    scheduleAutoStart(training, HWHFuncs);
+                });
+            }
+            scheduleAutoStart(training, HWHFuncs);
+            return true;
+        };
+
+        if (tryBind()) {
             return;
         }
-        checkbox.dataset.arenaTrainingBound = '1';
-        checkbox.addEventListener('change', () => {
-            scheduleAutoStart(training, HWHFuncs);
-        });
+
+        console.log('[Arena Training] Settings checkbox not ready — retrying auto-start bind');
+        const startedAt = Date.now();
+        const retry = setInterval(() => {
+            if (tryBind() || Date.now() - startedAt > AUTO_START_BIND_RETRY_MAX_MS) {
+                clearInterval(retry);
+            }
+        }, AUTO_START_BIND_RETRY_MS);
     }
 
     const CONSTANTS = {
@@ -737,8 +803,8 @@
             window.LLMHWH.arenaTrainingSimulateMatchup = (options) => training.simulateMatchup(options);
         }
 
+        // Binds checkbox (with retry) and schedules auto-start from the saved/checked value.
         bindAutoStartCheckbox(training, HWHFuncs);
-        scheduleAutoStart(training, HWHFuncs);
 
         const counterPanel = initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training });
         const transportButtons = installTrainingTransportButtons(training, counterPanel);
@@ -755,7 +821,8 @@
 
     function getMenuButtonLabelEl(button) {
         if (!button) return null;
-        return button.querySelector?.('.scriptMenu_buttonText, .scriptMenu_btnPlate') || button;
+        // Never fall back to the button root — replacing its textContent wipes HWH's inner DOM/handlers.
+        return button.querySelector?.('.scriptMenu_buttonText, .scriptMenu_btnPlate') || null;
     }
 
     function styleTransportButton(button, { active = false, enabled = true } = {}) {
@@ -779,7 +846,12 @@
         if (!button) return;
         button.title = title;
         const label = getMenuButtonLabelEl(button);
-        if (label) label.textContent = icon;
+        if (label) {
+            label.textContent = icon;
+        } else if (typeof button.msg !== 'undefined') {
+            // Some HWH builds keep the visible caption on .msg
+            try { button.msg = icon; } catch (_) { /* ignore */ }
+        }
         styleTransportButton(button, { active, enabled });
     }
 
