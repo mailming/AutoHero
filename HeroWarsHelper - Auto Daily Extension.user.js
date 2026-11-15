@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         HeroWarsHelper - Auto Daily Extension
 // @namespace    http://tampermonkey.net/
-// @version      3.5.64
+// @version      3.5.65
 // @description  Auto Daily panel plus merged AutoBattle options (Arena, Grand Arena, ToE, Guild War, Guild Raid, Clash of the World).
 // @author       Your Name & Coding Partner
 // @match        https://www.hero-wars.com/*
@@ -15,9 +15,25 @@
 
     // --- CONFIGURATION ---
     const EXTENSION_NAME = "Auto Daily Extension";
-    const EXTENSION_VERSION = "3.5.64";
+    const EXTENSION_VERSION = "3.5.65";
     const EXTENSION_AUTHOR = "You";
     const AUTO_DAILY_STYLE_ID = 'auto-daily-popup-styles';
+
+    /**
+     * Optional Arena Training HwH Ext APIs used by Auto Daily.
+     * When that extension is not installed, every hook below must no-op so Arena/Do All continue normally.
+     */
+    function getArenaTrainingFeatures() {
+        const simLab = window.AHSimLab;
+        const training = window.ArenaTraining;
+        const runAfterArenaLoss = typeof simLab?.runAfterArenaLoss === 'function'
+            ? (opts) => simLab.runAfterArenaLoss(opts)
+            : null;
+        return {
+            installed: !!(training || runAfterArenaLoss),
+            runAfterArenaLoss,
+        };
+    }
 
     // Dungeon knobs (set on window before run): HWH_DEBUG_DUNGEON, HWH_LOG_PREDICTION_CARDS,
     // HWH_DUNGEON_USE_ORACLE_CARDS, HWH_DUNGEON_NUM_TRIES, HWH_DUNGEON_STEP_DELAY_MS,
@@ -3459,7 +3475,7 @@
 
                 await this.endArenaBattle(battleResult);
 
-                // On Arena loss, start SimLab with fight-level defender favor/flag/slots when available.
+                // On Arena loss, optionally start SimLab (Arena Training HwH Ext only).
                 if (!battleResult.win && this.arenaType === 'arena') {
                     await this.maybeStartSimLabAfterLoss(opponent, attackTeam, battleResult, opponentTeamConfig);
                 }
@@ -3478,16 +3494,17 @@
             }
         }
 
+        /** Arena Training hooks — all skipped when Arena Training HwH Ext is not installed. */
         this.maybeStartSimLabAfterLoss = async function(opponent, attackTeam, battleResult, opponentTeamConfig) {
-            const simLab = window.AHSimLab;
-            if (typeof simLab?.runAfterArenaLoss !== 'function') {
-                console.log('[ARENA] SimLab not available — skip after-loss SimLab');
+            const features = getArenaTrainingFeatures();
+            if (!features.runAfterArenaLoss) {
+                console.log('[ARENA] Arena Training not installed — skipping all Arena Training features (SimLab after loss)');
                 return;
             }
 
             setProgress('Arena: loss — starting SimLab with full defender…');
             try {
-                await simLab.runAfterArenaLoss({
+                await features.runAfterArenaLoss({
                     responseBody: battleResult?.responseBody,
                     opponent,
                     attackTeam,
@@ -3496,7 +3513,8 @@
                 });
                 setProgress('Arena: SimLab finished after loss');
             } catch (error) {
-                console.warn('[ARENA] SimLab after loss failed:', error);
+                // Never fail the Arena task because optional training features errored.
+                console.warn('[ARENA] SimLab after loss failed (continuing Auto Daily):', error);
                 setProgress(`Arena: SimLab after loss failed — ${error?.message || error}`);
             }
         };
