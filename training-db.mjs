@@ -5,6 +5,11 @@ const { Pool } = pg;
 
 const DEFAULT_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/autohero';
 
+/** Best Counters dashboard: top teams & top heroes/pets shown at /training/view */
+export const TRAINING_INSIGHTS_TOP_N = 25;
+/** Grand Arena defense: number of 3-team lineups to show on the dashboard */
+export const TRAINING_GRAND_ARENA_TOP_N = 10;
+
 let pool = null;
 let ready = false;
 let lastError = null;
@@ -963,9 +968,9 @@ export async function getTrainingResultStats({
     opponentHeroIds,
     myHeroIds,
     testerUserId,
-    topN = 10,
+    topN = TRAINING_INSIGHTS_TOP_N,
     minWinRate = 90,
-    grandArenaMaxResults = 5,
+    grandArenaMaxResults = TRAINING_GRAND_ARENA_TOP_N,
     grandArenaComboPool = 80,
 } = {}) {
     // Cap the GA input pool — uncapped O(n³) over 1000+ combos hangs Node and can throw
@@ -973,7 +978,7 @@ export async function getTrainingResultStats({
     const gaPoolLimit = Number.isFinite(grandArenaComboPool) && grandArenaComboPool > 0
         ? Math.floor(grandArenaComboPool)
         : 80;
-    const gaResultLimit = grandArenaMaxResults > 0 ? grandArenaMaxResults : 5;
+    const gaResultLimit = grandArenaMaxResults > 0 ? grandArenaMaxResults : TRAINING_GRAND_ARENA_TOP_N;
 
     const [gaCombos, topMyCombos, topHeroesResult] = await Promise.all([
         queryMyComboStats({

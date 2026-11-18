@@ -63,7 +63,7 @@ function compareSelections(a, b) {
  */
 export function findGrandArenaSelections(combos, {
     heroesPerTeam = 5,
-    maxResults = 5,
+    maxResults = 10,
     requiredHeroIds = [],
     maxComboPool = DEFAULT_MAX_COMBO_POOL,
 } = {}) {

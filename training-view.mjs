@@ -10,6 +10,7 @@ import {
     resolvePatternShortLabel,
 } from './banner-names.mjs';
 import { HERO_ICON_TOOLTIP_CSS, iconUrlForUnit, renderComboLabelHtml, renderHeroListHtml, renderUnitNameHtml } from './hero-icons.mjs';
+import { TRAINING_GRAND_ARENA_TOP_N, TRAINING_INSIGHTS_TOP_N } from './training-db.mjs';
 
 export function parseHeroFilterParams(searchParams, key) {
     const values = searchParams.getAll(key);
@@ -597,7 +598,7 @@ function renderTrainingStats(stats = {}) {
     <div class="stats-grid">
       <div class="stats-panel card">
         <div class="panel-head">
-          <h3>Top 10 teams</h3>
+          <h3>Top ${TRAINING_INSIGHTS_TOP_N} teams</h3>
           <p class="muted stats-note">${minWinRate}%+ frequency</p>
         </div>
         <div class="table-wrap stats-table-wrap">
@@ -620,7 +621,7 @@ function renderTrainingStats(stats = {}) {
       </div>
       <div class="stats-panel card">
         <div class="panel-head">
-          <h3>Top 10 heroes &amp; pets</h3>
+          <h3>Top ${TRAINING_INSIGHTS_TOP_N} heroes &amp; pets</h3>
           <p class="muted stats-note">In ${minWinRate}%+ lineups</p>
         </div>
         <div class="table-wrap stats-table-wrap">
@@ -684,7 +685,7 @@ function renderGrandArenaSelections(stats = {}) {
     <div class="section-head">
       <h2>Grand Arena defense</h2>
       <p class="section-lead">
-        3 teams · 15 unique heroes · pets may repeat.
+        Top ${TRAINING_GRAND_ARENA_TOP_N} lineups · 3 teams · 15 unique heroes · pets may repeat.
         ${status}${myHeroFilterNote}
       </p>
     </div>
@@ -1072,8 +1073,8 @@ export function renderTrainingResultsPage(results, summary = {}, paging = {}) {
     }
     .stats-panel h3 { margin: 0; font-size: 0.95rem; color: #e7ecf3; }
     .stats-note { margin: 0; font-size: 0.78rem; }
-    .stats-table-wrap { max-height: 360px; flex: 1; }
-    .ga-table-wrap { max-height: 480px; }
+    .stats-table-wrap { max-height: 520px; flex: 1; }
+    .ga-table-wrap { max-height: 720px; }
     .ga-panel { padding: 12px; }
     .ga-team { display: flex; flex-direction: column; gap: 3px; }
     .ga-team-meta { font-size: 0.76rem; }
