@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arena Training HwH Ext
 // @namespace    HeroWarsHelper.ArenaTraining
-// @version      1.33.3
+// @version      1.33.4
 // @description  Arena training + Counter Suggest panel (Arena gather / Clan Domination attack, SimLab, Train)
 // @author       AutoHero
 // @match        https://www.hero-wars.com/*
@@ -16,7 +16,7 @@
     'use strict';
 
     const EXTENSION_NAME = 'Arena Training Extension';
-    const EXTENSION_VERSION = '1.33.3';
+    const EXTENSION_VERSION = '1.33.4';
     const BRIDGE_URL = 'http://127.0.0.1:9876';
     const EXTENSION_AUTHOR = 'AutoHero';
     const AUTO_START_CHECKBOX = 'autoArenaTraining';
@@ -3325,7 +3325,7 @@
 
 
     // --- Counter Suggest panel (merged from Arena Counter Suggest HwH Ext) ---
-    const COUNTER_SUGGEST_VERSION = '1.32.2';
+    const COUNTER_SUGGEST_VERSION = '1.33.4';
     function initializeCounterSuggestPanel({ HWHClasses, HWHFuncs, Send, cheats, lib, training }) {
         const EXTENSION_NAME = 'Arena Counter Suggest';
         const EXTENSION_VERSION = COUNTER_SUGGEST_VERSION;
@@ -3335,6 +3335,7 @@
         const PLAYER_BANNER_DATA_CLASS = 'game.model.user.banner.PlayerBannerData';
         const PLAYER_BANNER_ENTRY_CLASS = 'game.model.user.banner.PlayerBannerEntry';
         const INT_MAP_CLASS = 'haxe.ds.IntMap';
+        const BATTLE_TEAM_CLASS = 'game.data.storage.battle.BattleTeam';
         const BANNER_STONE_DESC_CLASS = 'game.data.storage.resource.BannerStoneDescription';
         const SIMLAB_SIMULATIONS = 10;
         const SIMLAB_TARGET_WIN_RATE = 90;
@@ -4103,25 +4104,129 @@
             return Number.isFinite(raw) && raw > 0 ? raw : 0;
         }
 
-        function extractHeroesFromBattleTeam(team) {
+        function unitsArrayFromBattleTeam(team) {
             if (!team) return [];
             try {
+                const viaHeroes = callSemantic(team, 'get_heroes');
+                if (Array.isArray(viaHeroes) && viaHeroes.length) return viaHeroes;
+            } catch {
+                // continue
+            }
+            try {
                 if (typeof team.O2b === 'function') {
-                    return (team.O2b() || []).map(Number).filter((id) => id > 0 && id < 6000);
+                    const ids = team.O2b() || [];
+                    if (Array.isArray(ids) && ids.length) return ids;
                 }
             } catch {
                 // continue
             }
             try {
                 const units = typeof team.Wi === 'function' ? team.Wi()
-                    : (callSemantic(team, 'get_units') || team.nC || []);
-                if (Array.isArray(units)) {
-                    return units.map(callUnitId).filter((id) => id > 0 && id < 6000);
+                    : (callSemantic(team, 'get_units') || team.nC);
+                if (Array.isArray(units) && units.length) return units;
+            } catch {
+                // continue
+            }
+            try {
+                for (const value of Object.values(team)) {
+                    if (!Array.isArray(value) || value.length < 4) continue;
+                    const heroish = value.filter((entry) => {
+                        const id = callUnitId(entry);
+                        return id > 0 && id < 6000;
+                    });
+                    if (heroish.length >= 4) return value;
                 }
             } catch {
                 // continue
             }
             return [];
+        }
+
+        function extractHeroesFromBattleTeam(team) {
+            const units = unitsArrayFromBattleTeam(team);
+            if (!units.length) return [];
+            if (typeof units[0] === 'number' || typeof units[0] === 'string') {
+                return units.map(Number).filter((id) => id > 0 && id < 6000);
+            }
+            return units.map(callUnitId).filter((id) => id > 0 && id < 6000);
+        }
+
+        function pickDefenceTeamFromEnemy(enemy) {
+            if (!enemy || typeof enemy !== 'object') return null;
+            const teamCandidates = [];
+            const pushTeam = (candidate) => {
+                if (candidate && typeof candidate === 'object') teamCandidates.push(candidate);
+            };
+            for (const semantic of [
+                'get_teams',
+                'get_defenceTeams',
+                'get_defenseTeams',
+                'get_team',
+                'get_defenceTeam',
+                'get_defenseTeam',
+                'get_enemyTeam',
+            ]) {
+                try {
+                    const value = callSemantic(enemy, semantic);
+                    if (Array.isArray(value)) value.forEach(pushTeam);
+                    else pushTeam(value);
+                } catch {
+                    // continue
+                }
+            }
+            if (Array.isArray(enemy.ex)) enemy.ex.forEach(pushTeam);
+            try {
+                for (const value of Object.values(enemy)) {
+                    if (classNameOf(value) === BATTLE_TEAM_CLASS) pushTeam(value);
+                    if (Array.isArray(value)) {
+                        value.filter((entry) => classNameOf(entry) === BATTLE_TEAM_CLASS).forEach(pushTeam);
+                    }
+                }
+            } catch {
+                // continue
+            }
+            for (const team of teamCandidates) {
+                if (extractHeroesFromBattleTeam(team).length === 5) return team;
+            }
+            return null;
+        }
+
+        function resolveGatherEnemyObject(mediator) {
+            if (!mediator) return null;
+            let enemy = null;
+            try {
+                enemy = callSemantic(mediator, 'get_enemy');
+            } catch {
+                enemy = null;
+            }
+            if (!enemy) enemy = mediator.fj || null;
+            if (!enemy) {
+                for (const semantic of ['get_defender', 'get_opponent', 'get_target', 'get_enemyTeam']) {
+                    try {
+                        const value = callSemantic(mediator, semantic);
+                        if (value && typeof value === 'object') {
+                            enemy = value;
+                            break;
+                        }
+                    } catch {
+                        // continue
+                    }
+                }
+            }
+            if (!enemy) {
+                try {
+                    for (const value of Object.values(mediator)) {
+                        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+                        if (pickDefenceTeamFromEnemy(value)) {
+                            enemy = value;
+                            break;
+                        }
+                    }
+                } catch {
+                    // continue
+                }
+            }
+            return enemy;
         }
 
         function normalizeFavorMap(raw) {
@@ -4494,8 +4599,7 @@
             }
             if (!Number.isFinite(userId) || userId <= 0) return null;
 
-            const teams = Array.isArray(enemy.ex) ? enemy.ex : [];
-            const team = teams[0] || null;
+            const team = pickDefenceTeamFromEnemy(enemy);
             const heroes = extractHeroesFromBattleTeam(team);
             if (heroes.length !== 5) return null;
 
@@ -4528,13 +4632,7 @@
 
         function extractEnemyFromMediator(mediator) {
             if (!mediator) return null;
-            let enemy = null;
-            try {
-                enemy = callSemantic(mediator, 'get_enemy');
-            } catch {
-                enemy = null;
-            }
-            if (!enemy) enemy = mediator.fj || null;
+            const enemy = resolveGatherEnemyObject(mediator);
             let fromEnemy = extractFromPlayerArenaEnemy(enemy);
 
             // Fallback: some builds keep enemy user separately
